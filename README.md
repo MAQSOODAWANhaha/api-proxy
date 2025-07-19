@@ -46,7 +46,7 @@ The AI Proxy System provides a unified, secure, and high-performance gateway to 
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/api-proxy.git
+git clone https://github.com/MAQSOODAWANhaha/api-proxy.git
 cd api-proxy
 
 # Check code quality
