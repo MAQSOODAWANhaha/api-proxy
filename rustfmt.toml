@@ -1,0 +1,24 @@
+# Rust formatting configuration for ai-proxy-system
+
+# Edition and style  
+edition = "2021"
+use_small_heuristics = "Default"
+
+# Code layout
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+
+# Function formatting
+fn_params_layout = "Tall"
+
+# Spacing and alignment
+use_field_init_shorthand = true
+force_explicit_abi = true
+
+# Control flow
+match_block_trailing_comma = false
+
+# Reorder imports (stable feature)
+reorder_imports = true
