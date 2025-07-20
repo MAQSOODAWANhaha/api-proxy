@@ -1,0 +1,29 @@
+# 测试环境配置
+
+[server]
+host = "127.0.0.1"
+port = 0  # 使用随机端口
+https_port = 0
+workers = 1
+
+[database]
+url = ":memory:"  # 内存数据库
+max_connections = 1
+connect_timeout = 5
+query_timeout = 5
+
+[redis]
+url = "redis://127.0.0.1:6379/15"
+pool_size = 1
+host = "127.0.0.1"
+port = 6379
+database = 15  # 专门的测试数据库
+password = ""
+connection_timeout = 5
+default_ttl = 300
+max_connections = 1
+
+[tls]
+cert_path = "./test_certs"
+acme_email = "test@example.com"
+domains = ["localhost", "127.0.0.1"]

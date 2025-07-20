@@ -1,0 +1,64 @@
+repos:
+  # Rust 格式化和检查
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: Cargo Format
+        entry: cargo fmt
+        language: rust
+        types: [rust]
+        pass_filenames: false
+      
+      - id: cargo-clippy
+        name: Cargo Clippy
+        entry: cargo clippy
+        language: rust
+        types: [rust]
+        pass_filenames: false
+        args: [--all-targets, --all-features, --, -D, warnings]
+      
+      - id: cargo-test
+        name: Cargo Test
+        entry: cargo test
+        language: rust
+        types: [rust]
+        pass_filenames: false
+        args: [--all-features]
+      
+      - id: cargo-audit
+        name: Cargo Security Audit
+        entry: cargo audit
+        language: rust
+        types: [rust]
+        pass_filenames: false
+
+  # 通用检查
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Markdown 检查
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+
+  # 提交消息检查
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, docs, style, refactor, perf, test, chore, ci]

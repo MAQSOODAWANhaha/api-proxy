@@ -1,3 +1,66 @@
-/target
+# Rust 生成文件
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 环境配置文件
+.env
+.env.local
+.env.production
+.env.development
+
+# 日志文件
+*.log
+logs/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 测试生成文件
+/test-results/
+/coverage/
+
+# 临时文件
+/tmp/
+*.tmp
+
+# 配置文件（生产环境）
+config/production.toml
+config/local.toml
+
+# Redis 数据文件
+dump.rdb
+appendonly.aof
+
+# TLS 证书文件
+*.pem
+*.key
+*.crt
+
+# 前端构建产物
+/frontend/dist/
+/frontend/node_modules/
+/frontend/.env.local
+
+# 文档生成
+/target/doc/
+/target/criterion/
+
+# 性能测试结果
+/benches/results/
+
+# PromptX 工具文件
 .promptx/pouch.json
 .promptx/resource/project.registry.json

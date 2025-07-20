@@ -1,0 +1,29 @@
+# 开发环境配置
+
+[server]
+host = "127.0.0.1"
+port = 8080
+https_port = 8443
+workers = 8
+
+[database]
+url = "sqlite:./data/dev.db"
+max_connections = 10
+connect_timeout = 30
+query_timeout = 30
+
+[redis]
+url = "redis://127.0.0.1:6379/0"
+pool_size = 10
+host = "127.0.0.1"
+port = 6379
+database = 0
+password = ""
+connection_timeout = 10
+default_ttl = 3600
+max_connections = 10
+
+[tls]
+cert_path = "./certs"
+acme_email = "admin@example.com"
+domains = ["localhost", "127.0.0.1"]
