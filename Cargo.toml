@@ -57,16 +57,28 @@ aes-gcm = "0.10"
 rand = "0.8"
 hex = "0.4"
 
-# 核心依赖（后续阶段添加）
-# pingora = "0.1"
-# axum = "0.7"
-sea-orm = { version = "0.12", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
-sea-orm-migration = "0.12"
+# 核心依赖 - Pingora 和 Web 框架（使用最新版本）
+pingora-core = "0.5.0"
+pingora-proxy = "0.5.0"
+pingora-load-balancing = "0.5.0"
+pingora-http = "0.5.0"
+axum = "0.8.4"
+sea-orm = { version = "1.1.13", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = "1.1.13"
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 reqwest = { version = "0.11", features = ["json"] }
 fastrand = "2.0"
+bytes = "1.0"
+http-body = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+regex = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+jsonwebtoken = "9.0"
+bcrypt = "0.15"
 
 # 测试框架依赖（条件编译）
 tempfile = { version = "3.0", optional = true }

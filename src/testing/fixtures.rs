@@ -5,9 +5,11 @@
 use entity::{
     provider_types, user_provider_keys, user_sessions, users,
 };
-use sea_orm::Set;
+use sea_orm::{Set, DatabaseConnection};
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use crate::auth::{AuthService, jwt::JwtManager, api_key::ApiKeyManager, types::AuthConfig};
 
 /// 用户测试数据构建器
 pub struct UserFixture {
@@ -339,6 +341,55 @@ impl TestConfig {
         let dir = Self::test_data_dir();
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// 获取测试用的认证配置
+    pub fn auth_config() -> AuthConfig {
+        AuthConfig {
+            jwt_secret: "test-secret-key-for-testing-only-12345".to_string(),
+            jwt_expires_in: 3600,       // 1 小时
+            refresh_expires_in: 604800, // 7 天
+            enable_rate_limiting: false, // 测试时禁用速率限制
+            default_request_rate_limit: 1000,
+            default_token_rate_limit: 100000,
+            min_password_length: 6, // 测试时降低密码要求
+            require_password_numbers: false,
+            require_password_special_chars: false,
+            session_timeout: 3600,
+            max_login_attempts: 5,
+            login_lockout_duration: 900,
+        }
+    }
+
+    /// 创建测试用的认证服务
+    pub fn auth_service() -> AuthService {
+        static TEST_DB_CONN: OnceLock<Arc<DatabaseConnection>> = OnceLock::new();
+        
+        // 获取或创建数据库连接
+        let db = TEST_DB_CONN.get_or_init(|| {
+            // 创建一个运行时来处理异步数据库连接
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            let db_conn = rt.block_on(async {
+                sea_orm::Database::connect("sqlite::memory:")
+                    .await
+                    .expect("Failed to connect to test database")
+            });
+            Arc::new(db_conn)
+        }).clone();
+        
+        let config = Arc::new(Self::auth_config());
+        
+        // 创建 JWT 管理器
+        let jwt_manager = Arc::new(
+            JwtManager::new(config.clone())
+                .expect("Failed to create JWT manager for tests")
+        );
+        
+        // 创建 API 密钥管理器
+        let api_key_manager = Arc::new(ApiKeyManager::new(db.clone(), config.clone()));
+        
+        // 创建认证服务
+        AuthService::new(jwt_manager, api_key_manager, db, config)
     }
 }
 

@@ -1,108 +1,134 @@
-//! # AI Proxy System
+//! # AI Proxy 主程序
 //!
-//! Enterprise-grade AI service proxy platform built with Rust and Pingora.
-//!
-//! This is the main entry point for the AI proxy system, which provides
-//! unified access to multiple AI service providers with load balancing,
-//! monitoring, and security features.
+//! 企业级 AI 服务代理平台 - 基于 Pingora 的高性能代理服务
 
-/// Main entry point for the AI proxy system.
-///
-/// Currently a placeholder implementation - will be replaced with
-/// the full Pingora-based proxy service in Phase 2.
+use std::env;
+use std::process;
+use tracing::{error, info};
+use api_proxy::{
+    config::ConfigManager,
+    proxy::PingoraProxyServer,
+    error::Result,
+};
+
 #[tokio::main]
-async fn main() -> api_proxy::Result<()> {
-    // 初始化日志
-    tracing_subscriber::fmt::init();
-    
-    println!("AI Proxy System v0.1.0");
-    println!("Starting development server...");
-    
-    // 初始化配置管理器
-    let config_manager = match api_proxy::config::ConfigManager::new().await {
-        Ok(manager) => {
-            println!("✅ 配置管理器初始化成功");
-            manager
+async fn main() -> Result<()> {
+    // 初始化日志系统
+    init_logging();
+
+    info!("Starting AI Proxy Service v{}", env!("CARGO_PKG_VERSION"));
+
+    // 处理命令行参数
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--version" | "-v" => {
+                println!("AI Proxy v{}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            _ => {
+                eprintln!("Unknown argument: {}", args[1]);
+                print_help();
+                process::exit(1);
+            }
         }
-        Err(e) => {
-            eprintln!("❌ 配置管理器初始化失败: {e}");
-            return Err(e);
-        }
-    };
-    
-    // 获取当前配置
+    }
+
+    // 启动服务器
+    if let Err(e) = run_server().await {
+        error!("Failed to start server: {}", e);
+        process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// 初始化日志系统
+fn init_logging() {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+    let log_level = env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info,api_proxy=debug".to_string());
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| log_level.into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+}
+
+/// 运行服务器
+async fn run_server() -> Result<()> {
+    // 加载配置
+    info!("Loading configuration...");
+    let config_manager = ConfigManager::new().await?;
     let config = config_manager.get_config().await;
-    println!("✅ 配置加载成功:");
-    println!("  服务器地址: {}:{}", config.server.host, config.server.port);
-    println!("  HTTPS端口: {}", config.server.https_port);
-    println!("  工作线程: {}", config.server.workers);
-    println!("  数据库URL: {}", config.database.url);
-    
-    // 初始化数据库
-    let db = match api_proxy::database::init_database(&config.database.url).await {
-        Ok(db) => {
-            println!("✅ 数据库连接成功");
-            db
-        }
-        Err(e) => {
-            eprintln!("❌ 数据库连接失败: {e}");
-            return Err(api_proxy::error::ProxyError::database_with_source(
-                "数据库连接失败",
-                e
-            ));
-        }
-    };
+
+    info!("Configuration loaded successfully");
+    info!("Server will listen on {}:{}", config.server.host, config.server.port);
+
+    // 初始化数据库连接
+    info!("Initializing database connection...");
+    let db = api_proxy::database::init_database(&config.database.url).await?;
     
     // 运行数据库迁移
-    if let Err(e) = api_proxy::database::run_migrations(&db).await {
-        eprintln!("❌ 数据库迁移失败: {e}");
-        return Err(api_proxy::error::ProxyError::database_with_source(
-            "数据库迁移失败",
-            e
-        ));
-    } else {
-        println!("✅ 数据库迁移完成");
-    }
+    info!("Running database migrations...");
+    api_proxy::database::run_migrations(&db).await?;
+    info!("Database migrations completed");
+
+    // 创建并启动代理服务器
+    let proxy_server = PingoraProxyServer::new(config);
     
-    // 检查数据库状态
-    if let Err(e) = api_proxy::database::check_database_status(&db).await {
-        eprintln!("⚠️ 数据库状态检查失败: {e}");
-    }
-    
-    // 订阅配置变更事件（如果支持热重载）
-    if let Some(mut event_receiver) = config_manager.subscribe_changes() {
-        println!("✅ 配置热重载已启用");
-        
-        // 启动配置变更监听任务
-        tokio::spawn(async move {
-            while let Ok(event) = event_receiver.recv().await {
-                match event {
-                    api_proxy::config::ConfigEvent::Reloaded(_) => {
-                        println!("🔄 配置已重新加载");
-                    }
-                    api_proxy::config::ConfigEvent::ReloadFailed(error) => {
-                        eprintln!("❌ 配置重载失败: {}", error);
-                    }
-                    api_proxy::config::ConfigEvent::FileDeleted => {
-                        eprintln!("⚠️ 配置文件被删除");
-                    }
-                }
-            }
-        });
-        
-        // 保持程序运行以测试热重载功能
-        println!("🔄 程序正在运行中，可以修改配置文件测试热重载功能...");
-        println!("按 Ctrl+C 退出");
-        
-        // 等待中断信号
-        tokio::signal::ctrl_c().await.map_err(|e| {
-            api_proxy::error::ProxyError::internal_with_source("等待中断信号失败", e)
-        })?;
-        
-        println!("\n👋 程序正在退出...");
-    } else {
-        println!("ℹ️ 配置热重载已禁用");
-    }
-    
+    // 设置信号处理
+    setup_signal_handlers();
+
+    // 启动服务器
+    info!("Starting Pingora proxy server...");
+    proxy_server.start().await?;
+
     Ok(())
+}
+
+/// 设置信号处理器
+fn setup_signal_handlers() {
+    tokio::spawn(async move {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Received Ctrl+C, shutting down gracefully...");
+            }
+            Err(e) => {
+                error!("Failed to listen for shutdown signal: {}", e);
+            }
+        }
+
+        // 这里可以添加优雅关闭逻辑
+        info!("Graceful shutdown completed");
+        process::exit(0);
+    });
+}
+
+/// 打印帮助信息
+fn print_help() {
+    println!("AI Proxy - Enterprise-grade AI service proxy platform");
+    println!();
+    println!("USAGE:");
+    println!("    {} [OPTIONS]", env!("CARGO_PKG_NAME"));
+    println!();
+    println!("OPTIONS:");
+    println!("    -h, --help       Print this help message");
+    println!("    -v, --version    Print version information");
+    println!();
+    println!("ENVIRONMENT VARIABLES:");
+    println!("    RUST_LOG         Set logging level (default: info,api_proxy=debug)");
+    println!("    CONFIG_FILE      Configuration file path (default: config/config.toml)");
+    println!();
+    println!("EXAMPLES:");
+    println!("    {}                    # Start with default configuration", env!("CARGO_PKG_NAME"));
+    println!("    RUST_LOG=debug {}     # Start with debug logging", env!("CARGO_PKG_NAME"));
 }

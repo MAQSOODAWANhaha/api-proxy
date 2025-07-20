@@ -91,6 +91,46 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
+
+    /// 服务器初始化错误
+    #[error("服务器初始化错误: {message}")]
+    ServerInit {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 服务器启动错误
+    #[error("服务器启动错误: {message}")]
+    ServerStart {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 认证错误
+    #[error("认证错误: {message}")]
+    Authentication {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 上游服务器未找到
+    #[error("上游服务器未找到: {message}")]
+    UpstreamNotFound {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 上游服务器不可用
+    #[error("上游服务器不可用: {message}")]
+    UpstreamNotAvailable {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
 }
 
 impl ProxyError {
@@ -212,6 +252,46 @@ impl ProxyError {
             source: Some(source.into()),
         }
     }
+
+    /// 创建服务器初始化错误
+    pub fn server_init<T: Into<String>>(message: T) -> Self {
+        Self::ServerInit {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建服务器启动错误
+    pub fn server_start<T: Into<String>>(message: T) -> Self {
+        Self::ServerStart {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建认证错误
+    pub fn authentication<T: Into<String>>(message: T) -> Self {
+        Self::Authentication {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建上游服务器未找到错误
+    pub fn upstream_not_found<T: Into<String>>(message: T) -> Self {
+        Self::UpstreamNotFound {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建上游服务器不可用错误
+    pub fn upstream_not_available<T: Into<String>>(message: T) -> Self {
+        Self::UpstreamNotAvailable {
+            message: message.into(),
+            source: None,
+        }
+    }
 }
 
 // 自动转换常见错误类型
@@ -235,6 +315,49 @@ impl From<serde_json::Error> for ProxyError {
         Self::Serialization {
             message: "JSON处理失败".to_string(),
             source: err.into(),
+        }
+    }
+}
+
+impl From<sea_orm::error::DbErr> for ProxyError {
+    fn from(err: sea_orm::error::DbErr) -> Self {
+        Self::database_with_source("数据库操作失败", err)
+    }
+}
+
+// 认证相关错误转换
+impl From<crate::auth::types::AuthError> for ProxyError {
+    fn from(err: crate::auth::types::AuthError) -> Self {
+        Self::Auth {
+            message: err.to_string(),
+            source: Some(anyhow::Error::new(err)),
+        }
+    }
+}
+
+impl From<crate::auth::jwt::JwtError> for ProxyError {
+    fn from(err: crate::auth::jwt::JwtError) -> Self {
+        Self::Auth {
+            message: err.to_string(),
+            source: Some(anyhow::Error::new(err)),
+        }
+    }
+}
+
+impl From<crate::auth::api_key::ApiKeyError> for ProxyError {
+    fn from(err: crate::auth::api_key::ApiKeyError) -> Self {
+        Self::Auth {
+            message: err.to_string(),
+            source: Some(anyhow::Error::new(err)),
+        }
+    }
+}
+
+impl From<crate::auth::service::AuthServiceError> for ProxyError {
+    fn from(err: crate::auth::service::AuthServiceError) -> Self {
+        Self::Auth {
+            message: err.to_string(),
+            source: Some(anyhow::Error::new(err)),
         }
     }
 }
