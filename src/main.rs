@@ -75,14 +75,27 @@ async fn run_server() -> Result<()> {
 
     // 初始化数据库连接
     info!("Initializing database connection...");
-    let db = api_proxy::database::init_database(&config.database.url).await?;
+    let db = match api_proxy::database::init_database(&config.database.url).await {
+        Ok(db) => {
+            info!("Database connection established successfully");
+            db
+        }
+        Err(e) => {
+            error!("Database connection failed: {:?}", e);
+            return Err(e.into());
+        }
+    };
     
     // 运行数据库迁移
     info!("Running database migrations...");
-    api_proxy::database::run_migrations(&db).await?;
+    if let Err(e) = api_proxy::database::run_migrations(&db).await {
+        error!("Database migration failed: {:?}", e);
+        return Err(e.into());
+    }
     info!("Database migrations completed");
 
     // 创建并启动代理服务器
+    info!("Creating Pingora proxy server...");
     let proxy_server = PingoraProxyServer::new(config);
     
     // 设置信号处理
@@ -90,7 +103,13 @@ async fn run_server() -> Result<()> {
 
     // 启动服务器
     info!("Starting Pingora proxy server...");
-    proxy_server.start().await?;
+    match proxy_server.start().await {
+        Ok(_) => info!("Pingora proxy server started successfully"),
+        Err(e) => {
+            error!("Failed to start Pingora proxy server: {:?}", e);
+            return Err(e);
+        }
+    }
 
     Ok(())
 }

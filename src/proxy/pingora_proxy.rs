@@ -50,24 +50,29 @@ impl PingoraProxyServer {
 
     /// 启动服务器
     pub async fn start(&self) -> Result<()> {
-        // 初始化日志
-        env_logger::init();
+        // 跳过env_logger初始化，因为我们已经使用tracing了
+        // env_logger::init();
 
         // 创建服务器配置
+        info!("Creating Pingora server configuration...");
         let opt = Opt::default();
         let mut server = Server::new(Some(opt))
             .map_err(|e| ProxyError::server_init(format!("Failed to create Pingora server: {}", e)))?;
         
+        info!("Bootstrapping Pingora server...");
         server.bootstrap();
 
         // 创建认证服务
+        info!("Creating authentication service...");
         let auth_service = Self::create_auth_service().await
             .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
 
         // 创建健康检查服务
+        info!("Creating health check service...");
         let health_service = Arc::new(crate::health::HealthCheckService::new(None));
 
         // 创建 AI 代理服务
+        info!("Creating AI proxy service...");
         let ai_proxy = ProxyService::new(Arc::clone(&self.config), auth_service, health_service)
             .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 

@@ -4,7 +4,7 @@
 
 use sea_orm::{Database, DatabaseConnection, DbErr};
 use sea_orm_migration::MigratorTrait;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 use std::path::Path;
 
 /// 初始化数据库连接
@@ -44,17 +44,23 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
 pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     info!("开始运行数据库迁移...");
     
-    migration::Migrator::up(db, None).await?;
-    
-    info!("数据库迁移完成");
-    Ok(())
+    match ::migration::Migrator::up(db, None).await {
+        Ok(_) => {
+            info!("数据库迁移完成");
+            Ok(())
+        }
+        Err(e) => {
+            error!("数据库迁移失败: {}", e);
+            Err(e)
+        }
+    }
 }
 
 /// 检查数据库状态
 pub async fn check_database_status(db: &DatabaseConnection) -> Result<(), DbErr> {
     info!("检查数据库状态...");
     
-    let status = migration::Migrator::get_pending_migrations(db).await?;
+    let status = ::migration::Migrator::get_pending_migrations(db).await?;
     
     if status.is_empty() {
         info!("所有迁移都已应用");
