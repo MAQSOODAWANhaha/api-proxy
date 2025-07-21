@@ -42,8 +42,11 @@ impl PingoraProxyServer {
         let auth_service = Self::create_auth_service().await
             .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
 
+        // 创建健康检查服务
+        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
+
         // 创建 AI 代理服务
-        let ai_proxy = ProxyService::new(Arc::clone(&self.config), auth_service)
+        let ai_proxy = ProxyService::new(Arc::clone(&self.config), auth_service, health_service)
             .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 创建 HTTP 代理服务

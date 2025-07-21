@@ -206,6 +206,7 @@ dependencies = [
  "entity",
  "env_logger",
  "fastrand",
+ "futures",
  "hex",
  "http-body 1.0.1",
  "jsonwebtoken",

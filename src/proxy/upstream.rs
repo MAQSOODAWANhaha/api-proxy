@@ -4,12 +4,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use pingora_core::upstreams::peer::HttpPeer;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
+use crate::scheduler::{LoadBalancer, SchedulingStrategy};
+use crate::scheduler::balancer::LoadBalancerConfig;
 
 /// 上游服务类型
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UpstreamType {
     OpenAI,
     Anthropic,
@@ -95,15 +99,33 @@ impl UpstreamServer {
 /// 上游管理器
 pub struct UpstreamManager {
     config: Arc<AppConfig>,
-    upstreams: HashMap<UpstreamType, Vec<UpstreamServer>>,
+    load_balancer: LoadBalancer,
 }
 
 impl UpstreamManager {
     /// 创建新的上游管理器
     pub fn new(config: Arc<AppConfig>) -> Self {
+        let lb_config = LoadBalancerConfig {
+            default_strategy: SchedulingStrategy::RoundRobin,
+            health_check_interval: Duration::from_secs(30),
+            auto_failover: true,
+            ..Default::default()
+        };
+        
         let mut manager = Self {
             config,
-            upstreams: HashMap::new(),
+            load_balancer: LoadBalancer::new(lb_config),
+        };
+        
+        manager.initialize_default_upstreams();
+        manager
+    }
+
+    /// 使用自定义负载均衡配置创建管理器
+    pub fn with_load_balancer_config(config: Arc<AppConfig>, lb_config: LoadBalancerConfig) -> Self {
+        let mut manager = Self {
+            config,
+            load_balancer: LoadBalancer::new(lb_config),
         };
         
         manager.initialize_default_upstreams();
@@ -113,48 +135,41 @@ impl UpstreamManager {
     /// 初始化默认上游服务器
     fn initialize_default_upstreams(&mut self) {
         // OpenAI 上游
-        let openai_servers = vec![
-            UpstreamServer::new("api.openai.com".to_string(), 443, true),
-        ];
-        self.upstreams.insert(UpstreamType::OpenAI, openai_servers);
+        let openai_server = UpstreamServer::new("api.openai.com".to_string(), 443, true);
+        self.load_balancer.add_server(UpstreamType::OpenAI, openai_server).unwrap();
 
         // Anthropic 上游
-        let anthropic_servers = vec![
-            UpstreamServer::new("api.anthropic.com".to_string(), 443, true),
-        ];
-        self.upstreams.insert(UpstreamType::Anthropic, anthropic_servers);
+        let anthropic_server = UpstreamServer::new("api.anthropic.com".to_string(), 443, true);
+        self.load_balancer.add_server(UpstreamType::Anthropic, anthropic_server).unwrap();
 
         // Google Gemini 上游
-        let gemini_servers = vec![
-            UpstreamServer::new("generativelanguage.googleapis.com".to_string(), 443, true),
-        ];
-        self.upstreams.insert(UpstreamType::GoogleGemini, gemini_servers);
+        let gemini_server = UpstreamServer::new("generativelanguage.googleapis.com".to_string(), 443, true);
+        self.load_balancer.add_server(UpstreamType::GoogleGemini, gemini_server).unwrap();
 
-        tracing::info!("Initialized default upstream servers");
+        tracing::info!("Initialized default upstream servers with load balancer");
     }
 
-    /// 获取指定类型的上游服务器
-    pub fn get_upstream(&self, upstream_type: &UpstreamType) -> Result<&UpstreamServer> {
-        let servers = self.upstreams.get(upstream_type)
-            .ok_or_else(|| ProxyError::upstream_not_found(format!("No upstream servers for {:?}", upstream_type)))?;
-        
-        // 简单轮询选择（后续可以实现更复杂的负载均衡）
-        let healthy_servers: Vec<_> = servers.iter().filter(|s| s.is_healthy).collect();
-        
-        if healthy_servers.is_empty() {
-            return Err(ProxyError::upstream_not_available(format!("No healthy servers for {:?}", upstream_type)));
-        }
+    /// 获取指定类型的上游服务器（已弃用，使用select_upstream代替）
+    #[deprecated(note = "Use select_upstream for load balancing")]
+    pub fn get_upstream(&self, upstream_type: &UpstreamType) -> Result<UpstreamServer> {
+        let (server, _) = self.load_balancer.select_server(upstream_type)?;
+        Ok(server)
+    }
 
-        // 简单选择第一个健康的服务器
-        Ok(healthy_servers[0])
+    /// 使用负载均衡选择上游服务器
+    pub fn select_upstream(&self, upstream_type: &UpstreamType) -> Result<UpstreamServer> {
+        let (server, result) = self.load_balancer.select_server(upstream_type)?;
+        tracing::debug!("Selected upstream: {} using strategy: {:?}, reason: {}", 
+                       server.address(), result.strategy, result.reason);
+        Ok(server)
     }
 
     /// 根据请求路径选择上游服务器
-    pub fn select_upstream_for_path(&self, path: &str) -> Result<&UpstreamServer> {
+    pub fn select_upstream_for_path(&self, path: &str) -> Result<UpstreamServer> {
         let upstream_type = UpstreamType::from_path(path)
             .ok_or_else(|| ProxyError::upstream_not_found(format!("Cannot determine upstream for path: {}", path)))?;
         
-        self.get_upstream(&upstream_type)
+        self.select_upstream(&upstream_type)
     }
 
     /// 创建用于指定路径的 HttpPeer
@@ -166,46 +181,61 @@ impl UpstreamManager {
     }
 
     /// 添加自定义上游服务器
-    pub fn add_upstream(&mut self, upstream_type: UpstreamType, server: UpstreamServer) {
-        self.upstreams.entry(upstream_type).or_insert_with(Vec::new).push(server);
+    pub fn add_upstream(&self, upstream_type: UpstreamType, server: UpstreamServer) -> Result<()> {
+        self.load_balancer.add_server(upstream_type, server)
     }
 
     /// 移除上游服务器
-    pub fn remove_upstream(&mut self, upstream_type: &UpstreamType) -> Option<Vec<UpstreamServer>> {
-        self.upstreams.remove(upstream_type)
+    pub fn remove_upstream(&self, upstream_type: &UpstreamType, server_address: &str) -> Result<()> {
+        self.load_balancer.remove_server(upstream_type, server_address)
     }
 
     /// 更新服务器健康状态
-    pub fn update_server_health(&mut self, upstream_type: &UpstreamType, server_address: &str, is_healthy: bool) {
-        if let Some(servers) = self.upstreams.get_mut(upstream_type) {
-            for server in servers {
-                if server.address() == server_address {
-                    server.is_healthy = is_healthy;
-                    tracing::info!("Updated health status for {}: {}", server_address, is_healthy);
-                    break;
-                }
-            }
-        }
+    pub fn update_server_health(&self, upstream_type: &UpstreamType, server_address: &str, is_healthy: bool) {
+        self.load_balancer.mark_server_healthy(upstream_type, server_address, is_healthy);
+    }
+
+    /// 记录请求成功
+    pub fn record_success(&self, upstream_type: &UpstreamType, server_address: &str, response_time: Duration) {
+        self.load_balancer.record_success(upstream_type, server_address, response_time);
+    }
+
+    /// 记录请求失败
+    pub fn record_failure(&self, upstream_type: &UpstreamType, server_address: &str) {
+        self.load_balancer.record_failure(upstream_type, server_address);
+    }
+
+    /// 设置负载均衡策略
+    pub fn set_load_balancing_strategy(&self, upstream_type: UpstreamType, strategy: SchedulingStrategy) {
+        self.load_balancer.set_strategy(upstream_type, strategy);
     }
 
     /// 获取所有上游服务器状态
-    pub fn get_all_upstreams(&self) -> &HashMap<UpstreamType, Vec<UpstreamServer>> {
-        &self.upstreams
+    pub fn get_all_upstreams(&self) -> HashMap<UpstreamType, Vec<(UpstreamServer, crate::scheduler::ServerMetrics)>> {
+        self.load_balancer.get_all_servers()
     }
 
     /// 获取健康的上游服务器数量
     pub fn healthy_server_count(&self, upstream_type: &UpstreamType) -> usize {
-        self.upstreams.get(upstream_type)
-            .map(|servers| servers.iter().filter(|s| s.is_healthy).count())
-            .unwrap_or(0)
+        self.load_balancer.healthy_server_count(upstream_type)
+    }
+
+    /// 获取负载均衡器引用
+    pub fn load_balancer(&self) -> &LoadBalancer {
+        &self.load_balancer
     }
 }
 
 impl std::fmt::Debug for UpstreamManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let all_servers = self.load_balancer.get_all_servers();
+        let total_servers: usize = all_servers.values().map(|v| v.len()).sum();
+        
         f.debug_struct("UpstreamManager")
-            .field("upstream_count", &self.upstreams.len())
-            .field("upstreams", &self.upstreams.keys().collect::<Vec<_>>())
+            .field("config", &"AppConfig")
+            .field("load_balancer", &self.load_balancer)
+            .field("server_types", &all_servers.keys().collect::<Vec<_>>())
+            .field("total_servers", &total_servers)
             .finish()
     }
 }
@@ -244,9 +274,9 @@ mod tests {
         let manager = UpstreamManager::new(config);
         
         // 检查默认上游服务器
-        assert!(manager.get_upstream(&UpstreamType::OpenAI).is_ok());
-        assert!(manager.get_upstream(&UpstreamType::Anthropic).is_ok());
-        assert!(manager.get_upstream(&UpstreamType::GoogleGemini).is_ok());
+        assert!(manager.select_upstream(&UpstreamType::OpenAI).is_ok());
+        assert!(manager.select_upstream(&UpstreamType::Anthropic).is_ok());
+        assert!(manager.select_upstream(&UpstreamType::GoogleGemini).is_ok());
         
         // 测试路径选择
         assert!(manager.select_upstream_for_path("/v1/chat/completions").is_ok());
@@ -272,7 +302,7 @@ mod tests {
         init_test_env();
         
         let config = Arc::new(TestConfig::app_config());
-        let mut manager = UpstreamManager::new(config);
+        let manager = UpstreamManager::new(config);
         
         // 初始状态应该是健康的
         assert_eq!(manager.healthy_server_count(&UpstreamType::OpenAI), 1);
@@ -284,5 +314,67 @@ mod tests {
         // 恢复健康状态
         manager.update_server_health(&UpstreamType::OpenAI, "api.openai.com:443", true);
         assert_eq!(manager.healthy_server_count(&UpstreamType::OpenAI), 1);
+    }
+
+    #[test]
+    fn test_load_balancing_strategies() {
+        init_test_env();
+        
+        let config = Arc::new(TestConfig::app_config());
+        let manager = UpstreamManager::new(config);
+        
+        // 添加多个服务器进行负载均衡测试
+        let server1 = UpstreamServer::new("server1.example.com".to_string(), 443, true);
+        let server2 = UpstreamServer::new("server2.example.com".to_string(), 443, true);
+        
+        manager.add_upstream(UpstreamType::OpenAI, server1).unwrap();
+        manager.add_upstream(UpstreamType::OpenAI, server2).unwrap();
+        
+        // 测试轮询策略
+        manager.set_load_balancing_strategy(UpstreamType::OpenAI, SchedulingStrategy::RoundRobin);
+        let result1 = manager.select_upstream(&UpstreamType::OpenAI).unwrap();
+        let result2 = manager.select_upstream(&UpstreamType::OpenAI).unwrap();
+        
+        // 应该选择不同的服务器（或相同的，取决于轮询状态）
+        assert!(result1.host.contains("example.com"));
+        assert!(result2.host.contains("example.com"));
+        
+        // 测试权重策略
+        manager.set_load_balancing_strategy(UpstreamType::OpenAI, SchedulingStrategy::Weighted);
+        let result3 = manager.select_upstream(&UpstreamType::OpenAI).unwrap();
+        assert!(result3.host.contains("example.com"));
+        
+        // 测试健康度最佳策略
+        manager.set_load_balancing_strategy(UpstreamType::OpenAI, SchedulingStrategy::HealthBased);
+        let result4 = manager.select_upstream(&UpstreamType::OpenAI).unwrap();
+        assert!(result4.host.contains("example.com"));
+    }
+
+    #[test]
+    fn test_request_metrics_recording() {
+        init_test_env();
+        
+        let config = Arc::new(TestConfig::app_config());
+        let manager = UpstreamManager::new(config);
+        
+        let server_address = "api.openai.com:443";
+        
+        // 记录成功请求
+        manager.record_success(&UpstreamType::OpenAI, server_address, Duration::from_millis(100));
+        
+        // 记录失败请求
+        manager.record_failure(&UpstreamType::OpenAI, server_address);
+        
+        // 验证指标已更新
+        let all_servers = manager.get_all_upstreams();
+        assert!(all_servers.contains_key(&UpstreamType::OpenAI));
+        
+        let openai_servers = &all_servers[&UpstreamType::OpenAI];
+        assert!(!openai_servers.is_empty());
+        
+        let (_, metrics) = &openai_servers[0];
+        assert_eq!(metrics.success_requests, 1);
+        assert_eq!(metrics.failed_requests, 1);
+        assert!(metrics.avg_response_time > 0.0);
     }
 }

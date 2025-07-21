@@ -10,7 +10,6 @@ use pingora_core::prelude::*;
 use pingora_core::server::configuration::Opt;
 use pingora_proxy::http_proxy_service;
 use std::sync::Arc;
-use sea_orm::DatabaseConnection;
 
 /// Pingora 代理服务器
 pub struct ProxyServer {
@@ -53,8 +52,11 @@ impl ProxyServer {
         let auth_service = Self::create_auth_service().await
             .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
 
+        // 创建健康检查服务
+        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
+
         // 创建代理服务
-        let proxy_service = ProxyService::new(Arc::clone(&self.config), auth_service.clone())
+        let proxy_service = ProxyService::new(Arc::clone(&self.config), auth_service.clone(), health_service.clone())
             .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 配置 HTTP 代理服务
@@ -69,10 +71,11 @@ impl ProxyServer {
 
         // 如果启用了 HTTPS，添加 HTTPS 监听器
         if self.config.server.https_port > 0 {
-            let proxy_service_https = ProxyService::new(Arc::clone(&self.config), auth_service.clone())
+            let health_service_https = Arc::new(crate::health::HealthCheckService::new(None));
+            let proxy_service_https = ProxyService::new(Arc::clone(&self.config), auth_service.clone(), health_service_https.clone())
                 .map_err(|e| ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e)))?;
             
-            let mut https_proxy = http_proxy_service(&server.configuration, proxy_service_https);
+            let _https_proxy = http_proxy_service(&server.configuration, proxy_service_https);
 
             // 添加 TLS 配置
             // 注意：这里需要根据实际的证书配置来设置
