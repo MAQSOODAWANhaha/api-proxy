@@ -14,6 +14,9 @@ pub enum CacheKey {
     /// 用户 API 密钥缓存 - user:apikey:{user_id}:{key_id}
     UserApiKey { user_id: i32, key_id: i32 },
     
+    /// 用户 API 配置缓存 - user:apiconfig:{user_id}:{api_id}
+    UserApiConfig { user_id: i32, api_id: i32 },
+    
     /// API 健康状态缓存 - health:api:{provider}:{api_name}
     ApiHealth { provider: String, api_name: String },
     
@@ -48,6 +51,9 @@ impl CacheKey {
             }
             CacheKey::UserApiKey { user_id, key_id } => {
                 format!("user:apikey:{}:{}", user_id, key_id)
+            }
+            CacheKey::UserApiConfig { user_id, api_id } => {
+                format!("user:apiconfig:{}:{}", user_id, api_id)
             }
             CacheKey::ApiHealth { provider, api_name } => {
                 format!("health:api:{}:{}", provider, api_name)
@@ -85,6 +91,9 @@ impl CacheKey {
             CacheKey::UserApiKey { user_id, .. } => {
                 format!("user:apikey:{}:*", user_id)
             }
+            CacheKey::UserApiConfig { user_id, .. } => {
+                format!("user:apiconfig:{}:*", user_id)
+            }
             CacheKey::ApiHealth { provider, .. } => {
                 format!("health:api:{}:*", provider)
             }
@@ -116,7 +125,8 @@ impl CacheKey {
     pub fn namespace(&self) -> &'static str {
         match self {
             CacheKey::UserSession { .. } => "user",
-            CacheKey::UserApiKey { .. } => "user", 
+            CacheKey::UserApiKey { .. } => "user",
+            CacheKey::UserApiConfig { .. } => "user", 
             CacheKey::ApiHealth { .. } => "health",
             CacheKey::RequestStats { .. } => "stats",
             CacheKey::DailyStats { .. } => "stats",
@@ -189,6 +199,11 @@ impl CacheKeyBuilder {
         CacheKey::UserApiKey { user_id, key_id }
     }
     
+    /// 构建用户 API 配置缓存键
+    pub fn user_api_config(user_id: i32, api_id: i32) -> CacheKey {
+        CacheKey::UserApiConfig { user_id, api_id }
+    }
+    
     /// 构建 API 健康状态缓存键
     pub fn api_health(provider: &str, api_name: &str) -> CacheKey {
         CacheKey::ApiHealth {
@@ -247,6 +262,14 @@ impl CacheKeyBuilder {
         CacheKey::Custom {
             prefix: prefix.to_string(),
             key: key.to_string(),
+        }
+    }
+    
+    /// 构建简单的速率限制缓存键（用于管理接口）
+    pub fn rate_limit_simple(client_id: &str, endpoint: &str) -> CacheKey {
+        CacheKey::Custom {
+            prefix: "rate_limit".to_string(),
+            key: format!("{}:{}", sanitize_endpoint(client_id), sanitize_endpoint(endpoint)),
         }
     }
 }

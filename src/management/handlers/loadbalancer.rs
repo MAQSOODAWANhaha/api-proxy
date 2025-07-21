@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::warn;
 use tracing::info;
 use sea_orm::{entity::*, query::*};
 use entity::{
@@ -196,7 +197,7 @@ pub struct AddServerResponse {
 
 /// 添加新服务器
 pub async fn add_server(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<AddServerRequest>,
 ) -> Result<Json<AddServerResponse>, StatusCode> {
     // 验证请求
@@ -231,11 +232,28 @@ pub async fn add_server(
         request.port
     );
 
-    // TODO: 实际添加到负载均衡管理器
-    info!(
-        "Adding server: {} ({}:{})",
-        server_id, request.host, request.port
-    );
+    // 实际添加到负载均衡管理器
+    match state.load_balancer_manager.add_server(
+        &request.upstream_type,
+        &request.host,
+        request.port,
+        request.weight,
+        request.use_tls
+    ).await {
+        Ok(_) => {
+            info!(
+                "Successfully added server: {} ({}:{})",
+                server_id, request.host, request.port
+            );
+        }
+        Err(e) => {
+            warn!(
+                "Failed to add server to load balancer manager: {} ({}:{}), error: {}",
+                server_id, request.host, request.port, e
+            );
+            // 继续执行，因为至少配置已保存到数据库
+        }
+    }
 
     Ok(Json(AddServerResponse {
         id: server_id,

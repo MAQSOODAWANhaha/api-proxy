@@ -246,6 +246,29 @@ impl CacheClient {
         }
     }
     
+    /// 执行原始Redis命令
+    pub async fn raw_command<T>(&self, args: &[&str]) -> Result<T>
+    where
+        T: redis::FromRedisValue + std::fmt::Debug,
+    {
+        debug!("执行原始Redis命令: {:?}", args);
+        
+        let mut conn = self.connection_manager.clone();
+        
+        let mut cmd = redis::Cmd::new();
+        for arg in args {
+            cmd.arg(*arg);
+        }
+        
+        let result: T = cmd
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ProxyError::cache_with_source(&format!("执行Redis命令失败: {:?}", args), e))?;
+            
+        debug!("Redis命令执行成功: {:?} -> {:?}", args, result);
+        Ok(result)
+    }
+    
     /// 获取配置信息
     pub fn config(&self) -> &RedisConfig {
         &self.config

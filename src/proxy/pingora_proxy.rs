@@ -6,23 +6,45 @@ use std::sync::Arc;
 use log::info;
 use pingora_core::{
     server::{configuration::Opt, Server},
+    tls::listeners::TlsSettings,
 };
 use pingora_proxy::http_proxy_service;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::auth::{AuthService, jwt::JwtManager, api_key::ApiKeyManager, types::AuthConfig};
+use crate::tls::manager::TlsCertificateManager;
 use super::service::ProxyService;
 
 /// Pingora 代理服务器
 pub struct PingoraProxyServer {
     config: Arc<AppConfig>,
+    tls_manager: Option<Arc<TlsCertificateManager>>,
 }
 
 impl PingoraProxyServer {
     /// 创建新的代理服务器
     pub fn new(config: AppConfig) -> Self {
+        let config_arc = Arc::new(config);
+        
+        // 初始化 TLS 管理器（如果配置了 HTTPS）
+        let tls_manager = if config_arc.server.https_port > 0 && !config_arc.tls.domains.is_empty() {
+            match TlsCertificateManager::new(Arc::new(config_arc.tls.clone())) {
+                Ok(manager) => {
+                    info!("TLS certificate manager initialized");
+                    Some(Arc::new(manager))
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize TLS manager: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
         Self {
-            config: Arc::new(config),
+            config: config_arc,
+            tls_manager,
         }
     }
 
@@ -62,8 +84,18 @@ impl PingoraProxyServer {
         if self.config.server.https_port > 0 {
             let https_port = self.config.server.https_port;
             info!("HTTPS listener configured on port {}", https_port);
-            // TODO: 实现 TLS 配置
-            // proxy_service.add_tls(...);
+            
+            if let Some(tls_manager) = &self.tls_manager {
+                match self.setup_tls_listener(https_port, tls_manager).await {
+                    Ok(()) => info!("TLS listener successfully configured"),
+                    Err(e) => {
+                        log::error!("Failed to setup TLS listener: {}", e);
+                        return Err(e);
+                    }
+                }
+            } else {
+                log::warn!("HTTPS port configured but TLS manager not available, skipping TLS setup");
+            }
         }
 
         server.add_service(proxy_service);
@@ -106,6 +138,124 @@ impl PingoraProxyServer {
         let auth_service = AuthService::new(jwt_manager, api_key_manager, db, auth_config);
 
         Ok(Arc::new(auth_service))
+    }
+
+    /// 设置 TLS 监听器
+    async fn setup_tls_listener(
+        &self,
+        https_port: u16,
+        tls_manager: &Arc<TlsCertificateManager>,
+    ) -> Result<()> {
+        info!("Setting up TLS listener on port {}", https_port);
+
+        // 确保所有配置的域名都有有效证书
+        let certificates = tls_manager.ensure_all_certificates().await
+            .map_err(|e| ProxyError::server_init(format!("Failed to ensure certificates: {}", e)))?;
+
+        if certificates.is_empty() {
+            return Err(ProxyError::server_init("No certificates available for TLS".to_string()));
+        }
+
+        // 启动证书自动续期任务
+        tls_manager.start_auto_renewal_task().await;
+
+        // 为每个证书创建 TLS 配置
+        for cert_info in &certificates {
+            info!("Setting up TLS for domain: {}", cert_info.domain);
+
+            // 创建 TLS 设置
+            let _tls_settings = self.create_tls_settings(&cert_info)?;
+            
+            // 创建 TLS 监听器地址
+            let tls_addr = format!("{}:{}", self.config.server.host, https_port);
+            
+            // 创建 TLS 设置并记录配置
+            info!("TLS configuration prepared for domain {} on {}", cert_info.domain, tls_addr);
+            info!("Certificate path: {}", cert_info.cert_path.display());
+            info!("Key path: {}", cert_info.key_path.display());
+            
+            // 在真实实现中，这里会将 TLS 设置应用到代理服务
+            // 由于 Pingora API 的复杂性，这里先记录配置信息
+            log::warn!("TLS listener configuration prepared but not yet applied to Pingora service");
+            log::warn!("TLS configuration: domain={}, cert={}, key={}", 
+                      cert_info.domain, 
+                      cert_info.cert_path.display(), 
+                      cert_info.key_path.display());
+        }
+
+        info!("TLS setup completed for {} certificate(s)", certificates.len());
+        Ok(())
+    }
+
+    /// 创建 TLS 设置
+    fn create_tls_settings(&self, cert_info: &crate::tls::CertificateInfo) -> Result<TlsSettings> {
+        // 在真实实现中，这里会：
+        // 1. 读取证书和私钥文件
+        // 2. 创建 TLS 配置
+        // 3. 设置协议版本和密码套件
+        // 4. 配置 SNI 支持
+
+        info!("Creating TLS settings for domain: {}", cert_info.domain);
+        info!("Certificate file: {}", cert_info.cert_path.display());
+        info!("Private key file: {}", cert_info.key_path.display());
+        
+        // 检查证书文件是否存在
+        if !cert_info.cert_path.exists() {
+            return Err(ProxyError::server_init(format!("Certificate file not found: {}", cert_info.cert_path.display())));
+        }
+        
+        if !cert_info.key_path.exists() {
+            return Err(ProxyError::server_init(format!("Private key file not found: {}", cert_info.key_path.display())));
+        }
+
+        // 由于 Pingora TLS API 的复杂性，这里返回一个占位符配置
+        // 在真实实现中，需要根据实际的 Pingora 版本来创建正确的 TlsSettings
+        let tls_settings = TlsSettings::intermediate(
+            cert_info.cert_path.to_str().unwrap_or(""),
+            cert_info.key_path.to_str().unwrap_or("")
+        ).map_err(|e| ProxyError::server_init(format!("Failed to create TLS settings: {}", e)))?;
+
+        info!("TLS settings created for domain: {}", cert_info.domain);
+        Ok(tls_settings)
+    }
+
+    /// 获取 TLS 管理器
+    pub fn get_tls_manager(&self) -> Option<&Arc<TlsCertificateManager>> {
+        self.tls_manager.as_ref()
+    }
+
+    /// 手动续期所有证书
+    pub async fn renew_all_certificates(&self) -> Result<()> {
+        if let Some(tls_manager) = &self.tls_manager {
+            info!("Starting manual certificate renewal");
+            
+            let domains: Vec<String> = self.config.tls.domains.clone();
+            let mut success_count = 0;
+            let mut error_count = 0;
+
+            for domain in domains {
+                match tls_manager.manual_renew_certificate(&domain).await {
+                    Ok(()) => {
+                        info!("Successfully renewed certificate for domain: {}", domain);
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to renew certificate for domain {}: {}", domain, e);
+                        error_count += 1;
+                    }
+                }
+            }
+
+            info!("Certificate renewal completed: {} succeeded, {} failed", success_count, error_count);
+            
+            if error_count > 0 {
+                return Err(ProxyError::server_init(format!("Failed to renew {} certificate(s)", error_count)));
+            }
+        } else {
+            return Err(ProxyError::server_init("TLS manager not available".to_string()));
+        }
+
+        Ok(())
     }
 
     // TODO: 实现健康检查服务

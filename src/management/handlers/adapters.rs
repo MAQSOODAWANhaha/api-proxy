@@ -148,7 +148,7 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
                 "upstream_type": s.upstream_type,
                 "endpoints": s.endpoints
             })),
-            "health_status": "unknown", // TODO: 从健康检查服务获取
+            "health_status": get_adapter_health_status(&state, &provider.name).await,
             "rate_limit": provider.rate_limit,
             "timeout_seconds": provider.timeout_seconds,
             "last_updated": provider.updated_at
@@ -168,4 +168,71 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
     });
 
     Ok(Json(response))
+}
+
+/// 获取适配器健康状态
+async fn get_adapter_health_status(state: &AppState, provider_name: &str) -> Value {
+    // 获取与该提供商相关的服务器健康状态
+    let all_health_status = state.health_service.get_all_health_status().await;
+    
+    // 查找匹配的服务器（通过提供商名称）
+    let mut matching_servers = Vec::new();
+    let mut total_response_time = 0u64;
+    let mut healthy_count = 0;
+    let mut total_count = 0;
+    
+    for (server_address, health_status) in &all_health_status {
+        // 简单匹配：如果服务器地址包含提供商名称，就认为是相关的
+        if server_address.contains(provider_name) || server_address.contains(&provider_name.to_lowercase()) {
+            total_count += 1;
+            total_response_time += health_status.avg_response_time.as_millis() as u64;
+            
+            if health_status.is_healthy {
+                healthy_count += 1;
+            }
+            
+            matching_servers.push(json!({
+                "server": server_address,
+                "status": if health_status.is_healthy { "healthy" } else { "unhealthy" },
+                "last_check": health_status.last_check.map(|t| chrono::Utc::now() - chrono::Duration::from_std(t.elapsed()).unwrap_or_default()),
+                "response_time_ms": health_status.avg_response_time.as_millis(),
+                "consecutive_failures": health_status.consecutive_failures,
+                "is_healthy": health_status.is_healthy
+            }));
+        }
+    }
+    
+    if total_count == 0 {
+        // 没有找到相关服务器，返回未知状态
+        return json!({
+            "status": "no_servers",
+            "last_check": null,
+            "response_time_ms": null,
+            "success_rate": 0.0,
+            "healthy_servers": 0,
+            "total_servers": 0,
+            "is_healthy": false,
+            "details": "No health check servers found for this provider",
+            "servers": []
+        });
+    }
+    
+    let avg_response_time = if total_count > 0 { total_response_time / total_count as u64 } else { 0 };
+    let success_rate = if total_count > 0 { (healthy_count as f64 / total_count as f64) * 100.0 } else { 0.0 };
+    let overall_status = if healthy_count == total_count { "healthy" } else if healthy_count == 0 { "unhealthy" } else { "degraded" };
+    
+    json!({
+        "status": overall_status,
+        "last_check": matching_servers.first()
+            .and_then(|s| s.get("last_check"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "response_time_ms": avg_response_time,
+        "success_rate": success_rate,
+        "healthy_servers": healthy_count,
+        "total_servers": total_count,
+        "is_healthy": healthy_count > 0,
+        "details": format!("{}/{} servers healthy", healthy_count, total_count),
+        "servers": matching_servers
+    })
 }

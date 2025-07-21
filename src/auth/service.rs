@@ -17,6 +17,8 @@ use crate::auth::{
     types::{AuthConfig, TokenType, UserInfo, AuditLogEntry, AuditEventType, AuditResult},
     permissions::{Permission, PermissionChecker},
 };
+use crate::cache::integration::CacheManager;
+use crate::cache::keys::CacheKeyBuilder;
 use crate::error::Result;
 
 /// Authentication service error types
@@ -53,6 +55,8 @@ pub struct AuthService {
     db: Arc<DatabaseConnection>,
     /// Authentication configuration
     config: Arc<AuthConfig>,
+    /// Cache manager for token blacklist
+    cache_manager: Option<Arc<CacheManager>>,
     /// Audit log cache
     audit_cache: tokio::sync::RwLock<Vec<AuditLogEntry>>,
 }
@@ -70,6 +74,25 @@ impl AuthService {
             api_key_manager,
             db,
             config,
+            cache_manager: None,
+            audit_cache: tokio::sync::RwLock::new(Vec::new()),
+        }
+    }
+    
+    /// Create authentication service with cache manager
+    pub fn with_cache(
+        jwt_manager: Arc<JwtManager>,
+        api_key_manager: Arc<ApiKeyManager>,
+        db: Arc<DatabaseConnection>,
+        config: Arc<AuthConfig>,
+        cache_manager: Arc<CacheManager>,
+    ) -> Self {
+        Self {
+            jwt_manager,
+            api_key_manager,
+            db,
+            config,
+            cache_manager: Some(cache_manager),
             audit_cache: tokio::sync::RwLock::new(Vec::new()),
         }
     }
@@ -267,10 +290,49 @@ impl AuthService {
     pub async fn logout(&self, access_token: &str) -> Result<()> {
         let jti = self.jwt_manager.revoke_token(access_token)?;
         
-        // TODO: Add JTI to blacklist in Redis
-        tracing::info!("Token revoked: {}", jti);
+        // Add JTI to blacklist in Redis
+        if let Some(cache_manager) = &self.cache_manager {
+            let blacklist_key = CacheKeyBuilder::auth_token(&jti);
+            let blacklist_data = serde_json::json!({
+                "revoked_at": Utc::now(),
+                "token_type": "access_token",
+                "reason": "user_logout"
+            });
+            
+            if let Err(e) = cache_manager.set_with_strategy(&blacklist_key, &blacklist_data).await {
+                tracing::warn!("Failed to add token to blacklist cache: {}", e);
+            } else {
+                tracing::debug!("Token added to blacklist: {}", jti);
+            }
+        }
         
+        tracing::info!("Token revoked: {}", jti);
         Ok(())
+    }
+    
+    /// Check if token is blacklisted
+    pub async fn is_token_blacklisted(&self, jti: &str) -> bool {
+        if let Some(cache_manager) = &self.cache_manager {
+            let blacklist_key = CacheKeyBuilder::auth_token(jti);
+            match cache_manager.exists(&blacklist_key).await {
+                Ok(exists) => {
+                    if exists {
+                        tracing::debug!("Token found in blacklist: {}", jti);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to check token blacklist: {}", e);
+                    // 在缓存不可用时，为了安全起见，不允许访问
+                    false
+                }
+            }
+        } else {
+            // 没有缓存管理器时，无法检查黑名单
+            false
+        }
     }
 
     /// Check if user has specific permission

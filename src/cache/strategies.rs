@@ -269,6 +269,7 @@ impl CacheStrategies {
         match key {
             CacheKey::UserSession { .. } => Self::user_session(),
             CacheKey::UserApiKey { .. } => Self::user_api_key(),
+            CacheKey::UserApiConfig { .. } => Self::user_api_key(), // 用户API配置使用与API密钥相同的策略
             CacheKey::ApiHealth { .. } => Self::api_health(),
             CacheKey::RequestStats { .. } => Self::request_stats(),
             CacheKey::DailyStats { .. } => Self::daily_stats(),

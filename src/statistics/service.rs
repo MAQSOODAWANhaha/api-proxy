@@ -3,14 +3,15 @@
 //! 收集和聚合系统统计信息
 
 use crate::cache::integration::CacheManager;
+use crate::cache::keys::CacheKeyBuilder;
 use crate::config::AppConfig;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, warn, error};
 
 /// 统计服务
 pub struct StatisticsService {
@@ -44,6 +45,61 @@ struct ResponseTimeRecord {
     endpoint: String,
     /// 上游类型
     upstream_type: String,
+}
+
+/// 缓存的请求统计数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedRequestStats {
+    /// 日期
+    pub date: String,
+    /// 小时
+    pub hour: u8,
+    /// 总请求数
+    pub total_requests: u64,
+    /// 成功请求数
+    pub successful_requests: u64,
+    /// 失败请求数
+    pub failed_requests: u64,
+    /// 总响应时间（毫秒）
+    pub total_response_time_ms: u64,
+    /// 平均响应时间（毫秒）
+    pub avg_response_time_ms: f64,
+    /// 端点统计
+    pub endpoints: HashMap<String, EndpointStats>,
+    /// 上游类型统计
+    pub upstream_types: HashMap<String, UpstreamStats>,
+    /// 最后更新时间
+    pub last_updated: DateTime<Utc>,
+}
+
+/// 端点统计信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointStats {
+    /// 总请求数
+    pub total_requests: u64,
+    /// 成功请求数
+    pub successful_requests: u64,
+    /// 失败请求数
+    pub failed_requests: u64,
+    /// 总响应时间（毫秒）
+    pub total_response_time_ms: u64,
+    /// 平均响应时间（毫秒）
+    pub avg_response_time_ms: f64,
+}
+
+/// 上游类型统计信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamStats {
+    /// 总请求数
+    pub total_requests: u64,
+    /// 成功请求数
+    pub successful_requests: u64,
+    /// 失败请求数
+    pub failed_requests: u64,
+    /// 总响应时间（毫秒）
+    pub total_response_time_ms: u64,
+    /// 平均响应时间（毫秒）
+    pub avg_response_time_ms: f64,
 }
 
 /// 请求统计信息
@@ -277,14 +333,195 @@ impl StatisticsService {
     /// 持久化到缓存
     async fn persist_to_cache(
         &self,
-        _endpoint: &str,
-        _upstream_type: &str,
-        _duration_ms: u64,
-        _success: bool,
+        endpoint: &str,
+        upstream_type: &str,
+        duration_ms: u64,
+        success: bool,
     ) -> Result<()> {
-        // TODO: 实现缓存持久化逻辑
-        // 这里可以将统计数据写入Redis或其他持久化存储
+        let now = Utc::now();
+        let date_key = now.format("%Y-%m-%d").to_string();
+        let hour = now.hour() as u8;
+        
+        // 构建缓存键
+        let stats_key = CacheKeyBuilder::request_stats(&date_key, hour);
+        
+        // 获取现有统计数据或创建新的
+        let mut cached_stats: CachedRequestStats = match self.cache_manager.get(&stats_key).await {
+            Ok(Some(stats)) => stats,
+            Ok(None) => CachedRequestStats {
+                date: date_key.clone(),
+                hour,
+                total_requests: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                total_response_time_ms: 0,
+                avg_response_time_ms: 0.0,
+                endpoints: HashMap::new(),
+                upstream_types: HashMap::new(),
+                last_updated: now,
+            },
+            Err(e) => {
+                warn!("Failed to get cached stats, creating new: {}", e);
+                CachedRequestStats {
+                    date: date_key.clone(),
+                    hour,
+                    total_requests: 0,
+                    successful_requests: 0,
+                    failed_requests: 0,
+                    total_response_time_ms: 0,
+                    avg_response_time_ms: 0.0,
+                    endpoints: HashMap::new(),
+                    upstream_types: HashMap::new(),
+                    last_updated: now,
+                }
+            }
+        };
+        
+        // 更新统计数据
+        cached_stats.total_requests += 1;
+        cached_stats.total_response_time_ms += duration_ms;
+        cached_stats.avg_response_time_ms = cached_stats.total_response_time_ms as f64 / cached_stats.total_requests as f64;
+        cached_stats.last_updated = now;
+        
+        if success {
+            cached_stats.successful_requests += 1;
+        } else {
+            cached_stats.failed_requests += 1;
+        }
+        
+        // 更新端点统计
+        let endpoint_stats = cached_stats.endpoints.entry(endpoint.to_string()).or_insert_with(|| EndpointStats {
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            total_response_time_ms: 0,
+            avg_response_time_ms: 0.0,
+        });
+        
+        endpoint_stats.total_requests += 1;
+        endpoint_stats.total_response_time_ms += duration_ms;
+        endpoint_stats.avg_response_time_ms = endpoint_stats.total_response_time_ms as f64 / endpoint_stats.total_requests as f64;
+        
+        if success {
+            endpoint_stats.successful_requests += 1;
+        } else {
+            endpoint_stats.failed_requests += 1;
+        }
+        
+        // 更新上游类型统计
+        let upstream_stats = cached_stats.upstream_types.entry(upstream_type.to_string()).or_insert_with(|| UpstreamStats {
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            total_response_time_ms: 0,
+            avg_response_time_ms: 0.0,
+        });
+        
+        upstream_stats.total_requests += 1;
+        upstream_stats.total_response_time_ms += duration_ms;
+        upstream_stats.avg_response_time_ms = upstream_stats.total_response_time_ms as f64 / upstream_stats.total_requests as f64;
+        
+        if success {
+            upstream_stats.successful_requests += 1;
+        } else {
+            upstream_stats.failed_requests += 1;
+        }
+        
+        // 缓存更新后的统计数据
+        if let Err(e) = self.cache_manager.set_with_strategy(&stats_key, &cached_stats).await {
+            error!("Failed to cache request statistics: {}", e);
+            return Err(e.into());
+        }
+        
+        debug!("Successfully persisted request statistics to cache: endpoint={}, upstream={}, success={}", 
+               endpoint, upstream_type, success);
+        
         Ok(())
+    }
+    
+    /// 从缓存获取统计数据
+    pub async fn get_cached_stats(&self, date: &str, hour: Option<u8>) -> Result<Option<CachedRequestStats>> {
+        if let Some(h) = hour {
+            let stats_key = CacheKeyBuilder::request_stats(date, h);
+            self.cache_manager.get(&stats_key).await.map_err(|e| e.into())
+        } else {
+            // 如果没有指定小时，返回当天的汇总数据
+            let mut daily_stats = None;
+            
+            // 聚合24小时的数据
+            for h in 0..24u8 {
+                let stats_key = CacheKeyBuilder::request_stats(date, h);
+                if let Ok(Some(hourly_stats)) = self.cache_manager.get::<CachedRequestStats>(&stats_key).await {
+                    match &mut daily_stats {
+                        Some(total) => {
+                            self.merge_stats(total, &hourly_stats);
+                        }
+                        None => {
+                            daily_stats = Some(hourly_stats);
+                        }
+                    }
+                }
+            }
+            
+            Ok(daily_stats)
+        }
+    }
+    
+    /// 合并统计数据
+    fn merge_stats(&self, target: &mut CachedRequestStats, source: &CachedRequestStats) {
+        target.total_requests += source.total_requests;
+        target.successful_requests += source.successful_requests;
+        target.failed_requests += source.failed_requests;
+        target.total_response_time_ms += source.total_response_time_ms;
+        
+        if target.total_requests > 0 {
+            target.avg_response_time_ms = target.total_response_time_ms as f64 / target.total_requests as f64;
+        }
+        
+        // 合并端点统计
+        for (endpoint, stats) in &source.endpoints {
+            let target_stats = target.endpoints.entry(endpoint.clone()).or_insert_with(|| EndpointStats {
+                total_requests: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                total_response_time_ms: 0,
+                avg_response_time_ms: 0.0,
+            });
+            
+            target_stats.total_requests += stats.total_requests;
+            target_stats.successful_requests += stats.successful_requests;
+            target_stats.failed_requests += stats.failed_requests;
+            target_stats.total_response_time_ms += stats.total_response_time_ms;
+            
+            if target_stats.total_requests > 0 {
+                target_stats.avg_response_time_ms = target_stats.total_response_time_ms as f64 / target_stats.total_requests as f64;
+            }
+        }
+        
+        // 合并上游类型统计
+        for (upstream, stats) in &source.upstream_types {
+            let target_stats = target.upstream_types.entry(upstream.clone()).or_insert_with(|| UpstreamStats {
+                total_requests: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                total_response_time_ms: 0,
+                avg_response_time_ms: 0.0,
+            });
+            
+            target_stats.total_requests += stats.total_requests;
+            target_stats.successful_requests += stats.successful_requests;
+            target_stats.failed_requests += stats.failed_requests;
+            target_stats.total_response_time_ms += stats.total_response_time_ms;
+            
+            if target_stats.total_requests > 0 {
+                target_stats.avg_response_time_ms = target_stats.total_response_time_ms as f64 / target_stats.total_requests as f64;
+            }
+        }
+        
+        // 更新最后更新时间
+        if source.last_updated > target.last_updated {
+            target.last_updated = source.last_updated;
+        }
     }
 }
 

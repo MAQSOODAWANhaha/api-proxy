@@ -4,16 +4,35 @@
 
 use sea_orm::{Database, DatabaseConnection, DbErr};
 use sea_orm_migration::MigratorTrait;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
+use std::path::Path;
 
 /// 初始化数据库连接
 pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbErr> {
     info!("正在连接数据库: {}", 
           if database_url.starts_with("sqlite:") {
-              &database_url[..20]
+              &database_url[..std::cmp::min(database_url.len(), 50)]
           } else {
               database_url
           });
+    
+    // 对于SQLite数据库，确保数据库文件的目录存在
+    if database_url.starts_with("sqlite:") {
+        let db_path = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
+        let db_file_path = Path::new(db_path);
+        
+        if let Some(parent_dir) = db_file_path.parent() {
+            if !parent_dir.exists() {
+                debug!("创建数据库目录: {}", parent_dir.display());
+                std::fs::create_dir_all(parent_dir).map_err(|e| {
+                    DbErr::Custom(format!("无法创建数据库目录 {}: {}", parent_dir.display(), e))
+                })?;
+                info!("数据库目录创建成功: {}", parent_dir.display());
+            } else {
+                debug!("数据库目录已存在: {}", parent_dir.display());
+            }
+        }
+    }
     
     let db = Database::connect(database_url).await?;
     

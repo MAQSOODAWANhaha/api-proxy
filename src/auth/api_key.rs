@@ -279,11 +279,79 @@ impl ApiKeyManager {
         }
     }
 
-    /// Get user permissions (simplified implementation)
-    async fn get_user_permissions(&self, _user_id: i32) -> Result<Vec<Permission>> {
-        // TODO: Should query from database for user roles and permissions
-        // Temporarily return basic user permissions
-        Ok(Role::User.permissions())
+    /// Get user permissions from database
+    async fn get_user_permissions(&self, user_id: i32) -> Result<Vec<Permission>> {
+        use entity::{users, users::Entity as Users};
+        use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, PaginatorTrait};
+        
+        // 从数据库查询用户信息
+        let user = Users::find()
+            .filter(users::Column::Id.eq(user_id))
+            .filter(users::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| crate::error::ProxyError::database(format!("Failed to query user: {}", e)))?;
+        
+        let user = match user {
+            Some(u) => u,
+            None => {
+                // 用户不存在或未激活，返回最小权限
+                return Ok(vec![Permission::UseApi]);
+            }
+        };
+        
+        // 根据用户类型确定权限
+        let mut permissions = Vec::new();
+        
+        // 基础权限：所有激活用户都有的权限
+        permissions.push(Permission::UseApi);
+        
+        // 管理员权限
+        if user.is_admin {
+            permissions.extend(Role::Admin.permissions());
+            return Ok(permissions);
+        }
+        
+        // 检查用户是否有活跃的API密钥（表示是付费用户）
+        let api_count = entity::user_service_apis::Entity::find()
+            .filter(entity::user_service_apis::Column::UserId.eq(user_id))
+            .filter(entity::user_service_apis::Column::IsActive.eq(true))
+            .count(self.db.as_ref())
+            .await
+            .unwrap_or(0);
+        
+        if api_count > 0 {
+            // 有活跃API密钥的用户，给予更多权限
+            permissions.extend(vec![
+                Permission::ViewApiKeys,
+                Permission::UseOpenAI,
+                Permission::UseAnthropic,
+                Permission::UseGemini,
+            ]);
+            
+            // 根据API密钥数量给予不同权限等级
+            if api_count >= 5 {
+                // 高级用户
+                permissions.push(Permission::ViewStatistics);
+                permissions.push(Permission::UseAllProviders);
+            }
+        } else {
+            // 没有API密钥的用户，只有基础权限
+            permissions.extend(vec![
+                Permission::ViewApiKeys,
+            ]);
+        }
+        
+        // 根据用户注册时间给予一些额外权限
+        let now = chrono::Utc::now().naive_utc();
+        let user_age_days = (now - user.created_at).num_days();
+        
+        if user_age_days >= 30 {
+            // 注册超过30天的用户，给予查看健康状态权限
+            permissions.push(Permission::ViewHealth);
+        }
+        
+        Ok(permissions)
     }
 
     /// Get API key from cache

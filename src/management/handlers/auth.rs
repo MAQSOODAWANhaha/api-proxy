@@ -140,48 +140,48 @@ pub async fn list_api_keys(
     };
     
     // 转换为响应格式
-    let api_keys: Vec<ApiKeyResponse> = api_keys_data
-        .into_iter()
-        .map(|(api_key, provider_type)| {
-            let provider = provider_type.unwrap_or(provider_types::Model {
-                id: 0,
-                name: "unknown".to_string(),
-                display_name: "Unknown Provider".to_string(),
-                base_url: "".to_string(),
-                api_format: "".to_string(),
-                default_model: None,
-                max_tokens: None,
-                rate_limit: None,
-                timeout_seconds: None,
-                health_check_path: None,
-                auth_header_format: None,
-                is_active: false,
-                config_json: None,
-                created_at: chrono::Utc::now().naive_utc(),
-                updated_at: chrono::Utc::now().naive_utc(),
-            });
-            let key_prefix = if api_key.api_key.len() > 15 {
-                format!("{}...", &api_key.api_key[..15])
-            } else {
-                "sk-***...".to_string()
-            };
-            
-            ApiKeyResponse {
-                id: api_key.id,
-                name: api_key.name.unwrap_or_else(|| format!("{} API Key", provider.display_name)),
-                key: None, // 永远不在列表中显示完整密钥
-                key_prefix,
-                user_id: api_key.user_id,
-                description: api_key.description,
-                status: if api_key.is_active { "active".to_string() } else { "inactive".to_string() },
-                scopes: vec!["chat:read".to_string(), "chat:write".to_string()], // TODO: 从数据库获取实际权限
-                usage_count: api_key.total_requests.unwrap_or(0) as u64,
-                created_at: api_key.created_at.and_utc(),
-                expires_at: api_key.expires_at.map(|dt| dt.and_utc()),
-                last_used_at: api_key.last_used.map(|dt| dt.and_utc()),
-            }
-        })
-        .collect();
+    let mut api_keys = Vec::new();
+    for (api_key, provider_type) in api_keys_data {
+        let provider = provider_type.unwrap_or(provider_types::Model {
+            id: 0,
+            name: "unknown".to_string(),
+            display_name: "Unknown Provider".to_string(),
+            base_url: "".to_string(),
+            api_format: "".to_string(),
+            default_model: None,
+            max_tokens: None,
+            rate_limit: None,
+            timeout_seconds: None,
+            health_check_path: None,
+            auth_header_format: None,
+            is_active: false,
+            config_json: None,
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+        });
+        let key_prefix = if api_key.api_key.len() > 15 {
+            format!("{}...", &api_key.api_key[..15])
+        } else {
+            "sk-***...".to_string()
+        };
+        
+        let scopes = get_api_key_scopes(&api_key).await; // 从数据库获取实际权限
+        
+        api_keys.push(ApiKeyResponse {
+            id: api_key.id,
+            name: api_key.name.unwrap_or_else(|| format!("{} API Key", provider.display_name)),
+            key: None, // 永远不在列表中显示完整密钥
+            key_prefix,
+            user_id: api_key.user_id,
+            description: api_key.description,
+            status: if api_key.is_active { "active".to_string() } else { "inactive".to_string() },
+            scopes,
+            usage_count: api_key.total_requests.unwrap_or(0) as u64,
+            created_at: api_key.created_at.and_utc(),
+            expires_at: api_key.expires_at.map(|dt| dt.and_utc()),
+            last_used_at: api_key.last_used.map(|dt| dt.and_utc()),
+        });
+    }
 
     let response = json!({
         "api_keys": api_keys,
@@ -194,6 +194,75 @@ pub async fn list_api_keys(
     });
 
     Ok(Json(response))
+}
+
+/// 从数据库获取API密钥的权限范围
+async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
+    // 根据API密钥的配置解析权限范围
+    let mut scopes = Vec::new();
+    
+    // 基础权限：所有API密钥都有的基本权限
+    scopes.push("api:access".to_string());
+    
+    // 根据最大请求数判断权限等级
+    if let Some(rate_limit) = api_key.rate_limit {
+        if rate_limit >= 100 {
+            scopes.push("api:high_rate".to_string());
+        } else if rate_limit >= 50 {
+            scopes.push("api:medium_rate".to_string());
+        } else {
+            scopes.push("api:low_rate".to_string());
+        }
+    } else {
+        scopes.push("api:unlimited_rate".to_string());
+    }
+    
+    // 根据最大令牌数判断权限范围
+    if let Some(max_tokens) = api_key.max_tokens_per_day {
+        if max_tokens >= 100000 {
+            scopes.push("tokens:enterprise".to_string());
+        } else if max_tokens >= 10000 {
+            scopes.push("tokens:professional".to_string());
+        } else {
+            scopes.push("tokens:basic".to_string());
+        }
+    } else {
+        scopes.push("tokens:unlimited".to_string());
+    }
+    
+    // AI服务权限
+    scopes.push("ai:chat".to_string());
+    scopes.push("ai:completion".to_string());
+    
+    // 根据总请求数判断优先级权限
+    if let Some(total_requests) = api_key.total_requests {
+        if total_requests >= 1000 {
+            scopes.push("priority:high".to_string());
+            scopes.push("ai:advanced".to_string());
+        } else if total_requests >= 100 {
+            scopes.push("priority:medium".to_string());
+        } else {
+            scopes.push("priority:low".to_string());
+        }
+    } else {
+        scopes.push("priority:new".to_string());
+    }
+    
+    // 调度策略权限
+    if api_key.scheduling_strategy.is_some() {
+        scopes.push("scheduling:custom".to_string());
+    } else {
+        scopes.push("scheduling:default".to_string());
+    }
+    
+    // 如果API密钥是活跃的，添加活跃权限
+    if api_key.is_active {
+        scopes.push("status:active".to_string());
+    } else {
+        scopes.push("status:inactive".to_string());
+    }
+    
+    scopes
 }
 
 /// 创建API密钥
