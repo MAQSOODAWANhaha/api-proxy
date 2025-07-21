@@ -41,6 +41,8 @@ pub enum AuthMethod {
     ApiKey,
     /// JWT 令牌
     Jwt,
+    /// 基础认证 (用户名/密码)
+    BasicAuth,
     /// 内部服务调用
     Internal,
 }

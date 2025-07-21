@@ -342,6 +342,37 @@ impl LoadBalancer {
     }
 }
 
+impl Clone for LoadBalancer {
+    fn clone(&self) -> Self {
+        let config = self.config.clone();
+        let new_balancer = LoadBalancer::new(config.clone());
+        
+        // 复制服务器配置
+        {
+            let servers = self.servers.read().unwrap();
+            let metrics = self.metrics.read().unwrap();
+            let failure_counts = self.failure_counts.read().unwrap();
+            let success_counts = self.success_counts.read().unwrap();
+            
+            *new_balancer.servers.write().unwrap() = servers.clone();
+            *new_balancer.metrics.write().unwrap() = metrics.clone();
+            *new_balancer.failure_counts.write().unwrap() = failure_counts.clone();
+            *new_balancer.success_counts.write().unwrap() = success_counts.clone();
+        }
+        
+        // 重建调度器
+        {
+            let servers = new_balancer.servers.read().unwrap();
+            let mut schedulers = new_balancer.schedulers.write().unwrap();
+            for upstream_type in servers.keys() {
+                schedulers.insert(upstream_type.clone(), crate::scheduler::algorithms::create_scheduler(config.default_strategy));
+            }
+        }
+        
+        new_balancer
+    }
+}
+
 impl std::fmt::Debug for LoadBalancer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let servers = self.servers.read().unwrap();

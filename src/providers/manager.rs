@@ -135,7 +135,7 @@ impl Default for AdapterManager {
 }
 
 /// 适配器统计信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdapterStats {
     pub name: String,
     pub upstream_type: String,

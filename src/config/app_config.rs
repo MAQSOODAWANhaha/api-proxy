@@ -77,3 +77,35 @@ pub struct TlsConfig {
     /// 支持的域名
     pub domains: Vec<String>,
 }
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            https_port: 8443,
+            workers: num_cpus::get(),
+        }
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_path: "./certs".to_string(),
+            acme_email: "admin@example.com".to_string(),
+            domains: vec!["localhost".to_string()],
+        }
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            database: super::DatabaseConfig::default(),
+            redis: RedisConfig::default(),
+            tls: TlsConfig::default(),
+        }
+    }
+}

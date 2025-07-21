@@ -14,3 +14,14 @@ pub struct DatabaseConfig {
     /// 查询超时时间（秒）
     pub query_timeout: u64,
 }
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            url: "sqlite://./data/api_proxy.db".to_string(),
+            max_connections: 10,
+            connect_timeout: 30,
+            query_timeout: 60,
+        }
+    }
+}

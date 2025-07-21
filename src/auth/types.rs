@@ -19,10 +19,12 @@ pub struct UserInfo {
     pub is_admin: bool,
     /// 是否激活
     pub is_active: bool,
+    /// 权限列表
+    pub permissions: Vec<crate::auth::permissions::Permission>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
-    /// 更新时间
-    pub updated_at: DateTime<Utc>,
+    /// 最后登录时间
+    pub last_login: Option<DateTime<Utc>>,
 }
 
 /// API 密钥信息

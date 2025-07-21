@@ -5,7 +5,9 @@
 pub mod balancer;
 pub mod algorithms;
 pub mod types;
+pub mod manager;
 
 pub use balancer::LoadBalancer;
 pub use algorithms::{SchedulingAlgorithm, RoundRobinScheduler, WeightedScheduler, HealthBasedScheduler};
 pub use types::{ServerMetrics, SchedulingStrategy};
+pub use manager::LoadBalancerManager;

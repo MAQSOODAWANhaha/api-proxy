@@ -9,6 +9,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Permission {
     // === 代理服务权限 ===
+    /// 基础 API 使用权限
+    UseApi,
     /// 使用 OpenAI API
     UseOpenAI,
     /// 使用 Anthropic API  
@@ -55,6 +57,7 @@ impl Permission {
     /// 获取权限的字符串表示
     pub fn as_str(&self) -> &'static str {
         match self {
+            Permission::UseApi => "use_api",
             Permission::UseOpenAI => "use_openai",
             Permission::UseAnthropic => "use_anthropic",
             Permission::UseGemini => "use_gemini",
@@ -78,6 +81,7 @@ impl Permission {
     /// 从字符串解析权限
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
+            "use_api" => Some(Permission::UseApi),
             "use_openai" => Some(Permission::UseOpenAI),
             "use_anthropic" => Some(Permission::UseAnthropic),
             "use_gemini" => Some(Permission::UseGemini),
@@ -102,6 +106,7 @@ impl Permission {
     /// 获取所有权限列表
     pub fn all() -> Vec<Permission> {
         vec![
+            Permission::UseApi,
             Permission::UseOpenAI,
             Permission::UseAnthropic,
             Permission::UseGemini,
@@ -125,6 +130,7 @@ impl Permission {
     /// 获取权限的描述
     pub fn description(&self) -> &'static str {
         match self {
+            Permission::UseApi => "基础 API 使用权限",
             Permission::UseOpenAI => "使用 OpenAI API",
             Permission::UseAnthropic => "使用 Anthropic Claude API",
             Permission::UseGemini => "使用 Google Gemini API",

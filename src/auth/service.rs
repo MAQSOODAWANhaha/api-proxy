@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use chrono::Utc;
 use thiserror::Error;
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QuerySelect};
+use entity::{users, users::Entity as Users};
+use bcrypt::verify;
 
 use crate::auth::{
     AuthResult, AuthMethod, AuthContext, AuthError,
@@ -133,10 +135,40 @@ impl AuthService {
     }
 
     /// Authenticate using basic authentication
-    async fn authenticate_basic(&self, _username: &str, _password: &str, _context: &AuthContext) -> Result<AuthResult> {
-        // TODO: Implement basic authentication with database lookup and password verification
-        // For now, return an error as basic auth is not fully implemented
-        Err(AuthServiceError::AuthenticationFailed.into())
+    async fn authenticate_basic(&self, username: &str, password: &str, _context: &AuthContext) -> Result<AuthResult> {
+        // Query user from database
+        let user = Users::find()
+            .filter(users::Column::Username.eq(username))
+            .filter(users::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?;
+
+        let user = user.ok_or(AuthServiceError::InvalidCredentials)?;
+
+        // Verify password
+        let password_valid = verify(password, &user.password_hash)
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e)))?;
+
+        if !password_valid {
+            return Err(AuthServiceError::InvalidCredentials.into());
+        }
+
+        // Get user permissions based on admin status
+        let permissions = if user.is_admin {
+            vec![Permission::SuperAdmin]
+        } else {
+            vec![Permission::UseApi] // 基本权限
+        };
+
+        Ok(AuthResult {
+            user_id: user.id,
+            username: user.username.clone(),
+            is_admin: user.is_admin,
+            permissions,
+            auth_method: AuthMethod::BasicAuth,
+            token_preview: self.sanitize_token(&format!("{}:{}", username, "***")),
+        })
     }
 
     /// Authorize request based on permissions
@@ -172,31 +204,63 @@ impl AuthService {
     }
 
     /// Generate token pair for user login
-    pub async fn login(&self, _username: &str, _password: &str) -> Result<TokenPair> {
-        // TODO: Implement user lookup and password verification
-        // For now, return a mock token pair
-        
-        let user_id = 1; // Mock user ID
-        let is_admin = false;
-        let permissions = vec!["use_openai".to_string()];
+    pub async fn login(&self, username: &str, password: &str) -> Result<TokenPair> {
+        // Query user from database
+        let user = Users::find()
+            .filter(users::Column::Username.eq(username))
+            .filter(users::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?;
+
+        let user = user.ok_or(AuthServiceError::InvalidCredentials)?;
+
+        // Verify password
+        let password_valid = verify(password, &user.password_hash)
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e)))?;
+
+        if !password_valid {
+            return Err(AuthServiceError::InvalidCredentials.into());
+        }
+
+        // Get user permissions based on admin status and user configuration
+        let permissions = self.get_user_permissions(&user).await;
 
         let token_pair = self.jwt_manager.generate_token_pair(
-            user_id,
-            _username.to_string(),
-            is_admin,
+            user.id,
+            user.username.clone(),
+            user.is_admin,
             permissions,
         )?;
+
+        // Update last login time
+        self.update_last_login(user.id).await?;
 
         Ok(token_pair)
     }
 
     /// Refresh access token
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<String> {
-        // TODO: Get user permissions from database
-        let permissions = vec!["use_openai".to_string()];
-        let is_admin = false;
+        // Validate refresh token and get user ID
+        let claims = self.jwt_manager.validate_token(refresh_token)?;
+        let user_id = claims.user_id()
+            .map_err(|_| AuthServiceError::InvalidCredentials)?;
 
-        self.jwt_manager.refresh_access_token(refresh_token, permissions, is_admin)
+        // Get user from database
+        let user = Users::find_by_id(user_id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?
+            .ok_or(AuthServiceError::InvalidCredentials)?;
+
+        if !user.is_active {
+            return Err(AuthServiceError::InvalidCredentials.into());
+        }
+
+        // Get current user permissions
+        let permissions = self.get_user_permissions(&user).await;
+
+        self.jwt_manager.refresh_access_token(refresh_token, permissions, user.is_admin)
     }
 
     /// Logout user (revoke tokens)
@@ -222,9 +286,31 @@ impl AuthService {
     }
 
     /// Get user information by user ID
-    pub async fn get_user_info(&self, _user_id: i32) -> Result<Option<UserInfo>> {
-        // TODO: Implement database lookup
-        Ok(None)
+    pub async fn get_user_info(&self, user_id: i32) -> Result<Option<UserInfo>> {
+        let user = Users::find_by_id(user_id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?;
+
+        if let Some(user) = user {
+            let permission_strings = self.get_user_permissions(&user).await;
+            let permissions: Vec<Permission> = permission_strings.iter()
+                .filter_map(|s| Permission::from_str(s))
+                .collect();
+            
+            Ok(Some(UserInfo {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                is_admin: user.is_admin,
+                is_active: user.is_active,
+                permissions,
+                created_at: user.created_at.and_utc(),
+                last_login: user.last_login.map(|dt| dt.and_utc()),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Log audit event
@@ -290,7 +376,12 @@ impl AuthService {
         
         status.insert("jwt_manager".to_string(), "healthy".to_string());
         status.insert("api_key_manager".to_string(), "healthy".to_string());
-        status.insert("database".to_string(), "healthy".to_string()); // TODO: Real DB health check
+        // Real database health check
+        let db_status = match self.test_database_connection().await {
+            Ok(_) => "healthy",
+            Err(_) => "unhealthy",
+        };
+        status.insert("database".to_string(), db_status.to_string());
         
         // Check cache stats
         let cache_stats = self.api_key_manager.get_cache_stats().await;
@@ -312,6 +403,61 @@ impl AuthService {
         let mut cache = self.audit_cache.write().await;
         let one_day_ago = Utc::now() - chrono::Duration::days(1);
         cache.retain(|entry| entry.timestamp > one_day_ago);
+    }
+
+    /// Get user permissions based on database configuration
+    async fn get_user_permissions(&self, user: &users::Model) -> Vec<String> {
+        if user.is_admin {
+            vec![
+                "super_admin".to_string(),
+                "use_openai".to_string(),
+                "use_claude".to_string(),
+                "use_gemini".to_string(),
+                "manage_users".to_string(),
+                "view_stats".to_string(),
+            ]
+        } else {
+            // Default user permissions - could be extended to query from user_permissions table
+            vec![
+                "use_openai".to_string(),
+                "use_claude".to_string(),
+                "use_gemini".to_string(),
+            ]
+        }
+    }
+
+    /// Update user's last login time
+    async fn update_last_login(&self, user_id: i32) -> Result<()> {
+        use sea_orm::ActiveModelTrait;
+        
+        // Find the user
+        let user = Users::find_by_id(user_id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?
+            .ok_or(AuthServiceError::InvalidCredentials)?;
+
+        // Update last login time
+        let mut user: users::ActiveModel = user.into();
+        user.last_login = sea_orm::Set(Some(Utc::now().naive_utc()));
+        
+        user.update(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Test database connection
+    async fn test_database_connection(&self) -> Result<()> {
+        // Simple query to test database connectivity
+        Users::find()
+            .limit(1)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database connection test failed: {}", e)))?;
+        
+        Ok(())
     }
 }
 

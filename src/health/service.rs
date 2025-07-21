@@ -141,6 +141,35 @@ impl HealthCheckService {
             .collect()
     }
 
+    /// 获取整体健康统计信息
+    pub async fn get_overall_health(&self) -> anyhow::Result<HealthCheckStatistics> {
+        let health_status = self.health_status.read().await;
+        let total_servers = health_status.len();
+        let healthy_servers = health_status.values().filter(|s| s.is_healthy).count();
+        let unhealthy_servers = total_servers - healthy_servers;
+        
+        let avg_response_time = if !health_status.is_empty() {
+            let total_ms: u64 = health_status.values()
+                .map(|s| s.avg_response_time.as_millis() as u64)
+                .sum();
+            Duration::from_millis(total_ms / health_status.len() as u64)
+        } else {
+            Duration::from_millis(0)
+        };
+
+        let active_tasks = self.tasks.read().await.len();
+        let is_running = self.is_running().await;
+
+        Ok(HealthCheckStatistics {
+            total_servers,
+            healthy_servers,
+            unhealthy_servers,
+            active_tasks,
+            avg_response_time,
+            is_running,
+        })
+    }
+
     /// 手动执行健康检查
     pub async fn manual_check(&self, server_address: &str) -> Result<HealthCheckResult> {
         let task = {

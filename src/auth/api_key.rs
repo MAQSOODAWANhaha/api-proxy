@@ -2,8 +2,8 @@
 //!
 //! Provides API key validation, management and caching functionality
 
-use chrono::{DateTime, Utc};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use chrono::{DateTime, Utc, Timelike};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, ActiveModelTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,6 +67,8 @@ pub struct ApiKeyManager {
     config: Arc<AuthConfig>,
     /// In-memory cache (production should use Redis)
     cache: tokio::sync::RwLock<HashMap<String, CachedApiKey>>,
+    /// Rate limit tracker (in production should use Redis)
+    rate_limits: tokio::sync::RwLock<HashMap<String, RateLimitTracker>>,
 }
 
 /// Cached API key information
@@ -80,6 +82,92 @@ struct CachedApiKey {
     cached_at: DateTime<Utc>,
     /// Cache TTL in seconds
     ttl: i64,
+}
+
+/// Rate limit tracker for API keys
+#[derive(Debug, Clone)]
+struct RateLimitTracker {
+    /// Request count in current minute
+    requests_current_minute: i32,
+    /// Tokens used today
+    tokens_used_today: i32,
+    /// Current minute timestamp
+    current_minute: DateTime<Utc>,
+    /// Current day (YYYY-MM-DD)
+    current_day: String,
+    /// Last request time
+    last_request_at: DateTime<Utc>,
+}
+
+impl RateLimitTracker {
+    /// Create new rate limit tracker
+    fn new() -> Self {
+        let now = Utc::now();
+        Self {
+            requests_current_minute: 0,
+            tokens_used_today: 0,
+            current_minute: now.with_second(0).unwrap().with_nanosecond(0).unwrap(),
+            current_day: now.format("%Y-%m-%d").to_string(),
+            last_request_at: now,
+        }
+    }
+
+    /// Update request count and check if allowed
+    fn check_and_update_request(&mut self, max_requests_per_minute: Option<i32>) -> bool {
+        let now = Utc::now();
+        let current_minute = now.with_second(0).unwrap().with_nanosecond(0).unwrap();
+
+        // Reset if new minute
+        if current_minute > self.current_minute {
+            self.current_minute = current_minute;
+            self.requests_current_minute = 0;
+        }
+
+        // Check request limit
+        if let Some(max_requests) = max_requests_per_minute {
+            if self.requests_current_minute >= max_requests {
+                return false;
+            }
+        }
+
+        // Update counters
+        self.requests_current_minute += 1;
+        self.last_request_at = now;
+        true
+    }
+
+    /// Update token usage and check if allowed
+    fn check_and_update_tokens(&mut self, tokens: i32, max_tokens_per_day: Option<i32>) -> bool {
+        let now = Utc::now();
+        let current_day = now.format("%Y-%m-%d").to_string();
+
+        // Reset if new day
+        if current_day != self.current_day {
+            self.current_day = current_day;
+            self.tokens_used_today = 0;
+        }
+
+        // Check token limit
+        if let Some(max_tokens) = max_tokens_per_day {
+            if self.tokens_used_today + tokens > max_tokens {
+                return false;
+            }
+        }
+
+        // Update token usage
+        self.tokens_used_today += tokens;
+        true
+    }
+
+    /// Get remaining requests for current minute
+    fn remaining_requests(&self, max_requests_per_minute: Option<i32>) -> Option<i32> {
+        max_requests_per_minute.map(|max| (max - self.requests_current_minute).max(0))
+    }
+
+    /// Get remaining tokens for today
+    fn remaining_tokens(&self, max_tokens_per_day: Option<i32>) -> Option<i32> {
+        max_tokens_per_day.map(|max| (max - self.tokens_used_today).max(0))
+    }
 }
 
 impl CachedApiKey {
@@ -98,6 +186,7 @@ impl ApiKeyManager {
             db,
             config,
             cache: tokio::sync::RwLock::new(HashMap::new()),
+            rate_limits: tokio::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -111,12 +200,15 @@ impl ApiKeyManager {
         // Check cache first
         if let Some(cached) = self.get_from_cache(api_key).await {
             if !cached.is_expired() {
+                // Get current rate limit info
+                let (remaining_requests, remaining_tokens) = self.get_rate_limit_info(api_key, &cached.api_key_info).await;
+                
                 return Ok(ApiKeyValidationResult {
                     api_key_info: cached.api_key_info.clone(),
                     permissions: cached.permissions.clone(),
                     permission_checker: PermissionChecker::new(cached.permissions.clone()),
-                    remaining_requests: None, // TODO: Get from rate limiter
-                    remaining_tokens: None,   // TODO: Get from rate limiter
+                    remaining_requests,
+                    remaining_tokens,
                 });
             }
             // Remove expired cache
@@ -156,6 +248,9 @@ impl ApiKeyManager {
         // Get user permissions (simplified - should query from user and role tables)
         let permissions = self.get_user_permissions(api_key_model.user_id).await?;
 
+        // Check rate limits
+        let (remaining_requests, remaining_tokens) = self.get_rate_limit_info(api_key, &api_key_info).await;
+
         // Cache result
         self.cache_api_key(api_key, &api_key_info, &permissions)
             .await;
@@ -164,8 +259,8 @@ impl ApiKeyManager {
             api_key_info,
             permissions: permissions.clone(),
             permission_checker: PermissionChecker::new(permissions),
-            remaining_requests: None, // TODO: Implement rate limit checking
-            remaining_tokens: None,   // TODO: Implement token usage checking
+            remaining_requests,
+            remaining_tokens,
         })
     }
 
@@ -262,28 +357,125 @@ impl ApiKeyManager {
     /// Check API key rate limit
     pub async fn check_rate_limit(
         &self,
-        _api_key: &str,
-        _request_cost: i32,
+        api_key: &str,
+        request_cost: i32,
     ) -> Result<RateLimitStatus> {
-        // TODO: Implement real rate limit checking
-        // Return mock result for now
+        // Get API key info first
+        let api_key_model = user_provider_keys::Entity::find()
+            .filter(user_provider_keys::Column::ApiKey.eq(api_key))
+            .filter(user_provider_keys::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| ApiKeyError::Database(e.to_string()))?
+            .ok_or(ApiKeyError::NotFound)?;
+
+        let mut rate_limits = self.rate_limits.write().await;
+        let tracker = rate_limits
+            .entry(api_key.to_string())
+            .or_insert_with(RateLimitTracker::new);
+
+        // Check request rate limit
+        let request_allowed = tracker.check_and_update_request(api_key_model.max_requests_per_minute);
+        
+        // Check token rate limit
+        let token_allowed = tracker.check_and_update_tokens(request_cost, api_key_model.max_tokens_per_day);
+
+        let allowed = request_allowed && token_allowed;
+
+        // Determine reset time (next minute for requests, next day for tokens)
+        let reset_time = if !request_allowed {
+            Utc::now().with_second(0).unwrap().with_nanosecond(0).unwrap() + chrono::Duration::minutes(1)
+        } else if !token_allowed {
+            let tomorrow = Utc::now().date_naive() + chrono::Duration::days(1);
+            tomorrow.and_hms_opt(0, 0, 0).unwrap().and_utc()
+        } else {
+            Utc::now() + chrono::Duration::minutes(1)
+        };
+
         Ok(RateLimitStatus {
-            allowed: true,
-            remaining_requests: Some(100),
-            remaining_tokens: Some(10000),
-            reset_time: Utc::now() + chrono::Duration::minutes(1),
+            allowed,
+            remaining_requests: tracker.remaining_requests(api_key_model.max_requests_per_minute),
+            remaining_tokens: tracker.remaining_tokens(api_key_model.max_tokens_per_day),
+            reset_time,
         })
     }
 
     /// Record API key usage
     pub async fn record_usage(&self, api_key: &str, tokens_used: i32) -> Result<()> {
-        // TODO: Implement usage recording to database and cache
-        tracing::info!(
-            "Recording usage for API key: {}, tokens: {}",
+        // Update database record
+        let api_key_model = user_provider_keys::Entity::find()
+            .filter(user_provider_keys::Column::ApiKey.eq(api_key))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| ApiKeyError::Database(e.to_string()))?
+            .ok_or(ApiKeyError::NotFound)?;
+
+        let mut active_model: user_provider_keys::ActiveModel = api_key_model.into();
+        
+        // Update today's token usage
+        let current_used = active_model.used_tokens_today.clone().unwrap().unwrap_or(0);
+        active_model.used_tokens_today = Set(Some(current_used + tokens_used));
+
+        // Update last used timestamp
+        active_model.last_used = Set(Some(Utc::now().naive_utc()));
+
+        active_model.update(self.db.as_ref())
+            .await
+            .map_err(|e| ApiKeyError::Database(e.to_string()))?;
+
+        // Update in-memory rate limiter
+        let mut rate_limits = self.rate_limits.write().await;
+        if let Some(tracker) = rate_limits.get_mut(api_key) {
+            tracker.tokens_used_today += tokens_used;
+        }
+
+        tracing::debug!(
+            "Recorded usage for API key: {}, tokens: {}",
             self.sanitize_api_key(api_key),
             tokens_used
         );
+        
         Ok(())
+    }
+
+    /// Get rate limit information for API key
+    async fn get_rate_limit_info(&self, api_key: &str, api_key_info: &ApiKeyInfo) -> (Option<i32>, Option<i32>) {
+        let rate_limits = self.rate_limits.read().await;
+        
+        if let Some(tracker) = rate_limits.get(api_key) {
+            let remaining_requests = tracker.remaining_requests(api_key_info.max_requests_per_minute);
+            let remaining_tokens = tracker.remaining_tokens(api_key_info.max_tokens_per_day);
+            (remaining_requests, remaining_tokens)
+        } else {
+            // No rate limit data yet, return maximum values
+            (api_key_info.max_requests_per_minute, api_key_info.max_tokens_per_day)
+        }
+    }
+
+    /// Cleanup expired rate limit trackers
+    pub async fn cleanup_rate_limits(&self) {
+        let mut rate_limits = self.rate_limits.write().await;
+        let now = Utc::now();
+        let one_hour_ago = now - chrono::Duration::hours(1);
+        
+        rate_limits.retain(|_, tracker| tracker.last_request_at > one_hour_ago);
+    }
+
+    /// Get rate limit statistics
+    pub async fn get_rate_limit_stats(&self) -> HashMap<String, serde_json::Value> {
+        let rate_limits = self.rate_limits.read().await;
+        let mut stats = HashMap::new();
+        
+        for (api_key, tracker) in rate_limits.iter() {
+            let sanitized_key = self.sanitize_api_key(api_key);
+            stats.insert(sanitized_key, serde_json::json!({
+                "requests_current_minute": tracker.requests_current_minute,
+                "tokens_used_today": tracker.tokens_used_today,
+                "last_request_at": tracker.last_request_at
+            }));
+        }
+        
+        stats
     }
 }
 
