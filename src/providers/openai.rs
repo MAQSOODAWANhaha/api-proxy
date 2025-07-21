@@ -2,18 +2,20 @@
 
 use serde_json::{Value, json};
 use super::types::{
-    ProviderAdapter, AdapterRequest, AdapterResponse, StreamingResponse,
-    ProviderError, ProviderResult, ChatCompletionRequest, ChatCompletionResponse,
+    AdapterRequest, AdapterResponse, StreamingResponse, StreamChunk,
+    ProviderError, ProviderResult, ChatCompletionRequest,
     ModelParameters
 };
+use super::traits::ProviderAdapter;
+use super::models::OpenAIModel;
 
 /// OpenAI API适配器
 #[derive(Debug, Clone)]
 pub struct OpenAIAdapter {
     /// 默认模型
-    pub default_model: String,
+    pub default_model: OpenAIModel,
     /// 支持的模型列表
-    pub supported_models: Vec<String>,
+    pub supported_models: Vec<OpenAIModel>,
     /// API版本
     pub api_version: String,
 }
@@ -28,23 +30,14 @@ impl OpenAIAdapter {
     /// 创建新的OpenAI适配器
     pub fn new() -> Self {
         Self {
-            default_model: "gpt-3.5-turbo".to_string(),
-            supported_models: vec![
-                "gpt-4".to_string(),
-                "gpt-4-turbo".to_string(),
-                "gpt-4-turbo-preview".to_string(),
-                "gpt-3.5-turbo".to_string(),
-                "gpt-3.5-turbo-16k".to_string(),
-                "text-davinci-003".to_string(),
-                "text-davinci-002".to_string(),
-                "code-davinci-002".to_string(),
-            ],
+            default_model: OpenAIModel::default(),
+            supported_models: OpenAIModel::all(),
             api_version: "v1".to_string(),
         }
     }
 
     /// 使用自定义配置创建适配器
-    pub fn with_config(default_model: String, supported_models: Vec<String>) -> Self {
+    pub fn with_config(default_model: OpenAIModel, supported_models: Vec<OpenAIModel>) -> Self {
         Self {
             default_model,
             supported_models,
@@ -54,7 +47,11 @@ impl OpenAIAdapter {
 
     /// 验证模型是否支持
     pub fn validate_model(&self, model: &str) -> bool {
-        self.supported_models.contains(&model.to_string())
+        if let Some(model_enum) = OpenAIModel::from_str(model) {
+            self.supported_models.contains(&model_enum)
+        } else {
+            false
+        }
     }
 
     /// 处理聊天完成请求
@@ -246,11 +243,31 @@ impl OpenAIAdapter {
 }
 
 impl ProviderAdapter for OpenAIAdapter {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "openai"
     }
 
-    fn process_request(&self, request: AdapterRequest) -> ProviderResult<AdapterRequest> {
+    fn supports_endpoint(&self, endpoint: &str) -> bool {
+        let supported = [
+            "/v1/chat/completions",
+            "/v1/completions",
+            "/v1/models",
+            "/v1/embeddings",
+            "/v1/audio/transcriptions",
+            "/v1/audio/translations",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/images/variations",
+            "/v1/moderations",
+        ];
+        supported.iter().any(|&ep| endpoint.starts_with(ep))
+    }
+
+    fn supports_streaming(&self, endpoint: &str) -> bool {
+        endpoint.starts_with("/v1/chat/completions") || endpoint.starts_with("/v1/completions")
+    }
+
+    fn transform_request(&self, request: &AdapterRequest) -> ProviderResult<AdapterRequest> {
         // 验证API密钥
         if let Some(auth_header) = request.get_authorization() {
             if !auth_header.starts_with("Bearer ") {
@@ -274,23 +291,16 @@ impl ProviderAdapter for OpenAIAdapter {
         // 根据端点处理请求
         match request.path.as_str() {
             path if path.starts_with("/v1/chat/completions") => {
-                self.process_chat_completion(&request)
+                self.process_chat_completion(request)
             }
-            path if path.starts_with("/v1/completions") => {
-                // 传统完成端点，直接透传
-                Ok(request)
+            _ => {
+                // 其他端点直接透传
+                Ok(request.clone())
             }
-            path if path.starts_with("/v1/models") => {
-                // 模型列表端点，直接透传
-                Ok(request)
-            }
-            _ => Err(ProviderError::UnsupportedOperation(
-                format!("Unsupported endpoint: {}", request.path)
-            ))
         }
     }
 
-    fn process_response(&self, response: AdapterResponse) -> ProviderResult<AdapterResponse> {
+    fn transform_response(&self, response: &AdapterResponse, _original_request: &AdapterRequest) -> ProviderResult<AdapterResponse> {
         if response.status_code >= 400 {
             let error_msg = response.body.as_str()
                 .unwrap_or("Unknown error")
@@ -298,49 +308,65 @@ impl ProviderAdapter for OpenAIAdapter {
             return Err(self.handle_error_response(response.status_code, &error_msg));
         }
 
-        // 对于成功响应，验证格式
-        if response.status_code == 200 && !response.is_streaming {
-            // 验证聊天完成响应格式
-            if let Ok(_) = serde_json::from_value::<ChatCompletionResponse>(response.body.clone()) {
-                Ok(response)
-            } else {
-                // 如果不是聊天完成响应，可能是其他有效的OpenAI响应
-                Ok(response)
-            }
-        } else {
-            Ok(response)
-        }
+        // 对于成功响应，直接返回
+        Ok(response.clone())
     }
 
-    fn process_streaming_response(&self, chunk: &[u8]) -> ProviderResult<StreamingResponse> {
+    fn handle_streaming_chunk(&self, chunk: &[u8], _request: &AdapterRequest) -> ProviderResult<Option<StreamChunk>> {
         let chunk_str = std::str::from_utf8(chunk)
             .map_err(|e| ProviderError::SerializationError(format!("Invalid UTF-8: {}", e)))?;
 
-        self.parse_streaming_chunk(chunk_str)
+        // 简化实现，直接返回数据块
+        if chunk_str.trim().is_empty() {
+            return Ok(None);
+        }
+
+        if chunk_str.contains("[DONE]") {
+            return Ok(Some(StreamChunk::final_chunk(Vec::new())));
+        }
+
+        Ok(Some(StreamChunk::data(chunk.to_vec())))
     }
 
-    fn validate_api_key(&self, api_key: &str) -> bool {
-        // OpenAI API密钥格式验证
-        api_key.starts_with("sk-") && api_key.len() >= 40
+    fn validate_request(&self, request: &AdapterRequest) -> ProviderResult<()> {
+        // 验证端点支持
+        if !self.supports_endpoint(&request.path) {
+            return Err(ProviderError::UnsupportedOperation(
+                format!("Endpoint {} not supported by OpenAI adapter", request.path)
+            ));
+        }
+
+        // 验证API密钥
+        if request.get_authorization().is_none() {
+            return Err(ProviderError::AuthenticationFailed(
+                "Missing authorization header".to_string()
+            ));
+        }
+
+        Ok(())
     }
 
-    fn supported_endpoints(&self) -> Vec<&'static str> {
+    fn get_supported_endpoints(&self) -> Vec<String> {
         vec![
-            "/v1/chat/completions",
-            "/v1/completions",
-            "/v1/models",
-            "/v1/embeddings",
-            "/v1/audio/transcriptions",
-            "/v1/audio/translations",
-            "/v1/images/generations",
-            "/v1/images/edits",
-            "/v1/images/variations",
-            "/v1/moderations",
+            "/v1/chat/completions".to_string(),
+            "/v1/completions".to_string(),
+            "/v1/models".to_string(),
+            "/v1/embeddings".to_string(),
+            "/v1/audio/transcriptions".to_string(),
+            "/v1/audio/translations".to_string(),
+            "/v1/images/generations".to_string(),
+            "/v1/images/edits".to_string(),
+            "/v1/images/variations".to_string(),
+            "/v1/moderations".to_string(),
         ]
     }
+}
 
-    fn convert_error(&self, status_code: u16, body: &str) -> ProviderError {
-        self.handle_error_response(status_code, body)
+impl OpenAIAdapter {
+    /// 验证API密钥格式
+    pub fn validate_api_key(&self, api_key: &str) -> bool {
+        // OpenAI API密钥格式验证
+        api_key.starts_with("sk-") && api_key.len() >= 40
     }
 }
 
@@ -408,8 +434,8 @@ mod tests {
     fn test_openai_adapter_creation() {
         let adapter = OpenAIAdapter::new();
         assert_eq!(adapter.name(), "openai");
-        assert_eq!(adapter.default_model, "gpt-3.5-turbo");
-        assert!(adapter.supported_models.contains(&"gpt-4".to_string()));
+        assert_eq!(adapter.default_model, OpenAIModel::Gpt35Turbo);
+        assert!(adapter.supported_models.contains(&OpenAIModel::Gpt4));
     }
 
     #[test]
@@ -454,7 +480,7 @@ mod tests {
                 "temperature": 0.7
             }));
 
-        let result = adapter.process_request(request);
+        let result = adapter.transform_request(&request);
         assert!(result.is_ok());
         
         let processed = result.unwrap();
@@ -470,7 +496,7 @@ mod tests {
         let request = AdapterRequest::new("POST", "/v1/chat/completions")
             .with_body(json!({"model": "gpt-3.5-turbo", "messages": []}));
         
-        let result = adapter.process_request(request);
+        let result = adapter.transform_request(&request);
         assert!(matches!(result, Err(ProviderError::AuthenticationFailed(_))));
 
         // 测试无效模型
@@ -481,19 +507,22 @@ mod tests {
                 "messages": [{"role": "user", "content": "test"}]
             }));
 
-        let result = adapter.process_request(request);
+        let result = adapter.transform_request(&request);
         assert!(matches!(result, Err(ProviderError::UnsupportedOperation(_))));
     }
 
     #[test]
     fn test_streaming_response_parsing() {
         let adapter = OpenAIAdapter::new();
+        let request = AdapterRequest::new("POST", "/v1/chat/completions");
         
         let chunk = b"data: {\"object\": \"chat.completion.chunk\", \"choices\": [{\"delta\": {\"content\": \"Hello\"}}]}\n\n";
-        let result = adapter.process_streaming_response(chunk);
+        let result = adapter.handle_streaming_chunk(chunk, &request);
         
         assert!(result.is_ok());
-        let response = result.unwrap();
+        let response_opt = result.unwrap();
+        assert!(response_opt.is_some());
+        let response = response_opt.unwrap();
         assert!(!response.is_final);
         assert!(response.error.is_none());
     }
@@ -501,12 +530,15 @@ mod tests {
     #[test]
     fn test_streaming_done_parsing() {
         let adapter = OpenAIAdapter::new();
+        let request = AdapterRequest::new("POST", "/v1/chat/completions");
         
         let chunk = b"data: [DONE]\n\n";
-        let result = adapter.process_streaming_response(chunk);
+        let result = adapter.handle_streaming_chunk(chunk, &request);
         
         assert!(result.is_ok());
-        let response = result.unwrap();
+        let response_opt = result.unwrap();
+        assert!(response_opt.is_some());
+        let response = response_opt.unwrap();
         assert!(response.is_final);
     }
 

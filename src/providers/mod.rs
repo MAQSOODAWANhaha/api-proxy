@@ -6,15 +6,19 @@ pub mod openai;
 pub mod gemini;
 pub mod claude;
 pub mod types;
+pub mod traits;
 pub mod manager;
+pub mod models;
 
 pub use openai::{OpenAIAdapter, OpenAIStreamParser};
 pub use gemini::GeminiAdapter;
 pub use claude::ClaudeAdapter;
 pub use manager::{AdapterManager, AdapterStats};
+pub use models::{AIModel, OpenAIModel, GeminiModel, ClaudeModel};
 pub use types::{
-    ProviderAdapter, AdapterRequest, AdapterResponse, 
-    StreamingResponse, ProviderError, ProviderResult,
-    ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
-    MessageRole, Usage, ChatChoice, ModelParameters
+    AdapterRequest, AdapterResponse, StreamingResponse, StreamChunk,
+    ProviderError, ProviderResult, ChatCompletionRequest, 
+    ChatCompletionResponse, ChatMessage, MessageRole, Usage, 
+    ChatChoice, ModelParameters
 };
+pub use traits::ProviderAdapter;

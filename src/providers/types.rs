@@ -145,6 +145,10 @@ impl AdapterResponse {
         self.headers.insert("Connection".to_string(), "keep-alive".to_string());
         self
     }
+
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status_code)
+    }
 }
 
 /// 流式响应数据
@@ -156,6 +160,57 @@ pub struct StreamingResponse {
     pub is_final: bool,
     /// 错误信息（如果有）
     pub error: Option<String>,
+}
+
+/// 流式响应块
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    /// 数据块
+    pub data: Vec<u8>,
+    /// 是否为最后一个数据块
+    pub is_final: bool,
+    /// 错误信息（如果有）
+    pub error: Option<String>,
+}
+
+impl StreamChunk {
+    /// 创建数据块
+    pub fn data(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            is_final: false,
+            error: None,
+        }
+    }
+
+    /// 创建最终块
+    pub fn final_chunk(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            is_final: true,
+            error: None,
+        }
+    }
+
+    /// 创建错误块
+    pub fn error(error: String) -> Self {
+        Self {
+            data: Vec::new(),
+            is_final: true,
+            error: Some(error),
+        }
+    }
+
+    /// 检查是否为空
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// 转换为字符串
+    pub fn as_str(&self) -> Result<&str> {
+        std::str::from_utf8(&self.data)
+            .map_err(|e| ProxyError::internal(format!("Invalid UTF-8 in stream data: {}", e)))
+    }
 }
 
 impl StreamingResponse {
@@ -193,39 +248,6 @@ impl StreamingResponse {
     }
 }
 
-/// 提供商适配器特质
-pub trait ProviderAdapter: Send + Sync {
-    /// 获取适配器名称
-    fn name(&self) -> &'static str;
-
-    /// 处理请求
-    fn process_request(&self, request: AdapterRequest) -> ProviderResult<AdapterRequest>;
-
-    /// 处理响应
-    fn process_response(&self, response: AdapterResponse) -> ProviderResult<AdapterResponse>;
-
-    /// 处理流式响应
-    fn process_streaming_response(&self, chunk: &[u8]) -> ProviderResult<StreamingResponse>;
-
-    /// 验证API密钥格式
-    fn validate_api_key(&self, api_key: &str) -> bool;
-
-    /// 获取支持的端点
-    fn supported_endpoints(&self) -> Vec<&'static str>;
-
-    /// 检查端点是否支持
-    fn supports_endpoint(&self, path: &str) -> bool {
-        self.supported_endpoints().iter().any(|&endpoint| path.starts_with(endpoint))
-    }
-
-    /// 转换错误响应
-    fn convert_error(&self, status_code: u16, body: &str) -> ProviderError {
-        ProviderError::ApiError {
-            status_code,
-            message: body.to_string(),
-        }
-    }
-}
 
 /// 通用模型参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +272,9 @@ pub struct ModelParameters {
     /// 是否流式输出
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// 停止序列
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
 }
 
 impl Default for ModelParameters {
@@ -262,6 +287,7 @@ impl Default for ModelParameters {
             frequency_penalty: None,
             presence_penalty: None,
             stream: None,
+            stop: None,
         }
     }
 }

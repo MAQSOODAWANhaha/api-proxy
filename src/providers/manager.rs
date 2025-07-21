@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 use crate::proxy::upstream::UpstreamType;
 use super::types::{
-    ProviderAdapter, AdapterRequest, AdapterResponse, StreamingResponse,
+    AdapterRequest, AdapterResponse, StreamChunk,
     ProviderError, ProviderResult
 };
+use super::traits::ProviderAdapter;
 use super::{OpenAIAdapter, GeminiAdapter, ClaudeAdapter};
 
 /// 适配器管理器
@@ -30,8 +31,8 @@ impl AdapterManager {
     /// 注册默认适配器
     fn register_default_adapters(&mut self) {
         self.adapters.insert(UpstreamType::OpenAI, Box::new(OpenAIAdapter::new()));
-        self.adapters.insert(UpstreamType::GoogleGemini, Box::new(GeminiAdapter));
-        self.adapters.insert(UpstreamType::Anthropic, Box::new(ClaudeAdapter));
+        self.adapters.insert(UpstreamType::GoogleGemini, Box::new(GeminiAdapter::new()));
+        self.adapters.insert(UpstreamType::Anthropic, Box::new(ClaudeAdapter::new()));
     }
 
     /// 注册自定义适配器
@@ -51,36 +52,37 @@ impl AdapterManager {
                 format!("No adapter found for upstream type: {:?}", upstream_type)
             ))?;
 
-        adapter.process_request(request)
+        adapter.transform_request(&request)
     }
 
     /// 处理响应
-    pub fn process_response(&self, upstream_type: &UpstreamType, response: AdapterResponse) -> ProviderResult<AdapterResponse> {
+    pub fn process_response(&self, upstream_type: &UpstreamType, response: AdapterResponse, original_request: &AdapterRequest) -> ProviderResult<AdapterResponse> {
         let adapter = self.get_adapter(upstream_type)
             .ok_or_else(|| ProviderError::UnsupportedOperation(
                 format!("No adapter found for upstream type: {:?}", upstream_type)
             ))?;
 
-        adapter.process_response(response)
+        adapter.transform_response(&response, original_request)
     }
 
     /// 处理流式响应
-    pub fn process_streaming_response(&self, upstream_type: &UpstreamType, chunk: &[u8]) -> ProviderResult<StreamingResponse> {
+    pub fn process_streaming_response(&self, upstream_type: &UpstreamType, chunk: &[u8], request: &AdapterRequest) -> ProviderResult<Option<StreamChunk>> {
         let adapter = self.get_adapter(upstream_type)
             .ok_or_else(|| ProviderError::UnsupportedOperation(
                 format!("No adapter found for upstream type: {:?}", upstream_type)
             ))?;
 
-        adapter.process_streaming_response(chunk)
+        adapter.handle_streaming_chunk(chunk, request)
     }
 
-    /// 验证API密钥
-    pub fn validate_api_key(&self, upstream_type: &UpstreamType, api_key: &str) -> bool {
-        if let Some(adapter) = self.get_adapter(upstream_type) {
-            adapter.validate_api_key(api_key)
-        } else {
-            false
-        }
+    /// 验证请求
+    pub fn validate_request(&self, upstream_type: &UpstreamType, request: &AdapterRequest) -> ProviderResult<()> {
+        let adapter = self.get_adapter(upstream_type)
+            .ok_or_else(|| ProviderError::UnsupportedOperation(
+                format!("No adapter found for upstream type: {:?}", upstream_type)
+            ))?;
+
+        adapter.validate_request(request)
     }
 
     /// 检查端点是否支持
@@ -112,11 +114,12 @@ impl AdapterManager {
         let mut stats = HashMap::new();
         
         for (upstream_type, adapter) in &self.adapters {
+            let endpoints = adapter.get_supported_endpoints();
             let stat = AdapterStats {
                 name: adapter.name().to_string(),
                 upstream_type: format!("{:?}", upstream_type),
-                supported_endpoints: adapter.supported_endpoints().len(),
-                endpoints: adapter.supported_endpoints().iter().map(|s| s.to_string()).collect(),
+                supported_endpoints: endpoints.len(),
+                endpoints,
             };
             stats.insert(adapter.name().to_string(), stat);
         }
@@ -180,11 +183,14 @@ mod tests {
     }
 
     #[test]
-    fn test_api_key_validation() {
+    fn test_request_validation() {
         let manager = AdapterManager::new();
         
-        assert!(manager.validate_api_key(&UpstreamType::OpenAI, "sk-1234567890abcdef1234567890abcdef12345678"));
-        assert!(!manager.validate_api_key(&UpstreamType::OpenAI, "invalid-key"));
+        let valid_request = AdapterRequest::new("POST", "/v1/chat/completions")
+            .with_header("Authorization", "Bearer sk-1234567890abcdef1234567890abcdef12345678");
+        
+        let result = manager.validate_request(&UpstreamType::OpenAI, &valid_request);
+        assert!(result.is_ok());
     }
 
     #[test]
