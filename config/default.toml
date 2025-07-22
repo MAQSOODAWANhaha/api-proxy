@@ -1,0 +1,74 @@
+# API 代理服务器默认配置文件
+# 这个文件展示了所有可用的配置选项及其默认值
+
+# 双端口服务器配置（推荐模式）
+[dual_port]
+workers = 4  # 工作线程数，默认为CPU核心数
+
+# 管理服务端点配置
+[dual_port.management]
+[dual_port.management.http]
+host = "127.0.0.1"  # 管理API监听地址
+port = 9090        # 管理API端口
+
+# 代理服务端点配置  
+[dual_port.proxy]
+[dual_port.proxy.http]
+host = "0.0.0.0"   # 代理服务监听地址
+port = 8080        # 代理服务端口
+
+# HTTPS代理配置（可选）
+# [dual_port.proxy.https]
+# host = "0.0.0.0"
+# port = 8443
+# [dual_port.proxy.https.tls]
+# cert_path = "./certs"
+# acme_email = "admin@example.com"
+# domains = ["example.com", "api.example.com"]
+
+# 数据库配置
+[database]
+url = "sqlite://./data/api_proxy.db"  # 数据库连接URL，支持SQLite和其他数据库
+max_connections = 10                   # 最大连接数
+connect_timeout = 30                   # 连接超时时间（秒）
+query_timeout = 60                     # 查询超时时间（秒）
+
+# 缓存配置
+[cache]
+cache_type = "memory"      # 缓存类型：memory（内存）或 redis（Redis）
+memory_max_entries = 10000 # 内存缓存最大条目数
+default_ttl = 300          # 默认过期时间（秒）
+enabled = true             # 是否启用缓存
+
+# Redis配置
+[redis]
+url = "redis://127.0.0.1:6379/0"  # Redis连接URL
+pool_size = 10                     # 连接池大小
+host = "127.0.0.1"                # Redis服务器地址
+port = 6379                        # Redis服务器端口
+database = 0                       # Redis数据库编号
+# password = "your_redis_password" # Redis密码（可选）
+connection_timeout = 10            # 连接超时时间（秒）
+default_ttl = 3600                # 默认TTL（秒）
+max_connections = 10              # 最大连接数
+
+# 服务启用配置
+[services]
+management_api = true    # 启用管理API
+ai_proxy = true         # 启用AI代理
+health_check = true     # 启用健康检查
+metrics = true          # 启用指标收集
+
+# 单端口模式配置（传统模式，不推荐）
+# 注意：dual_port 和 server 配置不能同时使用
+# [server]
+# host = "0.0.0.0"
+# port = 8080
+# https_port = 8443
+# workers = 4
+
+# TLS配置（仅用于单端口模式）
+# [tls]
+# cert_path = "./certs"
+# acme_email = "admin@example.com"
+# domains = ["localhost"]

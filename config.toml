@@ -1,4 +1,4 @@
-# 开发环境配置 - 双端口分离架构
+# 简化的AI代理配置文件
 
 # 双端口服务器配置
 [dual_port]
@@ -7,17 +7,16 @@ workers = 4
 # 管理服务配置
 [dual_port.management]
 enabled = true
-route_prefixes = ["/api", "/admin", "/"]
+route_prefixes = ["/api", "/admin"]
 
 [dual_port.management.http]
 host = "127.0.0.1"
 port = 9090
 
 [dual_port.management.access_control]
-allowed_ips = ["127.0.0.1/32", "::1/128"]
-denied_ips = []
-require_auth = false
-auth_methods = ["ApiKey"]
+allow_ips = ["127.0.0.1", "::1"]
+deny_ips = []
+require_auth = true
 
 # 代理服务配置
 [dual_port.proxy]
@@ -29,10 +28,9 @@ host = "0.0.0.0"
 port = 8080
 
 [dual_port.proxy.load_balancing]
-strategy = "RoundRobin"
+strategy = "round_robin"
 health_check_interval = 30
-failure_threshold = 3
-recovery_threshold = 2
+max_retries = 3
 
 # 启用的服务
 [dual_port.enabled_services]
@@ -43,10 +41,10 @@ monitoring = true
 
 # 数据库配置
 [database]
-url = "sqlite:///workspaces/api-proxy/data/dev.db"
+url = "sqlite://./data/api_proxy.db"
 max_connections = 10
 connect_timeout = 30
-query_timeout = 30
+query_timeout = 60
 
 # 缓存配置
 [cache]
@@ -57,12 +55,12 @@ enabled = true
 
 # Redis配置
 [redis]
-url = "redis://127.0.0.1:6379/0"
+url = "redis://localhost:6379"
 pool_size = 10
-host = "127.0.0.1"
+host = "localhost"
 port = 6379
 database = 0
-connection_timeout = 10
+connection_timeout = 5
 default_ttl = 3600
 max_connections = 10
 

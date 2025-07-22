@@ -3,12 +3,14 @@
 //! 处理应用配置加载、验证和管理
 
 mod app_config;
+mod dual_port_config;
 mod database;
 mod crypto;
 mod watcher;
 mod manager;
 
-pub use app_config::{AppConfig, RedisConfig, ServerConfig, TlsConfig};
+pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig, TlsConfig};
+pub use dual_port_config::{DualPortServerConfig, EnabledServices, ManagementPortConfig, ProxyPortConfig};
 pub use database::DatabaseConfig;
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use watcher::{ConfigEvent, ConfigWatcher};
@@ -44,23 +46,31 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
 
 /// 验证配置有效性
 fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
-    // 验证服务器配置
-    if config.server.port == 0 || config.server.port > 65535 {
-        return Err(crate::error::ProxyError::config(
-            format!("无效的服务器端口: {}", config.server.port)
-        ));
+    // 验证服务器配置（传统单端口模式）
+    if let Some(server) = &config.server {
+        if server.port == 0 || server.port > 65535 {
+            return Err(crate::error::ProxyError::config(
+                format!("无效的服务器端口: {}", server.port)
+            ));
+        }
+        
+        if server.https_port == 0 || server.https_port > 65535 {
+            return Err(crate::error::ProxyError::config(
+                format!("无效的HTTPS端口: {}", server.https_port)
+            ));
+        }
+        
+        if server.workers == 0 {
+            return Err(crate::error::ProxyError::config(
+                "工作线程数必须大于0"
+            ));
+        }
     }
     
-    if config.server.https_port == 0 || config.server.https_port > 65535 {
-        return Err(crate::error::ProxyError::config(
-            format!("无效的HTTPS端口: {}", config.server.https_port)
-        ));
-    }
-    
-    if config.server.workers == 0 {
-        return Err(crate::error::ProxyError::config(
-            "工作线程数必须大于0"
-        ));
+    // 验证双端口配置
+    if let Some(dual_port) = &config.dual_port {
+        dual_port.validate()
+            .map_err(|e| crate::error::ProxyError::config(e))?;
     }
     
     // 验证数据库配置
@@ -83,17 +93,19 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
         ));
     }
     
-    // 验证TLS配置
-    if config.tls.domains.is_empty() {
-        return Err(crate::error::ProxyError::config(
-            "必须配置至少一个域名"
-        ));
-    }
-    
-    if config.tls.acme_email.is_empty() {
-        return Err(crate::error::ProxyError::config(
-            "ACME邮箱不能为空"
-        ));
+    // 验证TLS配置（传统模式）
+    if let Some(tls) = &config.tls {
+        if tls.domains.is_empty() {
+            return Err(crate::error::ProxyError::config(
+                "必须配置至少一个域名"
+            ));
+        }
+        
+        if tls.acme_email.is_empty() {
+            return Err(crate::error::ProxyError::config(
+                "ACME邮箱不能为空"
+            ));
+        }
     }
     
     Ok(())

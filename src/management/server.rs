@@ -141,13 +141,13 @@ impl ManagementServer {
             // 用户管理
             .route("/users", get(super::handlers::users::list_users))
             .route("/users", post(super::handlers::users::create_user))
-            .route("/users/:id", get(super::handlers::users::get_user))
+            .route("/users/{id}", get(super::handlers::users::get_user))
             
             // API密钥管理
             .route("/api-keys", get(super::handlers::auth::list_api_keys))
             .route("/api-keys", post(super::handlers::auth::create_api_key))
-            .route("/api-keys/:id", get(super::handlers::auth::get_api_key))
-            .route("/api-keys/:id/revoke", post(super::handlers::auth::revoke_api_key))
+            .route("/api-keys/{id}", get(super::handlers::auth::get_api_key))
+            .route("/api-keys/{id}/revoke", post(super::handlers::auth::revoke_api_key))
             
             .with_state(state);
 

@@ -5,149 +5,145 @@
 use std::env;
 use std::process;
 use tracing::{error, info};
+use clap::{Arg, Command, ArgMatches};
 use api_proxy::{
     config::ConfigManager,
-    proxy::PingoraProxyServer,
     error::Result,
+    dual_port_setup,
 };
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let matches = build_cli().get_matches();
+    
     // 初始化日志系统
-    init_logging();
+    let log_level = matches.get_one::<String>("log_level");
+    init_logging_with_level(log_level);
 
     info!("Starting AI Proxy Service v{}", env!("CARGO_PKG_VERSION"));
-
-    // 处理命令行参数
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "--version" | "-v" => {
-                println!("AI Proxy v{}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--help" | "-h" => {
-                print_help();
-                return Ok(());
-            }
-            _ => {
-                eprintln!("Unknown argument: {}", args[1]);
-                print_help();
-                process::exit(1);
-            }
-        }
+    
+    // 处理配置检查命令
+    if matches.get_flag("check") {
+        return run_config_check(&matches);
     }
 
-    // 启动服务器
-    if let Err(e) = run_server().await {
-        error!("Failed to start server: {}", e);
+    // 启动双端口分离架构服务器
+    if let Err(e) = dual_port_setup::run_dual_port_servers(&matches) {
+        error!("Failed to start servers: {}", e);
         process::exit(1);
     }
 
     Ok(())
 }
 
-/// 初始化日志系统
-fn init_logging() {
+/// 构建CLI命令定义
+fn build_cli() -> Command {
+    Command::new("api-proxy")
+        .version(env!("CARGO_PKG_VERSION"))
+        .author("AI Proxy Team")
+        .about("Enterprise-grade AI service proxy platform")
+        .long_about("A high-performance AI service proxy platform built with Rust and Pingora.\nSupports multiple AI providers with load balancing, authentication, and monitoring.")
+        .arg(Arg::new("config")
+            .short('c')
+            .long("config")
+            .help("Configuration file path")
+            .value_name("FILE")
+            .default_value("config/config.toml"))
+        .arg(Arg::new("log_level")
+            .short('l')
+            .long("log-level")
+            .help("Set logging level")
+            .value_name("LEVEL")
+            .value_parser(["error", "warn", "info", "debug", "trace"])
+            .default_value("info"))
+        .arg(Arg::new("port")
+            .short('p')
+            .long("port")
+            .help("Override proxy server port")
+            .value_name("PORT")
+            .value_parser(clap::value_parser!(u16)))
+        .arg(Arg::new("host")
+            .long("host")
+            .help("Override proxy server host")
+            .value_name("HOST")
+            .default_value("127.0.0.1"))
+        .arg(Arg::new("https_port")
+            .long("https-port")
+            .help("Override HTTPS port")
+            .value_name("PORT")
+            .value_parser(clap::value_parser!(u16)))
+        .arg(Arg::new("database_url")
+            .short('d')
+            .long("database-url")
+            .help("Override database URL")
+            .value_name("URL"))
+        .arg(Arg::new("workers")
+            .short('w')
+            .long("workers")
+            .help("Number of worker threads")
+            .value_name("COUNT")
+            .value_parser(clap::value_parser!(u16)))
+        .arg(Arg::new("check")
+            .long("check")
+            .help("Check configuration and exit")
+            .action(clap::ArgAction::SetTrue))
+        .arg(Arg::new("daemon")
+            .long("daemon")
+            .help("Run as daemon (background process)")
+            .action(clap::ArgAction::SetTrue))
+}
+
+/// 带日志级别的初始化函数
+fn init_logging_with_level(log_level: Option<&String>) {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-    let log_level = env::var("RUST_LOG")
-        .unwrap_or_else(|_| "info,api_proxy=debug".to_string());
+    let level = log_level.map(|s| s.as_str()).unwrap_or("info");
+    let log_filter = env::var("RUST_LOG")
+        .unwrap_or_else(|_| format!("{},api_proxy=debug", level));
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| log_level.into()),
+                .unwrap_or_else(|_| log_filter.into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 }
 
-/// 运行服务器
-async fn run_server() -> Result<()> {
-    // 加载配置
-    info!("Loading configuration...");
-    let config_manager = ConfigManager::new().await?;
-    let config = config_manager.get_config().await;
-
-    info!("Configuration loaded successfully");
-    info!("Server will listen on {}:{}", config.server.host, config.server.port);
-
-    // 初始化数据库连接
-    info!("Initializing database connection...");
-    let db = match api_proxy::database::init_database(&config.database.url).await {
-        Ok(db) => {
-            info!("Database connection established successfully");
-            db
-        }
-        Err(e) => {
-            error!("Database connection failed: {:?}", e);
-            return Err(e.into());
-        }
-    };
+/// 配置检查函数
+fn run_config_check(matches: &ArgMatches) -> Result<()> {
+    info!("Checking configuration...");
     
-    // 运行数据库迁移
-    info!("Running database migrations...");
-    if let Err(e) = api_proxy::database::run_migrations(&db).await {
-        error!("Database migration failed: {:?}", e);
-        return Err(e.into());
-    }
-    info!("Database migrations completed");
-
-    // 创建并启动代理服务器
-    info!("Creating Pingora proxy server...");
-    let proxy_server = PingoraProxyServer::new(config);
+    let config_path = matches.get_one::<String>("config").unwrap();
+    info!("Using configuration file: {}", config_path);
     
-    // 设置信号处理
-    setup_signal_handlers();
+    // 创建Tokio运行时进行异步操作
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| api_proxy::error::ProxyError::server_init(format!("Failed to create Tokio runtime: {}", e)))?;
 
-    // 启动服务器
-    info!("Starting Pingora proxy server...");
-    match proxy_server.start().await {
-        Ok(_) => info!("Pingora proxy server started successfully"),
-        Err(e) => {
-            error!("Failed to start Pingora proxy server: {:?}", e);
-            return Err(e);
+    rt.block_on(async {
+        // 验证配置文件
+        let config_manager = ConfigManager::new().await?;
+        let config = config_manager.get_config().await;
+        
+        info!("✓ Configuration file is valid");
+        info!("  Server: {}:{}", config.server.as_ref().map_or("0.0.0.0", |s| &s.host), config.server.as_ref().map_or(8080, |s| s.port));
+        if let Some(server) = &config.server {
+            if server.https_port > 0 {
+                info!("  HTTPS: {}:{}", server.host, server.https_port);
+            }
         }
-    }
+        info!("  Database: {}", config.database.url);
+        info!("  Redis: {}", config.redis.url);
+        info!("  Workers: {}", config.server.as_ref().map_or(1, |s| s.workers));
+        
+        // 测试数据库连接
+        info!("Testing database connection...");
+        let _db = api_proxy::database::init_database(&config.database.url).await?;
+        info!("✓ Database connection successful");
+        
+        info!("✓ All configuration checks passed");
+        Ok::<_, api_proxy::error::ProxyError>(())
+    })?;
 
     Ok(())
-}
-
-/// 设置信号处理器
-fn setup_signal_handlers() {
-    tokio::spawn(async move {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => {
-                info!("Received Ctrl+C, shutting down gracefully...");
-            }
-            Err(e) => {
-                error!("Failed to listen for shutdown signal: {}", e);
-            }
-        }
-
-        // 这里可以添加优雅关闭逻辑
-        info!("Graceful shutdown completed");
-        process::exit(0);
-    });
-}
-
-/// 打印帮助信息
-fn print_help() {
-    println!("AI Proxy - Enterprise-grade AI service proxy platform");
-    println!();
-    println!("USAGE:");
-    println!("    {} [OPTIONS]", env!("CARGO_PKG_NAME"));
-    println!();
-    println!("OPTIONS:");
-    println!("    -h, --help       Print this help message");
-    println!("    -v, --version    Print version information");
-    println!();
-    println!("ENVIRONMENT VARIABLES:");
-    println!("    RUST_LOG         Set logging level (default: info,api_proxy=debug)");
-    println!("    CONFIG_FILE      Configuration file path (default: config/config.toml)");
-    println!();
-    println!("EXAMPLES:");
-    println!("    {}                    # Start with default configuration", env!("CARGO_PKG_NAME"));
-    println!("    RUST_LOG=debug {}     # Start with debug logging", env!("CARGO_PKG_NAME"));
 }

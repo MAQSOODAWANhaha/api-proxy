@@ -1,22 +1,51 @@
-# 默认配置 - 继承自 config.dev.toml
+# 双端口分离架构配置 - AI代理平台
 
-[server]
-host = "0.0.0.0"
-port = 8080
-https_port = 8443
-workers = 8
+# 双端口服务器配置（推荐模式）
+[dual_port]
+workers = 4  # 工作线程数，默认为CPU核心数
+
+# 管理服务端点配置
+[dual_port.management]
+[dual_port.management.http]
+host = "127.0.0.1"  # 管理API监听地址
+port = 9090        # 管理API端口
+
+# 代理服务端点配置  
+[dual_port.proxy]
+[dual_port.proxy.http]
+host = "0.0.0.0"   # 代理服务监听地址
+port = 8080        # 代理服务端口
 
 [database]
-url = "sqlite:./data/proxy.db"
+url = "sqlite://./data/api_proxy.db"
 max_connections = 20
 connect_timeout = 30
 query_timeout = 30
 
+# 缓存配置
+[cache]
+cache_type = "memory"      # 缓存类型：memory（内存）或 redis（Redis）
+memory_max_entries = 10000 # 内存缓存最大条目数
+default_ttl = 300          # 默认过期时间（秒）
+enabled = true             # 是否启用缓存
+
 [redis]
 url = "redis://localhost:6379"
 pool_size = 20
+host = "localhost"
+port = 6379
+database = 0
+connection_timeout = 5
+default_ttl = 3600
+max_connections = 20
 
 [tls]
 cert_path = "./certs"
 acme_email = "admin@yourdomain.com"
 domains = ["yourdomain.com"]
+
+[services]
+management_api = true    # 启用管理API
+ai_proxy = true         # 启用AI代理
+health_check = true     # 启用健康检查
+metrics = true          # 启用指标收集

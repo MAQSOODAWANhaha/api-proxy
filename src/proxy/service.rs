@@ -1,200 +1,67 @@
 //! # Pingora AI 代理服务
 //!
-//! 实现基于 Pingora 的 AI 服务代理，支持多个 AI 提供商的负载均衡
+//! 基于设计文档实现的透明AI代理服务，专注身份验证、速率限制和转发策略
 
 use async_trait::async_trait;
-use pingora_core::{prelude::*, upstreams::peer::HttpPeer};
+use pingora_core::{prelude::*, upstreams::peer::HttpPeer, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::time::Instant;
-use crate::config::AppConfig;
-use crate::proxy::router::SmartRouter;
-use crate::proxy::upstream::{UpstreamManager, UpstreamType};
-use crate::proxy::forwarding::{RequestForwarder, ForwardingContext, ForwardingConfig, ForwardingResult};
-use crate::proxy::statistics::{StatisticsCollector, StatisticsConfig};
-use crate::health::HealthCheckService;
-use crate::auth::{AuthContext, AuthService, middleware::{AuthMiddleware, AuthenticationResult}};
-use crate::providers::{AdapterManager, AdapterRequest, ProviderError};
 use pingora_proxy::{ProxyHttp, Session};
+use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
 
-/// AI 代理上下文，用于在请求处理阶段间传递信息
-#[derive(Debug, Default)]
-pub struct ProxyContext {
-    /// 请求 ID，用于日志追踪
-    pub request_id: String,
-    /// 选中的上游类型
-    pub upstream_type: Option<UpstreamType>,
-    /// 选中的服务器地址
-    pub selected_server: Option<String>,
-    /// 认证结果
-    pub auth_result: AuthenticationResult,
-    /// 路由决策信息
-    pub route_decision: Option<crate::proxy::router::RouteDecision>,
-    /// 请求开始时间
-    pub request_start: Option<Instant>,
-    /// 适配器处理的请求
-    pub adapter_request: Option<AdapterRequest>,
-    /// 转发上下文
-    pub forwarding_context: Option<ForwardingContext>,
-    /// 转发结果
-    pub forwarding_result: Option<ForwardingResult>,
-}
+use crate::config::AppConfig;
+use crate::auth::unified::UnifiedAuthManager;
+use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
+use crate::cache::UnifiedCacheManager;
+use sea_orm::DatabaseConnection;
 
-/// AI 代理服务
+/// AI 代理服务 - 透明代理设计
 pub struct ProxyService {
+    /// 配置
     config: Arc<AppConfig>,
-    router: SmartRouter,
-    auth_middleware: AuthMiddleware,
-    upstream_manager: Arc<UpstreamManager>,
-    adapter_manager: Arc<AdapterManager>,
-    request_forwarder: RequestForwarder,
-    statistics_collector: Arc<StatisticsCollector>,
+    /// AI代理处理器
+    ai_handler: Arc<AIProxyHandler>,
 }
 
 impl ProxyService {
     /// 创建新的代理服务实例
     pub fn new(
         config: Arc<AppConfig>,
-        auth_service: Arc<AuthService>,
-        health_service: Arc<HealthCheckService>,
+        db: Arc<DatabaseConnection>,
+        cache: Arc<UnifiedCacheManager>,
+        auth_manager: Arc<UnifiedAuthManager>,
     ) -> pingora_core::Result<Self> {
-        // 创建智能路由器
-        let router = SmartRouter::new(Arc::clone(&config))
-            .map_err(|_e| Error::new(ErrorType::InternalError))?;
+        // 创建调度器注册表
+        let schedulers = Arc::new(crate::proxy::ai_handler::SchedulerRegistry::new(
+            db.clone(),
+            cache.clone(),
+        ));
 
-        // 创建认证中间件
-        let auth_middleware = AuthMiddleware::new(auth_service)
-            .skip_path("/health".to_string())
-            .skip_path("/metrics".to_string())
-            .skip_path("/ping".to_string());
-
-        // 创建上游管理器
-        let upstream_manager = Arc::new(UpstreamManager::new(Arc::clone(&config)));
-
-        // 创建适配器管理器
-        let adapter_manager = Arc::new(AdapterManager::new());
-
-        // 创建统计收集器
-        let statistics_collector = Arc::new(StatisticsCollector::new(StatisticsConfig::default()));
-
-        // 创建请求转发器
-        let request_forwarder = RequestForwarder::new(
-            Arc::clone(&upstream_manager),
-            health_service,
-            Arc::clone(&adapter_manager),
-            ForwardingConfig::default(),
-        );
+        // 创建AI代理处理器
+        let ai_handler = Arc::new(AIProxyHandler::new(
+            db,
+            cache,
+            config.clone(),
+            auth_manager,
+            schedulers,
+        ));
 
         Ok(Self {
             config,
-            router,
-            auth_middleware,
-            upstream_manager,
-            adapter_manager,
-            request_forwarder,
-            statistics_collector,
+            ai_handler,
         })
     }
 
-    /// 选择上游服务器
-    fn select_upstream_server(&self, upstream_type: &UpstreamType) -> pingora_core::Result<crate::proxy::upstream::UpstreamServer> {
-        self.upstream_manager.select_upstream(upstream_type)
-            .map_err(|e| Error::because(ErrorType::InternalError, "Failed to select upstream server", Box::new(e)))
+    /// 检查是否为代理请求（透明代理设计）
+    fn is_proxy_request(&self, path: &str) -> bool {
+        // 仅检查代理路径前缀，不解析具体参数
+        path.starts_with("/v1/") || path.starts_with("/proxy/")
     }
-
-    /// 处理适配器请求
-    fn process_adapter_request(&self, session: &Session, ctx: &mut ProxyContext) -> pingora_core::Result<()> {
-        let req_header = session.req_header();
-        let path = req_header.uri.path();
-        let method = req_header.method.as_str();
-
-        // 提取请求头
-        let mut headers = HashMap::new();
-        for (name, value) in req_header.headers.iter() {
-            if let Ok(value_str) = value.to_str() {
-                headers.insert(name.to_string(), value_str.to_string());
-            }
-        }
-
-        // 创建适配器请求
-        let mut adapter_request = AdapterRequest::new(method, path);
-        adapter_request.headers = headers;
-
-        // 检测上游类型
-        if let Some(upstream_type) = self.adapter_manager.detect_upstream_type(path) {
-            ctx.upstream_type = Some(upstream_type.clone());
-
-            // 处理请求
-            match self.adapter_manager.process_request(&upstream_type, adapter_request) {
-                Ok(processed_request) => {
-                    ctx.adapter_request = Some(processed_request);
-                    Ok(())
-                }
-                Err(ProviderError::AuthenticationFailed(msg)) => {
-                    tracing::warn!("Authentication failed: {}", msg);
-                    Err(Error::explain(ErrorType::HTTPStatus(401), msg))
-                }
-                Err(ProviderError::InvalidRequest(msg)) => {
-                    tracing::warn!("Invalid request: {}", msg);
-                    Err(Error::new(ErrorType::InvalidHTTPHeader))
-                }
-                Err(e) => {
-                    tracing::error!("Adapter error: {}", e);
-                    Err(Error::new(ErrorType::InternalError))
-                }
-            }
-        } else {
-            tracing::warn!("No adapter found for path: {}", path);
-            Err(Error::new(ErrorType::InvalidHTTPHeader))
-        }
-    }
-
-
-    /// 检查是否为管理 API 请求
+    
+    /// 检查是否为管理请求（应该发送到端口9090）
     fn is_management_request(&self, path: &str) -> bool {
-        path.starts_with("/api/") || path.starts_with("/admin/")
-    }
-
-    /// 创建转发上下文
-    fn create_forwarding_context(
-        &self,
-        session: &Session,
-        ctx: &ProxyContext,
-    ) -> ForwardingContext {
-        let mut forwarding_ctx = ForwardingContext::new(
-            ctx.request_id.clone(),
-            ctx.upstream_type.clone().unwrap_or(UpstreamType::OpenAI),
-        );
-
-        // 设置用户信息
-        if let Some(ref username) = ctx.auth_result.username {
-            forwarding_ctx = forwarding_ctx.with_user_id(username.clone());
-        }
-
-        // 设置客户端IP
-        if let Some(client_addr) = session.client_addr() {
-            forwarding_ctx = forwarding_ctx.with_client_ip(format!("{:?}", client_addr));
-        }
-
-        // 设置适配器请求
-        if let Some(ref adapter_request) = ctx.adapter_request {
-            forwarding_ctx = forwarding_ctx.with_adapter_request(adapter_request.clone());
-        }
-
-        forwarding_ctx
-    }
-
-    /// 获取统计信息
-    pub async fn get_statistics(&self) -> crate::proxy::statistics::StatsSummary {
-        self.statistics_collector.get_stats_summary().await
-    }
-
-    /// 重置统计信息
-    pub async fn reset_statistics(&self) -> pingora_core::Result<()> {
-        self.statistics_collector.reset_all_stats().await
-            .map_err(|_| Error::new(ErrorType::InternalError))?;
-        Ok(())
+        path.starts_with("/api/") || path.starts_with("/admin/") || path == "/"
     }
 }
 
@@ -204,7 +71,8 @@ impl ProxyHttp for ProxyService {
 
     fn new_ctx(&self) -> Self::CTX {
         ProxyContext {
-            request_id: format!("req_{}", fastrand::u64(..)),
+            request_id: Uuid::new_v4().to_string(),
+            start_time: Instant::now(),
             ..Default::default()
         }
     }
@@ -214,21 +82,34 @@ impl ProxyHttp for ProxyService {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<bool> {
-        let req_header = session.req_header();
-        let path = req_header.uri.path();
-        let method = req_header.method.as_str();
+        let path = session.req_header().uri.path();
+        let method = session.req_header().method.as_str();
         
-        ctx.request_start = Some(Instant::now());
-        
-        tracing::info!(
-            "Processing request: {} {} (ID: {})",
-            method, path, ctx.request_id
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            method = %method,
+            path = %path,
+            "Processing AI proxy request"
         );
 
-        // 检查是否为管理API请求
-        if self.is_management_request(path) {
-            tracing::info!("Management request blocked: {} (ID: {})", path, ctx.request_id);
-            return Err(Error::explain(ErrorType::HTTPStatus(501), "Management API not implemented yet"));
+        // 透明代理设计：仅处理代理请求，其他全部拒绝
+        if !self.is_proxy_request(path) {
+            if self.is_management_request(path) {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    path = %path,
+                    "Management API request received on proxy port - should use port 9090"
+                );
+                return Err(Error::explain(
+                    ErrorType::HTTPStatus(404),
+                    r#"{"error":"Management APIs are available on management port (default: 9090)","code":"WRONG_PORT"}"#
+                ));
+            } else {
+                return Err(Error::explain(
+                    ErrorType::HTTPStatus(404),
+                    r#"{"error":"This endpoint only handles AI proxy requests (/v1/*, /proxy/*)","code":"NOT_PROXY_ENDPOINT"}"#
+                ));
+            }
         }
 
         // 处理CORS预检请求
@@ -236,152 +117,63 @@ impl ProxyHttp for ProxyService {
             return Err(Error::explain(ErrorType::HTTPStatus(200), "CORS preflight"));
         }
 
-        // 检查是否需要跳过认证
-        if self.auth_middleware.should_skip_auth(path) {
-            tracing::debug!("Skipping authentication for path: {} (ID: {})", path, ctx.request_id);
-            ctx.auth_result = AuthenticationResult::default();
-        } else {
-            // 执行认证
-            if let Some(auth_header) = req_header.headers.get("Authorization") {
-                if let Ok(auth_str) = auth_header.to_str() {
-                    // 创建认证上下文
-                    let mut auth_context = AuthContext {
-                        auth_result: None,
-                        resource_path: path.to_string(),
-                        method: method.to_string(),
-                        client_ip: session.client_addr()
-                            .map(|addr| format!("{:?}", addr)),
-                        user_agent: req_header.headers.get("User-Agent")
-                            .and_then(|h| h.to_str().ok())
-                            .map(|s| s.to_string()),
-                    };
-
-                    // 执行认证
-                    match self.auth_middleware.auth_service().authenticate(auth_str, &mut auth_context).await {
-                        Ok(auth_result) => {
-                            // 执行授权检查
-                            match self.auth_middleware.auth_service().authorize(&auth_result, &auth_context).await {
-                                Ok(_) => {
-                                    ctx.auth_result = auth_result.into();
-                                    tracing::debug!(
-                                        "Authentication and authorization successful for user: {} (ID: {})", 
-                                        ctx.auth_result.username.as_deref().unwrap_or("unknown"),
-                                        ctx.request_id
-                                    );
-                                }
-                                Err(auth_error) => {
-                                    tracing::warn!("Authorization failed: {} (ID: {})", auth_error, ctx.request_id);
-                                    return Err(Error::explain(ErrorType::HTTPStatus(403), "Access denied"));
-                                }
-                            }
-                        }
-                        Err(auth_error) => {
-                            tracing::warn!("Authentication failed: {} (ID: {})", auth_error, ctx.request_id);
-                            return Err(Error::explain(ErrorType::HTTPStatus(401), "Authentication failed"));
-                        }
+        // 使用AI代理处理器进行身份验证、速率限制和转发策略
+        match self.ai_handler.prepare_proxy_request(session, ctx).await {
+            Ok(_) => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "AI proxy request preparation completed successfully"
+                );
+                Ok(false) // 继续处理请求
+            }
+            Err(e) => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    "AI proxy request preparation failed"
+                );
+                
+                // 根据错误类型返回相应的HTTP状态码
+                match e {
+                    crate::error::ProxyError::Authentication { .. } => {
+                        let msg = e.to_string();
+                        Err(Error::explain(ErrorType::HTTPStatus(401), msg))
                     }
-                } else {
-                    tracing::warn!("Invalid authorization header (ID: {})", ctx.request_id);
-                    return Err(Error::explain(ErrorType::HTTPStatus(401), "Invalid authorization header"));
+                    crate::error::ProxyError::RateLimit { .. } => {
+                        let msg = e.to_string();
+                        Err(Error::explain(ErrorType::HTTPStatus(429), msg))
+                    }
+                    crate::error::ProxyError::BadGateway { .. } => {
+                        let msg = e.to_string();
+                        Err(Error::explain(ErrorType::HTTPStatus(502), msg))
+                    }
+                    _ => {
+                        Err(Error::explain(ErrorType::HTTPStatus(500), "Internal server error"))
+                    }
                 }
-            } else {
-                tracing::warn!("Missing Authorization header (ID: {})", ctx.request_id);
-                return Err(Error::explain(ErrorType::HTTPStatus(401), "Missing Authorization header"));
             }
         }
-
-        // 处理适配器请求
-        self.process_adapter_request(session, ctx)?;
-
-        // 创建转发上下文
-        let forwarding_context = self.create_forwarding_context(session, ctx);
-        ctx.forwarding_context = Some(forwarding_context);
-
-        Ok(false) // 继续处理请求
     }
 
     async fn upstream_peer(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        let _path = session.req_header().uri.path();
-        
-        // 获取上游类型
-        let upstream_type = ctx.upstream_type.as_ref()
-            .ok_or_else(|| Error::new_str("No upstream type detected"))?;
-        
-        // 选择上游服务器
-        let server = self.select_upstream_server(upstream_type)?;
-        
-        // 保存选中的服务器地址用于统计
-        ctx.selected_server = Some(server.address());
-
-        tracing::info!(
-            "Selected upstream {} for type {:?} (user: {}, ID: {})", 
-            server.address(),
-            upstream_type,
-            ctx.auth_result.username.as_deref().unwrap_or("anonymous"),
-            ctx.request_id
-        );
-
-        // 创建HttpPeer
-        let sni = server.host.clone();
-        let peer = Box::new(HttpPeer::new(&server.address(), server.use_tls, sni));
-        
-        Ok(peer)
+        // 使用AI代理处理器选择上游对等体
+        self.ai_handler.select_upstream_peer(ctx).await
+            .map_err(|_e| Error::new(ErrorType::InternalError))
     }
 
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        // 从适配器请求中应用修改
-        if let Some(ref adapter_req) = ctx.adapter_request {
-            // 更新请求头
-            for (name, value) in &adapter_req.headers {
-                upstream_request
-                    .insert_header(name.clone(), value.clone())
-                    .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set adapter header", e))?;
-            }
-
-            // 更新路径
-            if adapter_req.path != upstream_request.uri.path() {
-                // 在实际实现中可能需要重写URI
-                tracing::debug!("Path rewrite: {} -> {}", upstream_request.uri.path(), adapter_req.path);
-            }
-        }
-
-        // 添加请求ID头用于追踪
-        upstream_request
-            .insert_header("X-Request-ID", &ctx.request_id)
-            .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Request-ID header", e))?;
-
-        // 添加上游类型信息
-        if let Some(ref upstream_type) = ctx.upstream_type {
-            upstream_request
-                .insert_header("X-Upstream-Type", &format!("{:?}", upstream_type))
-                .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Upstream-Type header", e))?;
-        }
-
-        // 添加选中的服务器信息
-        if let Some(ref server) = ctx.selected_server {
-            upstream_request
-                .insert_header("X-Selected-Server", server)
-                .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Selected-Server header", e))?;
-        }
-
-        tracing::info!(
-            "Forwarding request to {:?} server {} (user: {}, ID: {})", 
-            ctx.upstream_type.as_ref().unwrap_or(&UpstreamType::OpenAI),
-            ctx.selected_server.as_deref().unwrap_or("unknown"),
-            ctx.auth_result.username.as_deref().unwrap_or("anonymous"),
-            ctx.request_id
-        );
-        
-        Ok(())
+        // 使用AI代理处理器过滤上游请求 - 替换认证信息和隐藏源信息
+        self.ai_handler.filter_upstream_request(session, upstream_request, ctx).await
+            .map_err(|_e| Error::new(ErrorType::InternalError))
     }
 
     async fn response_filter(
@@ -390,91 +182,20 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        // 记录响应时间
-        let response_time = ctx.request_start.map(|start| start.elapsed());
+        // 使用AI代理处理器过滤上游响应
+        self.ai_handler.filter_upstream_response(upstream_response, ctx).await
+            .map_err(|_e| Error::new(ErrorType::InternalError))?;
 
-        // 添加代理标识头
-        upstream_response
-            .insert_header("X-Proxy-By", "AI-Proxy-Pingora")
-            .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set proxy header", e))?;
+        // 记录响应时间和状态
+        let response_time = ctx.start_time.elapsed();
+        let status_code = upstream_response.status.as_u16();
         
-        // 添加请求ID
-        upstream_response
-            .insert_header("X-Request-ID", &ctx.request_id)
-            .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Request-ID header", e))?;
-
-        // 添加上游类型信息
-        if let Some(ref upstream_type) = ctx.upstream_type {
-            upstream_response
-                .insert_header("X-Upstream-Type", &format!("{:?}", upstream_type))
-                .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Upstream-Type header", e))?;
-        }
-
-        // 添加选中的服务器信息
-        if let Some(ref server) = ctx.selected_server {
-            upstream_response
-                .insert_header("X-Selected-Server", server)
-                .map_err(|e| Error::because(ErrorType::InternalError, "Failed to set Selected-Server header", e))?;
-        }
-
-        // 移除敏感头
-        upstream_response.remove_header("Server");
-        upstream_response.remove_header("X-Powered-By");
-
-        // 创建转发结果并收集统计
-        if let Some(ref forwarding_context) = ctx.forwarding_context {
-            let forwarding_result = ForwardingResult {
-                success: upstream_response.status.is_success(),
-                response_time: response_time.unwrap_or_default(),
-                status_code: Some(upstream_response.status.as_u16()),
-                error_message: if upstream_response.status.is_success() { None } else { 
-                    Some(format!("HTTP {}", upstream_response.status.as_u16()))
-                },
-                retry_count: 0, // 这里应该从转发上下文获取
-                bytes_transferred: 0, // 这里应该计算实际传输的字节数
-                upstream_server: ctx.selected_server.clone(),
-            };
-
-            // 更新转发结果到上下文
-            ctx.forwarding_result = Some(forwarding_result.clone());
-
-            // 使用请求转发器处理响应
-            if let Err(e) = self.request_forwarder.process_response(
-                upstream_response, 
-                forwarding_context, 
-                &forwarding_result
-            ).await {
-                tracing::error!("Failed to process response: {}", e);
-            }
-
-            // 收集统计信息
-            if let Err(e) = self.statistics_collector.record_request_completion(
-                forwarding_context, 
-                &forwarding_result
-            ).await {
-                tracing::error!("Failed to record statistics: {}", e);
-            }
-        }
-
-        // 记录成功或失败统计到上游管理器
-        if let (Some(upstream_type), Some(server)) = (&ctx.upstream_type, &ctx.selected_server) {
-            if upstream_response.status.is_success() {
-                if let Some(duration) = response_time {
-                    self.upstream_manager.record_success(upstream_type, server, duration);
-                }
-            } else {
-                self.upstream_manager.record_failure(upstream_type, server);
-            }
-        }
-
         tracing::info!(
-            "Response processed for {:?} request (server: {}, user: {}, ID: {}, Status: {}, Duration: {:?})", 
-            ctx.upstream_type.as_ref().unwrap_or(&UpstreamType::OpenAI),
-            ctx.selected_server.as_deref().unwrap_or("unknown"),
-            ctx.auth_result.username.as_deref().unwrap_or("anonymous"),
-            ctx.request_id, 
-            upstream_response.status,
-            response_time
+            request_id = %ctx.request_id,
+            status = status_code,
+            response_time_ms = response_time.as_millis(),
+            tokens_used = ctx.tokens_used,
+            "AI proxy response processed"
         );
         
         Ok(())
@@ -483,39 +204,24 @@ impl ProxyHttp for ProxyService {
     async fn logging(
         &self,
         _session: &mut Session,
-        _e: Option<&Error>,
+        e: Option<&Error>,
         ctx: &mut Self::CTX,
     ) {
-        let upstream_info = ctx.upstream_type.as_ref()
-            .map(|t| format!("type: {:?}", t))
-            .unwrap_or_else(|| "no upstream info".to_string());
-
-        let server_info = ctx.selected_server.as_deref().unwrap_or("unknown");
-        let duration = ctx.request_start.map(|start| start.elapsed());
-
-        // 记录失败统计
-        if let Some(error) = _e {
-            if let (Some(upstream_type), Some(server)) = (&ctx.upstream_type, &ctx.selected_server) {
-                self.upstream_manager.record_failure(upstream_type, server);
-            }
-
+        let duration = ctx.start_time.elapsed();
+        
+        if let Some(error) = e {
             tracing::error!(
-                "Request failed: {} (ID: {}, Upstream: {}, Server: {}, User: {}, Duration: {:?})", 
-                error, 
-                ctx.request_id, 
-                upstream_info,
-                server_info,
-                ctx.auth_result.username.as_deref().unwrap_or("anonymous"),
-                duration
+                request_id = %ctx.request_id,
+                error = %error,
+                duration_ms = duration.as_millis(),
+                "AI proxy request failed"
             );
         } else {
-            tracing::info!(
-                "Request completed successfully (ID: {}, Upstream: {}, Server: {}, User: {}, Duration: {:?})", 
-                ctx.request_id, 
-                upstream_info,
-                server_info,
-                ctx.auth_result.username.as_deref().unwrap_or("anonymous"),
-                duration
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                duration_ms = duration.as_millis(),
+                tokens_used = ctx.tokens_used,
+                "AI proxy request completed successfully"
             );
         }
     }
@@ -524,98 +230,34 @@ impl ProxyHttp for ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::fixtures::TestConfig;
-    use crate::testing::helpers::init_test_env;
 
     #[test]
-    fn test_proxy_service_creation() {
-        init_test_env();
+    fn test_path_detection() {
+        let config = Arc::new(crate::config::AppConfig::default());
+        let db = Arc::new(sea_orm::DatabaseConnection::default());
+        
+        // 创建内存缓存管理器用于测试
+        let cache_config = crate::config::CacheConfig {
+            cache_type: crate::config::CacheType::Memory,
+            memory_max_entries: 1000,
+            default_ttl: 300,
+            enabled: true,
+        };
+        let cache = Arc::new(UnifiedCacheManager::new(&cache_config, "").unwrap());
+        let auth_manager = Arc::new(crate::auth::unified::UnifiedAuthManager::default());
+        
+        let service = ProxyService::new(config, db, cache, auth_manager).unwrap();
 
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service);
-
-        assert!(service.is_ok());
-    }
-
-    #[test]
-    fn test_upstream_server_selection() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service).unwrap();
-
-        // 测试上游服务器选择
-        assert!(service.select_upstream_server(&UpstreamType::OpenAI).is_ok());
-        assert!(service.select_upstream_server(&UpstreamType::Anthropic).is_ok());
-        assert!(service.select_upstream_server(&UpstreamType::GoogleGemini).is_ok());
-    }
-
-    #[test]
-    fn test_adapter_manager_integration() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service).unwrap();
-
-        // 测试适配器检测
-        assert!(service.adapter_manager.supports_endpoint(&UpstreamType::OpenAI, "/v1/chat/completions"));
-        assert!(!service.adapter_manager.supports_endpoint(&UpstreamType::OpenAI, "/unknown/endpoint"));
-    }
-
-    #[test]
-    fn test_management_request_detection() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service).unwrap();
-
+        // 测试代理请求检测
+        assert!(service.is_proxy_request("/v1/chat/completions"));
+        assert!(service.is_proxy_request("/proxy/openai/models"));
+        assert!(!service.is_proxy_request("/api/health"));
+        assert!(!service.is_proxy_request("/admin/dashboard"));
+        
+        // 测试管理请求检测
         assert!(service.is_management_request("/api/users"));
         assert!(service.is_management_request("/admin/dashboard"));
-        assert!(!service.is_management_request("/health")); // health 不再是管理请求，而是跳过认证的路径
+        assert!(service.is_management_request("/"));
         assert!(!service.is_management_request("/v1/chat/completions"));
-    }
-
-    #[test]
-    fn test_auth_middleware_integration() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service).unwrap();
-
-        // 测试跳过认证的路径
-        assert!(service.auth_middleware.should_skip_auth("/health"));
-        assert!(service.auth_middleware.should_skip_auth("/metrics"));
-        assert!(service.auth_middleware.should_skip_auth("/ping"));
-        assert!(!service.auth_middleware.should_skip_auth("/v1/chat/completions"));
-    }
-
-    #[test]
-    fn test_smart_routing_integration() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let auth_service = Arc::new(TestConfig::auth_service());
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
-        let service = ProxyService::new(config, auth_service, health_service).unwrap();
-
-        // 测试路由决策 - 这里我们需要通过 SmartRouter 进行路由
-        let headers: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        
-        // 由于 router 是私有的，我们测试通过服务选择的结果
-        // 应该能够为所有主要提供商选择负载均衡器
-        // TODO: 添加正确的路由测试
-        // assert!(service.select_load_balancer("OpenAI").is_some());
-        // assert!(service.select_load_balancer("Anthropic").is_some());
-        // assert!(service.select_load_balancer("GoogleGemini").is_some());
     }
 }

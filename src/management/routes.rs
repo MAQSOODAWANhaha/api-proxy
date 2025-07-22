@@ -74,7 +74,7 @@ fn user_routes() -> Router<AppState> {
     Router::new()
         .route("/", get(crate::management::handlers::users::list_users))
         .route("/", post(crate::management::handlers::users::create_user))
-        .route("/:id", get(crate::management::handlers::users::get_user))
+        .route("/{id}", get(crate::management::handlers::users::get_user))
 }
 
 /// API密钥管理路由
@@ -82,6 +82,6 @@ fn auth_routes() -> Router<AppState> {
     Router::new()
         .route("/", get(crate::management::handlers::auth::list_api_keys))
         .route("/", post(crate::management::handlers::auth::create_api_key))
-        .route("/:id", get(crate::management::handlers::auth::get_api_key))
-        .route("/:id/revoke", post(crate::management::handlers::auth::revoke_api_key))
+        .route("/{id}", get(crate::management::handlers::auth::get_api_key))
+        .route("/{id}/revoke", post(crate::management::handlers::auth::revoke_api_key))
 }

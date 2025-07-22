@@ -131,6 +131,22 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
+
+    /// 速率限制错误
+    #[error("速率限制: {message}")]
+    RateLimit {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 网关错误
+    #[error("网关错误: {message}")]
+    BadGateway {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
 }
 
 impl ProxyError {
@@ -272,6 +288,22 @@ impl ProxyError {
     /// 创建认证错误
     pub fn authentication<T: Into<String>>(message: T) -> Self {
         Self::Authentication {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建速率限制错误
+    pub fn rate_limit<T: Into<String>>(message: T) -> Self {
+        Self::RateLimit {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建网关错误
+    pub fn bad_gateway<T: Into<String>>(message: T) -> Self {
+        Self::BadGateway {
             message: message.into(),
             source: None,
         }

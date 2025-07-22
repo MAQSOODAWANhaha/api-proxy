@@ -33,9 +33,9 @@ pub async fn get_system_info(State(state): State<AppState>) -> Result<Json<Value
             "target": std::env::consts::ARCH
         },
         "configuration": {
-            "server_port": state.config.server.port,
-            "https_port": state.config.server.https_port,
-            "workers": state.config.server.workers,
+            "server_port": state.config.server.as_ref().map_or(8080, |s| s.port),
+            "https_port": state.config.server.as_ref().map_or(0, |s| s.https_port),
+            "workers": state.config.server.as_ref().map_or(1, |s| s.workers),
             "database_url": mask_sensitive_info(&state.config.database.url)
         }
     });

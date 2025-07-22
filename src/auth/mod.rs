@@ -8,6 +8,7 @@ pub mod middleware;
 pub mod jwt;
 pub mod api_key;
 pub mod permissions;
+pub mod unified;
 
 pub use types::*;
 pub use service::AuthService;
@@ -15,6 +16,7 @@ pub use middleware::AuthMiddleware;
 pub use jwt::JwtManager;
 pub use api_key::ApiKeyManager;
 pub use permissions::{Permission, Role};
+pub use unified::{UnifiedAuthManager, AuthRequest, CacheStats, create_unified_auth_manager};
 
 
 /// 认证结果

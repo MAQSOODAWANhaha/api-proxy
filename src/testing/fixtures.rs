@@ -300,12 +300,12 @@ impl TestConfig {
     /// 获取测试用的应用配置
     pub fn app_config() -> crate::config::AppConfig {
         crate::config::AppConfig {
-            server: crate::config::ServerConfig {
+            server: Some(crate::config::ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 0, // 使用随机端口
                 https_port: 0,
                 workers: 1,
-            },
+            }),
             database: crate::config::DatabaseConfig {
                 url: ":memory:".to_string(), // 内存数据库
                 max_connections: 1,
@@ -323,10 +323,20 @@ impl TestConfig {
                 default_ttl: 300,
                 max_connections: 1,
             },
-            tls: crate::config::TlsConfig {
+            tls: Some(crate::config::TlsConfig {
                 cert_path: "./test_certs".to_string(),
                 acme_email: "test@example.com".to_string(),
                 domains: vec!["localhost".to_string()],
+            }),
+            dual_port: crate::config::DualPortConfig {
+                proxy_port: 8080,
+                management_port: 9090,
+                enable_dual_port: true,
+            },
+            services: crate::config::ServicesConfig {
+                enable_health_check: true,
+                enable_metrics: true,
+                enable_statistics: true,
             },
         }
     }
@@ -497,7 +507,7 @@ mod tests {
     #[test]
     fn test_test_config() {
         let config = TestConfig::app_config();
-        assert_eq!(config.server.host, "127.0.0.1");
+        assert_eq!(config.server.as_ref().unwrap().host, "127.0.0.1");
         assert_eq!(config.database.url, ":memory:");
         assert_eq!(config.redis.database, 15);
     }

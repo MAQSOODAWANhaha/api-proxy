@@ -2,7 +2,7 @@
 //!
 //! 收集和聚合系统统计信息
 
-use crate::cache::integration::CacheManager;
+use crate::cache::abstract_cache::UnifiedCacheManager;
 use crate::cache::keys::CacheKeyBuilder;
 use crate::config::AppConfig;
 use anyhow::Result;
@@ -18,7 +18,7 @@ pub struct StatisticsService {
     /// 应用配置
     config: Arc<AppConfig>,
     /// 缓存管理器
-    cache_manager: Arc<CacheManager>,
+    cache_manager: Arc<UnifiedCacheManager>,
     /// 内存统计数据
     memory_stats: Arc<RwLock<MemoryStats>>,
 }
@@ -134,7 +134,7 @@ pub struct TimeRangeQuery {
 
 impl StatisticsService {
     /// 创建新的统计服务
-    pub fn new(config: Arc<AppConfig>, cache_manager: Arc<CacheManager>) -> Self {
+    pub fn new(config: Arc<AppConfig>, cache_manager: Arc<UnifiedCacheManager>) -> Self {
         Self {
             config,
             cache_manager,
@@ -346,7 +346,7 @@ impl StatisticsService {
         let stats_key = CacheKeyBuilder::request_stats(&date_key, hour);
         
         // 获取现有统计数据或创建新的
-        let mut cached_stats: CachedRequestStats = match self.cache_manager.get(&stats_key).await {
+        let mut cached_stats: CachedRequestStats = match self.cache_manager.get(&stats_key.build()).await {
             Ok(Some(stats)) => stats,
             Ok(None) => CachedRequestStats {
                 date: date_key.clone(),
@@ -443,7 +443,7 @@ impl StatisticsService {
     pub async fn get_cached_stats(&self, date: &str, hour: Option<u8>) -> Result<Option<CachedRequestStats>> {
         if let Some(h) = hour {
             let stats_key = CacheKeyBuilder::request_stats(date, h);
-            self.cache_manager.get(&stats_key).await.map_err(|e| e.into())
+            self.cache_manager.get(&stats_key.build()).await.map_err(|e| e.into())
         } else {
             // 如果没有指定小时，返回当天的汇总数据
             let mut daily_stats = None;
@@ -451,7 +451,7 @@ impl StatisticsService {
             // 聚合24小时的数据
             for h in 0..24u8 {
                 let stats_key = CacheKeyBuilder::request_stats(date, h);
-                if let Ok(Some(hourly_stats)) = self.cache_manager.get::<CachedRequestStats>(&stats_key).await {
+                if let Ok(Some(hourly_stats)) = self.cache_manager.get::<CachedRequestStats>(&stats_key.build()).await {
                     match &mut daily_stats {
                         Some(total) => {
                             self.merge_stats(total, &hourly_stats);

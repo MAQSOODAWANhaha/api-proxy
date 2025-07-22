@@ -242,27 +242,37 @@ impl ConfigManager {
         let parts: Vec<&str> = path.split('.').collect();
         
         match parts.as_slice() {
-            ["server", "host"] => config.server.host = value.to_string(),
+            ["server", "host"] => {
+                if let Some(ref mut server) = config.server {
+                    server.host = value.to_string();
+                }
+            }
             ["server", "port"] => {
-                config.server.port = value.parse()
+                if let Some(ref mut server) = config.server {
+                    server.port = value.parse()
                     .map_err(|e| crate::error::ProxyError::config_with_source(
                         format!("无效的端口号: {}", value),
                         e
                     ))?;
+                }
             }
             ["server", "https", "port"] | ["server", "httpsport"] => {
-                config.server.https_port = value.parse()
+                if let Some(ref mut server) = config.server {
+                    server.https_port = value.parse()
                     .map_err(|e| crate::error::ProxyError::config_with_source(
                         format!("无效的HTTPS端口号: {}", value),
                         e
                     ))?;
+                }
             }
             ["server", "workers"] => {
-                config.server.workers = value.parse()
+                if let Some(ref mut server) = config.server {
+                    server.workers = value.parse()
                     .map_err(|e| crate::error::ProxyError::config_with_source(
                         format!("无效的工作线程数: {}", value),
                         e
                     ))?;
+                }
             }
             ["database", "url"] => config.database.url = value.to_string(),
             ["database", "max", "connections"] | ["database", "maxconnections"] => {
@@ -281,10 +291,14 @@ impl ConfigManager {
                     ))?;
             }
             ["tls", "cert", "path"] | ["tls", "certpath"] => {
-                config.tls.cert_path = value.to_string();
+                if let Some(ref mut tls) = config.tls {
+                    tls.cert_path = value.to_string();
+                }
             }
             ["tls", "acme", "email"] | ["tls", "acmeemail"] => {
-                config.tls.acme_email = value.to_string();
+                if let Some(ref mut tls) = config.tls {
+                    tls.acme_email = value.to_string();
+                }
             }
             _ => {
                 warn!("未知的配置路径，忽略环境变量覆盖: {}", path);

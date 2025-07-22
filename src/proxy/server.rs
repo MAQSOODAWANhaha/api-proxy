@@ -5,11 +5,13 @@
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::proxy::service::ProxyService;
-use crate::auth::{AuthService, jwt::JwtManager, api_key::ApiKeyManager, types::AuthConfig};
+use crate::auth::{AuthService, jwt::JwtManager, api_key::ApiKeyManager, types::AuthConfig, unified::UnifiedAuthManager};
+use crate::cache::UnifiedCacheManager;
 use pingora_core::prelude::*;
 use pingora_core::server::configuration::Opt;
 use pingora_proxy::http_proxy_service;
 use std::sync::Arc;
+use sea_orm::DatabaseConnection;
 
 /// Pingora 代理服务器
 pub struct ProxyServer {
@@ -48,32 +50,61 @@ impl ProxyServer {
         // server.configuration.error_log = Some(format!("logs/proxy-error.log"));
         // server.configuration.pid_file = Some(format!("logs/proxy.pid"));
 
-        // 创建认证服务
-        let auth_service = Self::create_auth_service().await
-            .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
+        // 确保数据库路径存在
+        self.config.database.ensure_database_path()
+            .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
 
-        // 创建健康检查服务
-        let health_service = Arc::new(crate::health::HealthCheckService::new(None));
+        // 创建数据库连接
+        let db_url = self.config.database.get_connection_url()
+            .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
+        
+        let db = Arc::new(
+            sea_orm::Database::connect(&db_url)
+                .await
+                .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
+        );
+
+        // 创建统一缓存管理器
+        let cache = Arc::new(
+            UnifiedCacheManager::new(&self.config.cache, &self.config.redis.url)
+                .map_err(|e| ProxyError::cache(format!("Failed to create cache manager: {}", e)))?
+        );
+
+        // 创建认证配置和服务
+        let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
+        let auth_service = Self::create_auth_service_with_db(db.clone(), auth_config.clone()).await
+            .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
+        
+        // 创建统一认证管理器
+        let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
 
         // 创建代理服务
-        let proxy_service = ProxyService::new(Arc::clone(&self.config), auth_service.clone(), health_service.clone())
-            .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
+        let proxy_service = ProxyService::new(
+            Arc::clone(&self.config),
+            db.clone(),
+            cache.clone(),
+            auth_manager.clone()
+        ).map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 配置 HTTP 代理服务
         let mut http_proxy = http_proxy_service(&server.configuration, proxy_service);
 
         http_proxy.add_tcp(&format!(
             "{}:{}",
-            self.config.server.host, self.config.server.port
+            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host), 
+            self.config.server.as_ref().map_or(8080, |s| s.port)
         ));
 
         server.add_service(http_proxy);
 
         // 如果启用了 HTTPS，添加 HTTPS 监听器
-        if self.config.server.https_port > 0 {
-            let health_service_https = Arc::new(crate::health::HealthCheckService::new(None));
-            let proxy_service_https = ProxyService::new(Arc::clone(&self.config), auth_service.clone(), health_service_https.clone())
-                .map_err(|e| ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e)))?;
+        if self.config.server.as_ref().map_or(0, |s| s.https_port) > 0 {
+            let proxy_service_https = ProxyService::new(
+                Arc::clone(&self.config),
+                db.clone(),
+                cache.clone(),
+                auth_manager.clone()
+            ).map_err(|e| ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e)))?;
             
             let _https_proxy = http_proxy_service(&server.configuration, proxy_service_https);
 
@@ -93,8 +124,8 @@ impl ProxyServer {
 
         tracing::info!(
             "Pingora proxy server initialized on {}:{}",
-            self.config.server.host,
-            self.config.server.port
+            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
+            self.config.server.as_ref().map_or(8080, |s| s.port)
         );
 
         Ok(())
@@ -137,18 +168,11 @@ impl ProxyServer {
         &self.config
     }
 
-    /// 创建认证服务
-    async fn create_auth_service() -> Result<Arc<AuthService>> {
-        // 创建数据库连接
-        let db = Arc::new(
-            sea_orm::Database::connect("sqlite::memory:")
-                .await
-                .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
-        );
-
-        // 创建认证配置
-        let auth_config = Arc::new(AuthConfig::default());
-
+    /// 创建认证服务（使用给定的数据库连接）
+    async fn create_auth_service_with_db(
+        db: Arc<DatabaseConnection>,
+        auth_config: Arc<AuthConfig>
+    ) -> Result<Arc<AuthService>> {
         // 创建 JWT 管理器
         let jwt_manager = Arc::new(
             JwtManager::new(auth_config.clone())
@@ -168,8 +192,8 @@ impl ProxyServer {
 impl std::fmt::Debug for ProxyServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProxyServer")
-            .field("host", &self.config.server.host)
-            .field("port", &self.config.server.port)
+            .field("host", &self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host))
+            .field("port", &self.config.server.as_ref().map_or(8080, |s| s.port))
             .field("is_running", &self.is_running())
             .finish()
     }

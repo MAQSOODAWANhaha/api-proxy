@@ -213,6 +213,8 @@ pub struct AuthConfig {
     pub max_login_attempts: u32,
     /// 登录锁定时间（秒）
     pub login_lockout_duration: i64,
+    /// 认证缓存TTL（分钟）
+    pub cache_ttl_minutes: u32,
 }
 
 impl Default for AuthConfig {
@@ -230,6 +232,7 @@ impl Default for AuthConfig {
             session_timeout: 3600, // 1 小时
             max_login_attempts: 5,
             login_lockout_duration: 900, // 15 分钟
+            cache_ttl_minutes: 10, // 10 分钟缓存
         }
     }
 }
@@ -253,6 +256,12 @@ pub enum AuthError {
     AccountInactive,
     /// 速率限制超出
     RateLimitExceeded,
+    /// 缺少认证凭据
+    MissingCredentials,
+    /// 无效的认证凭据
+    InvalidCredentials,
+    /// 令牌已被加入黑名单
+    TokenBlacklisted,
     /// 内部错误
     InternalError(String),
 }
@@ -268,6 +277,9 @@ impl std::fmt::Display for AuthError {
             AuthError::AccountLocked => write!(f, "账户已被锁定"),
             AuthError::AccountInactive => write!(f, "账户未激活"),
             AuthError::RateLimitExceeded => write!(f, "请求频率超出限制"),
+            AuthError::MissingCredentials => write!(f, "缺少认证凭据"),
+            AuthError::InvalidCredentials => write!(f, "无效的认证凭据"),
+            AuthError::TokenBlacklisted => write!(f, "令牌已被加入黑名单"),
             AuthError::InternalError(msg) => write!(f, "内部错误: {}", msg),
         }
     }

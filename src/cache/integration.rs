@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn, error};
 use std::sync::Arc;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, PaginatorTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
 use crate::{config::RedisConfig, error::Result};

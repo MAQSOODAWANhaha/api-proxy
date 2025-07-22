@@ -17,7 +17,7 @@ use crate::auth::{
     types::{AuthConfig, TokenType, UserInfo, AuditLogEntry, AuditEventType, AuditResult},
     permissions::{Permission, PermissionChecker},
 };
-use crate::cache::integration::CacheManager;
+use crate::cache::abstract_cache::UnifiedCacheManager;
 use crate::cache::keys::CacheKeyBuilder;
 use crate::error::Result;
 
@@ -56,7 +56,7 @@ pub struct AuthService {
     /// Authentication configuration
     config: Arc<AuthConfig>,
     /// Cache manager for token blacklist
-    cache_manager: Option<Arc<CacheManager>>,
+    cache_manager: Option<Arc<UnifiedCacheManager>>,
     /// Audit log cache
     audit_cache: tokio::sync::RwLock<Vec<AuditLogEntry>>,
 }
@@ -85,7 +85,7 @@ impl AuthService {
         api_key_manager: Arc<ApiKeyManager>,
         db: Arc<DatabaseConnection>,
         config: Arc<AuthConfig>,
-        cache_manager: Arc<CacheManager>,
+        cache_manager: Arc<UnifiedCacheManager>,
     ) -> Self {
         Self {
             jwt_manager,
@@ -123,7 +123,7 @@ impl AuthService {
     }
 
     /// Authenticate using JWT token
-    async fn authenticate_jwt(&self, token: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_jwt(&self, token: &str, _context: &AuthContext) -> Result<AuthResult> {
         let claims = self.jwt_manager.validate_token(token)?;
         
         let user_id = claims.user_id()
@@ -144,7 +144,7 @@ impl AuthService {
     }
 
     /// Authenticate using API key
-    async fn authenticate_api_key(&self, api_key: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_api_key(&self, api_key: &str, _context: &AuthContext) -> Result<AuthResult> {
         let validation_result = self.api_key_manager.validate_api_key(api_key).await?;
 
         Ok(AuthResult {
@@ -158,7 +158,7 @@ impl AuthService {
     }
 
     /// Authenticate using basic authentication
-    async fn authenticate_basic(&self, username: &str, password: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_basic(&self, username: &str, password: &str, _context: &AuthContext) -> Result<AuthResult> {
         // Query user from database
         let user = Users::find()
             .filter(users::Column::Username.eq(username))
@@ -314,7 +314,7 @@ impl AuthService {
     pub async fn is_token_blacklisted(&self, jti: &str) -> bool {
         if let Some(cache_manager) = &self.cache_manager {
             let blacklist_key = CacheKeyBuilder::auth_token(jti);
-            match cache_manager.exists(&blacklist_key).await {
+            match cache_manager.exists(&blacklist_key.build()).await {
                 Ok(exists) => {
                     if exists {
                         tracing::debug!("Token found in blacklist: {}", jti);

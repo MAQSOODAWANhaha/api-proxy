@@ -23,7 +23,8 @@ connection_timeout = 5
 default_ttl = 300
 max_connections = 1
 
-[tls]
-cert_path = "./test_certs"
-acme_email = "test@example.com"
-domains = ["localhost", "127.0.0.1"]
+[services]
+management = true
+proxy = true
+health_check = true
+monitoring = true

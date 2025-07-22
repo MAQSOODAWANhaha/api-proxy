@@ -15,6 +15,7 @@ pub mod providers;
 pub mod cache;
 pub mod utils;
 pub mod error;
+pub mod dual_port_setup;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

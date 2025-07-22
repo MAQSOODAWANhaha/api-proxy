@@ -15,8 +15,15 @@ query_timeout = 60
 [redis]
 url = "redis://redis:6379"
 pool_size = 50
+host = "redis"
+port = 6379
+database = 0
+connection_timeout = 10
+default_ttl = 3600
+max_connections = 50
 
-[tls]
-cert_path = "/etc/ssl/certs"
-acme_email = "admin@yourdomain.com"
-domains = ["api.yourdomain.com", "yourdomain.com"]
+[services]
+management = true
+proxy = true
+health_check = true
+monitoring = true
