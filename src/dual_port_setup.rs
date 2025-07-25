@@ -68,8 +68,8 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             shared_services.statistics_service.clone(),
         ).map_err(|e| crate::error::ProxyError::server_init(format!("Failed to create management server: {}", e)))?;
 
-        // 创建代理服务器
-        let proxy_server = PingoraProxyServer::new((*config).clone());
+        // 创建代理服务器，传递数据库连接
+        let proxy_server = PingoraProxyServer::new_with_db((*config).clone(), db.clone());
 
         info!("🎯 Starting both servers concurrently...");
         

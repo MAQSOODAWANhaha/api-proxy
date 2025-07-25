@@ -20,6 +20,8 @@ use super::service::ProxyService;
 pub struct PingoraProxyServer {
     config: Arc<AppConfig>,
     tls_manager: Option<Arc<TlsCertificateManager>>,
+    /// 共享数据库连接
+    db: Option<Arc<sea_orm::DatabaseConnection>>,
 }
 
 impl PingoraProxyServer {
@@ -50,7 +52,15 @@ impl PingoraProxyServer {
         Self {
             config: config_arc,
             tls_manager,
+            db: None,
         }
+    }
+
+    /// 创建新的代理服务器（带数据库连接）
+    pub fn new_with_db(config: AppConfig, db: Arc<sea_orm::DatabaseConnection>) -> Self {
+        let mut server = Self::new(config);
+        server.db = Some(db);
+        server
     }
 
     /// 启动服务器
@@ -67,21 +77,27 @@ impl PingoraProxyServer {
         info!("Bootstrapping Pingora server...");
         server.bootstrap();
 
-        // 确保数据库路径存在
-        info!("Setting up database path...");
-        self.config.database.ensure_database_path()
-            .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
+        // 使用共享数据库连接或创建新连接
+        let db = if let Some(shared_db) = &self.db {
+            info!("Using shared database connection...");
+            shared_db.clone()
+        } else {
+            // 确保数据库路径存在
+            info!("Setting up database path...");
+            self.config.database.ensure_database_path()
+                .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
 
-        // 创建数据库连接
-        info!("Creating database connection...");
-        let db_url = self.config.database.get_connection_url()
-            .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
-        
-        let db = Arc::new(
-            sea_orm::Database::connect(&db_url)
-                .await
-                .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
-        );
+            // 创建数据库连接
+            info!("Creating database connection...");
+            let db_url = self.config.database.get_connection_url()
+                .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
+            
+            Arc::new(
+                sea_orm::Database::connect(&db_url)
+                    .await
+                    .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
+            )
+        };
 
         // 创建统一缓存管理器
         info!("Creating unified cache manager...");
@@ -168,21 +184,27 @@ impl PingoraProxyServer {
 
         // 在运行时中执行异步初始化
         let ai_proxy = rt.block_on(async {
-            // 确保数据库路径存在
-            info!("Setting up database path...");
-            self.config.database.ensure_database_path()
-                .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
+            // 使用共享数据库连接或创建新连接
+            let db = if let Some(shared_db) = &self.db {
+                info!("Using shared database connection...");
+                shared_db.clone()
+            } else {
+                // 确保数据库路径存在
+                info!("Setting up database path...");
+                self.config.database.ensure_database_path()
+                    .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
 
-            // 创建数据库连接
-            info!("Creating database connection...");
-            let db_url = self.config.database.get_connection_url()
-                .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
-            
-            let db = Arc::new(
-                sea_orm::Database::connect(&db_url)
-                    .await
-                    .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
-            );
+                // 创建数据库连接
+                info!("Creating database connection...");
+                let db_url = self.config.database.get_connection_url()
+                    .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
+                
+                Arc::new(
+                    sea_orm::Database::connect(&db_url)
+                        .await
+                        .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
+                )
+            };
 
             // 创建统一缓存管理器
             info!("Creating unified cache manager...");
