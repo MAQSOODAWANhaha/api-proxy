@@ -8,3 +8,4 @@ pub mod adapters;
 pub mod statistics;
 pub mod users;
 pub mod auth;
+pub mod health;

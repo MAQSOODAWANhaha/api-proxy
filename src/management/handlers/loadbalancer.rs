@@ -328,13 +328,238 @@ fn parse_base_url(base_url: &str) -> (String, u16, bool) {
     }
 }
 
+/// 更改调度策略请求
+#[derive(Debug, Deserialize)]
+pub struct ChangeStrategyRequest {
+    /// 上游类型
+    pub upstream_type: String,
+    /// 新的调度策略
+    pub strategy: String,
+}
+
+/// 更改调度策略响应
+#[derive(Debug, Serialize)]
+pub struct ChangeStrategyResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 消息
+    pub message: String,
+    /// 旧策略
+    pub old_strategy: Option<String>,
+    /// 新策略
+    pub new_strategy: String,
+}
+
+/// 更改负载均衡调度策略
+pub async fn change_strategy(
+    State(state): State<AppState>,
+    Json(request): Json<ChangeStrategyRequest>,
+) -> Result<Json<ChangeStrategyResponse>, StatusCode> {
+    // 验证策略有效性
+    let strategy = match request.strategy.to_lowercase().as_str() {
+        "round_robin" => crate::scheduler::types::SchedulingStrategy::RoundRobin,
+        "weighted" => crate::scheduler::types::SchedulingStrategy::Weighted,
+        "health_based" => crate::scheduler::types::SchedulingStrategy::HealthBased,
+        _ => {
+            return Ok(Json(ChangeStrategyResponse {
+                success: false,
+                message: format!("Invalid strategy: {}. Supported strategies: round_robin, weighted, health_based", request.strategy),
+                old_strategy: None,
+                new_strategy: request.strategy,
+            }));
+        }
+    };
+
+    // 解析上游类型
+    let upstream_type = match request.upstream_type.to_lowercase().as_str() {
+        "openai" => UpstreamType::OpenAI,
+        "anthropic" | "claude" => UpstreamType::Anthropic,
+        "gemini" | "google" => UpstreamType::GoogleGemini,
+        custom => UpstreamType::Custom(custom.to_string()),
+    };
+
+    // 应用策略变更到负载均衡管理器
+    match state.load_balancer_manager.change_strategy(upstream_type, strategy).await {
+        Ok(old_strategy) => {
+            info!(
+                "Successfully changed strategy for {} from {:?} to {:?}",
+                request.upstream_type, old_strategy, strategy
+            );
+            Ok(Json(ChangeStrategyResponse {
+                success: true,
+                message: format!("Strategy changed successfully for {}", request.upstream_type),
+                old_strategy: old_strategy.map(|s| format!("{:?}", s)),
+                new_strategy: format!("{:?}", strategy),
+            }))
+        }
+        Err(e) => {
+            warn!(
+                "Failed to change strategy for {}: {}",
+                request.upstream_type, e
+            );
+            Ok(Json(ChangeStrategyResponse {
+                success: false,
+                message: format!("Failed to change strategy: {}", e),
+                old_strategy: None,
+                new_strategy: request.strategy,
+            }))
+        }
+    }
+}
+
+/// 服务器操作请求
+#[derive(Debug, Deserialize)]
+pub struct ServerActionRequest {
+    /// 服务器ID
+    pub server_id: String,
+    /// 操作类型: "enable", "disable", "remove"
+    pub action: String,
+}
+
+/// 服务器操作响应
+#[derive(Debug, Serialize)]
+pub struct ServerActionResponse {
+    /// 是否成功
+    pub success: bool,
+    /// 消息
+    pub message: String,
+    /// 服务器ID
+    pub server_id: String,
+    /// 执行的操作
+    pub action: String,
+}
+
+/// 执行服务器操作（启用/禁用/移除）
+pub async fn server_action(
+    State(state): State<AppState>,
+    Json(request): Json<ServerActionRequest>,
+) -> Result<Json<ServerActionResponse>, StatusCode> {
+    let action = request.action.to_lowercase();
+    
+    // 解析服务器ID获取上游类型和API ID
+    let parts: Vec<&str> = request.server_id.split('-').collect();
+    if parts.len() < 2 {
+        return Ok(Json(ServerActionResponse {
+            success: false,
+            message: "Invalid server ID format".to_string(),
+            server_id: request.server_id,
+            action: request.action,
+        }));
+    }
+
+    let upstream_type_str = parts[0];
+    let api_id: i32 = parts.last().unwrap().parse().unwrap_or(-1);
+    
+    if api_id == -1 {
+        return Ok(Json(ServerActionResponse {
+            success: false,
+            message: "Invalid API ID in server ID".to_string(),
+            server_id: request.server_id,
+            action: request.action,
+        }));
+    }
+
+    // 根据操作类型执行相应操作
+    let result = match action.as_str() {
+        "enable" => enable_server(&state, api_id).await,
+        "disable" => disable_server(&state, api_id).await,
+        "remove" => remove_server(&state, api_id, upstream_type_str).await,
+        _ => Err(format!("Unknown action: {}", action)),
+    };
+
+    match result {
+        Ok(message) => {
+            info!("Server action {} on {} successful: {}", action, request.server_id, message);
+            Ok(Json(ServerActionResponse {
+                success: true,
+                message,
+                server_id: request.server_id,
+                action: request.action,
+            }))
+        }
+        Err(error) => {
+            warn!("Server action {} on {} failed: {}", action, request.server_id, error);
+            Ok(Json(ServerActionResponse {
+                success: false,
+                message: error,
+                server_id: request.server_id,
+                action: request.action,
+            }))
+        }
+    }
+}
+
+/// 启用服务器
+async fn enable_server(state: &AppState, api_id: i32) -> Result<String, String> {
+    match UserServiceApis::update_many()
+        .col_expr(user_service_apis::Column::IsActive, true.into())
+        .filter(user_service_apis::Column::Id.eq(api_id))
+        .exec(state.database.as_ref())
+        .await
+    {
+        Ok(_) => Ok("Server enabled successfully".to_string()),
+        Err(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+/// 禁用服务器
+async fn disable_server(state: &AppState, api_id: i32) -> Result<String, String> {
+    match UserServiceApis::update_many()
+        .col_expr(user_service_apis::Column::IsActive, false.into())
+        .filter(user_service_apis::Column::Id.eq(api_id))
+        .exec(state.database.as_ref())
+        .await
+    {
+        Ok(_) => Ok("Server disabled successfully".to_string()),
+        Err(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+/// 移除服务器
+async fn remove_server(state: &AppState, api_id: i32, upstream_type_str: &str) -> Result<String, String> {
+    // 从数据库删除
+    match UserServiceApis::delete_many()
+        .filter(user_service_apis::Column::Id.eq(api_id))
+        .exec(state.database.as_ref())
+        .await
+    {
+        Ok(_) => {
+            // 同时从负载均衡管理器中移除
+            if let Err(e) = state.load_balancer_manager.remove_server(upstream_type_str, api_id).await {
+                warn!("Failed to remove server from load balancer manager: {}", e);
+            }
+            Ok("Server removed successfully".to_string())
+        }
+        Err(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+/// 获取负载均衡器指标
+pub async fn get_lb_metrics(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    // 获取负载均衡管理器的详细指标
+    let lb_metrics = match state.load_balancer_manager.get_detailed_metrics().await {
+        Ok(metrics) => metrics,
+        Err(e) => {
+            tracing::error!("Failed to get load balancer metrics: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let response = json!({
+        "metrics": lb_metrics,
+        "timestamp": chrono::Utc::now()
+    });
+
+    Ok(Json(response))
+}
+
 /// 计算平均响应时间
 fn calculate_avg_response_time(api: &user_service_apis::Model) -> i32 {
     // 基于一些启发式规则计算响应时间
     let base_time = match api.provider_type_id {
         1 => 120, // OpenAI 一般较快
-        2 => 150, // Anthropic
-        3 => 200, // Google Gemini
+        2 => 150, // Google Gemini
+        3 => 200, // Anthropic Claude
         _ => 180, // 其他
     };
 

@@ -1,0 +1,53 @@
+/* Global Style System */
+
+/* Color Palette */
+:root {
+  --color-primary: #2f54eb; /* A more vibrant blue */
+  --color-success: #52c41a;
+  --color-warning: #faad14;
+  --color-danger: #f5222d;
+  --color-info: #d9d9d9;
+
+  --text-color-primary: #262626;
+  --text-color-regular: #595959;
+  --text-color-secondary: #8c8c8c;
+
+  --bg-color: #f0f2f5; /* Global background */
+  --bg-color-overlay: #ffffff; /* Card, Dialog background */
+
+  --border-color: #f0f0f0;
+  --box-shadow-base: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* Reset & Base Styles */
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color-regular);
+}
+
+/* Override Element Plus Component Styles */
+
+/* Card */
+.el-card {
+  border: none !important;
+  box-shadow: var(--box-shadow-base) !important;
+  border-radius: 8px !important;
+}
+
+/* Table */
+.el-table th {
+  background-color: #fafafa !important;
+  color: var(--text-color-primary) !important;
+  font-weight: 600;
+}
+
+/* Button */
+.el-button--primary {
+  background-color: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+}
+
+/* Page Container Base Style */
+.page-container {
+  padding: 20px;
+}

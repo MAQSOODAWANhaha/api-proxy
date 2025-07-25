@@ -10,6 +10,7 @@ mod m20240101_000007_create_api_health_status_table;
 mod m20240101_000008_create_request_statistics_table;
 mod m20240101_000009_create_daily_statistics_table;
 mod m20240101_000010_insert_default_admin_data;
+mod m20240101_000011_insert_demo_request_statistics;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000008_create_request_statistics_table::Migration),
             Box::new(m20240101_000009_create_daily_statistics_table::Migration),
             Box::new(m20240101_000010_insert_default_admin_data::Migration),
+            Box::new(m20240101_000011_insert_demo_request_statistics::Migration),
         ]
     }
 }

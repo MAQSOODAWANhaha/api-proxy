@@ -13,7 +13,7 @@ use anyhow::Result;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, patch};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -117,9 +117,13 @@ impl ManagementServer {
     /// 创建路由器
     fn create_router(state: AppState, config: &ManagementConfig) -> Result<Router> {
         let api_routes = Router::new()
+            // 认证接口
+            .route("/auth/login", post(super::handlers::auth::login))
+            
             // 健康检查
             .route("/health", get(health_check))
             .route("/health/detailed", get(detailed_health_check))
+            .route("/health/servers", get(super::handlers::health::get_health_servers))
             
             // 系统信息
             .route("/system/info", get(super::handlers::system::get_system_info))
@@ -129,6 +133,9 @@ impl ManagementServer {
             .route("/loadbalancer/status", get(super::handlers::loadbalancer::get_lb_status))
             .route("/loadbalancer/servers", get(super::handlers::loadbalancer::list_servers))
             .route("/loadbalancer/servers", post(super::handlers::loadbalancer::add_server))
+            .route("/loadbalancer/servers/action", post(super::handlers::loadbalancer::server_action))
+            .route("/loadbalancer/strategy", patch(super::handlers::loadbalancer::change_strategy))
+            .route("/loadbalancer/metrics", get(super::handlers::loadbalancer::get_lb_metrics))
             
             // 适配器管理
             .route("/adapters", get(super::handlers::adapters::list_adapters))

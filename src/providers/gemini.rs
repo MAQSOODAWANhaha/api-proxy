@@ -475,7 +475,7 @@ impl GeminiAdapter {
 
 impl ProviderAdapter for GeminiAdapter {
     fn name(&self) -> &str {
-        "google-gemini"
+        "gemini"
     }
 
     fn supports_endpoint(&self, endpoint: &str) -> bool {
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn test_gemini_adapter_creation() {
         let adapter = GeminiAdapter::new();
-        assert_eq!(adapter.name(), "google-gemini");
+        assert_eq!(adapter.name(), "gemini");
         assert!(adapter.supports_endpoint("/v1/chat/completions"));
         assert!(!adapter.supports_endpoint("/unknown/endpoint"));
     }

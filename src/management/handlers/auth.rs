@@ -10,11 +10,109 @@ use sea_orm::{entity::*, query::*};
 use entity::{
     user_service_apis,
     user_service_apis::Entity as UserServiceApis,
+    users,
     users::Entity as Users,
     provider_types,
     provider_types::Entity as ProviderTypes,
 };
 use chrono::{Utc, Duration};
+use bcrypt::verify;
+use jsonwebtoken::{encode, Header, EncodingKey};
+
+/// 登录请求
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    /// 用户名
+    pub username: String,
+    /// 密码  
+    pub password: String,
+}
+
+/// 登录响应
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    /// JWT token
+    pub token: String,
+    /// 用户信息
+    pub user: UserInfo,
+}
+
+/// 用户信息
+#[derive(Debug, Serialize)]
+pub struct UserInfo {
+    /// 用户ID
+    pub id: i32,
+    /// 用户名
+    pub username: String,
+    /// 邮箱
+    pub email: String,
+    /// 是否为管理员
+    pub is_admin: bool,
+}
+
+/// JWT Claims
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    /// 用户ID
+    pub sub: String,
+    /// 用户名
+    pub username: String,
+    /// 是否为管理员
+    pub is_admin: bool,
+    /// 过期时间
+    pub exp: usize,
+    /// 签发时间
+    pub iat: usize,
+}
+
+/// 用户登录（临时简化版本，暂时放开认证）
+pub async fn login(
+    State(_state): State<AppState>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, StatusCode> {
+    // 基本输入验证
+    if request.username.is_empty() || request.password.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 临时：直接返回成功响应，不做密码验证
+    let now = Utc::now();
+    let exp = now + Duration::hours(24);
+    
+    let claims = Claims {
+        sub: "1".to_string(),
+        username: request.username.clone(),
+        is_admin: true, // 临时设为管理员
+        exp: exp.timestamp() as usize,
+        iat: now.timestamp() as usize,
+    };
+
+    let token = match encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret("your-secret-key".as_ref()),
+    ) {
+        Ok(token) => token,
+        Err(err) => {
+            tracing::error!("JWT encoding error: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    tracing::info!("User {} logged in successfully (simplified mode)", request.username);
+
+    let response = LoginResponse {
+        token,
+        user: UserInfo {
+            id: 1,
+            username: request.username,
+            email: "admin@example.com".to_string(),
+            is_admin: true,
+        },
+    };
+
+    Ok(Json(response))
+}
 
 /// API密钥查询参数
 #[derive(Debug, Deserialize)]
@@ -102,7 +200,6 @@ pub async fn list_api_keys(
     
     // 分页查询
     let api_keys_result = select
-        .inner_join(ProviderTypes)
         .offset(offset as u64)
         .limit(limit as u64)
         .order_by_desc(user_service_apis::Column::CreatedAt)

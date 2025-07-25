@@ -12,7 +12,7 @@ use crate::{
 };
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use clap::ArgMatches;
 
 /// 共享服务结构体
@@ -181,6 +181,36 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     let health_service = Arc::new(
         HealthCheckService::new(None)
     );
+    
+    // 添加一些模拟服务器到健康检查服务
+    if let Err(e) = health_service.add_server(
+        "api.openai.com:443".to_string(),
+        crate::proxy::upstream::UpstreamType::OpenAI,
+        None
+    ).await {
+        warn!("Failed to add OpenAI server to health check: {}", e);
+    }
+    
+    if let Err(e) = health_service.add_server(
+        "generativelanguage.googleapis.com:443".to_string(),
+        crate::proxy::upstream::UpstreamType::GoogleGemini,
+        None
+    ).await {
+        warn!("Failed to add Gemini server to health check: {}", e);
+    }
+    
+    if let Err(e) = health_service.add_server(
+        "api.anthropic.com:443".to_string(),
+        crate::proxy::upstream::UpstreamType::Anthropic,
+        None
+    ).await {
+        warn!("Failed to add Anthropic server to health check: {}", e);
+    }
+    
+    // 启动健康检查服务
+    if let Err(e) = health_service.start().await {
+        warn!("Failed to start health check service: {}", e);
+    }
     
     let adapter_manager = Arc::new(
         AdapterManager::new()

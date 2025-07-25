@@ -38,6 +38,7 @@ fn health_routes() -> Router<AppState> {
     Router::new()
         .route("/", get(crate::management::server::health_check))
         .route("/detailed", get(crate::management::server::detailed_health_check))
+        .route("/servers", get(crate::management::handlers::health::get_health_servers))
 }
 
 /// 系统信息路由
@@ -49,10 +50,14 @@ fn system_routes() -> Router<AppState> {
 
 /// 负载均衡管理路由
 fn loadbalancer_routes() -> Router<AppState> {
+    use axum::routing::patch;
     Router::new()
         .route("/status", get(crate::management::handlers::loadbalancer::get_lb_status))
         .route("/servers", get(crate::management::handlers::loadbalancer::list_servers))
         .route("/servers", post(crate::management::handlers::loadbalancer::add_server))
+        .route("/servers/action", post(crate::management::handlers::loadbalancer::server_action))
+        .route("/strategy", patch(crate::management::handlers::loadbalancer::change_strategy))
+        .route("/metrics", get(crate::management::handlers::loadbalancer::get_lb_metrics))
 }
 
 /// 适配器管理路由

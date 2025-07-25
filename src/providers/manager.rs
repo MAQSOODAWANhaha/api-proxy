@@ -113,17 +113,25 @@ impl AdapterManager {
     pub fn get_adapter_stats(&self) -> HashMap<String, AdapterStats> {
         let mut stats = HashMap::new();
         
+        tracing::info!("AdapterManager has {} adapters", self.adapters.len());
+        
         for (upstream_type, adapter) in &self.adapters {
             let endpoints = adapter.get_supported_endpoints();
+            let adapter_name = adapter.name().to_string();
+            
+            tracing::info!("Processing adapter: {} (type: {:?}) with {} endpoints", 
+                         adapter_name, upstream_type, endpoints.len());
+            
             let stat = AdapterStats {
-                name: adapter.name().to_string(),
+                name: adapter_name.clone(),
                 upstream_type: format!("{:?}", upstream_type),
                 supported_endpoints: endpoints.len(),
                 endpoints,
             };
-            stats.insert(adapter.name().to_string(), stat);
+            stats.insert(adapter_name, stat);
         }
         
+        tracing::info!("Final adapter stats keys: {:?}", stats.keys().collect::<Vec<_>>());
         stats
     }
 }

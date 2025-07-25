@@ -43,7 +43,7 @@ monitoring = true
 
 # 数据库配置
 [database]
-url = "sqlite:///workspaces/api-proxy/data/dev.db"
+url = "sqlite::memory:"
 max_connections = 10
 connect_timeout = 30
 query_timeout = 30
