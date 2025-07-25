@@ -21,7 +21,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="lastUsed" label="最后使用" />
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
@@ -43,8 +42,8 @@
             <el-option label="Claude" value="claude" />
           </el-select>
         </el-form-item>
-        <el-form-item label="API密钥" prop="apiKey">
-          <el-input v-model="formData.apiKey" />
+        <el-form-item label="API密钥" prop="api_key">
+          <el-input v-model="formData.api_key" />
         </el-form-item>
         <el-form-item label="权重" prop="weight">
           <el-input-number v-model="formData.weight" :min="1" />
@@ -75,11 +74,13 @@ const tableData = ref<ProviderKey[]>([])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const formRef = ref<FormInstance>()
+let currentKeyId: number | null = null;
+
 
 const getInitialFormData = (): Omit<ProviderKey, 'id' | 'lastUsed'> => ({
   name: '',
   provider: 'openai',
-  apiKey: '',
+  api_key: '',
   weight: 1,
   status: 'active',
 })
@@ -92,7 +93,7 @@ const dialogTitle = computed(() => (isEdit.value ? '编辑密钥' : '新增密�
 const formRules = reactive<FormRules>({
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   provider: [{ required: true, message: '请选择服务商', trigger: 'change' }],
-  apiKey: [{ required: true, message: '请输入API密钥', trigger: 'blur' }],
+  api_key: [{ required: true, message: '请输入API密钥', trigger: 'blur' }],
 })
 
 // Methods
@@ -110,12 +111,14 @@ const fetchKeys = async () => {
 
 const handleAdd = () => {
   isEdit.value = false
+  currentKeyId = null
   Object.assign(formData, getInitialFormData())
   dialogVisible.value = true
 }
 
 const handleEdit = (row: ProviderKey) => {
   isEdit.value = true
+  currentKeyId = row.id
   Object.assign(formData, row)
   dialogVisible.value = true
 }
@@ -125,8 +128,8 @@ const handleSave = async () => {
   await formRef.value.validate(async (valid) => {
     if (valid) {
       try {
-        if (isEdit.value) {
-          await updateProviderKey(formData as ProviderKey)
+        if (isEdit.value && currentKeyId) {
+          await updateProviderKey({ ...formData, id: currentKeyId, lastUsed: '' })
           ElMessage.success('更新成功')
         } else {
           await addProviderKey(formData)
@@ -166,14 +169,3 @@ onMounted(() => {
   fetchKeys()
 })
 </script>
-
-<style scoped>
-.page-container {
-  padding: 10px;
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-</style>

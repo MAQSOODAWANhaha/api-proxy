@@ -81,7 +81,6 @@ fn user_routes() -> Router<AppState> {
         .route("/", post(crate::management::handlers::users::create_user))
         .route("/{id}", get(crate::management::handlers::users::get_user))
 }
-
 /// API密钥管理路由
 fn auth_routes() -> Router<AppState> {
     Router::new()
@@ -89,4 +88,14 @@ fn auth_routes() -> Router<AppState> {
         .route("/", post(crate::management::handlers::auth::create_api_key))
         .route("/{id}", get(crate::management::handlers::auth::get_api_key))
         .route("/{id}/revoke", post(crate::management::handlers::auth::revoke_api_key))
+}
+
+/// 号池密钥管理路由
+fn provider_keys_routes() -> Router<AppState> {
+    use crate::management::handlers::provider_keys;
+    Router::new()
+        .route("/", get(provider_keys::list_provider_keys))
+        .route("/", post(provider_keys::create_provider_key))
+        .route("/:id", axum::routing::put(provider_keys::update_provider_key))
+        .route("/:id", axum::routing::delete(provider_keys::delete_provider_key))
 }
