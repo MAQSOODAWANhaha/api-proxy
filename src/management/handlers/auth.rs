@@ -18,6 +18,7 @@ use entity::{
 use chrono::{Utc, Duration};
 use bcrypt::verify;
 use jsonwebtoken::{encode, Header, EncodingKey};
+use rand;
 
 /// 登录请求
 #[derive(Debug, Deserialize)]
@@ -132,6 +133,8 @@ pub struct ApiKeyQuery {
 pub struct CreateApiKeyRequest {
     /// 用户ID
     pub user_id: i32,
+    /// 服务提供商类型ID（1=OpenAI, 2=Gemini, 3=Claude）
+    pub provider_type_id: i32,
     /// 密钥名称
     pub name: String,
     /// 描述
@@ -293,6 +296,48 @@ pub async fn list_api_keys(
     Ok(Json(response))
 }
 
+/// 获取服务提供商类型列表
+pub async fn list_provider_types(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    // 获取所有活跃的服务提供商类型
+    let provider_types_result = ProviderTypes::find()
+        .filter(provider_types::Column::IsActive.eq(true))
+        .order_by_asc(provider_types::Column::Id)
+        .all(state.database.as_ref())
+        .await;
+        
+    let provider_types_data = match provider_types_result {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Failed to fetch provider types: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 转换为响应格式
+    let provider_types: Vec<_> = provider_types_data
+        .into_iter()
+        .map(|provider| {
+            json!({
+                "id": provider.id,
+                "name": provider.name,
+                "display_name": provider.display_name,
+                "base_url": provider.base_url,
+                "api_format": provider.api_format,
+                "default_model": provider.default_model,
+                "is_active": provider.is_active
+            })
+        })
+        .collect();
+
+    let response = json!({
+        "provider_types": provider_types
+    });
+
+    Ok(Json(response))
+}
+
 /// 从数据库获取API密钥的权限范围
 async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
     // 根据API密钥的配置解析权限范围
@@ -372,7 +417,7 @@ pub async fn create_api_key(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if request.user_id <= 0 {
+    if request.user_id <= 0 || request.provider_type_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -393,6 +438,42 @@ pub async fn create_api_key(
         })));
     }
 
+    // 验证服务提供商类型是否存在
+    let provider_type = match ProviderTypes::find_by_id(request.provider_type_id).one(state.database.as_ref()).await {
+        Ok(Some(provider)) => provider,
+        Ok(None) => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Invalid provider type"
+            })));
+        },
+        Err(err) => {
+            tracing::error!("Failed to check provider type existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 检查该用户是否已经为该服务提供商创建过API密钥
+    let existing_api = match UserServiceApis::find()
+        .filter(user_service_apis::Column::UserId.eq(request.user_id))
+        .filter(user_service_apis::Column::ProviderTypeId.eq(request.provider_type_id))
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(api) => api,
+        Err(err) => {
+            tracing::error!("Failed to check existing API key: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    if existing_api.is_some() {
+        return Ok(Json(json!({
+            "success": false,
+            "message": format!("API key for {} already exists. Each user can only have one API key per provider type.", provider_type.display_name)
+        })));
+    }
+
     // 生成新的API密钥
     let api_key = format!("sk-proj-{}", generate_random_key(32));
     let api_secret = generate_random_key(64);
@@ -405,7 +486,7 @@ pub async fn create_api_key(
     // 创建API密钥记录
     let new_api_key = user_service_apis::ActiveModel {
         user_id: Set(request.user_id),
-        provider_type_id: Set(1), // TODO: 应该从请求中获取或有默认值
+        provider_type_id: Set(request.provider_type_id),
         api_key: Set(api_key.clone()),
         api_secret: Set(api_secret),
         name: Set(Some(request.name.clone())),
@@ -524,6 +605,72 @@ pub async fn get_api_key(
     };
 
     Ok(Json(serde_json::to_value(api_key_response).unwrap()))
+}
+
+/// 更新API密钥请求
+#[derive(Debug, Deserialize)]
+pub struct UpdateApiKeyRequest {
+    /// 密钥名称
+    pub name: Option<String>,
+    /// 描述
+    pub description: Option<String>,
+    /// 是否激活
+    pub is_active: Option<bool>,
+}
+
+/// 更新API密钥
+pub async fn update_api_key(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+    Json(request): Json<UpdateApiKeyRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    if key_id <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 检查API密钥是否存在
+    let existing_key = match UserServiceApis::find_by_id(key_id).one(state.database.as_ref()).await {
+        Ok(Some(key)) => key,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to check API key existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 更新API密钥信息
+    let now = Utc::now().naive_utc();
+    let mut api_key: user_service_apis::ActiveModel = existing_key.into();
+    
+    if let Some(name) = request.name {
+        if !name.is_empty() {
+            api_key.name = Set(Some(name));
+        }
+    }
+    
+    if let Some(description) = request.description {
+        api_key.description = Set(Some(description));
+    }
+    
+    if let Some(is_active) = request.is_active {
+        api_key.is_active = Set(is_active);
+    }
+    
+    api_key.updated_at = Set(now);
+
+    match api_key.update(state.database.as_ref()).await {
+        Ok(_) => {
+            let response = json!({
+                "success": true,
+                "message": format!("API key {} has been updated", key_id)
+            });
+            Ok(Json(response))
+        }
+        Err(err) => {
+            tracing::error!("Failed to update API key {}: {}", key_id, err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// 撤销API密钥

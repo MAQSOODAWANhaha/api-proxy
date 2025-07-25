@@ -13,7 +13,7 @@ use anyhow::Result;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Json;
-use axum::routing::{get, post, patch};
+use axum::routing::{get, post, put, patch};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -151,9 +151,11 @@ impl ManagementServer {
             .route("/users/{id}", get(super::handlers::users::get_user))
             
             // API密钥管理
+            .route("/provider-types", get(super::handlers::auth::list_provider_types))
             .route("/api-keys", get(super::handlers::auth::list_api_keys))
             .route("/api-keys", post(super::handlers::auth::create_api_key))
             .route("/api-keys/{id}", get(super::handlers::auth::get_api_key))
+            .route("/api-keys/{id}", put(super::handlers::auth::update_api_key))
             .route("/api-keys/{id}/revoke", post(super::handlers::auth::revoke_api_key))
             
             .with_state(state);

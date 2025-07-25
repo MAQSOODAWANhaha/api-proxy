@@ -86,10 +86,12 @@ fn user_routes() -> Router<AppState> {
 }
 /// API密钥管理路由
 fn auth_routes() -> Router<AppState> {
+    use axum::routing::put;
     Router::new()
         .route("/", get(crate::management::handlers::auth::list_api_keys))
         .route("/", post(crate::management::handlers::auth::create_api_key))
         .route("/{id}", get(crate::management::handlers::auth::get_api_key))
+        .route("/{id}", put(crate::management::handlers::auth::update_api_key))
         .route("/{id}/revoke", post(crate::management::handlers::auth::revoke_api_key))
 }
 

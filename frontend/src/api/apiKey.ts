@@ -120,9 +120,9 @@ export async function updateProviderKey(data: ProviderKey): Promise<{ data: Prov
   try {
     const requestData: UpdateProviderKeyRequest = {
       name: data.name,
-      weight: data.weight,
-      max_requests_per_minute: data.max_requests_per_minute,
-      max_tokens_per_day: data.max_tokens_per_day,
+      weight: data.weight || undefined,
+      max_requests_per_minute: data.max_requests_per_minute || undefined,
+      max_tokens_per_day: data.max_tokens_per_day || undefined,
       is_active: data.status === 'active'
     }
     
