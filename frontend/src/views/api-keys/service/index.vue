@@ -12,9 +12,16 @@
       </template>
       <el-table v-loading="loading" :data="tableData" style="width: 100%">
         <el-table-column prop="name" label="名称" />
-        <el-table-column prop="provider" label="服务商" />
-        <el-table-column prop="apiKey" label="API密钥" />
-        <el-table-column prop="strategy" label="调度策略" />
+        <el-table-column prop="key_prefix" label="API密钥" />
+        <el-table-column prop="scopes" label="权限范围">
+          <template #default="{ row }">
+            <el-tag v-for="scope in row.scopes.slice(0, 2)" :key="scope" size="small" style="margin-right: 4px;">
+              {{ scope }}
+            </el-tag>
+            <span v-if="row.scopes.length > 2">+{{ row.scopes.length - 2 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="usage_count" label="使用次数" />
         <el-table-column prop="status" label="状态">
           <template #default="{ row }">
             <el-tag :type="row.status === 'active' ? 'success' : 'info'">
@@ -22,10 +29,15 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="created_at" label="创建时间">
+          <template #default="{ row }">
+            {{ new Date(row.created_at).toLocaleDateString() }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
-            <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
+            <el-button type="primary" link @click="handleEdit(row)">查看</el-button>
+            <el-button type="danger" link @click="handleDelete(row)">撤销</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -36,22 +48,11 @@
         <el-form-item label="名称" prop="name">
           <el-input v-model="formData.name" />
         </el-form-item>
-        <el-form-item label="服务商" prop="provider">
-          <el-select v-model="formData.provider" placeholder="请选择服务商">
-            <el-option label="OpenAI" value="openai" />
-            <el-option label="Gemini" value="gemini" />
-            <el-option label="Claude" value="claude" />
-          </el-select>
+        <el-form-item label="描述" prop="description">
+          <el-input v-model="formData.description" type="textarea" rows="2" />
         </el-form-item>
-        <el-form-item label="调度策略" prop="strategy">
-          <el-select v-model="formData.strategy" placeholder="请选择策略">
-            <el-option label="轮询" value="round_robin" />
-            <el-option label="权重" value="weighted" />
-            <el-option label="健康最佳" value="health_best" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态" prop="status">
-          <el-switch v-model="formData.status" active-value="active" inactive-value="inactive" />
+        <el-form-item label="有效期(天)" prop="expires_in_days">
+          <el-input-number v-model="formData.expires_in_days" :min="1" :max="365" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -77,22 +78,19 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const formRef = ref<FormInstance>()
 
-const getInitialFormData = (): Omit<ServiceKey, 'id' | 'apiKey' | 'totalRequests' | 'successfulRequests'> => ({
+const getInitialFormData = () => ({
   name: '',
-  provider: 'openai',
-  strategy: 'round_robin',
-  status: 'active',
+  description: '',
+  expires_in_days: 30,
 })
 const formData = reactive(getInitialFormData())
 
 // Computed
-const dialogTitle = computed(() => (isEdit.value ? '编辑服务' : '创建服务'))
+const dialogTitle = computed(() => (isEdit.value ? '查看API密钥' : '创建API密钥'))
 
 // Form Rules
 const formRules = reactive<FormRules>({
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
-  provider: [{ required: true, message: '请选择服务商', trigger: 'change' }],
-  strategy: [{ required: true, message: '请选择调度策略', trigger: 'change' }],
 })
 
 // Methods
@@ -116,7 +114,12 @@ const handleAdd = () => {
 
 const handleEdit = (row: ServiceKey) => {
   isEdit.value = true
-  Object.assign(formData, row)
+  // For viewing purposes, show the key information
+  formData.name = row.name
+  formData.description = row.description || ''
+  formData.expires_in_days = row.expires_at ? 
+    Math.ceil((new Date(row.expires_at).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) : 
+    30
   dialogVisible.value = true
 }
 
@@ -126,15 +129,21 @@ const handleSave = async () => {
     if (valid) {
       try {
         if (isEdit.value) {
-          await updateServiceKey(formData as ServiceKey)
-          ElMessage.success('更新成功')
+          ElMessage.info('查看模式，无法编辑')
         } else {
-          await addServiceKey(formData)
+          const response = await addServiceKey(formData)
+          if (response.data?.key) {
+            ElMessageBox.alert(`API密钥创建成功！请立即保存，创建后将无法再次查看：\n\n${response.data.key}`, '重要提示', {
+              confirmButtonText: '已保存',
+              type: 'success',
+            })
+          }
           ElMessage.success('创建成功')
         }
         dialogVisible.value = false
         fetchKeys()
       } catch (error) {
+        console.error('Operation failed:', error)
         ElMessage.error('操作失败')
       }
     }
@@ -142,17 +151,18 @@ const handleSave = async () => {
 }
 
 const handleDelete = (row: ServiceKey) => {
-  ElMessageBox.confirm(`确定要删除服务 "${row.name}" 吗？`, '警告', {
-    confirmButtonText: '确定',
+  ElMessageBox.confirm(`确定要撤销API密钥 "${row.name}" 吗？撤销后将无法恢复！`, '警告', {
+    confirmButtonText: '确定撤销',
     cancelButtonText: '取消',
     type: 'warning',
   }).then(async () => {
     try {
       await deleteServiceKey(row.id)
-      ElMessage.success('删除成功')
+      ElMessage.success('撤销成功')
       fetchKeys()
     } catch (error) {
-      ElMessage.error('删除失败')
+      console.error('Delete failed:', error)
+      ElMessage.error('撤销失败')
     }
   })
 }

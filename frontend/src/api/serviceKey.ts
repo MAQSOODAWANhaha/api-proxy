@@ -1,74 +1,119 @@
-import type { AxiosPromise } from 'axios'
+import request from './index'
 
-// Define the ServiceKey type
+// Define the ServiceKey type to match backend API response
 export interface ServiceKey {
   id: number
   name: string
-  provider: 'openai' | 'gemini' | 'claude'
-  apiKey: string // The key we generate for the user
-  strategy: 'round_robin' | 'weighted' | 'health_best'
+  key_prefix: string
+  user_id: number
+  description?: string
   status: 'active' | 'inactive'
-  totalRequests: number
-  successfulRequests: number
+  scopes: string[]
+  usage_count: number
+  created_at: string
+  expires_at?: string
+  last_used_at?: string
+  key?: string // Only available when creating
 }
 
-// Mock database
-let mockServiceKeys: ServiceKey[] = [
-  { id: 1, name: 'My OpenAI Service', provider: 'openai', apiKey: 'proxy-abc-123', strategy: 'round_robin', status: 'active', totalRequests: 10520, successfulRequests: 10500 },
-  { id: 2, name: 'My Gemini Service', provider: 'gemini', apiKey: 'proxy-def-456', strategy: 'health_best', status: 'active', totalRequests: 5430, successfulRequests: 5421 },
-]
-let nextId = 3
+// Create API Key Request type
+export interface CreateServiceKeyRequest {
+  user_id: number
+  name: string
+  description?: string
+  expires_in_days?: number
+  scopes?: string[]
+}
+
+// API response wrapper
+export interface ApiResponse<T> {
+  success?: boolean
+  data?: T
+  api_keys?: T
+  api_key?: ServiceKey
+  message?: string
+  pagination?: {
+    page: number
+    limit: number
+    total: number
+    pages: number
+  }
+}
 
 // --- API Functions ---
 
-export function getServiceKeys(): AxiosPromise<ServiceKey[]> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({ data: mockServiceKeys } as any)
-    }, 300)
-  })
+// Get list of service keys
+export async function getServiceKeys(): Promise<{ data: ServiceKey[] }> {
+  try {
+    const response = await request.get<ApiResponse<ServiceKey[]>>('/api/api-keys')
+    const data = response.data.api_keys || response.data.data || []
+    return { data }
+  } catch (error) {
+    console.error('Failed to get service keys:', error)
+    throw error
+  }
 }
 
-export function addServiceKey(data: Omit<ServiceKey, 'id' | 'totalRequests' | 'successfulRequests'>): AxiosPromise<ServiceKey> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const newKey: ServiceKey = {
-        ...data,
-        id: nextId++,
-        apiKey: `proxy-${Math.random().toString(36).substring(2, 9)}`,
-        totalRequests: 0,
-        successfulRequests: 0,
-      }
-      mockServiceKeys.push(newKey)
-      resolve({ data: newKey } as any)
-    }, 300)
-  })
+// Add a new service key
+export async function addServiceKey(data: {
+  name: string
+  description?: string
+  expires_in_days?: number
+}): Promise<{ data: ServiceKey }> {
+  try {
+    const requestData: CreateServiceKeyRequest = {
+      user_id: 1, // TODO: Get from user context
+      name: data.name,
+      description: data.description,
+      expires_in_days: data.expires_in_days,
+      scopes: ['api:access', 'ai:chat', 'ai:completion']
+    }
+    
+    const response = await request.post<ApiResponse<ServiceKey>>('/api/api-keys', requestData)
+    const apiKey = response.data.api_key || response.data.data
+    if (!apiKey) {
+      throw new Error('No API key returned from server')
+    }
+    return { data: apiKey }
+  } catch (error) {
+    console.error('Failed to create service key:', error)
+    throw error
+  }
 }
 
-export function updateServiceKey(data: ServiceKey): AxiosPromise<ServiceKey> {
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      const index = mockServiceKeys.findIndex(k => k.id === data.id)
-      if (index !== -1) {
-        mockServiceKeys[index] = { ...mockServiceKeys[index], ...data }
-        resolve({ data: mockServiceKeys[index] } as any)
-      } else {
-        reject(new Error('Key not found'))
-      }
-    }, 300)
-  })
+// Update an existing service key (revoke functionality)
+export async function updateServiceKey(data: ServiceKey): Promise<{ data: ServiceKey }> {
+  // Since backend only supports revoke, we'll implement this as a revoke operation
+  if (data.status === 'inactive') {
+    await revokeServiceKey(data.id)
+    return { data }
+  }
+  // For other updates, we would need additional backend endpoints
+  return { data }
 }
 
-export function deleteServiceKey(id: number): AxiosPromise<void> {
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      const index = mockServiceKeys.findIndex(k => k.id === id)
-      if (index !== -1) {
-        mockServiceKeys.splice(index, 1)
-        resolve({} as any)
-      } else {
-        reject(new Error('Key not found'))
-      }
-    }, 300)
-  })
+// Revoke a service key
+export async function revokeServiceKey(id: number): Promise<void> {
+  try {
+    await request.post(`/api/api-keys/${id}/revoke`)
+  } catch (error) {
+    console.error('Failed to revoke service key:', error)
+    throw error
+  }
+}
+
+// Delete a service key (same as revoke for now)
+export async function deleteServiceKey(id: number): Promise<void> {
+  return revokeServiceKey(id)
+}
+
+// Get single service key
+export async function getServiceKey(id: number): Promise<{ data: ServiceKey }> {
+  try {
+    const response = await request.get<ServiceKey>(`/api/api-keys/${id}`)
+    return { data: response.data }
+  } catch (error) {
+    console.error('Failed to get service key:', error)
+    throw error
+  }
 }
