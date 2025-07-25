@@ -16,11 +16,14 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
               database_url
           });
     
-    // 对于SQLite数据库，确保数据库文件的目录存在
+    // 对于SQLite数据库，确保数据库文件的目录和文件存在
     if database_url.starts_with("sqlite:") {
-        let db_path = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
+        let db_path = database_url.strip_prefix("sqlite://").unwrap_or(
+            database_url.strip_prefix("sqlite:").unwrap_or(database_url)
+        );
         let db_file_path = Path::new(db_path);
         
+        // 确保父目录存在
         if let Some(parent_dir) = db_file_path.parent() {
             if !parent_dir.exists() {
                 debug!("创建数据库目录: {}", parent_dir.display());
@@ -31,6 +34,17 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
             } else {
                 debug!("数据库目录已存在: {}", parent_dir.display());
             }
+        }
+        
+        // 确保数据库文件存在（如果不存在则创建空文件）
+        if !db_file_path.exists() {
+            debug!("创建数据库文件: {}", db_file_path.display());
+            std::fs::File::create(db_file_path).map_err(|e| {
+                DbErr::Custom(format!("无法创建数据库文件 {}: {}", db_file_path.display(), e))
+            })?;
+            info!("数据库文件创建成功: {}", db_file_path.display());
+        } else {
+            debug!("数据库文件已存在: {}", db_file_path.display());
         }
     }
     
