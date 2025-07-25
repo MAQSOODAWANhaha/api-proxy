@@ -30,6 +30,9 @@ pub fn create_routes(state: AppState) -> Router {
         // API密钥管理路由
         .nest("/api-keys", auth_routes())
         
+        // Provider密钥管理路由
+        .nest("/provider-keys", provider_keys_routes())
+        
         .with_state(state)
 }
 
@@ -92,10 +95,12 @@ fn auth_routes() -> Router<AppState> {
 
 /// 号池密钥管理路由
 fn provider_keys_routes() -> Router<AppState> {
+    use axum::routing::{delete, put};
     use crate::management::handlers::provider_keys;
     Router::new()
         .route("/", get(provider_keys::list_provider_keys))
         .route("/", post(provider_keys::create_provider_key))
-        .route("/:id", axum::routing::put(provider_keys::update_provider_key))
-        .route("/:id", axum::routing::delete(provider_keys::delete_provider_key))
+        .route("/{id}", get(provider_keys::get_provider_key))
+        .route("/{id}", put(provider_keys::update_provider_key))
+        .route("/{id}", delete(provider_keys::delete_provider_key))
 }
