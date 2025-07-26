@@ -30,24 +30,28 @@ export interface NetworkError {
 }
 
 // 错误级别
-export enum ErrorLevel {
-  INFO = 'info',
-  WARNING = 'warning',
-  ERROR = 'error',
-  CRITICAL = 'critical'
-}
+export const ErrorLevel = {
+  INFO: 'info',
+  WARNING: 'warning',
+  ERROR: 'error',
+  CRITICAL: 'critical'
+} as const
+
+export type ErrorLevel = typeof ErrorLevel[keyof typeof ErrorLevel]
 
 // 错误类型
-export enum ErrorType {
-  NETWORK = 'network',
-  API = 'api',
-  VALIDATION = 'validation',
-  AUTHENTICATION = 'authentication',
-  AUTHORIZATION = 'authorization',
-  BUSINESS = 'business',
-  SYSTEM = 'system',
-  UNKNOWN = 'unknown'
-}
+export const ErrorType = {
+  NETWORK: 'network',
+  API: 'api',
+  VALIDATION: 'validation',
+  AUTHENTICATION: 'authentication',
+  AUTHORIZATION: 'authorization',
+  BUSINESS: 'business',
+  SYSTEM: 'system',
+  UNKNOWN: 'unknown'
+} as const
+
+export type ErrorType = typeof ErrorType[keyof typeof ErrorType]
 
 // 错误处理配置
 export interface ErrorHandlerConfig {
@@ -493,7 +497,6 @@ export class ErrorHandler {
    */
   private getNotificationDuration(errorType: ErrorType): number {
     switch (errorType) {
-      case ErrorType.CRITICAL:
       case ErrorType.SYSTEM:
         return 0 // 不自动关闭
       case ErrorType.AUTHENTICATION:

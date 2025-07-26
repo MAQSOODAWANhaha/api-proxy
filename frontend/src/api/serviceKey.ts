@@ -65,7 +65,7 @@ export interface ProviderType {
 export async function getProviderTypes(): Promise<{ data: ProviderType[] }> {
   try {
     const response = await request.get<ApiResponse<ProviderType[]>>('/provider-types')
-    const data = response.data.provider_types || response.data.data || []
+    const data = response.data.data || []
     return { data }
   } catch (error) {
     console.error('Failed to get provider types:', error)

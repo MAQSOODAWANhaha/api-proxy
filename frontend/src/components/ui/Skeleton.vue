@@ -125,10 +125,13 @@ const avatarClasses = computed(() => [
 ])
 
 const paragraphLines = computed(() => {
+  let lineCount = 0
   if (typeof props.paragraph === 'boolean') {
-    return props.paragraph ? 3 : 0
+    lineCount = props.paragraph ? 3 : 0
+  } else {
+    lineCount = Math.max(0, props.paragraph)
   }
-  return Math.max(0, props.paragraph)
+  return Array.from({ length: lineCount }, (_, i) => i)
 })
 
 // 方法

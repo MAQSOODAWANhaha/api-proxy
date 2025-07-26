@@ -558,7 +558,7 @@ const fetchData = async () => {
       getHealthStatuses()
     ])
     
-    statsData.value = statsRes.data
+    statsData.value = statsRes
     unhealthyKeys.value = healthRes.data.filter((key: HealthStatus & { failureCount?: number }) => {
       // 为没有 failureCount 的对象添加默认值
       if (!key.failureCount) {

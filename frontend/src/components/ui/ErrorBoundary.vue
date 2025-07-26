@@ -86,13 +86,15 @@ import { handleError, createError, ErrorType } from '@/utils/error'
 import { notify } from '@/utils/notification'
 
 // 错误类型枚举
-enum BoundaryErrorType {
-  RENDER = 'render',
-  ASYNC = 'async',
-  NETWORK = 'network',
-  COMPONENT = 'component',
-  UNKNOWN = 'unknown'
-}
+const BoundaryErrorType = {
+  RENDER: 'render',
+  ASYNC: 'async',
+  NETWORK: 'network',
+  COMPONENT: 'component',
+  UNKNOWN: 'unknown'
+} as const
+
+type BoundaryErrorType = typeof BoundaryErrorType[keyof typeof BoundaryErrorType]
 
 // 组件属性
 interface Props {

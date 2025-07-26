@@ -41,8 +41,8 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  cols: 12,
-  gap: 4,
+  cols: () => 12,
+  gap: () => 4,
   autoFit: false,
   minItemWidth: '250px',
   justify: 'start',

@@ -88,19 +88,19 @@ const getThemeColors = () => {
   if (props.colors) return props.colors
   
   return [
-    colors.value.brand.primary,
-    colors.value.status.success,
-    colors.value.status.warning,
-    colors.value.status.info,
-    colors.value.status.danger,
-    colors.value.brand.secondary
+    colors.primary[500],
+    colors.success[500],
+    colors.warning[500],
+    colors.info[500],
+    colors.error[500],
+    colors.secondary[500]
   ]
 }
 
 // 构建图表配置
 const buildChartOption = () => {
   const themeColors = getThemeColors()
-  const isDark = theme.value === 'dark'
+  const isDark = theme.value.mode === 'dark'
   
   const baseOption = {
     title: props.title ? {
@@ -233,7 +233,7 @@ const initChart = async () => {
     chartInstance.dispose()
   }
   
-  chartInstance = echarts.init(chartContainer.value, theme.value === 'dark' ? 'dark' : undefined)
+  chartInstance = echarts.init(chartContainer.value, theme.value.mode === 'dark' ? 'dark' : undefined)
   
   const option = buildChartOption()
   chartInstance.setOption(option, true)

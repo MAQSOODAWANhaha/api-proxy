@@ -12,29 +12,32 @@
     </el-icon>
     
     <!-- 前置图标 -->
-    <el-icon v-else-if="$slots.icon || icon" class="button-icon button-icon--prefix">
+    <el-icon v-else-if="slots.icon || icon" class="button-icon button-icon--prefix">
       <slot name="icon">
         <component :is="icon" />
       </slot>
     </el-icon>
     
     <!-- 按钮文本 -->
-    <span v-if="$slots.default" class="button-content">
+    <span v-if="slots.default" class="button-content">
       <slot />
     </span>
     
     <!-- 后置图标 -->
-    <el-icon v-if="$slots.suffix && !loading" class="button-icon button-icon--suffix">
+    <el-icon v-if="slots.suffix && !loading" class="button-icon button-icon--suffix">
       <slot name="suffix" />
     </el-icon>
   </button>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useSlots } from 'vue'
 import { ElIcon } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
+
+// 获取插槽
+const slots = useSlots()
 
 // 组件属性
 interface Props {
@@ -92,7 +95,7 @@ const buttonClasses = computed(() => [
     'ui-button--block': props.block,
     'ui-button--circle': props.circle,
     'ui-button--round': props.round,
-    'ui-button--icon-only': !props.loading && !$slots.default && (props.icon || $slots.icon),
+    'ui-button--icon-only': !props.loading && !slots.default && (props.icon || slots.icon),
   }
 ])
 

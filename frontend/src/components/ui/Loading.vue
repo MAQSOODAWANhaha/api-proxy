@@ -70,7 +70,7 @@
       <Button 
         v-if="cancelable" 
         type="default" 
-        size="small"
+        size="sm"
         class="loading-cancel"
         @click="handleCancel"
       >

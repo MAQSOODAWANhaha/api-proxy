@@ -2,11 +2,11 @@
  * HTTP 请求工具 - 集成错误处理系统
  */
 
-import axios, { 
+import axios, { AxiosError } from 'axios'
+import type { 
   AxiosInstance, 
   AxiosRequestConfig, 
   AxiosResponse, 
-  AxiosError,
   InternalAxiosRequestConfig
 } from 'axios'
 
@@ -314,6 +314,5 @@ export const http = {
 export const CancelToken = axios.CancelToken
 export const isCancel = axios.isCancel
 
-// 导出实例和类型
+// 导出实例
 export default request
-export type { RequestConfig, ApiResponse, RequestConfig as HttpRequestConfig, ApiResponse as HttpApiResponse }

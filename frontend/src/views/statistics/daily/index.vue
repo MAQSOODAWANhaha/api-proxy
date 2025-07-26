@@ -85,8 +85,8 @@ const fetchData = async () => {
   try {
     const response = await getDailyStats()
     await nextTick()
-    initTrendChart(response.data.stats)
-    initDistChart(response.data.distribution)
+    initTrendChart(response.stats)
+    initDistChart(response.distribution)
   } catch (error) {
     ElMessage.error('获取统计数据失败')
   }

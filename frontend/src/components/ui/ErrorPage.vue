@@ -29,7 +29,7 @@
           <el-input
             v-model="searchQuery"
             placeholder="搜索您需要的内容..."
-            size="large"
+            size="lg"
             clearable
             @keyup.enter="handleSearch"
           >
@@ -45,7 +45,7 @@
         <div class="error-actions">
           <Button 
             type="primary" 
-            size="large"
+            size="lg"
             @click="handlePrimaryAction"
           >
             {{ primaryActionText }}
@@ -53,7 +53,7 @@
           
           <Button 
             v-if="showSecondaryAction"
-            size="large"
+            size="lg"
             @click="handleSecondaryAction"
           >
             {{ secondaryActionText }}
@@ -62,7 +62,7 @@
           <Button 
             v-if="showContactSupport"
             type="default"
-            size="large"
+            size="lg"
             @click="handleContactSupport"
           >
             联系客服
@@ -117,7 +117,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { 
   Warning, 
   QuestionFilled, 
-  WifiOff, 
+  Close,
   Lock, 
   Tools, 
   Search,
@@ -195,7 +195,7 @@ const errorIcon = computed(() => {
     case 'maintenance':
       return Tools
     case 'network':
-      return WifiOff
+      return Close
     default:
       return Warning
   }

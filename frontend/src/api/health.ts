@@ -23,10 +23,7 @@ const mockHealthStatus: HealthStatus[] = [
 export function getHealthStatuses(): AxiosPromise<HealthStatus[]> {
   return new Promise(async (resolve, reject) => {
     try {
-      const response = await request({
-        url: '/health/servers',
-        method: 'get'
-      })
+      const response = await request.get('/health/servers')
       
       // Transform backend response to frontend format
       const healthData = response.data.servers || []

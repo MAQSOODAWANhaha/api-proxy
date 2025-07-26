@@ -2,7 +2,7 @@
  * 设计系统组合式函数 - 提供统一的设计令牌访问和工具函数
  */
 
-import { computed, type ComputedRef } from 'vue'
+import { computed, ref, readonly, type ComputedRef } from 'vue'
 import { 
   colors, 
   typography, 

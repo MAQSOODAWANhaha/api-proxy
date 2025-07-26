@@ -74,7 +74,7 @@ const handleLogin = async () => {
   try {
     const response = await login(loginForm)
     // Store the actual JWT token from the API response
-    userStore.setToken(response.data.token)
+    userStore.setToken(response.data.data.token)
     ElMessage.success(t('login.loginSuccess'))
     router.push('/')
   } catch (error: any) {

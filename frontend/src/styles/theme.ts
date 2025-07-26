@@ -2,7 +2,7 @@
  * 主题系统 - 统一的主题配置和切换功能
  */
 
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, readonly } from 'vue'
 import { colors, typography, spacing, borderRadius, boxShadow } from './design-tokens'
 
 // 主题类型定义

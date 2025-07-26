@@ -74,18 +74,12 @@ export interface LoadBalancerMetrics {
 
 // Get load balancer status
 export function getLoadBalancerStatus(): AxiosPromise<LoadBalancerStatus> {
-  return request({
-    url: '/loadbalancer/status',
-    method: 'get'
-  })
+  return request.get('/loadbalancer/status')
 }
 
 // List all servers across all providers
 export function listAllServers(): AxiosPromise<ServerInfo[]> {
-  return request({
-    url: '/loadbalancer/servers',
-    method: 'get'
-  })
+  return request.get('/loadbalancer/servers')
 }
 
 // Add new server
@@ -96,35 +90,20 @@ export function addServer(data: {
   weight?: number
   use_tls?: boolean
 }): AxiosPromise<{ success: boolean; message: string }> {
-  return request({
-    url: '/loadbalancer/servers',
-    method: 'post',
-    data
-  })
+  return request.post('/loadbalancer/servers', data)
 }
 
 // Change load balancing strategy
 export function changeStrategy(data: ChangeStrategyRequest): AxiosPromise<ChangeStrategyResponse> {
-  return request({
-    url: '/loadbalancer/strategy',
-    method: 'patch',
-    data
-  })
+  return request.patch('/loadbalancer/strategy', data)
 }
 
 // Perform server action (enable/disable/remove)
 export function performServerAction(data: ServerActionRequest): AxiosPromise<ServerActionResponse> {
-  return request({
-    url: '/loadbalancer/servers/action',
-    method: 'post',
-    data
-  })
+  return request.post('/loadbalancer/servers/action', data)
 }
 
 // Get detailed load balancer metrics
 export function getLoadBalancerMetrics(): AxiosPromise<LoadBalancerMetrics> {
-  return request({
-    url: '/loadbalancer/metrics',
-    method: 'get'
-  })
+  return request.get('/loadbalancer/metrics')
 }

@@ -45,8 +45,8 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  span: 1,
-  offset: 0,
+  span: () => 1,
+  offset: () => 0,
   justify: 'stretch',
   align: 'stretch'
 })

@@ -3,7 +3,7 @@
     <!-- 表格头部 -->
     <div class="table-skeleton-header">
       <div 
-        v-for="column in columns" 
+        v-for="column in columnsArray" 
         :key="column"
         class="table-skeleton-header-cell"
         :style="{ width: getColumnWidth(column) }"
@@ -15,12 +15,12 @@
     <!-- 表格内容 -->
     <div class="table-skeleton-body">
       <div 
-        v-for="row in rows" 
+        v-for="row in rowsArray" 
         :key="row"
         class="table-skeleton-row"
       >
         <div 
-          v-for="column in columns" 
+          v-for="column in columnsArray" 
           :key="`${row}-${column}`"
           class="table-skeleton-cell"
           :style="{ width: getColumnWidth(column) }"
@@ -57,7 +57,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   rows: 5,
   columns: 4,
-  columnWidths: [],
+  columnWidths: () => [],
   animation: 'pulse',
   showHeader: true
 })

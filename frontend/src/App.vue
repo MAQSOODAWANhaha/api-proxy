@@ -29,7 +29,7 @@ const themeClass = computed(() => {
 watch(
   () => userStore.lang,
   (newLang) => {
-    locale.value = newLang
+    locale.value = newLang as 'en' | 'zh'
   },
   { immediate: true } // Run immediately on component mount
 )

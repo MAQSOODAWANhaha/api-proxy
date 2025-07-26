@@ -3,7 +3,7 @@
     <!-- 顶部统计卡片 -->
     <div class="dashboard-skeleton-stats">
       <div 
-        v-for="stat in statsCount" 
+        v-for="stat in statsArray" 
         :key="stat"
         class="dashboard-skeleton-stat-card"
       >
@@ -69,7 +69,7 @@
         </div>
         <div class="activities-list">
           <div 
-            v-for="activity in activitiesCount" 
+            v-for="activity in activitiesArray" 
             :key="activity"
             class="activity-item"
           >
@@ -86,38 +86,52 @@
   </div>
 </template>
 
-<script setup lang="ts">
-import { computed } from 'vue'
+<script lang="ts">
+import { defineComponent, computed } from 'vue'
 import Card from '@/components/ui/Card.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import TableSkeleton from './TableSkeleton.vue'
 
-// 组件属性
-interface Props {
-  /** 统计卡片数量 */
-  statsCount?: number
-  /** 表格行数 */
-  tableRows?: number
-  /** 活动数量 */
-  activitiesCount?: number
-  /** 动画类型 */
-  animation?: 'pulse' | 'wave' | 'none'
-}
-
-const props = withDefaults(defineProps<Props>(), {
-  statsCount: 4,
-  tableRows: 5,
-  activitiesCount: 6,
-  animation: 'pulse'
-})
-
-// 计算属性
-const statsArray = computed(() => {
-  return Array.from({ length: props.statsCount }, (_, i) => i)
-})
-
-const activitiesArray = computed(() => {
-  return Array.from({ length: props.activitiesCount }, (_, i) => i)
+export default defineComponent({
+  name: 'DashboardSkeleton',
+  components: {
+    Card,
+    Skeleton,
+    TableSkeleton
+  },
+  props: {
+    /** 统计卡片数量 */
+    statsCount: {
+      type: Number,
+      default: 4
+    },
+    /** 表格行数 */
+    tableRows: {
+      type: Number,
+      default: 5
+    },
+    /** 活动数量 */
+    activitiesCount: {
+      type: Number,
+      default: 6
+    },
+    /** 动画类型 */
+    animation: {
+      type: String as () => 'pulse' | 'wave' | 'none',
+      default: 'pulse'
+    }
+  },
+  setup(props) {
+    return {
+      // 计算属性
+      statsArray: computed<number[]>(() => {
+        return Array.from({ length: props.statsCount }, (_, i) => i)
+      }),
+      activitiesArray: computed<number[]>(() => {
+        return Array.from({ length: props.activitiesCount }, (_, i) => i)
+      })
+    }
+  }
 })
 </script>
 
