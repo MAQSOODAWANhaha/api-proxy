@@ -159,10 +159,10 @@ let currentKeyId: number | null = null
 
 const getInitialFormData = () => ({
   name: '',
-  provider: 'openai',
+  provider: 'openai' as 'openai' | 'gemini' | 'claude',
   apiKey: '',
   weight: 1,
-  status: 'active',
+  status: 'active' as 'active' | 'inactive',
 })
 const formData = reactive(getInitialFormData())
 
