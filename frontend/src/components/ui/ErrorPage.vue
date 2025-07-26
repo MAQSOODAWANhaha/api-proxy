@@ -41,7 +41,7 @@
           </el-input>
         </div>
         
-        <!-- 操作按钮 */
+        <!-- 操作按钮 -->
         <div class="error-actions">
           <Button 
             type="primary" 
@@ -69,7 +69,7 @@
           </Button>
         </div>
         
-        <!-- 额外信息 */
+        <!-- 额外信息 -->
         <div v-if="showExtraInfo" class="error-extra">
           <details>
             <summary>技术详细信息</summary>
@@ -403,7 +403,7 @@ const handleContactSupport = () => {
 
 const handleSearch = () => {
   if (!searchQuery.value.trim()) {
-    notify.warningMessage('请输入搜索关键词')
+    notify.warning('请输入搜索关键词')
     return
   }
   
