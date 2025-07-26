@@ -288,7 +288,6 @@ export class NotificationManager {
       type: config.type || 'info',
       duration: config.duration ?? 3000,
       showClose: config.showClose ?? false,
-      center: config.center ?? false,
       grouping: config.grouping ?? true,
       onClose: config.onClose
     })

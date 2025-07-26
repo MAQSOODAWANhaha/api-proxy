@@ -3,7 +3,7 @@
     <!-- 顶部统计卡片 -->
     <div class="dashboard-skeleton-stats">
       <div 
-        v-for="stat in statsArray" 
+        v-for="stat in statsArrayComputed" 
         :key="stat"
         class="dashboard-skeleton-stat-card"
       >
@@ -28,10 +28,10 @@
       <Card class="main-chart-skeleton">
         <div class="chart-header">
           <Skeleton width="150px" height="24px" />
-          <Skeleton width="100px" height="32px" />
+          <Skeleton width="80px" height="20px" />
         </div>
         <div class="chart-content">
-          <Skeleton height="300px" />
+          <Skeleton width="100%" height="300px" />
         </div>
       </Card>
       
@@ -41,26 +41,26 @@
           <Skeleton width="120px" height="24px" />
         </div>
         <div class="chart-content">
-          <Skeleton height="300px" />
+          <Skeleton width="100%" height="300px" />
         </div>
       </Card>
     </div>
     
-    <!-- 数据表格 */
+    <!-- 表格区域 -->
     <div class="dashboard-skeleton-table">
       <Card>
         <div class="table-header">
           <Skeleton width="100px" height="24px" />
           <div class="table-actions">
+            <Skeleton width="60px" height="32px" />
             <Skeleton width="80px" height="32px" />
-            <Skeleton width="32px" height="32px" shape="circle" />
           </div>
         </div>
-        <TableSkeleton :rows="tableRows" :columns="4" />
+        <TableSkeleton :rows="tableRows" />
       </Card>
     </div>
     
-    <!-- 底部活动列表 */
+    <!-- 底部活动列表 -->
     <div class="dashboard-skeleton-activities">
       <Card>
         <div class="activities-header">
@@ -69,7 +69,7 @@
         </div>
         <div class="activities-list">
           <div 
-            v-for="activity in activitiesArray" 
+            v-for="activity in activitiesArrayComputed" 
             :key="activity"
             class="activity-item"
           >
@@ -122,14 +122,17 @@ export default defineComponent({
     }
   },
   setup(props) {
+    const statsArrayComputed = computed(() => {
+      return Array.from({ length: props.statsCount }, (_, i) => i)
+    })
+
+    const activitiesArrayComputed = computed(() => {
+      return Array.from({ length: props.activitiesCount }, (_, i) => i)
+    })
+
     return {
-      // 计算属性
-      statsArray: computed<number[]>(() => {
-        return Array.from({ length: props.statsCount }, (_, i) => i)
-      }),
-      activitiesArray: computed<number[]>(() => {
-        return Array.from({ length: props.activitiesCount }, (_, i) => i)
-      })
+      statsArrayComputed,
+      activitiesArrayComputed
     }
   }
 })

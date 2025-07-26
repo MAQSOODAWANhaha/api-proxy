@@ -22,9 +22,13 @@ import ErrorPageComponent from '@/components/ui/ErrorPage.vue'
 const route = useRoute()
 const router = useRouter()
 
+// 错误类型定义
+type ErrorPageType = '404' | '403' | '500' | '503' | 'network' | 'maintenance'
+
 // 计算属性
 const errorType = computed(() => {
-  return (route.params.type as string) || '404'
+  const type = (route.params.type as string) || '404'
+  return type as ErrorPageType
 })
 
 const errorCode = computed(() => {

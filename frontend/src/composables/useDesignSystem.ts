@@ -223,8 +223,8 @@ export function useDesignSystem(): DesignSystem {
     animation,
     breakpoints,
     components,
-    theme,
-    isDark,
+    theme: computed(() => theme.value),
+    isDark: computed(() => isDark.value),
     utils
   }
 }
