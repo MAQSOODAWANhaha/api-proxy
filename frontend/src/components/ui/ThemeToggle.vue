@@ -3,7 +3,7 @@
     <!-- 简单切换按钮 -->
     <el-button
       v-if="mode === 'simple'"
-      :icon="isDark ? Sun : Moon"
+      :icon="isDark ? Sunny : Moon"
       circle
       :title="isDark ? '切换到浅色主题' : '切换到深色主题'"
       @click="toggleTheme"
@@ -21,7 +21,7 @@
       <template #dropdown>
         <el-dropdown-menu>
           <el-dropdown-item command="light" :class="{ active: currentMode === 'light' }">
-            <el-icon><Sun /></el-icon>
+            <el-icon><Sunny /></el-icon>
             <span class="ml-2">浅色主题</span>
             <el-icon v-if="currentMode === 'light'" class="ml-auto"><Check /></el-icon>
           </el-dropdown-item>
@@ -46,7 +46,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ElButton, ElDropdown, ElDropdownMenu, ElDropdownItem, ElIcon } from 'element-plus'
-import { Sun, Moon, Monitor, ArrowDown, Check } from '@element-plus/icons-vue'
+import { Sunny, Moon, Monitor, ArrowDown, Check } from '@element-plus/icons-vue'
 import { useTheme, type ThemeMode } from '../../styles/theme'
 
 // 组件属性
@@ -71,7 +71,7 @@ const { theme, mode: currentMode, isDark, setTheme, toggleTheme } = useTheme()
 // 当前图标
 const currentIcon = computed(() => {
   if (currentMode.value === 'auto') return Monitor
-  return isDark.value ? Sun : Moon
+  return isDark.value ? Sunny : Moon
 })
 
 // 当前模式文本
