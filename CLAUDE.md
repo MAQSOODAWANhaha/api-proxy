@@ -99,3 +99,8 @@ Client → Pingora → Auth → LoadBalancer → UpstreamSelect → ProxyForward
 - 当前处于早期开发阶段，main.rs 仅包含基础 Hello World
 - 需要根据 docs/DESIGN.md 中的详细设计实现各个模块
 - 所有外部 AI 服务商信息都会被隐藏，确保客户端信息安全
+
+## 开发记录
+
+### 服务启动技巧
+- 后续启动服务的时候后台启动 不用等bash执行完 因为是常驻进程

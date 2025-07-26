@@ -126,6 +126,7 @@ impl MigrationTrait for Migration {
                         ProviderTypes::BaseUrl,
                         ProviderTypes::ApiFormat,
                         ProviderTypes::DefaultModel,
+                        ProviderTypes::AuthHeaderFormat,
                     ])
                     .values_panic([
                         "openai".into(),
@@ -133,6 +134,7 @@ impl MigrationTrait for Migration {
                         "api.openai.com".into(),
                         "openai".into(),
                         "gpt-3.5-turbo".into(),
+                        "Bearer {key}".into(),
                     ])
                     .values_panic([
                         "gemini".into(),
@@ -140,6 +142,7 @@ impl MigrationTrait for Migration {
                         "generativelanguage.googleapis.com".into(),
                         "gemini_rest".into(),
                         "gemini-pro".into(),
+                        "X-goog-api-key: {key}".into(),
                     ])
                     .values_panic([
                         "claude".into(),
@@ -147,6 +150,7 @@ impl MigrationTrait for Migration {
                         "api.anthropic.com".into(),
                         "anthropic".into(),
                         "claude-3-sonnet".into(),
+                        "Bearer {key}".into(),
                     ])
                     .to_owned(),
             )

@@ -327,12 +327,36 @@ impl AIProxyHandler {
         let provider_type = ctx.provider_type.as_ref()
             .ok_or(ProxyError::internal("Provider type not set"))?;
 
-        // 替换Authorization头 - 用后端API密钥替换用户密钥
+        // 根据提供商类型处理认证信息
         upstream_request.remove_header("authorization");
+        upstream_request.remove_header("x-goog-api-key");
         let auth_format = provider_type.auth_header_format.as_deref().unwrap_or("Bearer {key}");
-        let auth_value = auth_format.replace("{key}", &selected_backend.api_key);
-        upstream_request.insert_header("authorization", &auth_value)
-            .map_err(|e| ProxyError::internal(format!("Failed to set auth header: {}", e)))?;
+        
+        // 根据提供商类型选择认证方式
+        if self.should_use_google_api_key_auth(provider_type) {
+            // Gemini/Google APIs：使用 X-goog-api-key 头部认证
+            upstream_request.insert_header("x-goog-api-key", &selected_backend.api_key)
+                .map_err(|e| ProxyError::internal(format!("Failed to set x-goog-api-key header: {}", e)))?;
+            
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                base_url = %provider_type.base_url,
+                "Using X-goog-api-key authentication for Google API"
+            );
+        } else {
+            // 其他服务商：使用 Authorization 头部认证
+            let auth_value = auth_format.replace("{key}", &selected_backend.api_key);
+            upstream_request.insert_header("authorization", &auth_value)
+                .map_err(|e| ProxyError::internal(format!("Failed to set auth header: {}", e)))?;
+            
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                auth_format = %auth_format,
+                "Using Authorization header authentication"
+            );
+        }
 
         // 设置正确的Host头
         upstream_request.insert_header("host", &provider_type.base_url)
@@ -368,6 +392,9 @@ impl AIProxyHandler {
             backend_key_id = selected_backend.id,
             provider = %provider_type.name,
             auth_preview = %self.sanitize_api_key(&selected_backend.api_key),
+            final_uri = %upstream_request.uri,
+            host_header = ?upstream_request.headers.get("host"),
+            content_type = ?upstream_request.headers.get("content-type"),
             "Upstream request filtered - auth replaced, source info hidden"
         );
 
@@ -426,6 +453,31 @@ impl AIProxyHandler {
         }
 
         0
+    }
+
+    /// 判断提供商是否使用 X-goog-api-key 认证方式
+    fn should_use_google_api_key_auth(&self, provider_type: &provider_types::Model) -> bool {
+        // 检查提供商名称
+        let provider_name = provider_type.name.to_lowercase();
+        if provider_name.contains("gemini") || provider_name.contains("google") {
+            return true;
+        }
+        
+        // 检查认证头格式配置
+        if let Some(auth_format) = &provider_type.auth_header_format {
+            let auth_format_lower = auth_format.to_lowercase();
+            if auth_format_lower.contains("x-goog-api-key") {
+                return true;
+            }
+        }
+        
+        // 检查基础 URL
+        if provider_type.base_url.contains("googleapis.com") || 
+           provider_type.base_url.contains("generativelanguage.googleapis.com") {
+            return true;
+        }
+        
+        false
     }
 
     /// 净化API密钥用于日志记录

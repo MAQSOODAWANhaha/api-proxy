@@ -55,8 +55,9 @@ impl ProxyService {
 
     /// 检查是否为代理请求（透明代理设计）
     fn is_proxy_request(&self, path: &str) -> bool {
-        // 仅检查代理路径前缀，不解析具体参数
-        path.starts_with("/v1/") || path.starts_with("/proxy/")
+        // 透明代理：除了管理API之外的所有请求都当作AI代理请求
+        // 用户决定发送什么格式给什么提供商，系统只负责认证和密钥替换
+        !self.is_management_request(path)
     }
     
     /// 检查是否为管理请求（应该发送到端口9090）
@@ -107,7 +108,7 @@ impl ProxyHttp for ProxyService {
             } else {
                 return Err(Error::explain(
                     ErrorType::HTTPStatus(404),
-                    r#"{"error":"This endpoint only handles AI proxy requests (/v1/*, /proxy/*)","code":"NOT_PROXY_ENDPOINT"}"#
+                    r#"{"error":"Unknown endpoint - this port handles AI proxy requests (any format)","code":"NOT_PROXY_ENDPOINT"}"#
                 ));
             }
         }
