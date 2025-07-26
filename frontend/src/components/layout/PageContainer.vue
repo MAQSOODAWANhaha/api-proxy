@@ -45,7 +45,7 @@
       <slot />
     </div>
     
-    <!-- 页面底部 */
+    <!-- 页面底部 -->
     <div v-if="$slots.footer" class="page-footer">
       <slot name="footer" />
     </div>
