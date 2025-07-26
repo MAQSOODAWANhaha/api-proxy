@@ -45,8 +45,8 @@ pub enum Relation {
     ProviderType,
     #[sea_orm(has_many = "super::api_health_status::Entity")]
     ApiHealthStatus,
-    #[sea_orm(has_many = "super::request_statistics::Entity")]
-    RequestStatistics,
+    #[sea_orm(has_many = "super::proxy_tracing::Entity")]
+    ProxyTracing,
 }
 
 impl Related<super::users::Entity> for Entity {
@@ -67,9 +67,9 @@ impl Related<super::api_health_status::Entity> for Entity {
     }
 }
 
-impl Related<super::request_statistics::Entity> for Entity {
+impl Related<super::proxy_tracing::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::RequestStatistics.def()
+        Relation::ProxyTracing.def()
     }
 }
 

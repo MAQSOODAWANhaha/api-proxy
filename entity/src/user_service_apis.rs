@@ -51,8 +51,8 @@ pub enum Relation {
         on_delete = "Restrict"
     )]
     ProviderType,
-    #[sea_orm(has_many = "super::request_statistics::Entity")]
-    RequestStatistics,
+    #[sea_orm(has_many = "super::proxy_tracing::Entity")]
+    ProxyTracing,
     #[sea_orm(has_many = "super::daily_statistics::Entity")]
     DailyStatistics,
 }
@@ -69,9 +69,9 @@ impl Related<super::provider_types::Entity> for Entity {
     }
 }
 
-impl Related<super::request_statistics::Entity> for Entity {
+impl Related<super::proxy_tracing::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::RequestStatistics.def()
+        Relation::ProxyTracing.def()
     }
 }
 
