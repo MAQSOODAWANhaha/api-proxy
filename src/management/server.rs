@@ -13,7 +13,7 @@ use anyhow::Result;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Json;
-use axum::routing::{get, post, put, patch};
+use axum::routing::{get, post, put, patch, delete};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -23,6 +23,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
+use super::middleware::{ip_filter_middleware, IpFilterConfig};
 
 /// 管理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,12 @@ pub struct ManagementConfig {
     pub port: u16,
     /// 是否启用CORS
     pub enable_cors: bool,
+    /// 允许的CORS源地址
+    pub cors_origins: Vec<String>,
+    /// 允许访问的IP地址列表
+    pub allowed_ips: Vec<String>,
+    /// 拒绝访问的IP地址列表
+    pub denied_ips: Vec<String>,
     /// API前缀
     pub api_prefix: String,
     /// 最大请求大小
@@ -47,7 +54,10 @@ impl Default for ManagementConfig {
             bind_address: "0.0.0.0".to_string(),
             port: 8080,
             enable_cors: true,
-            api_prefix: "/api/v1".to_string(),
+            cors_origins: vec!["*".to_string()],
+            allowed_ips: vec!["0.0.0.0/0".to_string()],
+            denied_ips: vec![],
+            api_prefix: "/api".to_string(), // 修改为 /api 与前端一致
             max_request_size: 1024 * 1024, // 1MB
             request_timeout: 30,
         }
@@ -149,6 +159,9 @@ impl ManagementServer {
             .route("/users", get(super::handlers::users::list_users))
             .route("/users", post(super::handlers::users::create_user))
             .route("/users/{id}", get(super::handlers::users::get_user))
+            .route("/users/profile", get(super::handlers::users::get_user_profile))
+            .route("/users/profile", put(super::handlers::users::update_user_profile))
+            .route("/users/password", post(super::handlers::users::change_password))
             
             // API密钥管理
             .route("/provider-types", get(super::handlers::auth::list_provider_types))
@@ -158,6 +171,13 @@ impl ManagementServer {
             .route("/api-keys/{id}", put(super::handlers::auth::update_api_key))
             .route("/api-keys/{id}/revoke", post(super::handlers::auth::revoke_api_key))
             
+            // Provider密钥管理
+            .route("/provider-keys", get(super::handlers::provider_keys::list_provider_keys))
+            .route("/provider-keys", post(super::handlers::provider_keys::create_provider_key))
+            .route("/provider-keys/{id}", get(super::handlers::provider_keys::get_provider_key))
+            .route("/provider-keys/{id}", put(super::handlers::provider_keys::update_provider_key))
+            .route("/provider-keys/{id}", delete(super::handlers::provider_keys::delete_provider_key))
+            
             .with_state(state);
 
         let mut app = Router::new()
@@ -165,18 +185,68 @@ impl ManagementServer {
             .route("/", get(root_handler))
             .route("/ping", get(ping_handler));
 
+        // 创建IP过滤配置
+        let ip_filter_config = IpFilterConfig::from_strings(&config.allowed_ips, &config.denied_ips)
+            .unwrap_or_else(|e| {
+                warn!("Failed to create IP filter config: {}, using default", e);
+                IpFilterConfig {
+                    allowed_ips: vec![],
+                    denied_ips: vec![],
+                }
+            });
+
         // 添加中间件
         let service_builder = ServiceBuilder::new()
             .layer(TraceLayer::new_for_http());
 
+        // 配置CORS
         if config.enable_cors {
-            let cors = CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any);
-            app = app.layer(service_builder.layer(cors));
+            let mut cors_layer = CorsLayer::new()
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::PATCH,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::ACCEPT,
+                    axum::http::header::ORIGIN,
+                ]);
+
+            // 配置允许的源
+            if config.cors_origins.contains(&"*".to_string()) {
+                cors_layer = cors_layer.allow_origin(Any);
+            } else {
+                let origins: Result<Vec<_>, _> = config.cors_origins
+                    .iter()
+                    .map(|origin| origin.parse::<axum::http::HeaderValue>())
+                    .collect();
+                
+                match origins {
+                    Ok(origins) => {
+                        cors_layer = cors_layer.allow_origin(origins);
+                    }
+                    Err(e) => {
+                        warn!("Invalid CORS origin configuration: {}, falling back to allow any", e);
+                        cors_layer = cors_layer.allow_origin(Any);
+                    }
+                }
+            }
+
+            app = app.layer(service_builder.layer(cors_layer));
         } else {
             app = app.layer(service_builder);
+        }
+
+        // 添加IP过滤中间件（如果配置了限制）
+        if !config.allowed_ips.is_empty() || !config.denied_ips.is_empty() {
+            app = app.layer(axum::middleware::from_fn(ip_filter_middleware));
+            // 将IP过滤配置添加到请求扩展中
+            app = app.layer(axum::Extension(ip_filter_config));
         }
 
         Ok(app)

@@ -62,7 +62,7 @@ export interface ApiResponse<T> {
 // Get list of provider keys
 export async function getProviderKeys(): Promise<{ data: ProviderKey[] }> {
   try {
-    const response = await request.get<ApiResponse<ProviderKey[]>>('/api/provider-keys')
+    const response = await request.get<ApiResponse<ProviderKey[]>>('/provider-keys')
     let data = response.data.provider_keys || response.data.data || []
     
     // Transform backend data to frontend format for backward compatibility
@@ -107,7 +107,7 @@ export async function addProviderKey(data: {
       max_tokens_per_day: 10000
     }
     
-    const response = await request.post<ApiResponse<any>>('/api/provider-keys', requestData)
+    const response = await request.post<ApiResponse<any>>('/provider-keys', requestData)
     return { data: response.data }
   } catch (error) {
     console.error('Failed to create provider key:', error)
@@ -126,7 +126,7 @@ export async function updateProviderKey(data: ProviderKey): Promise<{ data: Prov
       is_active: data.status === 'active'
     }
     
-    const response = await request.put<ApiResponse<ProviderKey>>(`/api/provider-keys/${data.id}`, requestData)
+    const response = await request.put<ApiResponse<ProviderKey>>(`/provider-keys/${data.id}`, requestData)
     return { data: response.data.data || data }
   } catch (error) {
     console.error('Failed to update provider key:', error)
@@ -137,7 +137,7 @@ export async function updateProviderKey(data: ProviderKey): Promise<{ data: Prov
 // Delete a provider key
 export async function deleteProviderKey(id: number): Promise<void> {
   try {
-    await request.delete(`/api/provider-keys/${id}`)
+    await request.delete(`/provider-keys/${id}`)
   } catch (error) {
     console.error('Failed to delete provider key:', error)
     throw error
@@ -147,7 +147,7 @@ export async function deleteProviderKey(id: number): Promise<void> {
 // Get single provider key
 export async function getProviderKey(id: number): Promise<{ data: ProviderKey }> {
   try {
-    const response = await request.get<ProviderKey>(`/api/provider-keys/${id}`)
+    const response = await request.get<ProviderKey>(`/provider-keys/${id}`)
     return { data: response.data }
   } catch (error) {
     console.error('Failed to get provider key:', error)

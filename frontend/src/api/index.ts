@@ -1,36 +1,12 @@
-import axios from 'axios'
-import { ElMessage } from 'element-plus'
+/**
+ * API基础服务 - 使用新的错误处理系统
+ * @deprecated 请使用 @/utils/request 中的新HTTP客户端
+ */
 
-const service = axios.create({
-  baseURL: 'http://127.0.0.1:9090/api', // All requests will be sent to the management server (port 9090)
-  timeout: 10000,
-})
+import { http } from '@/utils/request'
 
-// Request interceptor
-service.interceptors.request.use(
-  (config) => {
-    // Attach JWT token if available
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+// 导出新的HTTP客户端
+export default http
 
-// Response interceptor
-service.interceptors.response.use(
-  (response) => {
-    // For direct API responses (like login), return the response as-is
-    return response
-  },
-  (error) => {
-    console.error('API Error:', error)
-    return Promise.reject(error)
-  }
-)
-
-export default service
+// 为了向后兼容，保留原有的service导出
+export const service = http

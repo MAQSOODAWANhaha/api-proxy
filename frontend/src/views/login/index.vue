@@ -1,11 +1,16 @@
 <template>
   <div class="login-wrapper">
+    <!-- 语言选择器 -->
+    <div class="language-selector-container">
+      <LanguageSelector size="small" variant="button" />
+    </div>
+    
     <div class="login-container">
       <div class="login-left">
         <div class="logo-area">
           <img src="@/assets/logo.svg" alt="Logo" />
-          <h1>AI Proxy Platform</h1>
-          <p>Enterprise-level AI service proxy platform</p>
+          <h1>{{ $t('login.subtitle') }}</h1>
+          <p>{{ $t('login.welcome') }}</p>
         </div>
       </div>
       <div class="login-right">
@@ -51,9 +56,12 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { login } from '@/api/auth'
 import { ElMessage } from 'element-plus'
+import { LanguageSelector } from '@/components/ui'
+import { useI18n } from '@/locales'
 
 const router = useRouter()
 const userStore = useUserStore()
+const { t } = useI18n()
 const loading = ref(false)
 
 const loginForm = reactive({
@@ -67,17 +75,17 @@ const handleLogin = async () => {
     const response = await login(loginForm)
     // Store the actual JWT token from the API response
     userStore.setToken(response.data.token)
-    ElMessage.success('登录成功!')
+    ElMessage.success(t('login.loginSuccess'))
     router.push('/')
   } catch (error: any) {
     console.error('Login failed:', error)
     // Handle different error scenarios
     if (error.response?.status === 401) {
-      ElMessage.error('用户名或密码错误')
+      ElMessage.error(t('login.invalidCredentials'))
     } else if (error.response?.status === 400) {
-      ElMessage.error('请输入用户名和密码')
+      ElMessage.error(t('login.usernameRequired'))
     } else {
-      ElMessage.error('登录失败，请稍后重试')
+      ElMessage.error(t('login.loginFailed'))
     }
   } finally {
     loading.value = false
@@ -94,6 +102,14 @@ const handleLogin = async () => {
   align-items: center;
   background-image: url('@/assets/background.svg');
   background-size: cover;
+  position: relative;
+}
+
+.language-selector-container {
+  position: absolute;
+  top: var(--spacing-6);
+  right: var(--spacing-6);
+  z-index: 10;
 }
 .login-container {
   display: flex;

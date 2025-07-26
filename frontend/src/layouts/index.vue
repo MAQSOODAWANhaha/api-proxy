@@ -55,6 +55,9 @@
           </el-icon>
         </div>
         <div class="toolbar">
+          <!-- 主题切换器 -->
+          <ThemeToggle mode="dropdown" />
+          
           <el-dropdown @command="handleLanguageChange">
             <span class="action-item">
               <el-icon><Switch /></el-icon>
@@ -95,6 +98,7 @@ import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { logout } from '@/api/auth'
 import { Odometer, Key, DataLine, FirstAidKit, User, Switch, Fold, Expand } from '@element-plus/icons-vue'
+import ThemeToggle from '@/components/ui/ThemeToggle.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -117,99 +121,225 @@ const handleUserCommand = async (command: string) => {
 </script>
 
 <style scoped>
+/* 使用设计系统变量 */
 .layout-container {
   height: 100vh;
   width: 100vw;
+  font-family: var(--font-family-sans);
 }
+
 .sidebar {
-  background: #001529;
-  transition: width 0.3s ease-in-out;
+  background: var(--color-neutral-900);
+  transition: width var(--transition-normal);
   display: flex;
   flex-direction: column;
+  border-right: var(--border-width-1) solid var(--color-border-primary);
 }
+
+.theme-dark .sidebar {
+  background: var(--color-neutral-800);
+}
+
 .logo-container {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: var(--spacing-4);
   height: 64px;
   box-sizing: border-box;
   flex-shrink: 0;
   overflow: hidden;
+  border-bottom: var(--border-width-1) solid var(--color-border-primary);
 }
+
 .logo-img {
-  height: 32px;
-  width: 32px;
-  margin-right: 12px;
+  height: var(--spacing-8);
+  width: var(--spacing-8);
+  margin-right: var(--spacing-3);
   flex-shrink: 0;
 }
+
 .logo-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: white;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-inverse);
   white-space: nowrap;
 }
+
 .menu-wrapper {
   flex-grow: 1;
   overflow-y: auto;
-  &::-webkit-scrollbar { display: none; }
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-secondary) transparent;
 }
+
+.menu-wrapper::-webkit-scrollbar {
+  width: 4px;
+}
+
+.menu-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.menu-wrapper::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-secondary);
+  border-radius: var(--border-radius-full);
+}
+
 .el-menu-vertical:not(.el-menu--collapse) {
   width: 220px;
 }
-.el-menu {
+
+:deep(.el-menu) {
   border-right: none;
-  background: #001529;
+  background: transparent;
 }
-.el-menu-item,
+
+:deep(.el-menu-item),
 :deep(.el-sub-menu__title) {
+  color: rgba(255, 255, 255, 0.75) !important;
+  transition: all var(--transition-fast) !important;
+  margin: var(--spacing-1);
+  border-radius: var(--border-radius-md);
+}
+
+:deep(.el-menu-item:hover),
+:deep(.el-sub-menu__title:hover) {
+  background-color: var(--color-interactive-hover) !important;
+  color: var(--color-text-inverse) !important;
+  transform: translateX(2px);
+}
+
+:deep(.el-menu-item.is-active) {
+  background-color: var(--color-brand-primary) !important;
+  color: var(--color-text-inverse) !important;
+  box-shadow: var(--box-shadow-sm);
+}
+
+:deep(.el-menu--inline) {
+  background-color: var(--color-bg-tertiary) !important;
+}
+
+:deep(.el-sub-menu .el-menu-item) {
+  background-color: transparent !important;
   color: rgba(255, 255, 255, 0.65) !important;
 }
-.el-menu-item:hover,
-:deep(.el-sub-menu__title:hover) {
-  background-color: #000c17 !important;
-  color: #fff !important;
+
+:deep(.el-sub-menu .el-menu-item:hover) {
+  background-color: var(--color-interactive-hover) !important;
+  color: var(--color-text-inverse) !important;
 }
-.el-menu-item.is-active {
-  background-color: var(--color-primary) !important;
-  color: #fff !important;
-}
-:deep(.el-menu--inline) {
-  background-color: #000c17 !important;
-}
+
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #fff;
-  padding: 0 24px;
+  background: var(--color-bg-elevated);
+  padding: 0 var(--spacing-6);
   height: 64px;
-  box-shadow: 0 1px 4px rgba(0,21,41,.08);
+  box-shadow: var(--box-shadow-sm);
+  border-bottom: var(--border-width-1) solid var(--color-border-primary);
+  transition: all var(--transition-normal);
 }
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
 .collapse-icon {
-  font-size: 22px;
+  font-size: var(--font-size-xl);
   cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: color var(--transition-fast);
+  padding: var(--spacing-2);
+  border-radius: var(--border-radius-md);
 }
+
+.collapse-icon:hover {
+  color: var(--color-brand-primary);
+  background-color: var(--color-interactive-hover);
+}
+
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 24px; /* Use gap for consistent spacing */
+  gap: var(--spacing-4);
 }
+
 .action-item {
   cursor: pointer;
   display: flex;
   align-items: center;
-  font-size: 20px;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-secondary);
+  transition: color var(--transition-fast);
+  padding: var(--spacing-2);
+  border-radius: var(--border-radius-md);
 }
+
+.action-item:hover {
+  color: var(--color-brand-primary);
+  background-color: var(--color-interactive-hover);
+}
+
 .user-info {
-  gap: 8px; /* Space between avatar and name */
-  font-size: 14px;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-lg);
+  border: var(--border-width-1) solid var(--color-border-primary);
+  transition: all var(--transition-fast);
 }
+
+.user-info:hover {
+  border-color: var(--color-brand-primary);
+  box-shadow: var(--box-shadow-sm);
+}
+
 .main-content {
-  background-color: var(--bg-color);
+  background-color: var(--color-bg-secondary);
   overflow-y: auto;
+  transition: background-color var(--transition-normal);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: var(--z-index-fixed);
+  }
+  
+  .header {
+    padding: 0 var(--spacing-4);
+  }
+  
+  .toolbar {
+    gap: var(--spacing-2);
+  }
+  
+  .user-info span {
+    display: none;
+  }
+}
+
+/* 深色主题特殊样式 */
+.theme-dark :deep(.el-menu-item),
+.theme-dark :deep(.el-sub-menu__title) {
+  color: var(--color-text-secondary) !important;
+}
+
+.theme-dark :deep(.el-menu-item:hover),
+.theme-dark :deep(.el-sub-menu__title:hover) {
+  color: var(--color-text-primary) !important;
+}
+
+.theme-dark :deep(.el-menu-item.is-active) {
+  color: var(--color-text-inverse) !important;
 }
 </style>

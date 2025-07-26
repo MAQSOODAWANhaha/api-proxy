@@ -272,3 +272,190 @@ pub async fn get_user(
     let user_response = UserResponse::from(user);
     Ok(Json(serde_json::to_value(user_response).unwrap()))
 }
+
+/// 用户档案响应
+#[derive(Debug, Serialize)]
+pub struct UserProfileResponse {
+    pub username: String,
+    pub email: String,
+    pub last_login: Option<String>,
+    pub is_admin: bool,
+    pub created_at: String,
+}
+
+/// 更新用户档案请求
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub email: Option<String>,
+}
+
+/// 修改密码请求
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// 获取用户档案
+pub async fn get_user_profile(
+    State(state): State<AppState>,
+    // TODO: 从JWT token中获取用户ID
+) -> Result<Json<Value>, StatusCode> {
+    // 临时使用管理员用户 (ID=1)
+    let user_id = 1;
+    
+    let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user profile: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let profile = UserProfileResponse {
+        username: user.username,
+        email: user.email,
+        last_login: user.last_login.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+        is_admin: user.is_admin,
+        created_at: user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+
+    Ok(Json(json!({
+        "success": true,
+        "data": profile
+    })))
+}
+
+/// 更新用户档案
+pub async fn update_user_profile(
+    State(state): State<AppState>,
+    Json(request): Json<UpdateProfileRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    // 临时使用管理员用户 (ID=1)
+    let user_id = 1;
+    
+    // 验证邮箱格式
+    if let Some(ref email) = request.email {
+        if email.is_empty() || !email.contains('@') {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Invalid email format"
+            })));
+        }
+    }
+
+    // 获取现有用户
+    let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user for update: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 更新用户信息
+    let mut active_model: users::ActiveModel = user.into();
+    if let Some(email) = request.email {
+        active_model.email = Set(email);
+    }
+    active_model.updated_at = Set(Utc::now().naive_utc());
+
+    match active_model.update(state.database.as_ref()).await {
+        Ok(updated_user) => {
+            let profile = UserProfileResponse {
+                username: updated_user.username,
+                email: updated_user.email,
+                last_login: updated_user.last_login.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+                is_admin: updated_user.is_admin,
+                created_at: updated_user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+
+            Ok(Json(json!({
+                "success": true,
+                "data": profile,
+                "message": "Profile updated successfully"
+            })))
+        }
+        Err(err) => {
+            tracing::error!("Failed to update user profile: {}", err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// 修改密码
+pub async fn change_password(
+    State(state): State<AppState>,
+    Json(request): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    // 临时使用管理员用户 (ID=1)
+    let user_id = 1;
+    
+    // 验证新密码强度
+    if request.new_password.len() < 6 {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "New password must be at least 6 characters long"
+        })));
+    }
+
+    // 获取现有用户
+    let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user for password change: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 验证当前密码
+    match bcrypt::verify(&request.current_password, &user.password_hash) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Current password is incorrect"
+            })));
+        }
+        Err(err) => {
+            tracing::error!("Failed to verify current password: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // 生成新密码哈希
+    let new_password_hash = match hash(&request.new_password, DEFAULT_COST) {
+        Ok(hash) => hash,
+        Err(err) => {
+            tracing::error!("Failed to hash new password: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 更新密码
+    let mut active_model: users::ActiveModel = user.into();
+    active_model.password_hash = Set(new_password_hash);
+    active_model.updated_at = Set(Utc::now().naive_utc());
+
+    match active_model.update(state.database.as_ref()).await {
+        Ok(_) => {
+            Ok(Json(json!({
+                "success": true,
+                "message": "Password changed successfully"
+            })))
+        }
+        Err(err) => {
+            tracing::error!("Failed to update password: {}", err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}

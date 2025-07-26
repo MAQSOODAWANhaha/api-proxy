@@ -14,10 +14,18 @@ host = "127.0.0.1"
 port = 9090
 
 [dual_port.management.access_control]
-allowed_ips = ["127.0.0.1/32", "::1/128"]
+allowed_ips = ["127.0.0.1/32", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
 denied_ips = []
 require_auth = false
 auth_methods = ["ApiKey"]
+
+# CORS配置
+[dual_port.management.cors]
+enabled = true
+# 允许的源地址列表，"*" 表示允许所有源
+origins = ["*"]
+# 或者指定具体的源地址：
+# origins = ["http://localhost:3000", "http://127.0.0.1:3000", "https://your-domain.com"]
 
 # 代理服务配置
 [dual_port.proxy]

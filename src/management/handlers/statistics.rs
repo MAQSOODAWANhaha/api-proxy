@@ -8,14 +8,10 @@ use axum::http::StatusCode;
 use axum::response::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sea_orm::{entity::*, query::*, DatabaseConnection, DbErr, QuerySelect};
+use sea_orm::{entity::*, query::*, QuerySelect};
 use entity::{
-    proxy_tracing, 
+    proxy_tracing,
     proxy_tracing::Entity as ProxyTracing,
-    provider_types,
-    provider_types::Entity as ProviderTypes,
-    user_service_apis,
-    user_service_apis::Entity as UserServiceApis,
 };
 use chrono::{DateTime, Utc, Duration};
 use std::collections::HashMap;

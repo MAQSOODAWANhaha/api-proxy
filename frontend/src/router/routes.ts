@@ -7,6 +7,15 @@ export const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/login/index.vue'),
   },
   {
+    path: '/error/:type?',
+    name: 'ErrorPage',
+    component: () => import('@/views/ErrorPage.vue'),
+    meta: { 
+      title: '错误页面',
+      requiresAuth: false
+    },
+  },
+  {
     path: '/',
     name: 'Layout',
     component: () => import('@/layouts/index.vue'),
@@ -68,6 +77,18 @@ export const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/user-center/index.vue'),
         meta: { title: 'User Center', icon: 'el-icon-user' },
       },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/settings/index.vue'),
+        meta: { title: 'Settings', icon: 'el-icon-setting' },
+      },
     ],
   },
+  // 404 路由 - 必须放在最后
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    redirect: '/error/404'
+  }
 ]

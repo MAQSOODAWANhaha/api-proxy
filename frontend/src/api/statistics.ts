@@ -1,5 +1,6 @@
-import request from './index'
-import type { AxiosPromise } from 'axios'
+import { http } from '@/utils/request'
+import type { AxiosResponse } from 'axios'
+import type { ApiResponse } from '@/utils/request'
 
 export interface DailyStat {
   date: string
@@ -72,36 +73,95 @@ export interface RequestStatsResponse {
   }
 }
 
-// Get daily statistics for dashboard
-export function getDailyStats(): AxiosPromise<{ stats: DailyStat[], distribution: ProviderDistribution[] }> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // Fetch both overview and request stats in parallel
-      const [overviewRes, requestStatsRes] = await Promise.all([
-        request({ url: '/statistics/overview', method: 'get', params: { hours: 168 } }), // 7 days
-        request({ url: '/statistics/requests', method: 'get', params: { hours: 168, group_by: 'day' } })
-      ])
+/**
+ * 获取统计概览
+ */
+export function getStatisticsOverview(hours = 24): Promise<AxiosResponse<ApiResponse<StatisticsOverview>>> {
+  return http.get('/statistics/overview', {
+    params: { hours },
+    showLoading: true
+  })
+}
 
-      const overview: StatisticsOverview = overviewRes.data
-      const requestStats: RequestStatsResponse = requestStatsRes.data
+/**
+ * 获取请求统计数据
+ */
+export function getRequestStats(
+  hours = 168, 
+  groupBy = 'day'
+): Promise<AxiosResponse<ApiResponse<RequestStatsResponse>>> {
+  return http.get('/statistics/requests', {
+    params: { hours, group_by: groupBy },
+    showLoading: true
+  })
+}
 
-      // Transform the data to match frontend expectations
-      const stats: DailyStat[] = requestStats.data.map(item => ({
-        date: new Date(item.timestamp).toISOString().split('T')[0],
-        totalRequests: item.requests,
-        successfulRequests: item.successful,
-        totalTokens: Math.floor(item.requests * 1000) // Estimate tokens
-      }))
+/**
+ * 获取日统计数据（Dashboard使用）
+ */
+export async function getDailyStats(): Promise<{ stats: DailyStat[], distribution: ProviderDistribution[] }> {
+  try {
+    // 并行获取概览和请求统计数据
+    const [overviewRes, requestStatsRes] = await Promise.all([
+      getStatisticsOverview(168), // 7天
+      getRequestStats(168, 'day')
+    ])
 
-      const distribution: ProviderDistribution[] = Object.entries(overview.by_provider).map(([provider, data]) => ({
-        provider,
-        count: data.requests
-      }))
+    const overview = overviewRes.data.data
+    const requestStats = requestStatsRes.data.data
 
-      resolve({ data: { stats, distribution } } as any)
-    } catch (error) {
-      console.error('Failed to fetch statistics:', error)
-      reject(error)
-    }
+    // 转换数据格式以匹配前端期望
+    const stats: DailyStat[] = requestStats.data.map((item: any) => ({
+      date: new Date(item.timestamp).toISOString().split('T')[0],
+      totalRequests: item.requests,
+      successfulRequests: item.successful,
+      totalTokens: Math.floor(item.requests * 1000) // 估算令牌数
+    }))
+
+    const distribution: ProviderDistribution[] = Object.entries(overview.by_provider).map(([provider, data]: [string, any]) => ({
+      provider,
+      count: data.requests
+    }))
+
+    return { stats, distribution }
+  } catch (error) {
+    console.error('获取统计数据失败:', error)
+    throw error
+  }
+}
+
+/**
+ * 获取实时统计数据
+ */
+export function getRealTimeStats(): Promise<AxiosResponse<ApiResponse<{
+  current_requests_per_minute: number
+  current_active_connections: number
+  current_response_time_ms: number
+  provider_status: Record<string, 'healthy' | 'warning' | 'error'>
+}>>> {
+  return http.get('/statistics/realtime', {
+    skipErrorHandler: false,
+    retryable: true
+  })
+}
+
+/**
+ * 获取错误统计
+ */
+export function getErrorStats(hours = 24): Promise<AxiosResponse<ApiResponse<{
+  total_errors: number
+  error_rate: number
+  by_error_code: Record<string, number>
+  by_provider: Record<string, number>
+  recent_errors: Array<{
+    timestamp: string
+    error_code: number
+    provider: string
+    message: string
+  }>
+}>>> {
+  return http.get('/statistics/errors', {
+    params: { hours },
+    showLoading: true
   })
 }

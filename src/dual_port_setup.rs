@@ -48,6 +48,9 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             bind_address: management_host.clone(), 
             port: management_port,
             enable_cors: true,
+            cors_origins: vec!["*".to_string()],
+            allowed_ips: vec!["0.0.0.0/0".to_string()], // 默认允许所有IP
+            denied_ips: vec![],
             api_prefix: "/api".to_string(),
             max_request_size: 16 * 1024 * 1024, // 16MB
             request_timeout: 30,

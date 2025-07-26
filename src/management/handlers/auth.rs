@@ -10,13 +10,11 @@ use sea_orm::{entity::*, query::*};
 use entity::{
     user_service_apis,
     user_service_apis::Entity as UserServiceApis,
-    users,
     users::Entity as Users,
     provider_types,
     provider_types::Entity as ProviderTypes,
 };
 use chrono::{Utc, Duration};
-use bcrypt::verify;
 use jsonwebtoken::{encode, Header, EncodingKey};
 use rand;
 

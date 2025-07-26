@@ -1,0 +1,601 @@
+/**
+ * 响应式设计样式 - 移动端和平板设备适配
+ */
+
+/* 响应式断点定义 */
+:root {
+  --breakpoint-xs: 0px;
+  --breakpoint-sm: 576px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 992px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-2xl: 1400px;
+}
+
+/* 移动优先的响应式工具类 */
+
+/* 容器宽度 */
+.container {
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--spacing-4);
+}
+
+@media (min-width: 576px) {
+  .container {
+    max-width: 540px;
+    padding: 0 var(--spacing-6);
+  }
+}
+
+@media (min-width: 768px) {
+  .container {
+    max-width: 720px;
+  }
+}
+
+@media (min-width: 992px) {
+  .container {
+    max-width: 960px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .container {
+    max-width: 1140px;
+  }
+}
+
+@media (min-width: 1400px) {
+  .container {
+    max-width: 1320px;
+  }
+}
+
+/* 流式容器 */
+.container-fluid {
+  width: 100%;
+  padding: 0 var(--spacing-4);
+}
+
+@media (min-width: 576px) {
+  .container-fluid {
+    padding: 0 var(--spacing-6);
+  }
+}
+
+/* 显示/隐藏工具类 */
+.d-none { display: none !important; }
+.d-block { display: block !important; }
+.d-inline { display: inline !important; }
+.d-inline-block { display: inline-block !important; }
+.d-flex { display: flex !important; }
+.d-inline-flex { display: inline-flex !important; }
+.d-grid { display: grid !important; }
+
+/* 响应式显示 - 小屏幕 */
+.d-sm-none { display: none !important; }
+.d-sm-block { display: block !important; }
+.d-sm-inline { display: inline !important; }
+.d-sm-inline-block { display: inline-block !important; }
+.d-sm-flex { display: flex !important; }
+.d-sm-inline-flex { display: inline-flex !important; }
+.d-sm-grid { display: grid !important; }
+
+@media (min-width: 576px) {
+  .d-sm-none { display: none !important; }
+  .d-sm-block { display: block !important; }
+  .d-sm-inline { display: inline !important; }
+  .d-sm-inline-block { display: inline-block !important; }
+  .d-sm-flex { display: flex !important; }
+  .d-sm-inline-flex { display: inline-flex !important; }
+  .d-sm-grid { display: grid !important; }
+}
+
+/* 响应式显示 - 中等屏幕 */
+@media (min-width: 768px) {
+  .d-md-none { display: none !important; }
+  .d-md-block { display: block !important; }
+  .d-md-inline { display: inline !important; }
+  .d-md-inline-block { display: inline-block !important; }
+  .d-md-flex { display: flex !important; }
+  .d-md-inline-flex { display: inline-flex !important; }
+  .d-md-grid { display: grid !important; }
+}
+
+/* 响应式显示 - 大屏幕 */
+@media (min-width: 992px) {
+  .d-lg-none { display: none !important; }
+  .d-lg-block { display: block !important; }
+  .d-lg-inline { display: inline !important; }
+  .d-lg-inline-block { display: inline-block !important; }
+  .d-lg-flex { display: flex !important; }
+  .d-lg-inline-flex { display: inline-flex !important; }
+  .d-lg-grid { display: grid !important; }
+}
+
+/* 响应式显示 - 超大屏幕 */
+@media (min-width: 1200px) {
+  .d-xl-none { display: none !important; }
+  .d-xl-block { display: block !important; }
+  .d-xl-inline { display: inline !important; }
+  .d-xl-inline-block { display: inline-block !important; }
+  .d-xl-flex { display: flex !important; }
+  .d-xl-inline-flex { display: inline-flex !important; }
+  .d-xl-grid { display: grid !important; }
+}
+
+/* Flex 布局工具类 */
+.flex-row { flex-direction: row !important; }
+.flex-column { flex-direction: column !important; }
+.flex-row-reverse { flex-direction: row-reverse !important; }
+.flex-column-reverse { flex-direction: column-reverse !important; }
+
+.flex-wrap { flex-wrap: wrap !important; }
+.flex-nowrap { flex-wrap: nowrap !important; }
+.flex-wrap-reverse { flex-wrap: wrap-reverse !important; }
+
+.justify-start { justify-content: flex-start !important; }
+.justify-end { justify-content: flex-end !important; }
+.justify-center { justify-content: center !important; }
+.justify-between { justify-content: space-between !important; }
+.justify-around { justify-content: space-around !important; }
+.justify-evenly { justify-content: space-evenly !important; }
+
+.align-start { align-items: flex-start !important; }
+.align-end { align-items: flex-end !important; }
+.align-center { align-items: center !important; }
+.align-baseline { align-items: baseline !important; }
+.align-stretch { align-items: stretch !important; }
+
+.align-content-start { align-content: flex-start !important; }
+.align-content-end { align-content: flex-end !important; }
+.align-content-center { align-content: center !important; }
+.align-content-between { align-content: space-between !important; }
+.align-content-around { align-content: space-around !important; }
+.align-content-stretch { align-content: stretch !important; }
+
+.align-self-auto { align-self: auto !important; }
+.align-self-start { align-self: flex-start !important; }
+.align-self-end { align-self: flex-end !important; }
+.align-self-center { align-self: center !important; }
+.align-self-baseline { align-self: baseline !important; }
+.align-self-stretch { align-self: stretch !important; }
+
+.flex-fill { flex: 1 1 auto !important; }
+.flex-grow-0 { flex-grow: 0 !important; }
+.flex-grow-1 { flex-grow: 1 !important; }
+.flex-shrink-0 { flex-shrink: 0 !important; }
+.flex-shrink-1 { flex-shrink: 1 !important; }
+
+/* 响应式Flex工具类 */
+@media (min-width: 576px) {
+  .flex-sm-row { flex-direction: row !important; }
+  .flex-sm-column { flex-direction: column !important; }
+  .flex-sm-row-reverse { flex-direction: row-reverse !important; }
+  .flex-sm-column-reverse { flex-direction: column-reverse !important; }
+  
+  .justify-sm-start { justify-content: flex-start !important; }
+  .justify-sm-end { justify-content: flex-end !important; }
+  .justify-sm-center { justify-content: center !important; }
+  .justify-sm-between { justify-content: space-between !important; }
+  .justify-sm-around { justify-content: space-around !important; }
+  
+  .align-sm-start { align-items: flex-start !important; }
+  .align-sm-end { align-items: flex-end !important; }
+  .align-sm-center { align-items: center !important; }
+  .align-sm-baseline { align-items: baseline !important; }
+  .align-sm-stretch { align-items: stretch !important; }
+}
+
+@media (min-width: 768px) {
+  .flex-md-row { flex-direction: row !important; }
+  .flex-md-column { flex-direction: column !important; }
+  .flex-md-row-reverse { flex-direction: row-reverse !important; }
+  .flex-md-column-reverse { flex-direction: column-reverse !important; }
+  
+  .justify-md-start { justify-content: flex-start !important; }
+  .justify-md-end { justify-content: flex-end !important; }
+  .justify-md-center { justify-content: center !important; }
+  .justify-md-between { justify-content: space-between !important; }
+  .justify-md-around { justify-content: space-around !important; }
+  
+  .align-md-start { align-items: flex-start !important; }
+  .align-md-end { align-items: flex-end !important; }
+  .align-md-center { align-items: center !important; }
+  .align-md-baseline { align-items: baseline !important; }
+  .align-md-stretch { align-items: stretch !important; }
+}
+
+@media (min-width: 992px) {
+  .flex-lg-row { flex-direction: row !important; }
+  .flex-lg-column { flex-direction: column !important; }
+  .flex-lg-row-reverse { flex-direction: row-reverse !important; }
+  .flex-lg-column-reverse { flex-direction: column-reverse !important; }
+  
+  .justify-lg-start { justify-content: flex-start !important; }
+  .justify-lg-end { justify-content: flex-end !important; }
+  .justify-lg-center { justify-content: center !important; }
+  .justify-lg-between { justify-content: space-between !important; }
+  .justify-lg-around { justify-content: space-around !important; }
+  
+  .align-lg-start { align-items: flex-start !important; }
+  .align-lg-end { align-items: flex-end !important; }
+  .align-lg-center { align-items: center !important; }
+  .align-lg-baseline { align-items: baseline !important; }
+  .align-lg-stretch { align-items: stretch !important; }
+}
+
+/* 间距工具类 */
+.m-0 { margin: 0 !important; }
+.m-1 { margin: var(--spacing-1) !important; }
+.m-2 { margin: var(--spacing-2) !important; }
+.m-3 { margin: var(--spacing-3) !important; }
+.m-4 { margin: var(--spacing-4) !important; }
+.m-5 { margin: var(--spacing-5) !important; }
+.m-6 { margin: var(--spacing-6) !important; }
+.m-8 { margin: var(--spacing-8) !important; }
+.m-10 { margin: var(--spacing-10) !important; }
+.m-12 { margin: var(--spacing-12) !important; }
+
+.mt-0 { margin-top: 0 !important; }
+.mt-1 { margin-top: var(--spacing-1) !important; }
+.mt-2 { margin-top: var(--spacing-2) !important; }
+.mt-3 { margin-top: var(--spacing-3) !important; }
+.mt-4 { margin-top: var(--spacing-4) !important; }
+.mt-5 { margin-top: var(--spacing-5) !important; }
+.mt-6 { margin-top: var(--spacing-6) !important; }
+.mt-8 { margin-top: var(--spacing-8) !important; }
+
+.mb-0 { margin-bottom: 0 !important; }
+.mb-1 { margin-bottom: var(--spacing-1) !important; }
+.mb-2 { margin-bottom: var(--spacing-2) !important; }
+.mb-3 { margin-bottom: var(--spacing-3) !important; }
+.mb-4 { margin-bottom: var(--spacing-4) !important; }
+.mb-5 { margin-bottom: var(--spacing-5) !important; }
+.mb-6 { margin-bottom: var(--spacing-6) !important; }
+.mb-8 { margin-bottom: var(--spacing-8) !important; }
+
+.ml-0 { margin-left: 0 !important; }
+.ml-1 { margin-left: var(--spacing-1) !important; }
+.ml-2 { margin-left: var(--spacing-2) !important; }
+.ml-3 { margin-left: var(--spacing-3) !important; }
+.ml-4 { margin-left: var(--spacing-4) !important; }
+.ml-5 { margin-left: var(--spacing-5) !important; }
+.ml-6 { margin-left: var(--spacing-6) !important; }
+.ml-auto { margin-left: auto !important; }
+
+.mr-0 { margin-right: 0 !important; }
+.mr-1 { margin-right: var(--spacing-1) !important; }
+.mr-2 { margin-right: var(--spacing-2) !important; }
+.mr-3 { margin-right: var(--spacing-3) !important; }
+.mr-4 { margin-right: var(--spacing-4) !important; }
+.mr-5 { margin-right: var(--spacing-5) !important; }
+.mr-6 { margin-right: var(--spacing-6) !important; }
+.mr-auto { margin-right: auto !important; }
+
+.mx-0 { margin-left: 0 !important; margin-right: 0 !important; }
+.mx-1 { margin-left: var(--spacing-1) !important; margin-right: var(--spacing-1) !important; }
+.mx-2 { margin-left: var(--spacing-2) !important; margin-right: var(--spacing-2) !important; }
+.mx-3 { margin-left: var(--spacing-3) !important; margin-right: var(--spacing-3) !important; }
+.mx-4 { margin-left: var(--spacing-4) !important; margin-right: var(--spacing-4) !important; }
+.mx-5 { margin-left: var(--spacing-5) !important; margin-right: var(--spacing-5) !important; }
+.mx-6 { margin-left: var(--spacing-6) !important; margin-right: var(--spacing-6) !important; }
+.mx-auto { margin-left: auto !important; margin-right: auto !important; }
+
+.my-0 { margin-top: 0 !important; margin-bottom: 0 !important; }
+.my-1 { margin-top: var(--spacing-1) !important; margin-bottom: var(--spacing-1) !important; }
+.my-2 { margin-top: var(--spacing-2) !important; margin-bottom: var(--spacing-2) !important; }
+.my-3 { margin-top: var(--spacing-3) !important; margin-bottom: var(--spacing-3) !important; }
+.my-4 { margin-top: var(--spacing-4) !important; margin-bottom: var(--spacing-4) !important; }
+.my-5 { margin-top: var(--spacing-5) !important; margin-bottom: var(--spacing-5) !important; }
+.my-6 { margin-top: var(--spacing-6) !important; margin-bottom: var(--spacing-6) !important; }
+
+/* 内边距工具类 */
+.p-0 { padding: 0 !important; }
+.p-1 { padding: var(--spacing-1) !important; }
+.p-2 { padding: var(--spacing-2) !important; }
+.p-3 { padding: var(--spacing-3) !important; }
+.p-4 { padding: var(--spacing-4) !important; }
+.p-5 { padding: var(--spacing-5) !important; }
+.p-6 { padding: var(--spacing-6) !important; }
+.p-8 { padding: var(--spacing-8) !important; }
+
+.pt-0 { padding-top: 0 !important; }
+.pt-1 { padding-top: var(--spacing-1) !important; }
+.pt-2 { padding-top: var(--spacing-2) !important; }
+.pt-3 { padding-top: var(--spacing-3) !important; }
+.pt-4 { padding-top: var(--spacing-4) !important; }
+.pt-5 { padding-top: var(--spacing-5) !important; }
+.pt-6 { padding-top: var(--spacing-6) !important; }
+
+.pb-0 { padding-bottom: 0 !important; }
+.pb-1 { padding-bottom: var(--spacing-1) !important; }
+.pb-2 { padding-bottom: var(--spacing-2) !important; }
+.pb-3 { padding-bottom: var(--spacing-3) !important; }
+.pb-4 { padding-bottom: var(--spacing-4) !important; }
+.pb-5 { padding-bottom: var(--spacing-5) !important; }
+.pb-6 { padding-bottom: var(--spacing-6) !important; }
+
+.pl-0 { padding-left: 0 !important; }
+.pl-1 { padding-left: var(--spacing-1) !important; }
+.pl-2 { padding-left: var(--spacing-2) !important; }
+.pl-3 { padding-left: var(--spacing-3) !important; }
+.pl-4 { padding-left: var(--spacing-4) !important; }
+.pl-5 { padding-left: var(--spacing-5) !important; }
+.pl-6 { padding-left: var(--spacing-6) !important; }
+
+.pr-0 { padding-right: 0 !important; }
+.pr-1 { padding-right: var(--spacing-1) !important; }
+.pr-2 { padding-right: var(--spacing-2) !important; }
+.pr-3 { padding-right: var(--spacing-3) !important; }
+.pr-4 { padding-right: var(--spacing-4) !important; }
+.pr-5 { padding-right: var(--spacing-5) !important; }
+.pr-6 { padding-right: var(--spacing-6) !important; }
+
+.px-0 { padding-left: 0 !important; padding-right: 0 !important; }
+.px-1 { padding-left: var(--spacing-1) !important; padding-right: var(--spacing-1) !important; }
+.px-2 { padding-left: var(--spacing-2) !important; padding-right: var(--spacing-2) !important; }
+.px-3 { padding-left: var(--spacing-3) !important; padding-right: var(--spacing-3) !important; }
+.px-4 { padding-left: var(--spacing-4) !important; padding-right: var(--spacing-4) !important; }
+.px-5 { padding-left: var(--spacing-5) !important; padding-right: var(--spacing-5) !important; }
+.px-6 { padding-left: var(--spacing-6) !important; padding-right: var(--spacing-6) !important; }
+
+.py-0 { padding-top: 0 !important; padding-bottom: 0 !important; }
+.py-1 { padding-top: var(--spacing-1) !important; padding-bottom: var(--spacing-1) !important; }
+.py-2 { padding-top: var(--spacing-2) !important; padding-bottom: var(--spacing-2) !important; }
+.py-3 { padding-top: var(--spacing-3) !important; padding-bottom: var(--spacing-3) !important; }
+.py-4 { padding-top: var(--spacing-4) !important; padding-bottom: var(--spacing-4) !important; }
+.py-5 { padding-top: var(--spacing-5) !important; padding-bottom: var(--spacing-5) !important; }
+.py-6 { padding-top: var(--spacing-6) !important; padding-bottom: var(--spacing-6) !important; }
+
+/* 文本对齐 */
+.text-left { text-align: left !important; }
+.text-right { text-align: right !important; }
+.text-center { text-align: center !important; }
+.text-justify { text-align: justify !important; }
+
+/* 响应式文本对齐 */
+@media (min-width: 576px) {
+  .text-sm-left { text-align: left !important; }
+  .text-sm-right { text-align: right !important; }
+  .text-sm-center { text-align: center !important; }
+  .text-sm-justify { text-align: justify !important; }
+}
+
+@media (min-width: 768px) {
+  .text-md-left { text-align: left !important; }
+  .text-md-right { text-align: right !important; }
+  .text-md-center { text-align: center !important; }
+  .text-md-justify { text-align: justify !important; }
+}
+
+@media (min-width: 992px) {
+  .text-lg-left { text-align: left !important; }
+  .text-lg-right { text-align: right !important; }
+  .text-lg-center { text-align: center !important; }
+  .text-lg-justify { text-align: justify !important; }
+}
+
+/* 宽度工具类 */
+.w-25 { width: 25% !important; }
+.w-50 { width: 50% !important; }
+.w-75 { width: 75% !important; }
+.w-100 { width: 100% !important; }
+.w-auto { width: auto !important; }
+
+/* 高度工具类 */
+.h-25 { height: 25% !important; }
+.h-50 { height: 50% !important; }
+.h-75 { height: 75% !important; }
+.h-100 { height: 100% !important; }
+.h-auto { height: auto !important; }
+
+/* 最大宽度工具类 */
+.mw-100 { max-width: 100% !important; }
+
+/* 最大高度工具类 */
+.mh-100 { max-height: 100% !important; }
+
+/* 最小视口高度 */
+.min-vh-100 { min-height: 100vh !important; }
+
+/* 视口宽度 */
+.vw-100 { width: 100vw !important; }
+
+/* 视口高度 */
+.vh-100 { height: 100vh !important; }
+
+/* 移动端特殊优化 */
+@media (max-width: 767.98px) {
+  /* 移动端间距调整 */
+  .mobile-p-2 { padding: var(--spacing-2) !important; }
+  .mobile-p-3 { padding: var(--spacing-3) !important; }
+  .mobile-p-4 { padding: var(--spacing-4) !important; }
+  
+  .mobile-m-2 { margin: var(--spacing-2) !important; }
+  .mobile-m-3 { margin: var(--spacing-3) !important; }
+  .mobile-m-4 { margin: var(--spacing-4) !important; }
+  
+  /* 移动端文本大小 */
+  .mobile-text-sm { font-size: var(--font-size-sm) !important; }
+  .mobile-text-base { font-size: var(--font-size-base) !important; }
+  .mobile-text-lg { font-size: var(--font-size-lg) !important; }
+  
+  /* 移动端全宽 */
+  .mobile-w-100 { width: 100% !important; }
+  
+  /* 移动端隐藏 */
+  .mobile-hidden { display: none !important; }
+  
+  /* 移动端垂直排列 */
+  .mobile-flex-column {
+    flex-direction: column !important;
+  }
+  
+  .mobile-flex-column > * + * {
+    margin-top: var(--spacing-3) !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* 平板端特殊优化 */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .tablet-hidden { display: none !important; }
+  .tablet-flex-column { flex-direction: column !important; }
+  
+  /* 平板端间距 */
+  .tablet-p-4 { padding: var(--spacing-4) !important; }
+  .tablet-p-6 { padding: var(--spacing-6) !important; }
+  
+  .tablet-m-4 { margin: var(--spacing-4) !important; }
+  .tablet-m-6 { margin: var(--spacing-6) !important; }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  /* 增加可触摸区域 */
+  .touch-target {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+  
+  /* 移除悬停效果 */
+  .no-touch-hover:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+}
+
+/* 高分辨率屏幕优化 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .retina-border {
+    border-width: 0.5px !important;
+  }
+}
+
+/* 横屏/竖屏适配 */
+@media (orientation: landscape) {
+  .landscape-hidden { display: none !important; }
+  .landscape-flex-row { flex-direction: row !important; }
+}
+
+@media (orientation: portrait) {
+  .portrait-hidden { display: none !important; }
+  .portrait-flex-column { flex-direction: column !important; }
+}
+
+/* 无障碍和动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .respect-motion-reduce * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+  .high-contrast-border {
+    border-width: 2px !important;
+    border-color: currentColor !important;
+  }
+}
+
+/* 打印样式 */
+@media print {
+  .print-hidden { display: none !important; }
+  .print-break-before { page-break-before: always !important; }
+  .print-break-after { page-break-after: always !important; }
+  .print-break-inside-avoid { page-break-inside: avoid !important; }
+  
+  /* 打印时的颜色调整 */
+  .print-text-black { color: black !important; }
+  .print-bg-white { background-color: white !important; }
+}
+
+/* 网格系统 */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 calc(var(--spacing-3) * -1);
+}
+
+.col {
+  flex: 1 0 0%;
+  padding: 0 var(--spacing-3);
+}
+
+.col-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+.col-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+.col-3 { flex: 0 0 25%; max-width: 25%; }
+.col-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+.col-5 { flex: 0 0 41.666667%; max-width: 41.666667%; }
+.col-6 { flex: 0 0 50%; max-width: 50%; }
+.col-7 { flex: 0 0 58.333333%; max-width: 58.333333%; }
+.col-8 { flex: 0 0 66.666667%; max-width: 66.666667%; }
+.col-9 { flex: 0 0 75%; max-width: 75%; }
+.col-10 { flex: 0 0 83.333333%; max-width: 83.333333%; }
+.col-11 { flex: 0 0 91.666667%; max-width: 91.666667%; }
+.col-12 { flex: 0 0 100%; max-width: 100%; }
+
+/* 响应式网格 */
+@media (min-width: 576px) {
+  .col-sm-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+  .col-sm-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+  .col-sm-3 { flex: 0 0 25%; max-width: 25%; }
+  .col-sm-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+  .col-sm-5 { flex: 0 0 41.666667%; max-width: 41.666667%; }
+  .col-sm-6 { flex: 0 0 50%; max-width: 50%; }
+  .col-sm-7 { flex: 0 0 58.333333%; max-width: 58.333333%; }
+  .col-sm-8 { flex: 0 0 66.666667%; max-width: 66.666667%; }
+  .col-sm-9 { flex: 0 0 75%; max-width: 75%; }
+  .col-sm-10 { flex: 0 0 83.333333%; max-width: 83.333333%; }
+  .col-sm-11 { flex: 0 0 91.666667%; max-width: 91.666667%; }
+  .col-sm-12 { flex: 0 0 100%; max-width: 100%; }
+}
+
+@media (min-width: 768px) {
+  .col-md-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+  .col-md-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+  .col-md-3 { flex: 0 0 25%; max-width: 25%; }
+  .col-md-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+  .col-md-5 { flex: 0 0 41.666667%; max-width: 41.666667%; }
+  .col-md-6 { flex: 0 0 50%; max-width: 50%; }
+  .col-md-7 { flex: 0 0 58.333333%; max-width: 58.333333%; }
+  .col-md-8 { flex: 0 0 66.666667%; max-width: 66.666667%; }
+  .col-md-9 { flex: 0 0 75%; max-width: 75%; }
+  .col-md-10 { flex: 0 0 83.333333%; max-width: 83.333333%; }
+  .col-md-11 { flex: 0 0 91.666667%; max-width: 91.666667%; }
+  .col-md-12 { flex: 0 0 100%; max-width: 100%; }
+}
+
+@media (min-width: 992px) {
+  .col-lg-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+  .col-lg-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+  .col-lg-3 { flex: 0 0 25%; max-width: 25%; }
+  .col-lg-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+  .col-lg-5 { flex: 0 0 41.666667%; max-width: 41.666667%; }
+  .col-lg-6 { flex: 0 0 50%; max-width: 50%; }
+  .col-lg-7 { flex: 0 0 58.333333%; max-width: 58.333333%; }
+  .col-lg-8 { flex: 0 0 66.666667%; max-width: 66.666667%; }
+  .col-lg-9 { flex: 0 0 75%; max-width: 75%; }
+  .col-lg-10 { flex: 0 0 83.333333%; max-width: 83.333333%; }
+  .col-lg-11 { flex: 0 0 91.666667%; max-width: 91.666667%; }
+  .col-lg-12 { flex: 0 0 100%; max-width: 100%; }
+}
+
+@media (min-width: 1200px) {
+  .col-xl-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+  .col-xl-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+  .col-xl-3 { flex: 0 0 25%; max-width: 25%; }
+  .col-xl-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+  .col-xl-5 { flex: 0 0 41.666667%; max-width: 41.666667%; }
+  .col-xl-6 { flex: 0 0 50%; max-width: 50%; }
+  .col-xl-7 { flex: 0 0 58.333333%; max-width: 58.333333%; }
+  .col-xl-8 { flex: 0 0 66.666667%; max-width: 66.666667%; }
+  .col-xl-9 { flex: 0 0 75%; max-width: 75%; }
+  .col-xl-10 { flex: 0 0 83.333333%; max-width: 83.333333%; }
+  .col-xl-11 { flex: 0 0 91.666667%; max-width: 91.666667%; }
+  .col-xl-12 { flex: 0 0 100%; max-width: 100%; }
+}
