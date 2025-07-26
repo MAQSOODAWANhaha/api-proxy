@@ -221,7 +221,6 @@ export default {
     updateProfile: '更新资料',
     profileUpdated: '资料更新成功',
     passwordChanged: '密码修改成功',
-    avatar: '头像',
     uploadAvatar: '上传头像',
     removeAvatar: '移除头像'
   },

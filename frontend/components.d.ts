@@ -8,6 +8,11 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    Badge: typeof import('./src/components/ui/Badge.vue')['default']
+    Button: typeof import('./src/components/ui/Button.vue')['default']
+    Card: typeof import('./src/components/ui/Card.vue')['default']
+    CardSkeleton: typeof import('./src/components/skeleton/CardSkeleton.vue')['default']
+    DashboardSkeleton: typeof import('./src/components/skeleton/DashboardSkeleton.vue')['default']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']
@@ -38,9 +43,24 @@ declare module 'vue' {
     ElTable: typeof import('element-plus/es')['ElTable']
     ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ErrorBoundary: typeof import('./src/components/ui/ErrorBoundary.vue')['default']
+    ErrorPage: typeof import('./src/components/ui/ErrorPage.vue')['default']
+    GlobalErrorBoundary: typeof import('./src/components/layouts/GlobalErrorBoundary.vue')['default']
+    Grid: typeof import('./src/components/layout/Grid.vue')['default']
+    GridItem: typeof import('./src/components/layout/GridItem.vue')['default']
     HelloWorld: typeof import('./src/components/HelloWorld.vue')['default']
+    LanguageSelector: typeof import('./src/components/ui/LanguageSelector.vue')['default']
+    LineChart: typeof import('./src/components/charts/LineChart.vue')['default']
+    Loading: typeof import('./src/components/ui/Loading.vue')['default']
+    PageContainer: typeof import('./src/components/layout/PageContainer.vue')['default']
+    PieChart: typeof import('./src/components/charts/PieChart.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    Skeleton: typeof import('./src/components/ui/Skeleton.vue')['default']
+    StatCard: typeof import('./src/components/charts/StatCard.vue')['default']
+    TableSkeleton: typeof import('./src/components/skeleton/TableSkeleton.vue')['default']
+    Tag: typeof import('./src/components/ui/Tag.vue')['default']
+    ThemeToggle: typeof import('./src/components/ui/ThemeToggle.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

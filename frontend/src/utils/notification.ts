@@ -3,7 +3,8 @@
  */
 
 import { ElMessage, ElNotification, ElLoading } from 'element-plus'
-import { h, VNode } from 'vue'
+import { h } from 'vue'
+import type { VNode } from 'vue'
 
 // 通知类型
 export type NotificationType = 'success' | 'warning' | 'info' | 'error'
