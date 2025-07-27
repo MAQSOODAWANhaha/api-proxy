@@ -110,7 +110,8 @@ get_host_ip() {
 
 # 创建必要的目录和文件
 prepare_environment() {
-    log_step "准备部署环境"
+    local profile="${1:-default}"
+    log_step "准备部署环境 (profile: $profile)"
     
     # 创建必要的目录
     mkdir -p "$SCRIPT_DIR/certs"
@@ -121,6 +122,23 @@ prepare_environment() {
     # 获取主机IP地址
     HOST_IP=$(get_host_ip)
     log_info "检测到主机IP地址: $HOST_IP"
+    
+    # 根据环境选择配置文件
+    if [ "$profile" = "production" ]; then
+        CONFIG_SOURCE="config.prod.toml"
+        log_info "使用生产环境配置: $CONFIG_SOURCE"
+    else
+        CONFIG_SOURCE="config.dev.toml"
+        log_info "使用开发环境配置: $CONFIG_SOURCE"
+    fi
+    
+    # 复制对应的配置文件
+    if [ -f "$SCRIPT_DIR/config/$CONFIG_SOURCE" ]; then
+        cp "$SCRIPT_DIR/config/$CONFIG_SOURCE" "$SCRIPT_DIR/config/config.toml"
+        log_info "已复制 $CONFIG_SOURCE 到 config.toml"
+    else
+        log_warning "配置文件 $CONFIG_SOURCE 不存在，将使用默认配置"
+    fi
     
     # 创建环境变量文件（如果不存在）
     if [ ! -f "$ENV_FILE" ]; then
@@ -395,14 +413,14 @@ main() {
     case "$command" in
         "install")
             check_docker
-            prepare_environment
+            prepare_environment "default"
             build_images
             start_services "default"
             show_access_info
             ;;
         "install-prod")
             check_docker
-            prepare_environment
+            prepare_environment "production"
             build_images
             start_services "production"
             show_access_info

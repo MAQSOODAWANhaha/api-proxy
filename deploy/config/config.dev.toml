@@ -1,8 +1,8 @@
-# 简化的AI代理配置文件
+# AI代理平台开发环境配置文件
 
 # 双端口服务器配置
 [dual_port]
-workers = 4
+workers = 2
 
 # 管理服务配置
 [dual_port.management]
@@ -14,7 +14,7 @@ host = "0.0.0.0"
 port = 9090
 
 [dual_port.management.access_control]
-allow_ips = ["127.0.0.1", "::1"]
+allow_ips = []
 deny_ips = []
 require_auth = true
 
