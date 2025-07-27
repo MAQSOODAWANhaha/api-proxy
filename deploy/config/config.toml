@@ -10,7 +10,7 @@ enabled = true
 route_prefixes = ["/api", "/admin"]
 
 [dual_port.management.http]
-host = "127.0.0.1"
+host = "0.0.0.0"
 port = 9090
 
 [dual_port.management.access_control]
@@ -41,7 +41,7 @@ monitoring = true
 
 # 数据库配置
 [database]
-url = "sqlite://./data/api_proxy.db"
+url = "sqlite:///app/data/api-proxy.db"
 max_connections = 10
 connect_timeout = 30
 query_timeout = 60
@@ -55,9 +55,9 @@ enabled = true
 
 # Redis配置
 [redis]
-url = "redis://localhost:6379"
+url = "redis://redis:6379"
 pool_size = 10
-host = "localhost"
+host = "redis"
 port = 6379
 database = 0
 connection_timeout = 5

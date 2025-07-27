@@ -42,10 +42,13 @@ RUN mkdir -p /var/cache/nginx/client_temp \
     && mkdir -p /var/cache/nginx/uwsgi_temp \
     && mkdir -p /var/cache/nginx/scgi_temp
 
-# 设置权限
+# 设置权限 - 确保所有目录存在并设置权限
 RUN chown -R nginx:nginx /var/cache/nginx \
     && chown -R nginx:nginx /usr/share/nginx/html \
-    && chown -R nginx:nginx /var/log/nginx
+    && chown -R nginx:nginx /var/log/nginx \
+    && chmod -R 755 /var/cache/nginx \
+    && chmod -R 644 /usr/share/nginx/html \
+    && chmod -R 755 /var/log/nginx
 
 # 切换到非root用户
 USER nginx
