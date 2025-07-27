@@ -137,16 +137,30 @@ prepare_environment() {
         log_warning "配置文件 $CONFIG_SOURCE 不存在"
     fi
     
-    # 更新.env文件中的CONFIG_FILE配置
+    # 更新.env文件中的动态配置
     if [ -f "$ENV_FILE" ]; then
-        # 如果CONFIG_FILE已存在，则更新它
+        # 更新CONFIG_FILE
         if grep -q "^CONFIG_FILE=" "$ENV_FILE"; then
             sed -i "s/^CONFIG_FILE=.*/CONFIG_FILE=${CONFIG_SOURCE}/" "$ENV_FILE"
         else
-            # 如果不存在，则添加它
             echo "CONFIG_FILE=${CONFIG_SOURCE}" >> "$ENV_FILE"
         fi
-        log_info "已更新环境配置中的CONFIG_FILE为: $CONFIG_SOURCE"
+        
+        # 更新VITE_API_BASE_URL
+        if grep -q "^VITE_API_BASE_URL=" "$ENV_FILE"; then
+            sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=http://${HOST_IP}:9090/api|" "$ENV_FILE"
+        else
+            echo "VITE_API_BASE_URL=http://${HOST_IP}:9090/api" >> "$ENV_FILE"
+        fi
+        
+        # 更新VITE_WS_URL
+        if grep -q "^VITE_WS_URL=" "$ENV_FILE"; then
+            sed -i "s|^VITE_WS_URL=.*|VITE_WS_URL=ws://${HOST_IP}:9090/ws|" "$ENV_FILE"
+        else
+            echo "VITE_WS_URL=ws://${HOST_IP}:9090/ws" >> "$ENV_FILE"
+        fi
+        
+        log_info "已更新环境配置: CONFIG_FILE=${CONFIG_SOURCE}, IP=${HOST_IP}"
     fi
     
     # 创建环境变量文件（如果不存在）
@@ -192,11 +206,11 @@ ENABLE_METRICS=true
 METRICS_PORT=9091
 
 # 前端配置 - 动态IP地址
-VITE_API_BASE_URL=http://${HOST_IP}:9090/api
-VITE_WS_URL=ws://${HOST_IP}:9090/ws
+VITE_API_BASE_URL=http://$HOST_IP:9090/api
+VITE_WS_URL=ws://$HOST_IP:9090/ws
 
 # 后端配置文件
-CONFIG_FILE=${CONFIG_SOURCE}
+CONFIG_FILE=$CONFIG_SOURCE
 EOF
         log_success "环境配置文件已创建，请根据需要修改: $ENV_FILE"
     fi
