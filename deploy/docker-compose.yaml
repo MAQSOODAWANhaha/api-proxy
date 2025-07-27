@@ -64,7 +64,7 @@ services:
   # Redis缓存服务
   # ================================
   redis:
-    image: redis:7.2-alpine
+    image: docker.m.daocloud.io/redis:7.2-alpine
     container_name: api-proxy-redis
     restart: unless-stopped
     ports:
@@ -84,7 +84,7 @@ services:
   # 反向代理 (Nginx) - 可选
   # ================================
   proxy:
-    image: nginx:alpine
+    image: docker.m.daocloud.io/nginx:alpine
     container_name: api-proxy-gateway
     restart: unless-stopped
     ports:

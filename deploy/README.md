@@ -24,6 +24,7 @@ deploy/
 - Docker Compose 2.0+
 - 至少2GB可用内存
 - 至少5GB可用磁盘空间
+- 安装Docker和Docker Compose：apt install docker.io docker-compose-v2
 
 ### 一键安装
 
