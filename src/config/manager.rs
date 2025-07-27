@@ -28,8 +28,13 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// 创建配置管理器
     pub async fn new() -> crate::error::Result<Self> {
-        let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
-        let config_file = format!("config/config.{env}.toml");
+        // 优先使用环境变量指定的配置文件路径
+        let config_file = if let Ok(path) = env::var("API_PROXY_CONFIG_PATH") {
+            path
+        } else {
+            let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
+            format!("config/config.{env}.toml")
+        };
         
         Self::from_file(&config_file).await
     }
