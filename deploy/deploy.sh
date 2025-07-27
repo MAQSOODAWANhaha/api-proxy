@@ -132,12 +132,21 @@ prepare_environment() {
         log_info "使用开发环境配置: $CONFIG_SOURCE"
     fi
     
-    # 复制对应的配置文件
-    if [ -f "$SCRIPT_DIR/config/$CONFIG_SOURCE" ]; then
-        cp "$SCRIPT_DIR/config/$CONFIG_SOURCE" "$SCRIPT_DIR/config/config.toml"
-        log_info "已复制 $CONFIG_SOURCE 到 config.toml"
-    else
-        log_warning "配置文件 $CONFIG_SOURCE 不存在，将使用默认配置"
+    # 检查配置文件是否存在
+    if [ ! -f "$SCRIPT_DIR/config/$CONFIG_SOURCE" ]; then
+        log_warning "配置文件 $CONFIG_SOURCE 不存在"
+    fi
+    
+    # 更新.env文件中的CONFIG_FILE配置
+    if [ -f "$ENV_FILE" ]; then
+        # 如果CONFIG_FILE已存在，则更新它
+        if grep -q "^CONFIG_FILE=" "$ENV_FILE"; then
+            sed -i "s/^CONFIG_FILE=.*/CONFIG_FILE=${CONFIG_SOURCE}/" "$ENV_FILE"
+        else
+            # 如果不存在，则添加它
+            echo "CONFIG_FILE=${CONFIG_SOURCE}" >> "$ENV_FILE"
+        fi
+        log_info "已更新环境配置中的CONFIG_FILE为: $CONFIG_SOURCE"
     fi
     
     # 创建环境变量文件（如果不存在）
@@ -185,15 +194,14 @@ METRICS_PORT=9091
 # 前端配置 - 动态IP地址
 VITE_API_BASE_URL=http://${HOST_IP}:9090/api
 VITE_WS_URL=ws://${HOST_IP}:9090/ws
+
+# 后端配置文件
+CONFIG_FILE=${CONFIG_SOURCE}
 EOF
         log_success "环境配置文件已创建，请根据需要修改: $ENV_FILE"
     fi
     
-    # 复制配置文件（如果存在）
-    if [ -f "$PROJECT_ROOT/config.toml" ]; then
-        cp "$PROJECT_ROOT/config.toml" "$SCRIPT_DIR/config/"
-        log_info "已复制主配置文件到部署目录"
-    fi
+    # 配置文件已通过环境特定文件管理，无需复制
     
     log_success "环境准备完成"
 }
@@ -204,11 +212,16 @@ build_images() {
     
     cd "$SCRIPT_DIR"
     
-    # 使用.env文件
-    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    # 使用.env文件 - 确保环境变量正确加载
+    if [ -f "$ENV_FILE" ]; then
+        set -a  # 自动导出所有变量
+        source "$ENV_FILE"
+        set +a  # 关闭自动导出
+        log_info "已加载环境变量: VITE_API_BASE_URL=${VITE_API_BASE_URL}, CONFIG_FILE=${CONFIG_FILE}"
+    fi
     
-    # 构建镜像
-    docker compose build --no-cache
+    # 构建镜像，使用--env-file确保Docker Compose读取环境变量
+    docker compose --env-file "$ENV_FILE" build --no-cache
     
     log_success "镜像构建完成"
 }
@@ -222,14 +235,18 @@ start_services() {
     cd "$SCRIPT_DIR"
     
     # 使用.env文件
-    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    if [ -f "$ENV_FILE" ]; then
+        set -a  # 自动导出所有变量
+        source "$ENV_FILE"
+        set +a  # 关闭自动导出
+    fi
     
     if [ "$profile" = "production" ]; then
         # 生产环境包括网关
-        docker compose --profile production up -d
+        docker compose --env-file "$ENV_FILE" --profile production up -d
     else
         # 开发环境不包括网关
-        docker compose up -d
+        docker compose --env-file "$ENV_FILE" up -d
     fi
     
     log_success "服务启动完成"

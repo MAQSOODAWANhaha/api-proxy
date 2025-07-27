@@ -24,7 +24,7 @@ services:
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1
-      - API_PROXY_CONFIG_PATH=/app/config/config.toml
+      - API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE:-config.prod.toml}
       - API_PROXY_DATA_DIR=/app/data
       - DATABASE_URL=sqlite:///app/data/api-proxy.db
     networks:
