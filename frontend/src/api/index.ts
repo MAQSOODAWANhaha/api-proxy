@@ -1,12 +1,16 @@
-/**
- * API基础服务 - 使用新的错误处理系统
- * @deprecated 请使用 @/utils/request 中的新HTTP客户端
- */
+// 导出所有API模块
 
-import { http } from '@/utils/request'
+export { AuthAPI } from './auth'
+export { UserAPI } from './user'
+export { ApiKeyAPI } from './apiKey'
+export { StatisticsAPI } from './statistics'
+export { SystemAPI } from './system'
 
-// 导出新的HTTP客户端
-export default http
-
-// 为了向后兼容，保留原有的service导出
-export const service = http
+// 统一的API类
+export class API {
+  static auth = AuthAPI
+  static user = UserAPI
+  static apiKey = ApiKeyAPI
+  static statistics = StatisticsAPI
+  static system = SystemAPI
+}

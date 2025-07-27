@@ -1,231 +1,186 @@
 <template>
-  <div :class="chartClasses" :style="chartStyle">
-    <Loading v-if="loading" :visible="loading" text="图表加载中..." />
-    <div ref="chartContainer" class="chart-container" />
-  </div>
+  <BaseChart
+    ref="baseChartRef"
+    :option="chartOption"
+    :height="height"
+    :width="width"
+    :theme="theme"
+    :auto-resize="autoResize"
+    @chart-click="handleChartClick"
+    @chart-ready="handleChartReady"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
-import * as echarts from 'echarts'
-import { Loading } from '@/components/ui'
-import { useDesignSystem } from '@/composables/useDesignSystem'
+import { ref, computed, watch } from 'vue'
+import BaseChart from './BaseChart.vue'
+import type { PieSeriesOption } from 'echarts/charts'
+import type { 
+  TitleComponentOption,
+  TooltipComponentOption,
+  LegendComponentOption
+} from 'echarts/components'
 
-// 数据类型定义
-interface PieDataItem {
+type EChartsOption = echarts.ComposeOption<
+  | PieSeriesOption
+  | TitleComponentOption
+  | TooltipComponentOption
+  | LegendComponentOption
+>
+
+interface PieChartData {
   name: string
   value: number
   color?: string
 }
 
-// 组件属性
 interface Props {
-  /** 图表数据 */
-  data?: PieDataItem[]
-  /** 图表标题 */
+  data: PieChartData[]
   title?: string
-  /** 图表高度 */
-  height?: string | number
-  /** 是否加载中 */
-  loading?: boolean
-  /** 内径比例 */
-  innerRadius?: string
-  /** 外径比例 */
-  outerRadius?: string
-  /** 是否显示标签 */
-  showLabel?: boolean
-  /** 是否显示图例 */
+  height?: string
+  width?: string
+  theme?: string
+  autoResize?: boolean
+  donut?: boolean
   showLegend?: boolean
-  /** 颜色配置 */
+  legendPosition?: 'top' | 'bottom' | 'left' | 'right'
+  radius?: [string, string] | string
+  center?: [string, string]
   colors?: string[]
-  /** 图表配置 */
-  options?: any
+  roseType?: boolean | 'area' | 'radius'
+  showLabel?: boolean
+  labelPosition?: 'inner' | 'outside' | 'center'
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  height: '400px',
-  loading: false,
-  innerRadius: '0%',
-  outerRadius: '70%',
+  height: '300px',
+  width: '100%',
+  theme: '',
+  autoResize: true,
+  donut: false,
+  showLegend: true,
+  legendPosition: 'bottom',
+  radius: '70%',
+  center: () => ['50%', '50%'] as [string, string],
+  roseType: false,
   showLabel: true,
-  showLegend: true
+  labelPosition: 'outside'
 })
 
-// 组件事件
 const emit = defineEmits<{
-  click: [data: any]
-  legendselectchanged: [data: any]
+  chartClick: [params: any]
+  chartReady: [chart: echarts.ECharts]
 }>()
 
-// 响应式数据
-const chartContainer = ref<HTMLElement>()
-let chartInstance: echarts.ECharts | null = null
+const baseChartRef = ref<InstanceType<typeof BaseChart>>()
 
-// 使用设计系统
-const { theme, colors } = useDesignSystem()
+// 默认颜色配置
+const defaultColors = [
+  '#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#9B59B6',
+  '#1abc9c', '#34495e', '#f39c12', '#e74c3c', '#3498db'
+]
 
-// 计算样式类
-const chartClasses = computed(() => [
-  'ui-pie-chart',
-  {
-    'ui-pie-chart--loading': props.loading
-  }
-])
+// 图表配置
+const chartOption = computed<EChartsOption>(() => {
+  // 处理颜色映射
+  const dataWithColors = props.data.map((item, index) => ({
+    ...item,
+    itemStyle: {
+      color: item.color || (props.colors || defaultColors)[index % (props.colors || defaultColors).length]
+    }
+  }))
 
-// 计算图表样式
-const chartStyle = computed(() => ({
-  height: typeof props.height === 'number' ? `${props.height}px` : props.height
-}))
-
-// 获取主题色彩
-const getThemeColors = () => {
-  if (props.colors) return props.colors
-  
-  return [
-    colors.primary[500],
-    colors.success[500],
-    colors.warning[500],
-    colors.info[500],
-    colors.error[500],
-    colors.secondary[500],
-    colors.neutral[400],
-    colors.neutral[500]
-  ]
-}
-
-// 构建图表配置
-const buildChartOption = () => {
-  const themeColors = getThemeColors()
-  const isDark = theme.value.mode === 'dark'
-  
-  const baseOption = {
+  const option: EChartsOption = {
+    color: props.colors || defaultColors,
     title: props.title ? {
       text: props.title,
       textStyle: {
-        color: isDark ? '#ffffff' : '#1f2937',
         fontSize: 16,
         fontWeight: 'normal'
       },
       left: 'center',
-      top: 10
+      top: 20
     } : undefined,
-    
     tooltip: {
       trigger: 'item',
-      backgroundColor: isDark ? '#374151' : '#ffffff',
-      borderColor: isDark ? '#4b5563' : '#e5e7eb',
-      borderWidth: 1,
-      textStyle: {
-        color: isDark ? '#f9fafb' : '#1f2937'
-      },
-      formatter: '{b}: {c} ({d}%)'
+      formatter: '{a} <br/>{b}: {c} ({d}%)'
     },
-    
     legend: props.showLegend ? {
-      orient: 'horizontal',
-      bottom: 10,
-      textStyle: {
-        color: isDark ? '#d1d5db' : '#4b5563'
-      },
-      type: 'scroll',
-      pageButtonPosition: 'end'
+      orient: ['left', 'right'].includes(props.legendPosition) ? 'vertical' : 'horizontal',
+      [props.legendPosition]: props.legendPosition === 'bottom' ? 0 : 
+                             props.legendPosition === 'top' ? 20 :
+                             props.legendPosition === 'left' ? 0 : 0,
+      data: props.data.map(item => item.name)
     } : undefined,
-    
-    color: themeColors,
-    
     series: [{
+      name: props.title || '数据分布',
       type: 'pie',
-      radius: [props.innerRadius, props.outerRadius],
-      center: ['50%', '50%'],
-      data: props.data?.map((item, index) => ({
-        name: item.name,
-        value: item.value,
-        itemStyle: item.color ? {
-          color: item.color
-        } : undefined
-      })) || [],
+      radius: props.donut ? 
+        (Array.isArray(props.radius) ? props.radius : ['40%', props.radius]) : 
+        props.radius,
+      center: props.center,
+      data: dataWithColors,
+      roseType: props.roseType === true ? 'radius' : (props.roseType === 'area' ? 'area' : undefined),
       emphasis: {
         itemStyle: {
           shadowBlur: 10,
           shadowOffsetX: 0,
-          shadowColor: 'rgba(0, 0, 0, 0.5)',
-          borderColor: isDark ? '#ffffff' : '#1f2937',
-          borderWidth: 2
-        },
-        label: {
-          show: true,
-          fontSize: 14,
-          fontWeight: 'bold'
+          shadowColor: 'rgba(0, 0, 0, 0.5)'
         }
       },
       label: props.showLabel ? {
         show: true,
-        position: 'outside',
-        formatter: '{b}: {d}%',
-        fontSize: 12,
-        color: isDark ? '#d1d5db' : '#4b5563'
+        position: props.labelPosition,
+        formatter: props.labelPosition === 'center' ? '{b}\n{d}%' : '{b}: {d}%'
       } : {
         show: false
       },
-      labelLine: props.showLabel ? {
-        show: true,
-        lineStyle: {
-          color: isDark ? '#6b7280' : '#9ca3af'
-        }
-      } : {
-        show: false
+      labelLine: {
+        show: props.showLabel && props.labelPosition === 'outside'
       },
       itemStyle: {
-        borderRadius: 8,
-        borderColor: isDark ? '#1f2937' : '#ffffff',
+        borderRadius: 4,
+        borderColor: '#fff',
         borderWidth: 2
-      },
-      animationType: 'scale',
-      animationEasing: 'elasticOut',
-      animationDelay: (idx: number) => Math.random() * 200
+      }
     }]
   }
-  
-  // 合并自定义配置
-  return props.options ? echarts.util.merge(baseOption, props.options) : baseOption
+
+  return option
+})
+
+// 处理图表点击事件
+const handleChartClick = (params: any) => {
+  emit('chartClick', params)
 }
 
-// 初始化图表
-const initChart = async () => {
-  if (!chartContainer.value) return
-  
-  await nextTick()
-  
-  if (chartInstance) {
-    chartInstance.dispose()
-  }
-  
-  chartInstance = echarts.init(chartContainer.value, theme.value.mode === 'dark' ? 'dark' : undefined)
-  
-  const option = buildChartOption()
-  chartInstance.setOption(option, true)
-  
-  // 绑定事件
-  chartInstance.on('click', (params) => {
-    emit('click', params)
-  })
-  
-  chartInstance.on('legendselectchanged', (params) => {
-    emit('legendselectchanged', params)
-  })
+// 处理图表就绪事件
+const handleChartReady = (chart: echarts.ECharts) => {
+  emit('chartReady', chart)
 }
 
 // 更新图表
-const updateChart = () => {
-  if (!chartInstance) return
-  
-  const option = buildChartOption()
-  chartInstance.setOption(option, true)
+const updateChart = (newOption?: any) => {
+  if (newOption) {
+    baseChartRef.value?.updateChart(newOption)
+  } else {
+    baseChartRef.value?.updateChart(chartOption.value)
+  }
 }
 
-// 调整图表大小
-const resizeChart = () => {
-  chartInstance?.resize()
+// 清空图表
+const clearChart = () => {
+  baseChartRef.value?.clearChart()
+}
+
+// 获取图表实例
+const getChart = () => {
+  return baseChartRef.value?.getChart()
+}
+
+// 调整大小
+const resize = () => {
+  baseChartRef.value?.resize()
 }
 
 // 监听数据变化
@@ -233,69 +188,11 @@ watch(() => props.data, () => {
   updateChart()
 }, { deep: true })
 
-// 监听主题变化
-watch(theme, () => {
-  initChart()
-})
-
-// 监听窗口大小变化
-const handleResize = () => {
-  resizeChart()
-}
-
-// 生命周期
-onMounted(() => {
-  initChart()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
-})
-
 // 暴露方法
 defineExpose({
-  resize: resizeChart,
-  getInstance: () => chartInstance
+  updateChart,
+  clearChart,
+  getChart,
+  resize
 })
 </script>
-
-<style scoped>
-.ui-pie-chart {
-  position: relative;
-  width: 100%;
-  min-height: 200px;
-}
-
-.ui-pie-chart--loading {
-  pointer-events: none;
-}
-
-.chart-container {
-  width: 100%;
-  height: 100%;
-  min-height: inherit;
-}
-
-/* 深色主题适配 */
-.theme-dark .ui-pie-chart {
-  background-color: transparent;
-}
-
-/* 响应式适配 */
-@media (max-width: 768px) {
-  .ui-pie-chart {
-    min-height: 300px;
-  }
-}
-
-@media (max-width: 480px) {
-  .ui-pie-chart {
-    min-height: 250px;
-  }
-}
-</style>

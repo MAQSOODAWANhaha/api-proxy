@@ -1,0 +1,132 @@
+# AI代理平台 Docker 构建忽略文件
+
+# ================================
+# Git相关
+# ================================
+.git
+.gitignore
+.gitattributes
+
+# ================================
+# 开发工具
+# ================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ================================
+# 文档
+# ================================
+README.md
+docs/
+*.md
+LICENSE
+CONTRIBUTING.md
+
+# ================================
+# 部署相关（避免递归复制）
+# ================================
+docker-compose*.yml
+docker-compose*.yaml
+deploy/Dockerfile*
+deploy/docker-compose*.yaml
+deploy/deploy.sh
+deploy/README.md
+.dockerignore
+
+# 但保留部署配置文件
+!deploy/nginx.conf
+!deploy/nginx-gateway.conf
+
+# ================================
+# Rust相关
+# ================================
+target/
+# 保留 Cargo.toml 和 Cargo.lock，构建需要
+
+# 运行时文件
+*.log
+api-proxy.log
+server.log
+debug.log
+
+# 开发数据库
+data/dev.db
+data/*.db-shm
+data/*.db-wal
+
+# 证书文件（构建时不需要）
+certs/
+*.crt
+*.key
+*.pem
+
+# ================================
+# Node.js相关
+# ================================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/coverage/
+frontend/.nyc_output/
+frontend/*.tsbuildinfo
+
+# 前端日志
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# 前端环境文件
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ================================
+# 系统文件
+# ================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ================================
+# 临时文件
+# ================================
+*.tmp
+*.temp
+*.pid
+*.seed
+*.log
+
+# ================================
+# 测试相关
+# ================================
+tests/
+benches/
+coverage/
+.coverage
+
+# ================================
+# 缓存文件
+# ================================
+.cache/
+.npm/
+.yarn/
+.pnpm/
+
+# ================================
+# 编辑器配置
+# ================================
+.editorconfig
+.eslintrc*
+.prettierrc*
+tsconfig.json
+vite.config.ts
+rustfmt.toml

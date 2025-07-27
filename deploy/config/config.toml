@@ -1,0 +1,72 @@
+# 简化的AI代理配置文件
+
+# 双端口服务器配置
+[dual_port]
+workers = 4
+
+# 管理服务配置
+[dual_port.management]
+enabled = true
+route_prefixes = ["/api", "/admin"]
+
+[dual_port.management.http]
+host = "127.0.0.1"
+port = 9090
+
+[dual_port.management.access_control]
+allow_ips = ["127.0.0.1", "::1"]
+deny_ips = []
+require_auth = true
+
+# 代理服务配置
+[dual_port.proxy]
+enabled = true
+route_prefixes = ["/v1", "/proxy"]
+
+[dual_port.proxy.http]
+host = "0.0.0.0"
+port = 8080
+
+[dual_port.proxy.load_balancing]
+strategy = "round_robin"
+health_check_interval = 30
+max_retries = 3
+
+# 启用的服务
+[dual_port.enabled_services]
+management = true
+proxy = true
+health_check = true
+monitoring = true
+
+# 数据库配置
+[database]
+url = "sqlite://./data/api_proxy.db"
+max_connections = 10
+connect_timeout = 30
+query_timeout = 60
+
+# 缓存配置
+[cache]
+cache_type = "memory"
+memory_max_entries = 10000
+default_ttl = 300
+enabled = true
+
+# Redis配置
+[redis]
+url = "redis://localhost:6379"
+pool_size = 10
+host = "localhost"
+port = 6379
+database = 0
+connection_timeout = 5
+default_ttl = 3600
+max_connections = 10
+
+# 全局服务启用配置
+[services]
+management = true
+proxy = true
+health_check = true
+monitoring = true

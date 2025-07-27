@@ -1,0 +1,128 @@
+# AI代理平台 Docker Compose 配置
+
+services:
+  # ================================
+  # 后端服务 (Rust + Pingora)
+  # ================================
+  backend:
+    build:
+      context: ..
+      dockerfile: ./deploy/Dockerfile.backend
+    container_name: api-proxy-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # Pingora代理服务
+      - "9090:9090"  # Axum管理API
+    volumes:
+      # 数据持久化
+      - backend_data:/app/data
+      - backend_logs:/app/logs
+      # TLS证书（如果需要外部证书）
+      - ./certs:/app/certs:ro
+      # 配置文件（可选，用于动态配置）
+      - ./config:/app/config:ro
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+      - API_PROXY_CONFIG_PATH=/app/config.toml
+      - API_PROXY_DATA_DIR=/app/data
+      - DATABASE_URL=sqlite:///app/data/api-proxy.db
+    networks:
+      - api-proxy-network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ================================
+  # 前端服务 (Vue.js + Nginx)
+  # ================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: ./deploy/Dockerfile.frontend
+    container_name: api-proxy-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"  # 前端Web界面
+    networks:
+      - api-proxy-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ================================
+  # Redis缓存服务
+  # ================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: api-proxy-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - api-proxy-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ================================
+  # 反向代理 (Nginx) - 可选
+  # ================================
+  proxy:
+    image: nginx:alpine
+    container_name: api-proxy-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"    # HTTP
+      - "443:443"  # HTTPS (如果配置了SSL)
+    volumes:
+      - ./nginx-gateway.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # SSL证书目录
+    networks:
+      - api-proxy-network
+    depends_on:
+      - frontend
+      - backend
+    profiles:
+      - production  # 仅在生产环境启用
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ================================
+# 数据卷定义
+# ================================
+volumes:
+  backend_data:
+    driver: local
+  backend_logs:
+    driver: local
+  redis_data:
+    driver: local
+
+# ================================
+# 网络定义
+# ================================
+networks:
+  api-proxy-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

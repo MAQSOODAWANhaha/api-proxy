@@ -1,167 +1,233 @@
-import { http } from '@/utils/request'
-import type { AxiosResponse } from 'axios'
-import type { ApiResponse } from '@/utils/request'
+// 统计数据相关API
 
-export interface DailyStat {
-  date: string
-  totalRequests: number
-  successfulRequests: number
-  totalTokens: number
-}
+import { HttpClient } from '@/utils/http'
+import { MockDataService, useMockData } from '@/utils/mockData'
+import type {
+  StatisticsOverview,
+  RequestStatistics,
+  RequestLog,
+  RequestLogParams,
+  RequestLogListResponse,
+  StatisticsParams
+} from '@/types'
 
-export interface ProviderDistribution {
-  provider: string
-  count: number
-}
+export class StatisticsAPI {
+  // ===== 统计概览 =====
 
-export interface StatisticsOverview {
-  time_range: {
-    hours: number
-    start_time: string
-    end_time: string
+  // 获取统计概览
+  static async getOverview(params: StatisticsParams = {}): Promise<StatisticsOverview> {
+    return HttpClient.get('/statistics/overview', params)
   }
-  requests: {
-    total: number
+
+  // 获取请求统计数据
+  static async getRequestStatistics(params: StatisticsParams = {}): Promise<RequestStatistics> {
+    return HttpClient.get('/statistics/requests', params)
+  }
+
+  // ===== 请求日志 =====
+
+  // 获取请求日志列表
+  static async getRequestLogs(params: RequestLogParams = {}): Promise<RequestLogListResponse> {
+    if (useMockData) {
+      return MockDataService.getRequestLogs(params)
+    }
+    return HttpClient.get('/statistics/logs', params)
+  }
+
+  // 获取单个请求日志详情
+  static async getRequestLog(id: number): Promise<RequestLog> {
+    return HttpClient.get(`/statistics/logs/${id}`)
+  }
+
+  // 导出请求日志
+  static async exportRequestLogs(params: RequestLogParams & {
+    format: 'csv' | 'xlsx'
+  }): Promise<void> {
+    const filename = `request_logs_${new Date().toISOString().split('T')[0]}.${params.format}`
+    return HttpClient.download('/statistics/logs/export', params, filename)
+  }
+
+  // ===== 仪表盘数据 =====
+
+  // 获取仪表盘卡片数据
+  static async getDashboardCards(): Promise<{
+    total_requests_today: number
+    success_rate_today: number
+    total_tokens_today: number
+    active_api_services: number
+    healthy_keys: number
+    total_keys: number
+    avg_response_time: number
+    requests_per_minute: number
+  }> {
+    return HttpClient.get('/statistics/dashboard/cards')
+  }
+
+  // 获取请求趋势数据（过去7天）
+  static async getRequestTrend(days: number = 7): Promise<Array<{
+    date: string
+    requests: number
     successful: number
     failed: number
-    success_rate: number
+    tokens: number
+  }>> {
+    return HttpClient.get('/statistics/dashboard/trend', { days })
   }
-  response_times: {
-    avg_ms: number
-    p50_ms: number
-    p95_ms: number
-    p99_ms: number
-  }
-  traffic: {
-    requests_per_second: number
-    bytes_sent: number
-    bytes_received: number
-  }
-  by_provider: Record<string, {
-    requests: number
-    success_rate: number
-    avg_response_ms: number
-  }>
-  top_endpoints: Array<{
-    path: string
+
+  // 获取服务商使用分布
+  static async getProviderDistribution(): Promise<Array<{
+    provider: string
     requests: number
     percentage: number
-  }>
-}
-
-export interface RequestStatsResponse {
-  time_range: {
-    hours: number
-    group_by: string
-    start_time: string
-    end_time: string
-    points: number
+    tokens: number
+  }>> {
+    return HttpClient.get('/statistics/dashboard/provider-distribution')
   }
-  data: Array<{
+
+  // 获取实时统计数据
+  static async getRealTimeStats(): Promise<{
+    current_requests: number
+    requests_per_second: number
+    active_connections: number
+    avg_response_time: number
+    error_rate: number
     timestamp: string
-    requests: number
-    successful: number
-    failed: number
-    avg_response_ms: number
-    success_rate: number
-  }>
-  aggregated: {
+  }> {
+    return HttpClient.get('/statistics/realtime')
+  }
+
+  // ===== 响应时间分析 =====
+
+  // 获取响应时间分析
+  static async getResponseTimeAnalysis(params: {
+    hours?: number
+    group_by?: 'hour' | 'day'
+    provider_type?: string
+  } = {}): Promise<{
+    data: Array<{
+      timestamp: string
+      avg_response_time: number
+      p50_response_time: number
+      p95_response_time: number
+      p99_response_time: number
+    }>
+    summary: {
+      overall_avg: number
+      best_performance: number
+      worst_performance: number
+      trend: 'improving' | 'stable' | 'degrading'
+    }
+  }> {
+    return HttpClient.get('/statistics/response-time', params)
+  }
+
+  // ===== 错误分析 =====
+
+  // 获取错误统计
+  static async getErrorStatistics(params: {
+    hours?: number
+    group_by?: 'hour' | 'day'
+  } = {}): Promise<{
+    data: Array<{
+      timestamp: string
+      error_count: number
+      error_rate: number
+      error_types: Record<string, number>
+    }>
+    top_errors: Array<{
+      error_type: string
+      count: number
+      percentage: number
+      last_occurrence: string
+    }>
+    summary: {
+      total_errors: number
+      overall_error_rate: number
+      most_common_error: string
+    }
+  }> {
+    return HttpClient.get('/statistics/errors', params)
+  }
+
+  // ===== Token使用分析 =====
+
+  // 获取Token使用统计
+  static async getTokenUsage(params: {
+    start_date?: string
+    end_date?: string
+    group_by?: 'hour' | 'day'
+    provider_type?: string
+  } = {}): Promise<{
+    data: Array<{
+      timestamp: string
+      total_tokens: number
+      prompt_tokens: number
+      completion_tokens: number
+      cost_estimate: number
+    }>
+    summary: {
+      total_tokens: number
+      avg_tokens_per_request: number
+      total_cost_estimate: number
+      trend: 'increasing' | 'stable' | 'decreasing'
+    }
+    by_provider: Record<string, {
+      tokens: number
+      percentage: number
+      cost_estimate: number
+    }>
+  }> {
+    return HttpClient.get('/statistics/tokens', params)
+  }
+
+  // ===== 用户使用分析 =====
+
+  // 获取用户使用排行
+  static async getUserUsageRanking(params: {
+    period?: 'today' | 'week' | 'month'
+    limit?: number
+  } = {}): Promise<Array<{
+    user_id: number
+    username: string
     total_requests: number
-    total_successful: number
-    total_failed: number
-    avg_response_ms: number
+    total_tokens: number
+    success_rate: number
+    last_active: string
+  }>> {
+    return HttpClient.get('/statistics/users/ranking', params)
   }
-}
 
-/**
- * 获取统计概览
- */
-export function getStatisticsOverview(hours = 24): Promise<AxiosResponse<ApiResponse<StatisticsOverview>>> {
-  return http.get('/statistics/overview', {
-    params: { hours },
-    showLoading: true
-  })
-}
+  // ===== 自定义报表 =====
 
-/**
- * 获取请求统计数据
- */
-export function getRequestStats(
-  hours = 168, 
-  groupBy = 'day'
-): Promise<AxiosResponse<ApiResponse<RequestStatsResponse>>> {
-  return http.get('/statistics/requests', {
-    params: { hours, group_by: groupBy },
-    showLoading: true
-  })
-}
-
-/**
- * 获取日统计数据（Dashboard使用）
- */
-export async function getDailyStats(): Promise<{ stats: DailyStat[], distribution: ProviderDistribution[] }> {
-  try {
-    // 并行获取概览和请求统计数据
-    const [overviewRes, requestStatsRes] = await Promise.all([
-      getStatisticsOverview(168), // 7天
-      getRequestStats(168, 'day')
-    ])
-
-    const overview = overviewRes.data.data
-    const requestStats = requestStatsRes.data.data
-
-    // 转换数据格式以匹配前端期望
-    const stats: DailyStat[] = requestStats.data.map((item: any) => ({
-      date: new Date(item.timestamp).toISOString().split('T')[0],
-      totalRequests: item.requests,
-      successfulRequests: item.successful,
-      totalTokens: Math.floor(item.requests * 1000) // 估算令牌数
-    }))
-
-    const distribution: ProviderDistribution[] = Object.entries(overview.by_provider).map(([provider, data]: [string, any]) => ({
-      provider,
-      count: data.requests
-    }))
-
-    return { stats, distribution }
-  } catch (error) {
-    console.error('获取统计数据失败:', error)
-    throw error
+  // 生成自定义报表
+  static async generateCustomReport(params: {
+    start_date: string
+    end_date: string
+    metrics: string[]
+    group_by: 'hour' | 'day'
+    filters?: Record<string, any>
+  }): Promise<{
+    report_id: string
+    status: 'generating' | 'completed' | 'failed'
+    download_url?: string
+    created_at: string
+  }> {
+    return HttpClient.post('/statistics/reports/custom', params)
   }
-}
 
-/**
- * 获取实时统计数据
- */
-export function getRealTimeStats(): Promise<AxiosResponse<ApiResponse<{
-  current_requests_per_minute: number
-  current_active_connections: number
-  current_response_time_ms: number
-  provider_status: Record<string, 'healthy' | 'warning' | 'error'>
-}>>> {
-  return http.get('/statistics/realtime', {
-    skipErrorHandler: false,
-    retryable: true
-  })
-}
+  // 获取报表状态
+  static async getReportStatus(reportId: string): Promise<{
+    report_id: string
+    status: 'generating' | 'completed' | 'failed'
+    progress: number
+    download_url?: string
+    error_message?: string
+  }> {
+    return HttpClient.get(`/statistics/reports/${reportId}/status`)
+  }
 
-/**
- * 获取错误统计
- */
-export function getErrorStats(hours = 24): Promise<AxiosResponse<ApiResponse<{
-  total_errors: number
-  error_rate: number
-  by_error_code: Record<string, number>
-  by_provider: Record<string, number>
-  recent_errors: Array<{
-    timestamp: string
-    error_code: number
-    provider: string
-    message: string
-  }>
-}>>> {
-  return http.get('/statistics/errors', {
-    params: { hours },
-    showLoading: true
-  })
+  // 下载报表
+  static async downloadReport(reportId: string): Promise<void> {
+    return HttpClient.download(`/statistics/reports/${reportId}/download`)
+  }
 }
