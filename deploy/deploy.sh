@@ -10,7 +10,7 @@ set -e
 # ================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yaml"
+COMPOSE_FILE="$SCRIPT_DIR/docker compose.yaml"
 ENV_FILE="$SCRIPT_DIR/.env"
 
 # 颜色定义
@@ -67,7 +67,7 @@ check_docker() {
         exit 1
     fi
     
-    if ! check_command docker-compose && ! docker compose version &> /dev/null; then
+    if ! check_command docker compose && ! docker compose version &> /dev/null; then
         log_error "请安装Docker Compose: https://docs.docker.com/compose/install/"
         exit 1
     fi
@@ -149,7 +149,7 @@ build_images() {
     export $(grep -v '^#' "$ENV_FILE" | xargs)
     
     # 构建镜像
-    docker-compose build --no-cache
+    docker compose build --no-cache
     
     log_success "镜像构建完成"
 }
@@ -167,10 +167,10 @@ start_services() {
     
     if [ "$profile" = "production" ]; then
         # 生产环境包括网关
-        docker-compose --profile production up -d
+        docker compose --profile production up -d
     else
         # 开发环境不包括网关
-        docker-compose up -d
+        docker compose up -d
     fi
     
     log_success "服务启动完成"
@@ -181,7 +181,7 @@ stop_services() {
     log_step "停止服务"
     
     cd "$SCRIPT_DIR"
-    docker-compose down
+    docker compose down
     
     log_success "服务已停止"
 }
@@ -203,13 +203,13 @@ show_status() {
     log_step "服务状态"
     
     cd "$SCRIPT_DIR"
-    docker-compose ps
+    docker compose ps
     
     echo ""
     log_info "服务健康状态:"
-    docker-compose exec backend curl -f http://localhost:9090/api/health 2>/dev/null && log_success "后端API服务正常" || log_warning "后端API服务异常"
-    docker-compose exec frontend curl -f http://localhost/health 2>/dev/null && log_success "前端服务正常" || log_warning "前端服务异常"
-    docker-compose exec redis redis-cli ping 2>/dev/null && log_success "Redis服务正常" || log_warning "Redis服务异常"
+    docker compose exec backend curl -f http://localhost:9090/api/health 2>/dev/null && log_success "后端API服务正常" || log_warning "后端API服务异常"
+    docker compose exec frontend curl -f http://localhost/health 2>/dev/null && log_success "前端服务正常" || log_warning "前端服务异常"
+    docker compose exec redis redis-cli ping 2>/dev/null && log_success "Redis服务正常" || log_warning "Redis服务异常"
 }
 
 # 查看日志
@@ -221,10 +221,10 @@ show_logs() {
     
     if [ -n "$service" ]; then
         log_step "查看 $service 服务日志 (最近 $lines 行)"
-        docker-compose logs --tail="$lines" -f "$service"
+        docker compose logs --tail="$lines" -f "$service"
     else
         log_step "查看所有服务日志 (最近 $lines 行)"
-        docker-compose logs --tail="$lines" -f
+        docker compose logs --tail="$lines" -f
     fi
 }
 
@@ -235,11 +235,11 @@ cleanup() {
     cd "$SCRIPT_DIR"
     
     # 停止并删除容器
-    docker-compose down --volumes --remove-orphans
+    docker compose down --volumes --remove-orphans
     
     # 删除镜像（可选）
     if [ "$1" = "--images" ]; then
-        docker-compose down --rmi all
+        docker compose down --rmi all
         log_info "已删除相关镜像"
     fi
     
@@ -258,7 +258,7 @@ database_operation() {
             log_step "备份数据库"
             mkdir -p "$SCRIPT_DIR/backups"
             backup_file="$SCRIPT_DIR/backups/backup-$(date +%Y%m%d-%H%M%S).db"
-            docker-compose exec backend cp /app/data/api-proxy.db "/app/backups/$(basename "$backup_file")"
+            docker compose exec backend cp /app/data/api-proxy.db "/app/backups/$(basename "$backup_file")"
             log_success "数据库已备份到: $backup_file"
             ;;
         "restore")
@@ -268,8 +268,8 @@ database_operation() {
                 exit 1
             fi
             log_step "恢复数据库"
-            docker-compose exec backend cp "/app/backups/$(basename "$backup_file")" /app/data/api-proxy.db
-            docker-compose restart backend
+            docker compose exec backend cp "/app/backups/$(basename "$backup_file")" /app/data/api-proxy.db
+            docker compose restart backend
             log_success "数据库已恢复"
             ;;
         *)
@@ -298,7 +298,7 @@ show_access_info() {
     log_info "📊 其他服务:"
     echo "   Redis:   $host:6379"
     
-    if docker-compose ps | grep -q "api-proxy-gateway"; then
+    if docker compose ps | grep -q "api-proxy-gateway"; then
         echo ""
         log_info "🚪 生产网关:"
         echo "   HTTP:  http://$host"

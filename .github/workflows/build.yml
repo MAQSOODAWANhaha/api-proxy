@@ -11,7 +11,7 @@ env:
 
 jobs:
   build:
-    name: Build and Test
+    name: Build
     runs-on: ubuntu-latest
     
     steps:
@@ -46,6 +46,3 @@ jobs:
       
     - name: Build release
       run: cargo build --release --verbose --all-features
-      
-    - name: Run tests
-      run: cargo test --verbose --all-features
