@@ -45,10 +45,16 @@ services:
     build:
       context: ..
       dockerfile: ./deploy/Dockerfile.frontend
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+        - VITE_WS_URL=${VITE_WS_URL}
     container_name: api-proxy-frontend
     restart: unless-stopped
     ports:
       - "3000:80"  # 前端Web界面
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+      - VITE_WS_URL=${VITE_WS_URL}
     networks:
       - api-proxy-network
     depends_on:

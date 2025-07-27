@@ -75,6 +75,39 @@ check_docker() {
     log_success "Docker环境检查通过"
 }
 
+# 获取本机IP地址
+get_host_ip() {
+    # 尝试多种方法获取本机IP地址
+    local ip=""
+    
+    # 方法1: 通过hostname -I (Linux)
+    if command -v hostname &> /dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    # 方法2: 通过ip route (Linux)
+    if [ -z "$ip" ] && command -v ip &> /dev/null; then
+        ip=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+')
+    fi
+    
+    # 方法3: 通过ifconfig
+    if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
+        ip=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
+    fi
+    
+    # 方法4: 通过网络连接检测
+    if [ -z "$ip" ]; then
+        ip=$(curl -s http://checkip.amazonaws.com/ 2>/dev/null || echo "")
+    fi
+    
+    # 默认回退到localhost
+    if [ -z "$ip" ]; then
+        ip="localhost"
+    fi
+    
+    echo "$ip"
+}
+
 # 创建必要的目录和文件
 prepare_environment() {
     log_step "准备部署环境"
@@ -84,6 +117,10 @@ prepare_environment() {
     mkdir -p "$SCRIPT_DIR/config"
     mkdir -p "$SCRIPT_DIR/ssl"
     mkdir -p "$SCRIPT_DIR/logs"
+    
+    # 获取主机IP地址
+    HOST_IP=$(get_host_ip)
+    log_info "检测到主机IP地址: $HOST_IP"
     
     # 创建环境变量文件（如果不存在）
     if [ ! -f "$ENV_FILE" ]; then
@@ -126,6 +163,10 @@ TLS_KEY_PATH=/app/certs/key.pem
 # 监控配置
 ENABLE_METRICS=true
 METRICS_PORT=9091
+
+# 前端配置 - 动态IP地址
+VITE_API_BASE_URL=http://${HOST_IP}:9090/api
+VITE_WS_URL=ws://${HOST_IP}:9090/ws
 EOF
         log_success "环境配置文件已创建，请根据需要修改: $ENV_FILE"
     fi
