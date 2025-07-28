@@ -75,37 +75,99 @@ check_docker() {
     log_success "Docker环境检查通过"
 }
 
-# 获取本机IP地址
+# 获取主机IP地址（支持公网IP检测和用户指定）
 get_host_ip() {
-    # 尝试多种方法获取本机IP地址
-    local ip=""
+    local public_ip=""
+    local local_ip=""
+    local final_ip=""
     
-    # 方法1: 通过hostname -I (Linux)
+    # 首先检查是否通过环境变量指定了IP
+    if [[ -n "$DEPLOY_IP" ]]; then
+        echo "$DEPLOY_IP"
+        return
+    fi
+    
+    log_info "正在检测IP地址..."
+    
+    # 获取内网IP
     if command -v hostname &> /dev/null; then
-        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
     
-    # 方法2: 通过ip route (Linux)
-    if [ -z "$ip" ] && command -v ip &> /dev/null; then
-        ip=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+')
+    if [ -z "$local_ip" ] && command -v ip &> /dev/null; then
+        local_ip=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+')
     fi
     
-    # 方法3: 通过ifconfig
-    if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
-        ip=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
+    if [ -z "$local_ip" ] && command -v ifconfig &> /dev/null; then
+        local_ip=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
     fi
     
-    # 方法4: 通过网络连接检测
-    if [ -z "$ip" ]; then
-        ip=$(curl -s http://checkip.amazonaws.com/ 2>/dev/null || echo "")
+    # 尝试获取公网IP
+    if command -v curl &> /dev/null; then
+        log_info "尝试获取公网IP..."
+        public_ip=$(timeout 10 curl -s ifconfig.me 2>/dev/null || timeout 10 curl -s ipinfo.io/ip 2>/dev/null || timeout 10 curl -s icanhazip.com 2>/dev/null)
+        
+        # 验证IP格式
+        if [[ ! "$public_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            public_ip=""
+        fi
     fi
     
-    # 默认回退到localhost
-    if [ -z "$ip" ]; then
-        ip="localhost"
+    # 显示检测结果并让用户选择
+    echo ""
+    echo -e "${BLUE}检测到以下IP地址:${NC}"
+    
+    options_count=0
+    declare -a ip_options
+    
+    if [[ -n "$public_ip" ]]; then
+        options_count=$((options_count + 1))
+        ip_options[$options_count]="$public_ip"
+        echo -e "${GREEN}[$options_count]${NC} 公网IP: $public_ip ${YELLOW}(推荐用于生产环境)${NC}"
     fi
     
-    echo "$ip"
+    if [[ -n "$local_ip" && "$local_ip" != "$public_ip" ]]; then
+        options_count=$((options_count + 1))
+        ip_options[$options_count]="$local_ip"
+        echo -e "${GREEN}[$options_count]${NC} 内网IP: $local_ip ${YELLOW}(推荐用于开发环境)${NC}"
+    fi
+    
+    options_count=$((options_count + 1))
+    ip_options[$options_count]="custom"
+    echo -e "${GREEN}[$options_count]${NC} 手动输入IP地址"
+    
+    echo ""
+    
+    # 让用户选择
+    while true; do
+        read -p "请选择要使用的IP地址 [1-$options_count]: " choice
+        
+        if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [[ $choice -le $options_count ]]; then
+            if [[ "${ip_options[$choice]}" == "custom" ]]; then
+                while true; do
+                    read -p "请输入IP地址: " custom_ip
+                    if [[ "$custom_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                        final_ip="$custom_ip"
+                        break
+                    else
+                        log_warning "IP地址格式不正确，请重新输入"
+                    fi
+                done
+            else
+                final_ip="${ip_options[$choice]}"
+            fi
+            break
+        else
+            log_warning "无效选择，请输入1-$options_count之间的数字"
+        fi
+    done
+    
+    # 默认回退
+    if [ -z "$final_ip" ]; then
+        final_ip="${local_ip:-127.0.0.1}"
+    fi
+    
+    echo "$final_ip"
 }
 
 # 创建必要的目录和文件
@@ -146,18 +208,32 @@ prepare_environment() {
             echo "CONFIG_FILE=${CONFIG_SOURCE}" >> "$ENV_FILE"
         fi
         
+        # 根据环境决定API访问方式
+        local api_base_url=""
+        local ws_url=""
+        
+        if [ "$profile" = "production" ]; then
+            # 生产环境：通过网关访问（80端口）
+            api_base_url="http://${HOST_IP}/api"
+            ws_url="ws://${HOST_IP}/ws"
+        else
+            # 开发环境：直接访问后端（9090端口）
+            api_base_url="http://${HOST_IP}:9090/api"
+            ws_url="ws://${HOST_IP}:9090/ws"
+        fi
+        
         # 更新VITE_API_BASE_URL
         if grep -q "^VITE_API_BASE_URL=" "$ENV_FILE"; then
-            sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=http://${HOST_IP}:9090/api|" "$ENV_FILE"
+            sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=${api_base_url}|" "$ENV_FILE"
         else
-            echo "VITE_API_BASE_URL=http://${HOST_IP}:9090/api" >> "$ENV_FILE"
+            echo "VITE_API_BASE_URL=${api_base_url}" >> "$ENV_FILE"
         fi
         
         # 更新VITE_WS_URL
         if grep -q "^VITE_WS_URL=" "$ENV_FILE"; then
-            sed -i "s|^VITE_WS_URL=.*|VITE_WS_URL=ws://${HOST_IP}:9090/ws|" "$ENV_FILE"
+            sed -i "s|^VITE_WS_URL=.*|VITE_WS_URL=${ws_url}|" "$ENV_FILE"
         else
-            echo "VITE_WS_URL=ws://${HOST_IP}:9090/ws" >> "$ENV_FILE"
+            echo "VITE_WS_URL=${ws_url}" >> "$ENV_FILE"
         fi
         
         log_info "已更新环境配置: CONFIG_FILE=${CONFIG_SOURCE}, IP=${HOST_IP}"
@@ -166,6 +242,21 @@ prepare_environment() {
     # 创建环境变量文件（如果不存在）
     if [ ! -f "$ENV_FILE" ]; then
         log_info "创建环境配置文件: $ENV_FILE"
+        
+        # 根据环境决定API访问方式
+        local api_base_url=""
+        local ws_url=""
+        
+        if [ "$profile" = "production" ]; then
+            # 生产环境：通过网关访问（80端口）
+            api_base_url="http://$HOST_IP/api"
+            ws_url="ws://$HOST_IP/ws"
+        else
+            # 开发环境：直接访问后端（9090端口）
+            api_base_url="http://$HOST_IP:9090/api"
+            ws_url="ws://$HOST_IP:9090/ws"
+        fi
+        
         cat > "$ENV_FILE" << EOF
 # AI代理平台环境配置
 
@@ -206,8 +297,8 @@ ENABLE_METRICS=true
 METRICS_PORT=9091
 
 # 前端配置 - 动态IP地址
-VITE_API_BASE_URL=http://$HOST_IP:9090/api
-VITE_WS_URL=ws://$HOST_IP:9090/ws
+VITE_API_BASE_URL=$api_base_url
+VITE_WS_URL=$ws_url
 
 # 后端配置文件
 CONFIG_FILE=$CONFIG_SOURCE
