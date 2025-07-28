@@ -27,6 +27,9 @@ pub fn create_routes(state: AppState) -> Router {
         // 用户管理路由
         .nest("/users", user_routes())
         
+        // 用户中心路由（前端兼容性）
+        .nest("/user", user_center_routes())
+        
         // 认证路由
         .nest("/auth", auth_routes())
         
@@ -55,6 +58,22 @@ fn system_routes() -> Router<AppState> {
     Router::new()
         .route("/info", get(crate::management::handlers::system::get_system_info))
         .route("/metrics", get(crate::management::handlers::system::get_system_metrics))
+        // TODO: 系统配置管理相关功能暂时不实现
+        // .route("/config", get(crate::management::handlers::system::get_system_config))
+        // .route("/config", put(crate::management::handlers::system::update_system_config))
+        // .route("/config/reload", post(crate::management::handlers::system::reload_config))
+        // 日志管理
+        // .route("/logs", get(crate::management::handlers::system::get_system_logs))
+        // .route("/logs/download", get(crate::management::handlers::system::download_system_logs))
+        // 系统操作
+        // .route("/restart", post(crate::management::handlers::system::restart_system))
+        // .route("/cache/clear", post(crate::management::handlers::system::clear_cache))
+        // .route("/gc", post(crate::management::handlers::system::garbage_collect))
+        // 备份与恢复
+        // .route("/backup", post(crate::management::handlers::system::create_backup))
+        // .route("/backups", get(crate::management::handlers::system::list_backups))
+        // .route("/backups/{id}/download", get(crate::management::handlers::system::download_backup))
+        // .route("/restore/{id}", post(crate::management::handlers::system::restore_backup))
 }
 
 /// 负载均衡管理路由
@@ -83,6 +102,14 @@ fn statistics_routes() -> Router<AppState> {
         .route("/requests", get(crate::management::handlers::statistics::get_request_stats))
         // Dashboard相关接口
         .nest("/dashboard", dashboard_routes())
+        // 其他核心统计接口
+        .route("/logs", get(crate::management::handlers::statistics::get_request_logs))
+        .route("/realtime", get(crate::management::handlers::statistics::get_realtime_stats))
+        .route("/tokens", get(crate::management::handlers::statistics::get_token_stats))
+        // 高级统计接口（TODO: 后续实现）
+        // .route("/logs/{id}", get(crate::management::handlers::statistics::get_request_log_detail))
+        // .route("/response-time", get(crate::management::handlers::statistics::get_response_time_analysis))
+        // .route("/errors", get(crate::management::handlers::statistics::get_error_stats))
 }
 
 /// Dashboard统计路由
@@ -104,23 +131,76 @@ fn user_routes() -> Router<AppState> {
         .route("/profile", put(crate::management::handlers::users::update_user_profile))
         .route("/password", post(crate::management::handlers::users::change_password))
 }
+
+/// 用户中心路由（为前端兼容性提供 /user/* 路径）
+fn user_center_routes() -> Router<AppState> {
+    use axum::routing::put;
+    Router::new()
+        .route("/profile", get(crate::management::handlers::users::get_user_profile))
+        .route("/profile", put(crate::management::handlers::users::update_user_profile))
+        // TODO: 高级用户功能暂时不实现
+        // .route("/avatar", post(crate::management::handlers::users::upload_avatar))
+        // .route("/security", get(crate::management::handlers::users::get_security_settings))
+        // .route("/security", put(crate::management::handlers::users::update_security_settings))
+        // .route("/2fa/enable", post(crate::management::handlers::users::enable_2fa))
+        // .route("/2fa/disable", post(crate::management::handlers::users::disable_2fa))
+        // .route("/login-history", get(crate::management::handlers::users::get_login_history))
+}
+
 /// 认证路由
 fn auth_routes() -> Router<AppState> {
     Router::new()
         .route("/login", post(crate::management::handlers::auth::login))
         .route("/validate", get(crate::management::handlers::auth::validate_token))
+        // TODO: 其他认证功能暂时不实现，专注于核心功能
+        // .route("/register", post(crate::management::handlers::auth::register))
+        // .route("/profile", get(crate::management::handlers::auth::get_profile))
+        // .route("/refresh", post(crate::management::handlers::auth::refresh_token))
+        // .route("/logout", post(crate::management::handlers::auth::logout))
+        // .route("/password", put(crate::management::handlers::auth::change_password))
 }
 
 /// API密钥管理路由
 fn api_keys_routes() -> Router<AppState> {
     use axum::routing::put;
     Router::new()
+        // 传统API密钥管理（兼容现有功能）
         .route("/", get(crate::management::handlers::auth::list_api_keys))
         .route("/", post(crate::management::handlers::auth::create_api_key))
         .route("/{id}", get(crate::management::handlers::auth::get_api_key))
         .route("/{id}", put(crate::management::handlers::auth::update_api_key))
         .route("/{id}/revoke", post(crate::management::handlers::auth::revoke_api_key))
+        
+        // Provider密钥管理（内部API密钥池）- 核心功能
+        .nest("/provider", provider_api_keys_routes())
+        
+        // TODO: Service API管理暂时不实现
+        // .nest("/service", service_api_keys_routes())
+        
+        // TODO: 其他功能暂时不实现
+        // .route("/health", get(crate::management::handlers::auth::get_api_health))
+        // .route("/provider-types", get(crate::management::handlers::auth::list_provider_types))
+        // .route("/scheduling-strategies", get(crate::management::handlers::auth::list_scheduling_strategies))
 }
+
+/// Provider API密钥路由（内部密钥池管理）- 核心功能
+fn provider_api_keys_routes() -> Router<AppState> {
+    use axum::routing::{delete, put};
+    Router::new()
+        .route("/", get(crate::management::handlers::provider_keys::list_provider_keys))
+        .route("/", post(crate::management::handlers::provider_keys::create_provider_key))
+        .route("/{id}", get(crate::management::handlers::provider_keys::get_provider_key))
+        .route("/{id}", put(crate::management::handlers::provider_keys::update_provider_key))
+        .route("/{id}", delete(crate::management::handlers::provider_keys::delete_provider_key))
+        // TODO: 高级功能暂时不实现
+        // .route("/{id}/status", patch(crate::management::handlers::provider_keys::toggle_provider_key_status))
+        // .route("/{id}/health-check", post(crate::management::handlers::provider_keys::manual_health_check))
+        // .route("/{id}/usage", get(crate::management::handlers::provider_keys::get_provider_key_usage))
+        // .route("/{id}/test", post(crate::management::handlers::provider_keys::test_provider_key))
+}
+
+// TODO: Service API密钥路由暂时不实现
+// fn service_api_keys_routes() -> Router<AppState> { ... }
 
 /// Provider类型管理路由
 fn provider_type_routes() -> Router<AppState> {

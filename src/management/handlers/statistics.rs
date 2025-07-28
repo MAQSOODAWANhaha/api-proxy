@@ -613,37 +613,26 @@ pub async fn get_dashboard_cards(
     }
     let active_providers = provider_set.len() as i64;
     
+    // TODO: 从数据库获取健康密钥数据
+    let total_keys = 10; // 临时值
+    let healthy_keys = 8; // 临时值
+    
+    // 计算每分钟请求数（基于24小时数据的平均值）
+    let requests_per_minute = if total_requests > 0 {
+        total_requests as f64 / (24.0 * 60.0) // 24小时转换为分钟
+    } else {
+        0.0
+    };
+
     let cards = json!({
-        "total_requests": {
-            "value": total_requests,
-            "change": "+12.5%", // TODO: 计算与昨天的变化
-            "trend": "up"
-        },
-        "success_rate": {
-            "value": format!("{:.1}%", success_rate),
-            "change": "+2.1%",
-            "trend": "up"
-        },
-        "avg_response_time": {
-            "value": format!("{:.0}ms", avg_response_time),
-            "change": "-5.2%",
-            "trend": "down"
-        },
-        "total_tokens": {
-            "value": total_tokens,
-            "change": "+18.3%",
-            "trend": "up"
-        },
-        "active_providers": {
-            "value": active_providers,
-            "change": "0",
-            "trend": "stable"
-        },
-        "failed_requests": {
-            "value": failed_requests,
-            "change": "-8.7%",
-            "trend": "down"
-        }
+        "total_requests_today": total_requests,
+        "success_rate_today": success_rate,
+        "total_tokens_today": total_tokens,
+        "active_api_services": active_providers,
+        "healthy_keys": healthy_keys,
+        "total_keys": total_keys,
+        "avg_response_time": avg_response_time as i64,
+        "requests_per_minute": requests_per_minute as i64
     });
     
     Ok(Json(cards))
@@ -672,15 +661,15 @@ pub async fn get_dashboard_trend(
         }
     };
     
-    // 按天分组数据
-    let mut daily_data: std::collections::HashMap<String, (i64, i64, f64)> = std::collections::HashMap::new();
+    // 按天分组数据 (total, successful, total_response_time, total_tokens)
+    let mut daily_data: std::collections::HashMap<String, (i64, i64, f64, i64)> = std::collections::HashMap::new();
     
     for trace in traces {
         let trace_date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
             .format("%Y-%m-%d")
             .to_string();
         
-        let entry = daily_data.entry(trace_date).or_insert((0, 0, 0.0));
+        let entry = daily_data.entry(trace_date).or_insert((0, 0, 0.0, 0));
         entry.0 += 1; // total requests
         if trace.is_success {
             entry.1 += 1; // successful requests
@@ -690,6 +679,9 @@ pub async fn get_dashboard_trend(
         if let Some(duration) = trace.duration_ms.or_else(|| trace.response_time_ms.map(|r| r as i64)) {
             entry.2 += duration as f64;
         }
+        
+        // 累计token数
+        entry.3 += trace.tokens_total.unwrap_or(0) as i64;
     }
     
     // 生成趋势数据
@@ -699,22 +691,19 @@ pub async fn get_dashboard_trend(
             .format("%Y-%m-%d")
             .to_string();
         
-        let (total, successful, total_response_time) = daily_data.get(&date).unwrap_or(&(0, 0, 0.0));
-        let success_rate = if *total > 0 { (*successful as f64 / *total as f64) * 100.0 } else { 0.0 };
-        let avg_response_time = if *total > 0 { total_response_time / *total as f64 } else { 0.0 };
+        let (total, successful, _total_response_time, tokens) = daily_data.get(&date).unwrap_or(&(0, 0, 0.0, 0));
+        let failed = total - successful;
         
         trend_data.push(json!({
             "date": date,
             "requests": total,
-            "success_rate": success_rate,
-            "avg_response_time": avg_response_time as i64
+            "successful": successful,
+            "failed": failed,
+            "tokens": tokens
         }));
     }
     
-    Ok(Json(json!({
-        "trend": trend_data,
-        "period": format!("{}d", days)
-    })))
+    Ok(Json(serde_json::Value::Array(trend_data)))
 }
 
 /// Dashboard服务商分布数据
@@ -736,13 +725,13 @@ pub async fn get_provider_distribution(
         }
     };
     
-    // 按服务商统计
-    let mut provider_stats: std::collections::HashMap<String, (i64, i64, f64)> = std::collections::HashMap::new();
+    // 按服务商统计 (requests, successful, total_response_time, tokens)
+    let mut provider_stats: std::collections::HashMap<String, (i64, i64, f64, i64)> = std::collections::HashMap::new();
     let total_requests = traces.len() as i64;
     
     for trace in traces {
         let provider_name = trace.provider_name.as_deref().unwrap_or("Unknown").to_string();
-        let entry = provider_stats.entry(provider_name).or_insert((0, 0, 0.0));
+        let entry = provider_stats.entry(provider_name).or_insert((0, 0, 0.0, 0));
         
         entry.0 += 1; // requests count
         if trace.is_success {
@@ -753,23 +742,16 @@ pub async fn get_provider_distribution(
         if let Some(duration) = trace.duration_ms.or_else(|| trace.response_time_ms.map(|r| r as i64)) {
             entry.2 += duration as f64;
         }
+        
+        // 累计tokens
+        entry.3 += trace.tokens_total.unwrap_or(0) as i64;
     }
     
     // 生成分布数据
     let mut distribution = Vec::new();
-    for (provider, (requests, successful, total_response_time)) in provider_stats {
+    for (provider, (requests, _successful, _total_response_time, tokens)) in provider_stats {
         let percentage = if total_requests > 0 { 
             (requests as f64 / total_requests as f64) * 100.0 
-        } else { 
-            0.0 
-        };
-        let success_rate = if requests > 0 { 
-            (successful as f64 / requests as f64) * 100.0 
-        } else { 
-            0.0 
-        };
-        let avg_response_time = if requests > 0 { 
-            total_response_time / requests as f64 
         } else { 
             0.0 
         };
@@ -777,9 +759,8 @@ pub async fn get_provider_distribution(
         distribution.push(json!({
             "provider": provider,
             "requests": requests,
-            "percentage": format!("{:.1}%", percentage),
-            "success_rate": format!("{:.1}%", success_rate),
-            "avg_response_time": format!("{:.0}ms", avg_response_time)
+            "percentage": percentage,
+            "tokens": tokens
         }));
     }
     
@@ -790,9 +771,325 @@ pub async fn get_provider_distribution(
         b_requests.cmp(&a_requests)
     });
     
+    Ok(Json(serde_json::Value::Array(distribution)))
+}
+
+/// 获取请求日志列表
+pub async fn get_request_logs(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let page = params.get("page")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+    let limit = params.get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(20);
+    let offset = (page - 1) * limit;
+    
+    // 状态过滤（success, failed, all）
+    let status_filter = params.get("status").map(|s| s.as_str()).unwrap_or("all");
+    
+    // 时间范围过滤
+    let hours = params.get("hours")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(24);
+    let start_time = Utc::now() - Duration::hours(hours as i64);
+    
+    // 构建查询
+    let mut select = ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()));
+    
+    // 应用状态过滤
+    match status_filter {
+        "success" => select = select.filter(proxy_tracing::Column::IsSuccess.eq(true)),
+        "failed" => select = select.filter(proxy_tracing::Column::IsSuccess.eq(false)),
+        _ => {} // "all" - 不过滤
+    }
+    
+    // 服务商过滤
+    if let Some(provider) = params.get("provider") {
+        select = select.filter(proxy_tracing::Column::ProviderName.eq(provider));
+    }
+    
+    let traces = match select
+        .offset(offset as u64)
+        .limit(limit as u64)
+        .order_by_desc(proxy_tracing::Column::CreatedAt)
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch request logs: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 获取总数
+    let mut count_select = ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()));
+    
+    match status_filter {
+        "success" => count_select = count_select.filter(proxy_tracing::Column::IsSuccess.eq(true)),
+        "failed" => count_select = count_select.filter(proxy_tracing::Column::IsSuccess.eq(false)),
+        _ => {}
+    }
+    
+    if let Some(provider) = params.get("provider") {
+        count_select = count_select.filter(proxy_tracing::Column::ProviderName.eq(provider));
+    }
+    
+    let total = match count_select.count(state.database.as_ref()).await {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::error!("Failed to count request logs: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 转换为响应格式
+    let logs: Vec<Value> = traces.iter().map(|trace| {
+        json!({
+            "id": trace.id,
+            "request_id": trace.request_id,
+            "method": trace.method,
+            "path": trace.path,
+            "provider_name": trace.provider_name,
+            "status_code": trace.status_code,
+            "is_success": trace.is_success,
+            "duration_ms": trace.duration_ms.or_else(|| trace.response_time_ms.map(|r| r as i64)),
+            "tokens_total": trace.tokens_total,
+            "created_at": trace.created_at,
+            "error_type": trace.error_type,
+            "error_message": if trace.error_message.as_ref().map_or(false, |s| !s.is_empty()) {
+                trace.error_message.as_ref().map(|s| s.chars().take(100).collect::<String>())
+            } else {
+                None
+            }
+        })
+    }).collect();
+    
     Ok(Json(json!({
-        "distribution": distribution,
-        "total_requests": total_requests,
-        "period": "24h"
+        "logs": logs,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": ((total as f64) / (limit as f64)).ceil() as u32
+        },
+        "filters": {
+            "status": status_filter,
+            "hours": hours,
+            "provider": params.get("provider")
+        }
+    })))
+}
+
+/// 获取实时统计数据
+pub async fn get_realtime_stats(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    // 获取最近5分钟的数据
+    let start_time = Utc::now() - Duration::minutes(5);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch realtime stats: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    let total_requests = traces.len() as i64;
+    let successful_requests = traces.iter().filter(|t| t.is_success).count() as i64;
+    let failed_requests = total_requests - successful_requests;
+    
+    // 计算每分钟请求量
+    let mut minute_stats: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    
+    for trace in &traces {
+        let minute_key = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%H:%M")
+            .to_string();
+        
+        let entry = minute_stats.entry(minute_key).or_insert((0, 0));
+        entry.0 += 1; // total
+        if trace.is_success {
+            entry.1 += 1; // successful
+        }
+    }
+    
+    // 生成最近5分钟的数据点
+    let mut timeline = Vec::new();
+    for i in 0..5 {
+        let time_point = Utc::now() - Duration::minutes(4 - i);
+        let minute_key = time_point.format("%H:%M").to_string();
+        let (total, successful) = minute_stats.get(&minute_key).unwrap_or(&(0, 0));
+        
+        timeline.push(json!({
+            "time": minute_key,
+            "timestamp": time_point,
+            "total_requests": total,
+            "successful_requests": successful,
+            "failed_requests": total - successful,
+            "success_rate": if *total > 0 { (*successful as f64 / *total as f64) * 100.0 } else { 0.0 }
+        }));
+    }
+    
+    // 按服务商统计
+    let mut provider_stats: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    for trace in &traces {
+        let provider = trace.provider_name.as_deref().unwrap_or("Unknown").to_string();
+        let entry = provider_stats.entry(provider).or_insert((0, 0));
+        entry.0 += 1;
+        if trace.is_success {
+            entry.1 += 1;
+        }
+    }
+    
+    let provider_distribution: Vec<Value> = provider_stats.into_iter().map(|(provider, (total, successful))| {
+        json!({
+            "provider": provider,
+            "requests": total,
+            "success_rate": if total > 0 { (successful as f64 / total as f64) * 100.0 } else { 0.0 }
+        })
+    }).collect();
+    
+    // 平均响应时间
+    let response_times: Vec<i64> = traces.iter()
+        .filter_map(|t| t.duration_ms.or_else(|| t.response_time_ms.map(|r| r as i64)))
+        .collect();
+    let avg_response_time = if !response_times.is_empty() {
+        response_times.iter().sum::<i64>() as f64 / response_times.len() as f64
+    } else {
+        0.0
+    };
+    
+    Ok(Json(json!({
+        "summary": {
+            "total_requests": total_requests,
+            "successful_requests": successful_requests,
+            "failed_requests": failed_requests,
+            "success_rate": if total_requests > 0 { (successful_requests as f64 / total_requests as f64) * 100.0 } else { 0.0 },
+            "avg_response_time": avg_response_time as i64,
+            "period": "5min"
+        },
+        "timeline": timeline,
+        "provider_distribution": provider_distribution,
+        "last_updated": Utc::now()
+    })))
+}
+
+/// 获取Token统计数据
+pub async fn get_token_stats(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let hours = params.get("hours")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(24);
+    let start_time = Utc::now() - Duration::hours(hours as i64);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true)) // 只统计成功的请求
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch token stats: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // Token统计
+    let total_prompt_tokens: i64 = traces.iter()
+        .map(|t| t.tokens_prompt.unwrap_or(0) as i64)
+        .sum();
+    let total_completion_tokens: i64 = traces.iter()
+        .map(|t| t.tokens_completion.unwrap_or(0) as i64)
+        .sum();
+    let total_tokens = total_prompt_tokens + total_completion_tokens;
+    
+    let requests_with_tokens = traces.iter()
+        .filter(|t| t.tokens_total.map_or(false, |total| total > 0))
+        .count() as i64;
+    
+    let avg_tokens_per_request = if requests_with_tokens > 0 {
+        total_tokens as f64 / requests_with_tokens as f64
+    } else {
+        0.0
+    };
+    
+    // 按服务商统计Token使用量
+    let mut provider_token_stats: std::collections::HashMap<String, (i64, i64, i64, i64)> = std::collections::HashMap::new();
+    
+    for trace in &traces {
+        let provider = trace.provider_name.as_deref().unwrap_or("Unknown").to_string();
+        let entry = provider_token_stats.entry(provider).or_insert((0, 0, 0, 0));
+        entry.0 += trace.tokens_prompt.unwrap_or(0) as i64;
+        entry.1 += trace.tokens_completion.unwrap_or(0) as i64;
+        entry.2 += trace.tokens_total.unwrap_or(0) as i64;
+        entry.3 += 1; // request count
+    }
+    
+    let provider_breakdown: Vec<Value> = provider_token_stats.into_iter().map(|(provider, (prompt, completion, total, requests))| {
+        json!({
+            "provider": provider,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+            "requests": requests,
+            "avg_tokens_per_request": if requests > 0 { total as f64 / requests as f64 } else { 0.0 }
+        })
+    }).collect();
+    
+    // 按小时统计Token使用趋势（过去24小时）
+    let mut hourly_usage: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    
+    for trace in &traces {
+        let hour_key = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%Y-%m-%d %H:00")
+            .to_string();
+        
+        let tokens = trace.tokens_total.unwrap_or(0) as i64;
+        *hourly_usage.entry(hour_key).or_insert(0) += tokens;
+    }
+    
+    // 生成过去24小时的趋势数据
+    let mut token_trend = Vec::new();
+    for i in 0..24 {
+        let hour_time = Utc::now() - Duration::hours(23 - i);
+        let hour_key = hour_time.format("%Y-%m-%d %H:00").to_string();
+        let tokens = hourly_usage.get(&hour_key).unwrap_or(&0);
+        
+        token_trend.push(json!({
+            "hour": hour_time.format("%H:00").to_string(),
+            "timestamp": hour_time,
+            "tokens": tokens
+        }));
+    }
+    
+    Ok(Json(json!({
+        "summary": {
+            "total_tokens": total_tokens,
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "requests_with_tokens": requests_with_tokens,
+            "avg_tokens_per_request": avg_tokens_per_request as i64,
+            "period": format!("{}h", hours)
+        },
+        "provider_breakdown": provider_breakdown,
+        "token_trend": token_trend,
+        "token_efficiency": {
+            "prompt_ratio": if total_tokens > 0 { (total_prompt_tokens as f64 / total_tokens as f64) * 100.0 } else { 0.0 },
+            "completion_ratio": if total_tokens > 0 { (total_completion_tokens as f64 / total_tokens as f64) * 100.0 } else { 0.0 }
+        }
     })))
 }
