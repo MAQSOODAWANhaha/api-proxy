@@ -1,7 +1,7 @@
 // 用户状态管理
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, readonly } from 'vue'
 import { ElMessage } from 'element-plus'
 import { AuthAPI } from '@/api'
 import type { User, LoginRequest, RegisterRequest } from '@/types'
