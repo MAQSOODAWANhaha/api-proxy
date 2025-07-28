@@ -1,7 +1,14 @@
 // API密钥相关类型定义
 
-// 调度策略
-export type SchedulingStrategy = 'round_robin' | 'weighted' | 'health_best'
+// 调度策略类型 - 从后端动态获取
+export type SchedulingStrategy = string
+
+// 调度策略定义接口
+export interface SchedulingStrategyOption {
+  key: SchedulingStrategy
+  name: string
+  description: string
+}
 
 // 服务商类型定义
 export interface ProviderType {

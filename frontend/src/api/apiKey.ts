@@ -11,7 +11,8 @@ import type {
   ApiKeyListResponse,
   ApiHealthStatus,
   ProviderType,
-  SchedulingStrategy
+  SchedulingStrategy,
+  SchedulingStrategyOption
 } from '@/types'
 
 export class ApiKeyAPI {
@@ -207,11 +208,7 @@ export class ApiKeyAPI {
   }
 
   // 获取调度策略列表
-  static async getSchedulingStrategies(): Promise<Array<{
-    key: SchedulingStrategy
-    name: string
-    description: string
-  }>> {
+  static async getSchedulingStrategies(): Promise<SchedulingStrategyOption[]> {
     return HttpClient.get('/api-keys/scheduling-strategies')
   }
 

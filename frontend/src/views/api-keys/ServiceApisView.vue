@@ -51,13 +51,15 @@
         </div>
 
         <!-- API服务表格 -->
-        <el-table
-          :data="apisList"
-          v-loading="loading"
-          stripe
-          border
-          style="width: 100%"
-        >
+        <div class="table-container">
+          <el-table
+            :data="apisList"
+            v-loading="loading"
+            stripe
+            border
+            style="width: 100%"
+            :height="tableHeight"
+          >
           <el-table-column prop="name" label="服务名称" width="150" show-overflow-tooltip />
           
           <el-table-column prop="description" label="描述" show-overflow-tooltip />
@@ -140,19 +142,20 @@
               </el-popconfirm>
             </template>
           </el-table-column>
-        </el-table>
-
-        <!-- 分页 -->
-        <div class="pagination-wrapper">
-          <el-pagination
-            v-model:current-page="pagination.page"
-            v-model:page-size="pagination.size"
-            :page-sizes="[20, 50, 100]"
-            :total="pagination.total"
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="handleSizeChange"
-            @current-change="handleCurrentChange"
-          />
+          </el-table>
+          
+          <!-- 分页 -->
+          <div class="pagination-wrapper">
+            <el-pagination
+              v-model:current-page="pagination.page"
+              v-model:page-size="pagination.size"
+              :page-sizes="[20, 50, 100]"
+              :total="pagination.total"
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleSizeChange"
+              @current-change="handleCurrentChange"
+            />
+          </div>
         </div>
       </div>
     </el-card>
@@ -332,14 +335,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
   Refresh, Plus, Search, RefreshLeft, CopyDocument
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { ApiKeyAPI } from '@/api'
-import type { UserServiceApi, CreateServiceApiRequest, SchedulingStrategy } from '@/types'
+import type { UserServiceApi, CreateServiceApiRequest, SchedulingStrategy, SchedulingStrategyOption } from '@/types'
 
 // 状态
 const loading = ref(false)
@@ -353,7 +356,7 @@ const toggleLoading = ref<number[]>([])
 
 // 数据
 const apisList = ref<UserServiceApi[]>([])
-const schedulingStrategies = ref<any[]>([])
+const schedulingStrategies = ref<SchedulingStrategyOption[]>([])
 const selectedApiStats = ref<any>(null)
 const selectedApiForRegenerate = ref<UserServiceApi | null>(null)
 const newApiKey = ref('')
@@ -388,6 +391,21 @@ const pagination = reactive({
 const statsChartRef = ref<HTMLElement>()
 const statsChart = ref<echarts.ECharts>()
 
+// 表格高度计算
+const tableHeight = ref<string | number>('auto')
+
+const calculateTableHeight = () => {
+  // 计算表格可用高度：页面高度 - 卡片头部 - 筛选器 - 分页 - 边距
+  const windowHeight = window.innerHeight
+  const headerHeight = 60  // 卡片头部高度
+  const filtersHeight = 80  // 筛选器高度
+  const paginationHeight = 60  // 分页高度
+  const margins = 120  // 各种边距
+  
+  const availableHeight = windowHeight - headerHeight - filtersHeight - paginationHeight - margins
+  tableHeight.value = Math.max(400, availableHeight)  // 最小400px高度
+}
+
 // 表单验证规则
 const formRules: FormRules = {
   name: [
@@ -418,7 +436,7 @@ const fetchApis = async () => {
       scheduling_strategy: filters.scheduling_strategy || undefined,
       is_active: filters.is_active,
       page: pagination.page,
-      page_size: pagination.size
+      limit: pagination.size
     }
     
     const response = await ApiKeyAPI.getServiceApis(params)
@@ -728,6 +746,15 @@ const getStrategyDisplayName = (strategy: string) => {
 onMounted(() => {
   fetchSchedulingStrategies()
   fetchApis()
+  calculateTableHeight()
+  
+  // 监听窗口大小变化
+  window.addEventListener('resize', calculateTableHeight)
+})
+
+// 清理事件监听器
+onUnmounted(() => {
+  window.removeEventListener('resize', calculateTableHeight)
 })
 </script>
 
@@ -763,16 +790,119 @@ onMounted(() => {
 }
 
 .apis-filters {
-  margin-bottom: 20px;
-  padding: 16px;
-  background: #f8f9fa;
-  border-radius: 6px;
+  flex-shrink: 0;
+  margin-bottom: 16px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+.apis-filters .el-form {
+  margin-bottom: 0;
+}
+
+.apis-filters .el-form-item {
+  margin-bottom: 0;
+  margin-right: 24px;
+}
+
+.apis-filters .el-form-item:last-child {
+  margin-right: 0;
+}
+
+.apis-filters .el-select,
+.apis-filters .el-input {
+  width: 160px;
+}
+
+.apis-filters .el-button {
+  margin-left: 8px;
+}
+
+.apis-filters .el-button:first-child {
+  margin-left: 0;
+}
+
+.table-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.table-container .el-table {
+  flex: 1;
+}
+
+.table-container .el-table .el-table__header-wrapper {
+  background: #fafafa;
+}
+
+.table-container .el-table th {
+  background: #fafafa !important;
+  color: #374151;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 12px 0;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.table-container .el-table td {
+  padding: 14px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.table-container .el-table .el-table__row:hover {
+  background: #f9fafb;
+}
+
+.table-container .el-table .el-table__row:hover td {
+  background: transparent;
+}
+
+/* 表格滚动优化 */
+.table-container .el-table__body-wrapper {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 3px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }
 
 .api-key-cell {
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: 200px;
+}
+
+.api-key-cell .masked-key {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .masked-key {
@@ -781,9 +911,22 @@ onMounted(() => {
 }
 
 .pagination-wrapper {
-  margin-top: 20px;
+  flex-shrink: 0;
+  padding: 16px 20px;
+  background: #fafafa;
+  border-top: 1px solid #e5e7eb;
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pagination-wrapper .el-pagination {
+  margin: 0;
+}
+
+.pagination-wrapper .el-pagination .el-pagination__total {
+  color: #6b7280;
+  font-size: 13px;
 }
 
 .stats-content {
@@ -812,13 +955,64 @@ onMounted(() => {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
+  .apis-filters {
+    padding: 16px;
+  }
+  
   .apis-filters .el-form {
     flex-direction: column;
+    gap: 16px;
   }
   
   .apis-filters .el-form-item {
-    margin-bottom: 16px;
+    margin-bottom: 0;
     margin-right: 0;
+    width: 100%;
+  }
+  
+  .apis-filters .el-select,
+  .apis-filters .el-input {
+    width: 100%;
+  }
+  
+  .pagination-wrapper {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  
+  .pagination-wrapper .el-pagination {
+    width: 100%;
+    text-align: center;
+  }
+  
+  .table-container .el-table .el-table__cell {
+    padding: 8px 4px;
+  }
+  
+  .header-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .header-actions .el-button {
+    width: 100%;
+  }
+}
+
+/* 中等屏幕优化 */
+@media (max-width: 1024px) {
+  .apis-filters .el-form {
+    flex-wrap: wrap;
+  }
+  
+  .apis-filters .el-form-item {
+    margin-right: 16px;
+    margin-bottom: 12px;
+  }
+  
+  .table-container .el-table .el-table__cell {
+    padding: 10px 6px;
   }
 }
 </style>

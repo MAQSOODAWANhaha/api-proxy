@@ -170,10 +170,10 @@ const getBreadcrumbs = (route: RouteLocationNormalized): Array<{ name: string; p
   const matched = route.matched.filter(item => item.meta && item.meta.title)
   
   // 添加首页
-  if (route.path !== '/dashboard' && matched.length > 0) {
+  if (route.path !== '/statistics' && matched.length > 0) {
     breadcrumbs.push({
       name: '首页',
-      path: '/dashboard'
+      path: '/statistics'
     })
   }
   

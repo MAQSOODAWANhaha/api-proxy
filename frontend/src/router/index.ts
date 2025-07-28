@@ -29,22 +29,11 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: () => import('@/layouts/MainLayout.vue'),
-    redirect: '/dashboard',
+    redirect: '/statistics',
     meta: {
       requiresAuth: true
     },
     children: [
-      {
-        path: 'dashboard',
-        name: 'Dashboard',
-        component: () => import('@/views/dashboard/DashboardView.vue'),
-        meta: {
-          title: '仪表盘',
-          icon: 'dashboard',
-          requiresAuth: true,
-          keepAlive: true
-        }
-      },
       {
         path: 'api-keys',
         name: 'ApiKeys',
@@ -85,7 +74,8 @@ const routes: RouteRecordRaw[] = [
           title: '统计分析',
           icon: 'chart',
           requiresAuth: true,
-          keepAlive: true
+          keepAlive: true,
+          isHome: true
         }
       },
       {

@@ -22,10 +22,10 @@
           router
           class="sidebar-menu"
         >
-          <!-- 仪表盘 -->
-          <el-menu-item index="/dashboard">
-            <el-icon><Odometer /></el-icon>
-            <template #title>仪表盘</template>
+          <!-- 统计分析（首页） -->
+          <el-menu-item index="/statistics">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>统计分析</template>
           </el-menu-item>
 
           <!-- API密钥管理 -->
@@ -44,11 +44,6 @@
             </el-menu-item>
           </el-sub-menu>
 
-          <!-- 统计分析 -->
-          <el-menu-item index="/statistics">
-            <el-icon><DataAnalysis /></el-icon>
-            <template #title>统计分析</template>
-          </el-menu-item>
           
           <!-- 日志查询 -->
           <el-menu-item index="/logs">
@@ -225,7 +220,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Cpu, Odometer, Key, Collection, Setting, DataAnalysis, 
+  Cpu, Key, Collection, Setting, DataAnalysis, 
   Document, Monitor, Tools, InfoFilled, Files,
   Fold, Expand, Refresh, FullScreen, Bell, User, ArrowDown,
   SwitchButton
