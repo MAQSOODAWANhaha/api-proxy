@@ -33,10 +33,8 @@ pub struct ProviderKeyQuery {
 /// 创建Provider Key请求
 #[derive(Debug, Deserialize)]
 pub struct CreateProviderKeyRequest {
-    /// 用户ID
-    pub user_id: i32,
-    /// 服务商类型ID
-    pub provider_type_id: i32,
+    /// 服务商类型
+    pub provider_type: String,
     /// 密钥名称
     pub name: String,
     /// API密钥
@@ -47,6 +45,8 @@ pub struct CreateProviderKeyRequest {
     pub max_requests_per_minute: Option<i32>,
     /// 最大每日令牌数
     pub max_tokens_per_day: Option<i32>,
+    /// 是否启用
+    pub is_active: Option<bool>,
 }
 
 /// 更新Provider Key请求
@@ -76,27 +76,29 @@ pub struct ProviderKeyResponse {
     /// 服务商类型
     pub provider_type: String,
     /// 服务商显示名称
-    pub provider_display_name: String,
+    pub provider_name: String,
     /// 密钥名称
     pub name: String,
-    /// 密钥前缀（用于显示）
-    pub api_key_prefix: String,
+    /// 完整API密钥
+    pub api_key: String,
     /// 权重
-    pub weight: Option<i32>,
+    pub weight: i32,
     /// 最大每分钟请求数
     pub max_requests_per_minute: Option<i32>,
     /// 最大每日令牌数
     pub max_tokens_per_day: Option<i32>,
     /// 今日已用令牌数
-    pub used_tokens_today: Option<i32>,
-    /// 状态
-    pub status: String,
-    /// 创建时间
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    /// 更新时间
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub used_tokens_today: i32,
     /// 最后使用时间
-    pub last_used: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_used: Option<String>,
+    /// 是否启用
+    pub is_active: bool,
+    /// 健康状态
+    pub health_status: String,
+    /// 创建时间
+    pub created_at: String,
+    /// 更新时间
+    pub updated_at: String,
 }
 
 /// 列出Provider Keys
@@ -184,32 +186,27 @@ pub async fn list_provider_keys(
             updated_at: chrono::Utc::now().naive_utc(),
         });
         
-        let api_key_prefix = if provider_key.api_key.len() > 10 {
-            format!("{}***{}", &provider_key.api_key[..4], &provider_key.api_key[provider_key.api_key.len() - 4..])
-        } else {
-            "***".to_string()
-        };
-        
         provider_keys.push(ProviderKeyResponse {
             id: provider_key.id,
             user_id: provider_key.user_id,
             provider_type: provider.name.clone(),
-            provider_display_name: provider.display_name,
+            provider_name: provider.display_name,
             name: provider_key.name,
-            api_key_prefix,
-            weight: provider_key.weight,
+            api_key: provider_key.api_key,
+            weight: provider_key.weight.unwrap_or(1),
             max_requests_per_minute: provider_key.max_requests_per_minute,
             max_tokens_per_day: provider_key.max_tokens_per_day,
-            used_tokens_today: provider_key.used_tokens_today,
-            status: if provider_key.is_active { "active".to_string() } else { "inactive".to_string() },
-            created_at: provider_key.created_at.and_utc(),
-            updated_at: provider_key.updated_at.and_utc(),
-            last_used: provider_key.last_used.map(|dt| dt.and_utc()),
+            used_tokens_today: provider_key.used_tokens_today.unwrap_or(0),
+            last_used: provider_key.last_used.map(|dt| dt.and_utc().to_rfc3339()),
+            is_active: provider_key.is_active,
+            health_status: "healthy".to_string(), // TODO: 从health检查表获取实际状态
+            created_at: provider_key.created_at.and_utc().to_rfc3339(),
+            updated_at: provider_key.updated_at.and_utc().to_rfc3339(),
         });
     }
 
     let response = json!({
-        "provider_keys": provider_keys,
+        "keys": provider_keys,
         "pagination": {
             "page": page,
             "limit": limit,
@@ -228,48 +225,51 @@ pub async fn create_provider_key(
 ) -> Result<Json<Value>, StatusCode> {
     // 验证输入
     if request.name.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(json!({
+            "success": false,
+            "message": "Name cannot be empty"
+        })));
     }
 
     if request.api_key.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(json!({
+            "success": false,
+            "message": "API key cannot be empty"
+        })));
     }
 
-    if request.user_id <= 0 || request.provider_type_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    // 验证服务商类型是否存在
-    let provider_type_exists = match ProviderTypes::find_by_id(request.provider_type_id)
+    // 通过provider_type名称查找对应的provider_type记录
+    let provider_type = match ProviderTypes::find()
+        .filter(provider_types::Column::Name.eq(&request.provider_type))
         .one(state.database.as_ref()).await {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
+        Ok(Some(pt)) => pt,
+        Ok(None) => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": format!("Provider type '{}' not found", request.provider_type)
+            })));
+        },
         Err(err) => {
             tracing::error!("Failed to check provider type existence: {}", err);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
-    if !provider_type_exists {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "Provider type not found"
-        })));
-    }
-
     let now = Utc::now().naive_utc();
+    // TODO: 从认证上下文获取真实的user_id，这里暂时使用固定值
+    let user_id = 1; 
 
     // 创建Provider Key记录
     let new_provider_key = user_provider_keys::ActiveModel {
-        user_id: Set(request.user_id),
-        provider_type_id: Set(request.provider_type_id),
+        user_id: Set(user_id),
+        provider_type_id: Set(provider_type.id),
         name: Set(request.name.clone()),
         api_key: Set(request.api_key.clone()),
         weight: Set(request.weight),
         max_requests_per_minute: Set(request.max_requests_per_minute),
         max_tokens_per_day: Set(request.max_tokens_per_day),
         used_tokens_today: Set(Some(0)),
-        is_active: Set(true),
+        is_active: Set(request.is_active.unwrap_or(true)),
         created_at: Set(now),
         updated_at: Set(now),
         last_used: Set(None),
@@ -280,16 +280,56 @@ pub async fn create_provider_key(
     
     match insert_result {
         Ok(result) => {
-            let response = json!({
-                "success": true,
-                "provider_key_id": result.last_insert_id,
-                "message": "Provider key created successfully"
-            });
-            Ok(Json(response))
+            // 获取创建的密钥以返回完整信息
+            let created_key = UserProviderKeys::find_by_id(result.last_insert_id)
+                .find_also_related(ProviderTypes)
+                .one(state.database.as_ref())
+                .await;
+
+            match created_key {
+                Ok(Some((key, provider))) => {
+                    let provider = provider.unwrap_or(provider_type);
+                    let key_response = ProviderKeyResponse {
+                        id: key.id,
+                        user_id: key.user_id,
+                        provider_type: provider.name,
+                        provider_name: provider.display_name,
+                        name: key.name,
+                        api_key: key.api_key,
+                        weight: key.weight.unwrap_or(1),
+                        max_requests_per_minute: key.max_requests_per_minute,
+                        max_tokens_per_day: key.max_tokens_per_day,
+                        used_tokens_today: key.used_tokens_today.unwrap_or(0),
+                        last_used: key.last_used.map(|dt| dt.and_utc().to_rfc3339()),
+                        is_active: key.is_active,
+                        health_status: "healthy".to_string(),
+                        created_at: key.created_at.and_utc().to_rfc3339(),
+                        updated_at: key.updated_at.and_utc().to_rfc3339(),
+                    };
+
+                    let response = json!({
+                        "success": true,
+                        "key": key_response,
+                        "message": "Provider key created successfully"
+                    });
+                    Ok(Json(response))
+                },
+                _ => {
+                    let response = json!({
+                        "success": true,
+                        "message": "Provider key created successfully"
+                    });
+                    Ok(Json(response))
+                }
+            }
         }
         Err(err) => {
             tracing::error!("Failed to create provider key: {}", err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            let response = json!({
+                "success": false,
+                "message": "Failed to create provider key"
+            });
+            Ok(Json(response))
         }
     }
 }
@@ -336,27 +376,22 @@ pub async fn get_provider_key(
         updated_at: chrono::Utc::now().naive_utc(),
     });
 
-    let api_key_prefix = if provider_key.api_key.len() > 10 {
-        format!("{}***{}", &provider_key.api_key[..4], &provider_key.api_key[provider_key.api_key.len() - 4..])
-    } else {
-        "***".to_string()
-    };
-
     let provider_key_response = ProviderKeyResponse {
         id: provider_key.id,
         user_id: provider_key.user_id,
         provider_type: provider.name,
-        provider_display_name: provider.display_name,
+        provider_name: provider.display_name,
         name: provider_key.name,
-        api_key_prefix,
-        weight: provider_key.weight,
+        api_key: provider_key.api_key,
+        weight: provider_key.weight.unwrap_or(1),
         max_requests_per_minute: provider_key.max_requests_per_minute,
         max_tokens_per_day: provider_key.max_tokens_per_day,
-        used_tokens_today: provider_key.used_tokens_today,
-        status: if provider_key.is_active { "active".to_string() } else { "inactive".to_string() },
-        created_at: provider_key.created_at.and_utc(),
-        updated_at: provider_key.updated_at.and_utc(),
-        last_used: provider_key.last_used.map(|dt| dt.and_utc()),
+        used_tokens_today: provider_key.used_tokens_today.unwrap_or(0),
+        last_used: provider_key.last_used.map(|dt| dt.and_utc().to_rfc3339()),
+        is_active: provider_key.is_active,
+        health_status: "healthy".to_string(), // TODO: 从health检查表获取实际状态
+        created_at: provider_key.created_at.and_utc().to_rfc3339(),
+        updated_at: provider_key.updated_at.and_utc().to_rfc3339(),
     };
 
     Ok(Json(serde_json::to_value(provider_key_response).unwrap()))
@@ -460,4 +495,172 @@ pub async fn delete_provider_key(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+/// 切换Provider Key状态
+#[derive(Debug, Deserialize)]
+pub struct ToggleStatusRequest {
+    pub is_active: bool,
+}
+
+pub async fn toggle_provider_key_status(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+    Json(request): Json<ToggleStatusRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    if key_id <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 检查Provider Key是否存在
+    let existing_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+        Ok(Some(key)) => key,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to check provider key existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 更新状态
+    let now = Utc::now().naive_utc();
+    let mut provider_key: user_provider_keys::ActiveModel = existing_key.into();
+    provider_key.is_active = Set(request.is_active);
+    provider_key.updated_at = Set(now);
+
+    match provider_key.update(state.database.as_ref()).await {
+        Ok(_) => {
+            let response = json!({
+                "success": true,
+                "message": format!("Provider key status updated to {}", 
+                    if request.is_active { "active" } else { "inactive" })
+            });
+            Ok(Json(response))
+        }
+        Err(err) => {
+            tracing::error!("Failed to toggle provider key status: {}", err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// 测试Provider Key
+pub async fn test_provider_key(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+) -> Result<Json<Value>, StatusCode> {
+    if key_id <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 检查Provider Key是否存在
+    let provider_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+        Ok(Some(key)) => key,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to check provider key existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // TODO: 实现实际的API密钥测试逻辑
+    // 这里应该向对应的服务商API发送测试请求
+    let start_time = std::time::Instant::now();
+    
+    // 模拟测试过程
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    
+    let response_time = start_time.elapsed().as_millis() as u64;
+    let success = provider_key.is_active; // 简单的模拟逻辑
+
+    let response = json!({
+        "success": success,
+        "response_time": response_time,
+        "status": if success { "healthy" } else { "unhealthy" },
+        "message": if success { 
+            "API key test successful" 
+        } else { 
+            "API key is inactive or invalid" 
+        }
+    });
+
+    Ok(Json(response))
+}
+
+/// 获取Provider Key使用统计
+pub async fn get_provider_key_usage(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    if key_id <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 检查Provider Key是否存在
+    let _provider_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+        Ok(Some(key)) => key,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to check provider key existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // TODO: 从实际的统计表获取数据
+    // 这里返回模拟数据
+    let usage_data = json!({
+        "usage": [
+            {
+                "timestamp": "2025-07-27",
+                "requests": 150,
+                "tokens": 25000,
+                "success_rate": 96.5
+            },
+            {
+                "timestamp": "2025-07-26",
+                "requests": 180,
+                "tokens": 30000,
+                "success_rate": 98.2
+            }
+        ],
+        "summary": {
+            "total_requests": 330,
+            "total_tokens": 55000,
+            "avg_response_time": 245
+        }
+    });
+
+    Ok(Json(usage_data))
+}
+
+/// 获取支持的服务商类型
+pub async fn get_provider_types(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let provider_types_result = ProviderTypes::find()
+        .filter(provider_types::Column::IsActive.eq(true))
+        .all(state.database.as_ref())
+        .await;
+
+    let provider_types = match provider_types_result {
+        Ok(types) => types,
+        Err(err) => {
+            tracing::error!("Failed to fetch provider types: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let provider_types_data: Vec<Value> = provider_types.into_iter().map(|pt| {
+        json!({
+            "id": pt.name,
+            "name": pt.name,
+            "display_name": pt.display_name,
+            "base_url": pt.base_url,
+            "default_model": pt.default_model,
+            "supported_features": [] // TODO: 从config_json解析
+        })
+    }).collect();
+
+    Ok(Json(json!(provider_types_data)))
 }

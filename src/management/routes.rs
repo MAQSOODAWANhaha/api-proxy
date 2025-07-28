@@ -177,26 +177,26 @@ fn api_keys_routes() -> Router<AppState> {
         // TODO: Service API管理暂时不实现
         // .nest("/service", service_api_keys_routes())
         
+        // 服务商类型查询
+        .route("/provider-types", get(crate::management::handlers::provider_keys::get_provider_types))
+        
         // TODO: 其他功能暂时不实现
         // .route("/health", get(crate::management::handlers::auth::get_api_health))
-        // .route("/provider-types", get(crate::management::handlers::auth::list_provider_types))
         // .route("/scheduling-strategies", get(crate::management::handlers::auth::list_scheduling_strategies))
 }
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
 fn provider_api_keys_routes() -> Router<AppState> {
-    use axum::routing::{delete, put};
+    use axum::routing::{delete, put, patch};
     Router::new()
         .route("/", get(crate::management::handlers::provider_keys::list_provider_keys))
         .route("/", post(crate::management::handlers::provider_keys::create_provider_key))
         .route("/{id}", get(crate::management::handlers::provider_keys::get_provider_key))
         .route("/{id}", put(crate::management::handlers::provider_keys::update_provider_key))
         .route("/{id}", delete(crate::management::handlers::provider_keys::delete_provider_key))
-        // TODO: 高级功能暂时不实现
-        // .route("/{id}/status", patch(crate::management::handlers::provider_keys::toggle_provider_key_status))
-        // .route("/{id}/health-check", post(crate::management::handlers::provider_keys::manual_health_check))
-        // .route("/{id}/usage", get(crate::management::handlers::provider_keys::get_provider_key_usage))
-        // .route("/{id}/test", post(crate::management::handlers::provider_keys::test_provider_key))
+        .route("/{id}/status", patch(crate::management::handlers::provider_keys::toggle_provider_key_status))
+        .route("/{id}/usage", get(crate::management::handlers::provider_keys::get_provider_key_usage))
+        .route("/{id}/test", post(crate::management::handlers::provider_keys::test_provider_key))
 }
 
 // TODO: Service API密钥路由暂时不实现
