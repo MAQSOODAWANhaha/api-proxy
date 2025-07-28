@@ -170,6 +170,9 @@ get_host_ip() {
     echo "$final_ip"
 }
 
+# 全局变量：主机IP地址
+HOST_IP=""
+
 # 创建必要的目录和文件
 prepare_environment() {
     local profile="${1:-default}"
@@ -181,7 +184,7 @@ prepare_environment() {
     mkdir -p "$SCRIPT_DIR/ssl"
     mkdir -p "$SCRIPT_DIR/logs"
     
-    # 获取主机IP地址
+    # 获取主机IP地址（设为全局变量）
     HOST_IP=$(get_host_ip)
     log_info "检测到主机IP地址: $HOST_IP"
     
@@ -465,66 +468,67 @@ database_operation() {
 # 显示访问信息
 show_access_info() {
     local profile="${1:-default}"
+    local host_ip="${2:-}"
     
     log_step "部署完成"
     
-    # 从.env文件获取实际配置的IP地址
-    local ip=""
-    if [ -f "$ENV_FILE" ]; then
+    # 使用传入的IP地址，如果没有则从.env文件获取
+    local ip="$host_ip"
+    if [ -z "$ip" ] && [ -f "$ENV_FILE" ]; then
         ip=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | sed 's|.*://||' | sed 's|/.*||' | sed 's|:.*||')
     fi
     
-    # 如果获取不到IP，使用localhost作为备用
+    # 如果仍然获取不到IP，使用localhost作为备用
     if [ -z "$ip" ]; then
         ip="localhost"
     fi
     
     echo ""
-    echo "${GREEN}==================== 🎉 部署成功 ====================${NC}"
+    echo -e "${GREEN}==================== 🎉 部署成功 ====================${NC}"
     echo ""
     
     if docker compose ps | grep -q "api-proxy-gateway"; then
-        echo "${BLUE}🌍 生产环境访问地址 (通过网关):${NC}"
-        echo "  📱 前端界面: ${GREEN}http://$ip${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo "  🔧 管理API:  ${GREEN}http://$ip/api${NC}"
-        echo "  🤖 AI代理:   ${GREEN}http://$ip/v1${NC}"
+        echo -e "${BLUE}🌍 生产环境访问地址 (通过网关):${NC}"
+        echo -e "  📱 前端界面: ${GREEN}http://$ip${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理API:  ${GREEN}http://$ip/api${NC}"
+        echo -e "  🤖 AI代理:   ${GREEN}http://$ip/v1${NC}"
         echo ""
-        echo "${YELLOW}📌 重要说明:${NC}"
+        echo -e "${YELLOW}📌 重要说明:${NC}"
         echo "  • 生产环境所有请求都通过80端口的Nginx网关转发"
-        echo "  • 前端会自动请求 ${GREEN}http://$ip/api${NC} 接口"
+        echo -e "  • 前端会自动请求 ${GREEN}http://$ip/api${NC} 接口"
         echo "  • 确保防火墙开放80和443端口供外部访问"
         echo ""
-        echo "${BLUE}🔧 直接访问后端服务（调试用）:${NC}"
+        echo -e "${BLUE}🔧 直接访问后端服务（调试用）:${NC}"
         echo "  • 管理API: http://$ip:9090/api"
         echo "  • AI代理: http://$ip:8080/v1"
     else
-        echo "${BLUE}🛠️ 开发环境访问地址:${NC}"
-        echo "  📱 前端界面: ${GREEN}http://$ip:3000${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo "  🔧 管理API:  ${GREEN}http://$ip:9090/api${NC}"
-        echo "  🤖 AI代理:   ${GREEN}http://$ip:8080/v1${NC}"
-        echo "  📊 Redis:    ${GREEN}redis://$ip:6379${NC}"
+        echo -e "${BLUE}🛠️ 开发环境访问地址:${NC}"
+        echo -e "  📱 前端界面: ${GREEN}http://$ip:3000${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理API:  ${GREEN}http://$ip:9090/api${NC}"
+        echo -e "  🤖 AI代理:   ${GREEN}http://$ip:8080/v1${NC}"
+        echo -e "  📊 Redis:    ${GREEN}redis://$ip:6379${NC}"
         echo ""
-        echo "${YELLOW}📌 开发环境说明:${NC}"
-        echo "  • 前端直接请求 ${GREEN}http://$ip:9090/api${NC} 接口"
+        echo -e "${YELLOW}📌 开发环境说明:${NC}"
+        echo -e "  • 前端直接请求 ${GREEN}http://$ip:9090/api${NC} 接口"
         echo "  • 无网关转发，各服务独立端口访问"
     fi
     
     echo ""
-    echo "${BLUE}⚙️ 管理命令:${NC}"
-    echo "  📊 查看状态: ${GREEN}./deploy.sh status${NC}"
-    echo "  📋 查看日志: ${GREEN}./deploy.sh logs [service]${NC}"
-    echo "  ⏹️  停止服务: ${GREEN}./deploy.sh stop${NC}"
-    echo "  🔄 重启服务: ${GREEN}./deploy.sh restart${NC}"
+    echo -e "${BLUE}⚙️ 管理命令:${NC}"
+    echo -e "  📊 查看状态: ${GREEN}./deploy.sh status${NC}"
+    echo -e "  📋 查看日志: ${GREEN}./deploy.sh logs [service]${NC}"
+    echo -e "  ⏹️  停止服务: ${GREEN}./deploy.sh stop${NC}"
+    echo -e "  🔄 重启服务: ${GREEN}./deploy.sh restart${NC}"
     echo ""
-    echo "${BLUE}🌍 外部访问提示:${NC}"
+    echo -e "${BLUE}🌍 外部访问提示:${NC}"
     if [ "$ip" != "localhost" ] && [ "$ip" != "127.0.0.1" ]; then
-        echo "  ✅ 已配置外部IP: ${GREEN}$ip${NC}"
+        echo -e "  ✅ 已配置外部IP: ${GREEN}$ip${NC}"
         echo "  📋 请确保防火墙规则允许访问相应端口"
     else
-        echo "  💡 如需外部访问，请使用: ${GREEN}DEPLOY_IP=你的公网IP ./deploy.sh install-prod${NC}"
+        echo -e "  💡 如需外部访问，请使用: ${GREEN}DEPLOY_IP=你的公网IP ./deploy.sh install-prod${NC}"
     fi
     echo ""
-    echo "${GREEN}==================================================${NC}"
+    echo -e "${GREEN}==================================================${NC}"
 }
 
 # 显示帮助信息
@@ -572,14 +576,14 @@ main() {
             prepare_environment "default"
             build_images
             start_services "default"
-            show_access_info
+            show_access_info "default" "$HOST_IP"
             ;;
         "install-prod")
             check_docker
             prepare_environment "production"
             build_images
             start_services "production"
-            show_access_info
+            show_access_info "production" "$HOST_IP"
             ;;
         "start")
             check_docker
@@ -612,7 +616,12 @@ main() {
             database_operation "restore" "$2"
             ;;
         "info")
-            show_access_info "$2"
+            # 如果用户指定了IP地址，使用指定的IP；否则从.env文件读取
+            local info_ip="$2"
+            if [ -z "$info_ip" ] && [ -f "$ENV_FILE" ]; then
+                info_ip=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | sed 's|.*://||' | sed 's|/.*||' | sed 's|:.*||')
+            fi
+            show_access_info "production" "$info_ip"
             ;;
         "help"|"--help"|"-h"|"")
             show_help
