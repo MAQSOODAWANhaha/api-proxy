@@ -54,13 +54,14 @@ export class ApiKeyAPI {
   // 更新内部API密钥
   static async updateProviderKey(id: number, data: {
     name?: string
+    api_key?: string
     weight?: number
     max_requests_per_minute?: number
     max_tokens_per_day?: number
     is_active?: boolean
   }): Promise<{
     success: boolean
-    key: UserProviderKey
+    key?: UserProviderKey
     message: string
   }> {
     return HttpClient.put(`/api-keys/provider/${id}`, data)
@@ -201,14 +202,7 @@ export class ApiKeyAPI {
   // ===== 其他辅助功能 =====
 
   // 获取支持的服务商类型
-  static async getProviderTypes(): Promise<Array<{
-    id: string
-    name: string
-    display_name: string
-    base_url: string
-    default_model: string
-    supported_features: string[]
-  }>> {
+  static async getProviderTypes(): Promise<ProviderType[]> {
     return HttpClient.get('/api-keys/provider-types')
   }
 

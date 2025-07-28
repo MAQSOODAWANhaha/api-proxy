@@ -101,7 +101,7 @@ fn statistics_routes() -> Router<AppState> {
         .nest("/dashboard", dashboard_routes())
         // 其他核心统计接口
         .route("/logs", get(crate::management::handlers::statistics::get_request_logs))
-        .route("/logs/:id", get(crate::management::handlers::statistics::get_request_log_detail))
+        .route("/logs/{id}", get(crate::management::handlers::statistics::get_request_log_detail))
         .route("/realtime", get(crate::management::handlers::statistics::get_realtime_stats))
         .route("/tokens", get(crate::management::handlers::statistics::get_token_stats))
         // 新增的高级统计接口

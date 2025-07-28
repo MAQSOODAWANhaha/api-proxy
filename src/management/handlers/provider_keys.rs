@@ -28,6 +28,8 @@ pub struct ProviderKeyQuery {
     pub provider_type: Option<String>,
     /// 状态过滤
     pub status: Option<String>,
+    /// 健康状态过滤
+    pub healthy: Option<bool>,
 }
 
 /// 创建Provider Key请求
@@ -118,6 +120,16 @@ pub async fn list_provider_keys(
         select = select.filter(user_provider_keys::Column::UserId.eq(user_id));
     }
     
+    // 服务商类型过滤
+    if let Some(provider_type) = &query.provider_type {
+        // 先查找provider_type的ID
+        if let Ok(Some(pt)) = ProviderTypes::find()
+            .filter(provider_types::Column::Name.eq(provider_type))
+            .one(state.database.as_ref()).await {
+            select = select.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
+        }
+    }
+    
     // 状态过滤
     if let Some(status) = &query.status {
         match status.as_str() {
@@ -125,6 +137,18 @@ pub async fn list_provider_keys(
             "inactive" => select = select.filter(user_provider_keys::Column::IsActive.eq(false)),
             _ => {}
         }
+    }
+    
+    // 健康状态过滤
+    // TODO: 当实现了真实的健康检查系统后，这里需要join health_checks表进行筛选
+    // 目前所有密钥的health_status都是硬编码为"healthy"，所以healthy=false的查询将返回空结果
+    if let Some(healthy) = query.healthy {
+        if !healthy {
+            // 如果查询非健康状态，由于目前所有密钥都是健康的，返回空结果
+            // 通过添加一个永远为false的条件来实现
+            select = select.filter(user_provider_keys::Column::Id.eq(-1));
+        }
+        // 如果查询健康状态(healthy=true)，不需要额外筛选，因为所有密钥都是健康的
     }
     
     // 分页查询
@@ -149,11 +173,24 @@ pub async fn list_provider_keys(
     if let Some(user_id) = query.user_id {
         count_select = count_select.filter(user_provider_keys::Column::UserId.eq(user_id));
     }
+    if let Some(provider_type) = &query.provider_type {
+        // 先查找provider_type的ID
+        if let Ok(Some(pt)) = ProviderTypes::find()
+            .filter(provider_types::Column::Name.eq(provider_type))
+            .one(state.database.as_ref()).await {
+            count_select = count_select.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
+        }
+    }
     if let Some(status) = &query.status {
         match status.as_str() {
             "active" => count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(true)),
             "inactive" => count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(false)),
             _ => {}
+        }
+    }
+    if let Some(healthy) = query.healthy {
+        if !healthy {
+            count_select = count_select.filter(user_provider_keys::Column::Id.eq(-1));
         }
     }
     
@@ -476,13 +513,8 @@ pub async fn delete_provider_key(
         }
     };
 
-    // 软删除：设置为非活跃状态
-    let now = Utc::now().naive_utc();
-    let mut provider_key: user_provider_keys::ActiveModel = existing_key.into();
-    provider_key.is_active = Set(false);
-    provider_key.updated_at = Set(now);
-
-    match provider_key.update(state.database.as_ref()).await {
+    // 硬删除：直接从数据库删除记录
+    match UserProviderKeys::delete_by_id(key_id).exec(state.database.as_ref()).await {
         Ok(_) => {
             let response = json!({
                 "success": true,

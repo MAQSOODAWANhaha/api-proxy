@@ -363,10 +363,10 @@ const fetchKeys = async () => {
     loading.value = true
     const params = {
       provider_type: filters.provider_type || undefined,
-      is_active: filters.is_active,
+      status: filters.is_active === null ? undefined : (filters.is_active ? 'active' : 'inactive'),
       healthy: filters.healthy,
       page: pagination.page,
-      page_size: pagination.size
+      limit: pagination.size
     }
     
     const response = await ApiKeyAPI.getProviderKeys(params)
@@ -460,6 +460,7 @@ const submitForm = async () => {
     if (isEdit.value && form.id) {
       await ApiKeyAPI.updateProviderKey(form.id, {
         name: form.name,
+        api_key: form.api_key,
         weight: form.weight,
         max_requests_per_minute: form.max_requests_per_minute || undefined,
         max_tokens_per_day: form.max_tokens_per_day || undefined,

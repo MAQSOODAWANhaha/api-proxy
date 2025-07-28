@@ -1,25 +1,33 @@
 // API密钥相关类型定义
 
-// 服务商类型
-export type ProviderType = 'openai' | 'gemini' | 'claude'
-
 // 调度策略
 export type SchedulingStrategy = 'round_robin' | 'weighted' | 'health_best'
+
+// 服务商类型定义
+export interface ProviderType {
+  id: string
+  name: string
+  display_name: string
+  base_url: string
+  default_model?: string
+  supported_features: string[]
+}
 
 // 用户内部API密钥（号池）
 export interface UserProviderKey {
   id: number
   user_id: number
-  provider_type: ProviderType
+  provider_type: string
   provider_name: string
   api_key: string
   name: string
   weight: number
-  max_requests_per_minute: number
-  max_tokens_per_day: number
+  max_requests_per_minute?: number
+  max_tokens_per_day?: number
   used_tokens_today: number
   last_used?: string
   is_active: boolean
+  health_status: string
   created_at: string
   updated_at: string
 }
@@ -28,7 +36,7 @@ export interface UserProviderKey {
 export interface UserServiceApi {
   id: number
   user_id: number
-  provider_type: ProviderType
+  provider_type: string
   provider_name: string
   api_key: string // 对外API密钥
   api_secret: string
@@ -51,17 +59,19 @@ export interface UserServiceApi {
 
 // 创建内部API密钥请求
 export interface CreateProviderKeyRequest {
-  provider_type: ProviderType
+  id?: number // 用于编辑时传递ID
+  provider_type: string
   api_key: string
   name: string
   weight?: number
   max_requests_per_minute?: number
   max_tokens_per_day?: number
+  is_active?: boolean
 }
 
 // 创建对外API服务请求
 export interface CreateServiceApiRequest {
-  provider_type: ProviderType
+  provider_type: string
   name?: string
   description?: string
   scheduling_strategy?: SchedulingStrategy
@@ -77,6 +87,7 @@ export interface ApiKeyListParams {
   page?: number
   limit?: number
   user_id?: number
+  provider_type?: string
   status?: 'active' | 'inactive'
 }
 
