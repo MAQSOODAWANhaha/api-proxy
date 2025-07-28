@@ -74,7 +74,8 @@ http.interceptors.request.use(
     
     // 根据配置显示全局 loading
     if (config.headers?.['X-Show-Loading'] === 'true') {
-      const loadingText = config.headers['X-Loading-Text'] as string || '请求处理中...'
+      // 从metadata中获取loadingText，避免在HTTP头中传递非ASCII字符
+      const loadingText = (config as any).loadingText || 'Loading...'
       const loadingId = loadingManager.showRequestLoading(loadingText)
       config.metadata = { ...config.metadata, loadingId }
     }
@@ -232,7 +233,7 @@ export class HttpClient {
     method: 'get' | 'post' | 'put' | 'delete' | 'patch',
     url: string,
     data?: any,
-    loadingText = '请求处理中...'
+    loadingText = 'Loading...'
   ): Promise<T> {
     return this[method]<T>(url, data, {
       showLoading: true,
@@ -264,9 +265,8 @@ export class HttpClient {
     // 设置加载状态
     if (config.showLoading !== false) {
       headers['X-Show-Loading'] = 'true'
-      if (config.loadingText) {
-        headers['X-Loading-Text'] = config.loadingText
-      }
+      // 不将loadingText放入headers，避免非ASCII字符导致的ISO-8859-1错误
+      // loadingText将在拦截器中使用，而不是作为HTTP头传递
     }
 
     // 设置错误显示
@@ -281,7 +281,9 @@ export class HttpClient {
 
     return {
       ...config,
-      headers
+      headers,
+      // 保存loadingText到配置对象中，而不是headers
+      loadingText: config.loadingText
     }
   }
 
