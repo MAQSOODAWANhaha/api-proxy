@@ -14,9 +14,15 @@ host = "0.0.0.0"
 port = 9090
 
 [dual_port.management.access_control]
-allow_ips = []
-deny_ips = []
-require_auth = true
+allowed_ips = ["127.0.0.1/32", "::1/128", "0.0.0.0/0"]
+denied_ips = []
+require_auth = false
+auth_methods = ["ApiKey"]
+
+# CORS配置
+[dual_port.management.cors]
+enabled = true
+origins = ["*"]
 
 # 代理服务配置
 [dual_port.proxy]
@@ -28,9 +34,10 @@ host = "0.0.0.0"
 port = 8080
 
 [dual_port.proxy.load_balancing]
-strategy = "round_robin"
+strategy = "RoundRobin"
 health_check_interval = 30
-max_retries = 3
+failure_threshold = 3
+recovery_threshold = 2
 
 # 启用的服务
 [dual_port.enabled_services]
@@ -60,6 +67,7 @@ pool_size = 10
 host = "redis"
 port = 6379
 database = 0
+password = ""
 connection_timeout = 5
 default_ttl = 3600
 max_connections = 10

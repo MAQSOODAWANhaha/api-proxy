@@ -55,11 +55,11 @@ RUN chown -R nginx:nginx /var/cache/nginx \
     && chown -R nginx:nginx /usr/share/nginx/html \
     && chown -R nginx:nginx /var/log/nginx \
     && chmod -R 755 /var/cache/nginx \
-    && chmod -R 644 /usr/share/nginx/html \
+    && chmod -R 755 /usr/share/nginx/html \
     && chmod -R 755 /var/log/nginx
 
-# 切换到非root用户
-USER nginx
+# 为了解决权限问题，暂时以root运行nginx
+# USER nginx
 
 # 暴露端口
 EXPOSE 80

@@ -194,7 +194,11 @@ impl ConfigManager {
                 e
             ))?;
 
-        let config: AppConfig = toml::from_str(&config_content)?;
+        let config: AppConfig = toml::from_str(&config_content)
+            .map_err(|e| crate::error::ProxyError::config_with_source(
+                format!("TOML解析失败 - 配置文件: {:?}, 详细错误: {}", path, e),
+                e
+            ))?;
         
         // 验证配置
         super::validate_config(&config)?;

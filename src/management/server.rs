@@ -263,7 +263,10 @@ impl ManagementServer {
 
         let listener = TcpListener::bind(&addr).await?;
         
-        axum::serve(listener, self.router.into_make_service())
+        axum::serve(
+            listener, 
+            self.router.into_make_service_with_connect_info::<SocketAddr>()
+        )
             .await
             .map_err(|e| anyhow::anyhow!("Management server error: {}", e))?;
 
