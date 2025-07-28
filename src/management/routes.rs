@@ -27,8 +27,11 @@ pub fn create_routes(state: AppState) -> Router {
         // 用户管理路由
         .nest("/users", user_routes())
         
-        // API密钥管理路由
-        .nest("/api-keys", auth_routes())
+        // 认证路由
+        .nest("/auth", auth_routes())
+        
+        // API密钥管理路由  
+        .nest("/api-keys", api_keys_routes())
         
         // Provider密钥管理路由
         .nest("/provider-keys", provider_keys_routes())
@@ -84,8 +87,15 @@ fn user_routes() -> Router<AppState> {
         .route("/", post(crate::management::handlers::users::create_user))
         .route("/{id}", get(crate::management::handlers::users::get_user))
 }
-/// API密钥管理路由
+/// 认证路由
 fn auth_routes() -> Router<AppState> {
+    Router::new()
+        .route("/login", post(crate::management::handlers::auth::login))
+        .route("/validate", get(crate::management::handlers::auth::validate_token))
+}
+
+/// API密钥管理路由
+fn api_keys_routes() -> Router<AppState> {
     use axum::routing::put;
     Router::new()
         .route("/", get(crate::management::handlers::auth::list_api_keys))

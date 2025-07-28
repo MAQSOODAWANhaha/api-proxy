@@ -2,7 +2,7 @@
 
 use crate::management::server::AppState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, HeaderMap};
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -15,7 +15,7 @@ use entity::{
     provider_types::Entity as ProviderTypes,
 };
 use chrono::{Utc, Duration};
-use jsonwebtoken::{encode, Header, EncodingKey};
+use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
 use rand;
 
 /// 登录请求
@@ -86,10 +86,14 @@ pub async fn login(
         iat: now.timestamp() as usize,
     };
 
+    // 从环境变量或配置获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+    
     let token = match encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret("your-secret-key".as_ref()),
+        &EncodingKey::from_secret(jwt_secret.as_ref()),
     ) {
         Ok(token) => token,
         Err(err) => {
@@ -111,6 +115,75 @@ pub async fn login(
     };
 
     Ok(Json(response))
+}
+
+/// 验证token响应
+#[derive(Debug, Serialize)]
+pub struct ValidateTokenResponse {
+    /// token是否有效
+    pub valid: bool,
+    /// 用户信息（如果token有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<UserInfo>,
+}
+
+/// 验证JWT Token
+pub async fn validate_token(
+    State(_state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ValidateTokenResponse>, StatusCode> {
+    // 从Authorization头中提取token
+    let auth_header = match headers.get("Authorization") {
+        Some(header) => match header.to_str() {
+            Ok(header_str) => header_str,
+            Err(_) => return Ok(Json(ValidateTokenResponse { valid: false, user: None })),
+        },
+        None => return Ok(Json(ValidateTokenResponse { valid: false, user: None })),
+    };
+
+    // 检查Bearer前缀
+    if !auth_header.starts_with("Bearer ") {
+        return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+    }
+
+    let token = &auth_header[7..]; // 移除"Bearer "前缀
+
+    // 从环境变量或配置获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+    
+    // 验证JWT token
+    let validation = Validation::default();
+    let token_data = match decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::debug!("Token validation failed: {}", err);
+            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        }
+    };
+
+    // 检查token是否过期
+    let now = Utc::now().timestamp() as usize;
+    if token_data.claims.exp < now {
+        return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+    }
+
+    // 构造用户信息
+    let user_info = UserInfo {
+        id: token_data.claims.sub.parse().unwrap_or(1),
+        username: token_data.claims.username,
+        email: "admin@example.com".to_string(), // 临时固定值
+        is_admin: token_data.claims.is_admin,
+    };
+
+    Ok(Json(ValidateTokenResponse {
+        valid: true,
+        user: Some(user_info),
+    }))
 }
 
 /// API密钥查询参数
