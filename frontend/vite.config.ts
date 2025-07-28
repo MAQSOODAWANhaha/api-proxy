@@ -26,8 +26,8 @@ export default defineConfig(({ command, mode }) => {
     },
   },
   server: {
-    port: 3000,
-    host: true,
+    port: 3001,
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:9090',
@@ -57,15 +57,16 @@ export default defineConfig(({ command, mode }) => {
           chunkFileNames: 'assets/js/[name]-[hash].js',
           entryFileNames: 'assets/js/[name]-[hash].js',
           assetFileNames: (assetInfo) => {
-            const info = assetInfo.name.split('.')
+            const fileName = assetInfo.name || 'unknown'
+            const info = fileName.split('.')
             const ext = info[info.length - 1]
-            if (/\.(mp4|webm|ogg|mp3|wav|flac|aac)$/.test(assetInfo.name)) {
+            if (/\.(mp4|webm|ogg|mp3|wav|flac|aac)$/.test(fileName)) {
               return `assets/media/[name]-[hash].${ext}`
             }
-            if (/\.(png|jpe?g|gif|svg|ico|webp)$/.test(assetInfo.name)) {
+            if (/\.(png|jpe?g|gif|svg|ico|webp)$/.test(fileName)) {
               return `assets/images/[name]-[hash].${ext}`
             }
-            if (/\.(woff2?|eot|ttf|otf)$/.test(assetInfo.name)) {
+            if (/\.(woff2?|eot|ttf|otf)$/.test(fileName)) {
               return `assets/fonts/[name]-[hash].${ext}`
             }
             return `assets/[ext]/[name]-[hash].${ext}`

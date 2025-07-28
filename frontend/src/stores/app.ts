@@ -229,6 +229,7 @@ export const useAppStore = defineStore('app', () => {
     toggleTheme,
     setPageTitle,
     initializeApp,
+    initApp: initializeApp, // 别名，兼容旧代码
     updateNetworkStatus,
     addError,
     removeError,
