@@ -422,7 +422,7 @@ const fetchApis = async () => {
     }
     
     const response = await ApiKeyAPI.getServiceApis(params)
-    apisList.value = response.apis || []
+    apisList.value = response.api_keys || response.apis || []
     pagination.total = response.pagination?.total || 0
   } catch (error: any) {
     ElMessage.error(error.message || '获取API服务列表失败')

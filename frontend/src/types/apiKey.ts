@@ -83,6 +83,7 @@ export interface ApiKeyListParams {
 // API密钥列表响应
 export interface ApiKeyListResponse {
   api_keys: UserServiceApi[]
+  apis?: UserServiceApi[]  // 兼容service APIs返回格式
   pagination: {
     page: number
     limit: number

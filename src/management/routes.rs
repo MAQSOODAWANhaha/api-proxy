@@ -39,9 +39,6 @@ pub fn create_routes(state: AppState) -> Router {
         // Provider类型管理路由
         .nest("/provider-types", provider_type_routes())
         
-        // Provider密钥管理路由
-        .nest("/provider-keys", provider_keys_routes())
-        
         .with_state(state)
 }
 
@@ -174,15 +171,17 @@ fn api_keys_routes() -> Router<AppState> {
         // Provider密钥管理（内部API密钥池）- 核心功能
         .nest("/provider", provider_api_keys_routes())
         
-        // TODO: Service API管理暂时不实现
-        // .nest("/service", service_api_keys_routes())
+        // Service API管理（对外API服务）
+        .nest("/service", service_api_keys_routes())
         
         // 服务商类型查询
         .route("/provider-types", get(crate::management::handlers::provider_keys::get_provider_types))
         
-        // TODO: 其他功能暂时不实现
+        // 调度策略查询
+        .route("/scheduling-strategies", get(crate::management::handlers::service_apis::get_scheduling_strategies))
+        
+        // TODO: 其他功能暂时不实现  
         // .route("/health", get(crate::management::handlers::auth::get_api_health))
-        // .route("/scheduling-strategies", get(crate::management::handlers::auth::list_scheduling_strategies))
 }
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
@@ -199,8 +198,18 @@ fn provider_api_keys_routes() -> Router<AppState> {
         .route("/{id}/test", post(crate::management::handlers::provider_keys::test_provider_key))
 }
 
-// TODO: Service API密钥路由暂时不实现
-// fn service_api_keys_routes() -> Router<AppState> { ... }
+/// Service API密钥路由（对外API服务管理）
+fn service_api_keys_routes() -> Router<AppState> {
+    use axum::routing::{delete, put};
+    Router::new()
+        .route("/", get(crate::management::handlers::service_apis::list_service_apis))
+        .route("/", post(crate::management::handlers::service_apis::create_service_api))
+        .route("/{id}", get(crate::management::handlers::service_apis::get_service_api))
+        .route("/{id}", put(crate::management::handlers::service_apis::update_service_api))
+        .route("/{id}", delete(crate::management::handlers::service_apis::delete_service_api))
+        .route("/{id}/regenerate", post(crate::management::handlers::service_apis::regenerate_service_api_key))
+        .route("/{id}/revoke", post(crate::management::handlers::service_apis::revoke_service_api))
+}
 
 /// Provider类型管理路由
 fn provider_type_routes() -> Router<AppState> {
@@ -208,14 +217,5 @@ fn provider_type_routes() -> Router<AppState> {
         .route("/", get(crate::management::handlers::auth::list_provider_types))
 }
 
-/// 号池密钥管理路由
-fn provider_keys_routes() -> Router<AppState> {
-    use axum::routing::{delete, put};
-    use crate::management::handlers::provider_keys;
-    Router::new()
-        .route("/", get(provider_keys::list_provider_keys))
-        .route("/", post(provider_keys::create_provider_key))
-        .route("/{id}", get(provider_keys::get_provider_key))
-        .route("/{id}", put(provider_keys::update_provider_key))
-        .route("/{id}", delete(provider_keys::delete_provider_key))
-}
+// 已删除重复的provider_keys_routes函数
+// 功能已合并到api_keys_routes中的provider_api_keys_routes子路由

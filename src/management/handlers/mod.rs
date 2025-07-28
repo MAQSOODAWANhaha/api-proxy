@@ -6,3 +6,4 @@ pub mod statistics;
 pub mod system;
 pub mod users;
 pub mod provider_keys;
+pub mod service_apis;
