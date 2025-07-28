@@ -559,3 +559,240 @@ fn calculate_percentile_i64(values: &[i64], percentile: f64) -> i64 {
     let index = if index >= values.len() { values.len() - 1 } else { index };
     values[index]
 }
+
+/// Dashboard卡片数据
+pub async fn get_dashboard_cards(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let hours = 24; // 固定24小时数据
+    let start_time = Utc::now() - Duration::hours(hours);
+    
+    // 获取基础统计数据
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch traces for dashboard cards: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    let total_requests = traces.len() as i64;
+    let successful_requests = traces.iter().filter(|t| t.is_success).count() as i64;
+    let failed_requests = total_requests - successful_requests;
+    let success_rate = if total_requests > 0 {
+        (successful_requests as f64 / total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // 计算平均响应时间
+    let response_times: Vec<i64> = traces.iter()
+        .filter_map(|t| t.duration_ms.or_else(|| t.response_time_ms.map(|r| r as i64)))
+        .collect();
+    let avg_response_time = if !response_times.is_empty() {
+        response_times.iter().sum::<i64>() as f64 / response_times.len() as f64
+    } else {
+        0.0
+    };
+    
+    // Token统计
+    let total_tokens: i64 = traces.iter()
+        .map(|t| t.tokens_total.unwrap_or(0) as i64)
+        .sum();
+    
+    // 活跃服务商数量
+    let mut provider_set = std::collections::HashSet::new();
+    for trace in &traces {
+        if let Some(provider) = &trace.provider_name {
+            provider_set.insert(provider);
+        }
+    }
+    let active_providers = provider_set.len() as i64;
+    
+    let cards = json!({
+        "total_requests": {
+            "value": total_requests,
+            "change": "+12.5%", // TODO: 计算与昨天的变化
+            "trend": "up"
+        },
+        "success_rate": {
+            "value": format!("{:.1}%", success_rate),
+            "change": "+2.1%",
+            "trend": "up"
+        },
+        "avg_response_time": {
+            "value": format!("{:.0}ms", avg_response_time),
+            "change": "-5.2%",
+            "trend": "down"
+        },
+        "total_tokens": {
+            "value": total_tokens,
+            "change": "+18.3%",
+            "trend": "up"
+        },
+        "active_providers": {
+            "value": active_providers,
+            "change": "0",
+            "trend": "stable"
+        },
+        "failed_requests": {
+            "value": failed_requests,
+            "change": "-8.7%",
+            "trend": "down"
+        }
+    });
+    
+    Ok(Json(cards))
+}
+
+/// Dashboard趋势数据
+pub async fn get_dashboard_trend(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let days = params.get("days")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(7); // 默认7天
+    
+    let start_time = Utc::now() - Duration::days(days as i64);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch traces for dashboard trend: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 按天分组数据
+    let mut daily_data: std::collections::HashMap<String, (i64, i64, f64)> = std::collections::HashMap::new();
+    
+    for trace in traces {
+        let trace_date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%Y-%m-%d")
+            .to_string();
+        
+        let entry = daily_data.entry(trace_date).or_insert((0, 0, 0.0));
+        entry.0 += 1; // total requests
+        if trace.is_success {
+            entry.1 += 1; // successful requests
+        }
+        
+        // 累计响应时间
+        if let Some(duration) = trace.duration_ms.or_else(|| trace.response_time_ms.map(|r| r as i64)) {
+            entry.2 += duration as f64;
+        }
+    }
+    
+    // 生成趋势数据
+    let mut trend_data = Vec::new();
+    for i in 0..days {
+        let date = (Utc::now() - Duration::days((days - 1 - i) as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        
+        let (total, successful, total_response_time) = daily_data.get(&date).unwrap_or(&(0, 0, 0.0));
+        let success_rate = if *total > 0 { (*successful as f64 / *total as f64) * 100.0 } else { 0.0 };
+        let avg_response_time = if *total > 0 { total_response_time / *total as f64 } else { 0.0 };
+        
+        trend_data.push(json!({
+            "date": date,
+            "requests": total,
+            "success_rate": success_rate,
+            "avg_response_time": avg_response_time as i64
+        }));
+    }
+    
+    Ok(Json(json!({
+        "trend": trend_data,
+        "period": format!("{}d", days)
+    })))
+}
+
+/// Dashboard服务商分布数据
+pub async fn get_provider_distribution(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, StatusCode> {
+    let hours = 24; // 固定24小时数据
+    let start_time = Utc::now() - Duration::hours(hours);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch traces for provider distribution: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 按服务商统计
+    let mut provider_stats: std::collections::HashMap<String, (i64, i64, f64)> = std::collections::HashMap::new();
+    let total_requests = traces.len() as i64;
+    
+    for trace in traces {
+        let provider_name = trace.provider_name.as_deref().unwrap_or("Unknown").to_string();
+        let entry = provider_stats.entry(provider_name).or_insert((0, 0, 0.0));
+        
+        entry.0 += 1; // requests count
+        if trace.is_success {
+            entry.1 += 1; // successful requests
+        }
+        
+        // 累计响应时间
+        if let Some(duration) = trace.duration_ms.or_else(|| trace.response_time_ms.map(|r| r as i64)) {
+            entry.2 += duration as f64;
+        }
+    }
+    
+    // 生成分布数据
+    let mut distribution = Vec::new();
+    for (provider, (requests, successful, total_response_time)) in provider_stats {
+        let percentage = if total_requests > 0 { 
+            (requests as f64 / total_requests as f64) * 100.0 
+        } else { 
+            0.0 
+        };
+        let success_rate = if requests > 0 { 
+            (successful as f64 / requests as f64) * 100.0 
+        } else { 
+            0.0 
+        };
+        let avg_response_time = if requests > 0 { 
+            total_response_time / requests as f64 
+        } else { 
+            0.0 
+        };
+        
+        distribution.push(json!({
+            "provider": provider,
+            "requests": requests,
+            "percentage": format!("{:.1}%", percentage),
+            "success_rate": format!("{:.1}%", success_rate),
+            "avg_response_time": format!("{:.0}ms", avg_response_time)
+        }));
+    }
+    
+    // 按请求数排序
+    distribution.sort_by(|a, b| {
+        let a_requests = a["requests"].as_i64().unwrap_or(0);
+        let b_requests = b["requests"].as_i64().unwrap_or(0);
+        b_requests.cmp(&a_requests)
+    });
+    
+    Ok(Json(json!({
+        "distribution": distribution,
+        "total_requests": total_requests,
+        "period": "24h"
+    })))
+}

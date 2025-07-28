@@ -132,13 +132,30 @@ pub async fn validate_token(
     State(_state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ValidateTokenResponse>, StatusCode> {
+    // 记录所有请求头用于调试
+    tracing::info!("Validate token request headers:");
+    for (name, value) in headers.iter() {
+        if let Ok(value_str) = value.to_str() {
+            tracing::info!("  {}: {}", name, value_str);
+        }
+    }
+    
     // 从Authorization头中提取token
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {
-            Ok(header_str) => header_str,
-            Err(_) => return Ok(Json(ValidateTokenResponse { valid: false, user: None })),
+            Ok(header_str) => {
+                tracing::info!("Found Authorization header: {}", header_str);
+                header_str
+            },
+            Err(err) => {
+                tracing::warn!("Invalid Authorization header format: {}", err);
+                return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+            }
         },
-        None => return Ok(Json(ValidateTokenResponse { valid: false, user: None })),
+        None => {
+            tracing::warn!("No Authorization header found in request");
+            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        },
     };
 
     // 检查Bearer前缀

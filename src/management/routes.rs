@@ -81,6 +81,16 @@ fn statistics_routes() -> Router<AppState> {
     Router::new()
         .route("/overview", get(crate::management::handlers::statistics::get_overview))
         .route("/requests", get(crate::management::handlers::statistics::get_request_stats))
+        // Dashboard相关接口
+        .nest("/dashboard", dashboard_routes())
+}
+
+/// Dashboard统计路由
+fn dashboard_routes() -> Router<AppState> {
+    Router::new()
+        .route("/cards", get(crate::management::handlers::statistics::get_dashboard_cards))
+        .route("/trend", get(crate::management::handlers::statistics::get_dashboard_trend))
+        .route("/provider-distribution", get(crate::management::handlers::statistics::get_provider_distribution))
 }
 
 /// 用户管理路由
