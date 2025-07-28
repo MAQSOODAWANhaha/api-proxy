@@ -33,6 +33,9 @@ pub fn create_routes(state: AppState) -> Router {
         // API密钥管理路由  
         .nest("/api-keys", api_keys_routes())
         
+        // Provider类型管理路由
+        .nest("/provider-types", provider_type_routes())
+        
         // Provider密钥管理路由
         .nest("/provider-keys", provider_keys_routes())
         
@@ -82,10 +85,14 @@ fn statistics_routes() -> Router<AppState> {
 
 /// 用户管理路由
 fn user_routes() -> Router<AppState> {
+    use axum::routing::put;
     Router::new()
         .route("/", get(crate::management::handlers::users::list_users))
         .route("/", post(crate::management::handlers::users::create_user))
         .route("/{id}", get(crate::management::handlers::users::get_user))
+        .route("/profile", get(crate::management::handlers::users::get_user_profile))
+        .route("/profile", put(crate::management::handlers::users::update_user_profile))
+        .route("/password", post(crate::management::handlers::users::change_password))
 }
 /// 认证路由
 fn auth_routes() -> Router<AppState> {
@@ -103,6 +110,12 @@ fn api_keys_routes() -> Router<AppState> {
         .route("/{id}", get(crate::management::handlers::auth::get_api_key))
         .route("/{id}", put(crate::management::handlers::auth::update_api_key))
         .route("/{id}/revoke", post(crate::management::handlers::auth::revoke_api_key))
+}
+
+/// Provider类型管理路由
+fn provider_type_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(crate::management::handlers::auth::list_provider_types))
 }
 
 /// 号池密钥管理路由

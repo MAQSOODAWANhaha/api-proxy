@@ -126,59 +126,8 @@ impl ManagementServer {
 
     /// 创建路由器
     fn create_router(state: AppState, config: &ManagementConfig) -> Result<Router> {
-        let api_routes = Router::new()
-            // 认证接口
-            .route("/auth/login", post(super::handlers::auth::login))
-            
-            // 健康检查
-            .route("/health", get(health_check))
-            .route("/health/detailed", get(detailed_health_check))
-            .route("/health/servers", get(super::handlers::health::get_health_servers))
-            
-            // 系统信息
-            .route("/system/info", get(super::handlers::system::get_system_info))
-            .route("/system/metrics", get(super::handlers::system::get_system_metrics))
-            
-            // 负载均衡管理
-            .route("/loadbalancer/status", get(super::handlers::loadbalancer::get_lb_status))
-            .route("/loadbalancer/servers", get(super::handlers::loadbalancer::list_servers))
-            .route("/loadbalancer/servers", post(super::handlers::loadbalancer::add_server))
-            .route("/loadbalancer/servers/action", post(super::handlers::loadbalancer::server_action))
-            .route("/loadbalancer/strategy", patch(super::handlers::loadbalancer::change_strategy))
-            .route("/loadbalancer/metrics", get(super::handlers::loadbalancer::get_lb_metrics))
-            
-            // 适配器管理
-            .route("/adapters", get(super::handlers::adapters::list_adapters))
-            .route("/adapters/stats", get(super::handlers::adapters::get_adapter_stats))
-            
-            // 统计查询
-            .route("/statistics/overview", get(super::handlers::statistics::get_overview))
-            .route("/statistics/requests", get(super::handlers::statistics::get_request_stats))
-            
-            // 用户管理
-            .route("/users", get(super::handlers::users::list_users))
-            .route("/users", post(super::handlers::users::create_user))
-            .route("/users/{id}", get(super::handlers::users::get_user))
-            .route("/users/profile", get(super::handlers::users::get_user_profile))
-            .route("/users/profile", put(super::handlers::users::update_user_profile))
-            .route("/users/password", post(super::handlers::users::change_password))
-            
-            // API密钥管理
-            .route("/provider-types", get(super::handlers::auth::list_provider_types))
-            .route("/api-keys", get(super::handlers::auth::list_api_keys))
-            .route("/api-keys", post(super::handlers::auth::create_api_key))
-            .route("/api-keys/{id}", get(super::handlers::auth::get_api_key))
-            .route("/api-keys/{id}", put(super::handlers::auth::update_api_key))
-            .route("/api-keys/{id}/revoke", post(super::handlers::auth::revoke_api_key))
-            
-            // Provider密钥管理
-            .route("/provider-keys", get(super::handlers::provider_keys::list_provider_keys))
-            .route("/provider-keys", post(super::handlers::provider_keys::create_provider_key))
-            .route("/provider-keys/{id}", get(super::handlers::provider_keys::get_provider_key))
-            .route("/provider-keys/{id}", put(super::handlers::provider_keys::update_provider_key))
-            .route("/provider-keys/{id}", delete(super::handlers::provider_keys::delete_provider_key))
-            
-            .with_state(state);
+        // 使用统一的路由配置
+        let api_routes = super::routes::create_routes(state.clone());
 
         let mut app = Router::new()
             .nest(&config.api_prefix, api_routes)
