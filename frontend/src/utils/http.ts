@@ -61,7 +61,7 @@ const removePendingRequest = (requestKey: string) => {
 http.interceptors.request.use(
   (config: AxiosRequestConfig) => {
     // 添加认证token
-    const token = localStorage.getItem('auth_token')
+    const token = localStorage.getItem('api_proxy_token')
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
