@@ -101,12 +101,12 @@ fn statistics_routes() -> Router<AppState> {
         .nest("/dashboard", dashboard_routes())
         // 其他核心统计接口
         .route("/logs", get(crate::management::handlers::statistics::get_request_logs))
+        .route("/logs/:id", get(crate::management::handlers::statistics::get_request_log_detail))
         .route("/realtime", get(crate::management::handlers::statistics::get_realtime_stats))
         .route("/tokens", get(crate::management::handlers::statistics::get_token_stats))
-        // 高级统计接口（TODO: 后续实现）
-        // .route("/logs/{id}", get(crate::management::handlers::statistics::get_request_log_detail))
-        // .route("/response-time", get(crate::management::handlers::statistics::get_response_time_analysis))
-        // .route("/errors", get(crate::management::handlers::statistics::get_error_stats))
+        // 新增的高级统计接口
+        .route("/response-time", get(crate::management::handlers::statistics::get_response_time_analysis))
+        .route("/errors", get(crate::management::handlers::statistics::get_error_statistics))
 }
 
 /// Dashboard统计路由

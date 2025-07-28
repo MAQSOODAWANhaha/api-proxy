@@ -613,9 +613,9 @@ pub async fn get_dashboard_cards(
     }
     let active_providers = provider_set.len() as i64;
     
-    // TODO: 从数据库获取健康密钥数据
-    let total_keys = 10; // 临时值
-    let healthy_keys = 8; // 临时值
+    // 注意：密钥健康状态数据暂不可用，当前返回0
+    let total_keys = 0; // 需要实现密钥健康状态统计
+    let healthy_keys = 0; // 需要实现密钥健康状态统计
     
     // 计算每分钟请求数（基于24小时数据的平均值）
     let requests_per_minute = if total_requests > 0 {
@@ -1092,4 +1092,279 @@ pub async fn get_token_stats(
             "completion_ratio": if total_tokens > 0 { (total_completion_tokens as f64 / total_tokens as f64) * 100.0 } else { 0.0 }
         }
     })))
+}
+
+/// 获取响应时间分析
+pub async fn get_response_time_analysis(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let hours = params.get("hours")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(24);
+    let start_time = Utc::now() - Duration::hours(hours as i64);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch traces for response time analysis: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 按时间分组统计响应时间
+    let interval_hours = if hours <= 24 { 1 } else if hours <= 168 { 4 } else { 24 }; // 1小时、4小时、24小时间隔
+    let total_intervals = hours / interval_hours;
+    
+    let mut time_series = Vec::new();
+    let now = Utc::now();
+    
+    for i in 0..total_intervals {
+        let interval_start = now - Duration::hours((total_intervals - i) as i64 * interval_hours as i64);
+        let interval_end = interval_start + Duration::hours(interval_hours as i64);
+        
+        let interval_traces: Vec<&proxy_tracing::Model> = traces.iter()
+            .filter(|t| {
+                let trace_time = DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc);
+                trace_time >= interval_start && trace_time < interval_end
+            })
+            .collect();
+        
+        if !interval_traces.is_empty() {
+            let mut response_times: Vec<i64> = interval_traces.iter()
+                .filter_map(|t| t.duration_ms.or_else(|| t.response_time_ms.map(|r| r as i64)))
+                .collect();
+            response_times.sort_unstable();
+            
+            let avg_response_time = response_times.iter().sum::<i64>() as f64 / response_times.len() as f64;
+            let p50_response_time = calculate_percentile_i64(&response_times, 0.5);
+            let p95_response_time = calculate_percentile_i64(&response_times, 0.95);
+            let p99_response_time = calculate_percentile_i64(&response_times, 0.99);
+            
+            time_series.push(json!({
+                "timestamp": interval_start.format("%Y-%m-%d %H:%M").to_string(),
+                "avg_response_time": avg_response_time as i64,
+                "p50_response_time": p50_response_time,
+                "p95_response_time": p95_response_time,
+                "p99_response_time": p99_response_time,
+                "request_count": interval_traces.len()
+            }));
+        }
+    }
+    
+    // 整体统计
+    let mut all_response_times: Vec<i64> = traces.iter()
+        .filter_map(|t| t.duration_ms.or_else(|| t.response_time_ms.map(|r| r as i64)))
+        .collect();
+    all_response_times.sort_unstable();
+    
+    let overall_avg = if !all_response_times.is_empty() {
+        all_response_times.iter().sum::<i64>() as f64 / all_response_times.len() as f64
+    } else {
+        0.0
+    };
+    
+    Ok(Json(json!({
+        "data": time_series,
+        "summary": {
+            "avg_response_time": overall_avg as i64,
+            "p50_response_time": calculate_percentile_i64(&all_response_times, 0.5),
+            "p95_response_time": calculate_percentile_i64(&all_response_times, 0.95),
+            "p99_response_time": calculate_percentile_i64(&all_response_times, 0.99),
+            "total_requests": all_response_times.len(),
+            "period": format!("{}h", hours)
+        }
+    })))
+}
+
+/// 获取错误统计分析
+pub async fn get_error_statistics(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
+    let hours = params.get("hours")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(24);
+    let start_time = Utc::now() - Duration::hours(hours as i64);
+    
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
+        Err(err) => {
+            tracing::error!("Failed to fetch traces for error statistics: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    let total_requests = traces.len() as i64;
+    let failed_traces: Vec<&proxy_tracing::Model> = traces.iter().filter(|t| !t.is_success).collect();
+    let total_errors = failed_traces.len() as i64;
+    
+    // 错误类型分布统计
+    let mut error_type_stats: HashMap<String, i64> = HashMap::new();
+    for trace in &failed_traces {
+        if let Some(error_type) = &trace.error_type {
+            *error_type_stats.entry(error_type.clone()).or_insert(0) += 1;
+        } else {
+            *error_type_stats.entry("Unknown".to_string()).or_insert(0) += 1;
+        }
+    }
+    
+    // 按服务商统计错误
+    let mut provider_error_stats: HashMap<String, (i64, i64)> = HashMap::new(); // (total, errors)
+    for trace in &traces {
+        let provider = trace.provider_name.as_deref().unwrap_or("Unknown").to_string();
+        let entry = provider_error_stats.entry(provider).or_insert((0, 0));
+        entry.0 += 1; // total requests
+        if !trace.is_success {
+            entry.1 += 1; // error count
+        }
+    }
+    
+    // 时间序列错误趋势
+    let interval_hours = if hours <= 24 { 1 } else { 4 };
+    let total_intervals = hours / interval_hours;
+    let mut error_trend = Vec::new();
+    let now = Utc::now();
+    
+    for i in 0..total_intervals {
+        let interval_start = now - Duration::hours((total_intervals - i) as i64 * interval_hours as i64);
+        let interval_end = interval_start + Duration::hours(interval_hours as i64);
+        
+        let interval_traces: Vec<&proxy_tracing::Model> = traces.iter()
+            .filter(|t| {
+                let trace_time = DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc);
+                trace_time >= interval_start && trace_time < interval_end
+            })
+            .collect();
+        
+        let interval_total = interval_traces.len() as i64;
+        let interval_errors = interval_traces.iter().filter(|t| !t.is_success).count() as i64;
+        let error_rate = if interval_total > 0 {
+            (interval_errors as f64 / interval_total as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        error_trend.push(json!({
+            "timestamp": interval_start.format("%Y-%m-%d %H:%M").to_string(),
+            "error_count": interval_errors,
+            "total_requests": interval_total,
+            "error_rate": error_rate
+        }));
+    }
+    
+    // 热门错误列表（按发生次数排序）
+    let mut top_errors: Vec<_> = error_type_stats.into_iter().collect();
+    top_errors.sort_by(|a, b| b.1.cmp(&a.1));
+    top_errors.truncate(10); // 只保留前10个
+    
+    let top_errors_list: Vec<Value> = top_errors.into_iter().map(|(error_type, count)| {
+        let percentage = if total_errors > 0 {
+            (count as f64 / total_errors as f64) * 100.0
+        } else {
+            0.0
+        };
+        json!({
+            "error_type": error_type,
+            "count": count,
+            "percentage": percentage
+        })
+    }).collect();
+    
+    // 服务商错误率
+    let provider_error_rates: Vec<Value> = provider_error_stats.into_iter().map(|(provider, (total, errors))| {
+        let error_rate = if total > 0 {
+            (errors as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        json!({
+            "provider": provider,
+            "total_requests": total,
+            "error_count": errors,
+            "error_rate": error_rate
+        })
+    }).collect();
+    
+    Ok(Json(json!({
+        "summary": {
+            "total_requests": total_requests,
+            "total_errors": total_errors,
+            "error_rate": if total_requests > 0 { (total_errors as f64 / total_requests as f64) * 100.0 } else { 0.0 },
+            "period": format!("{}h", hours)
+        },
+        "data": error_trend,
+        "top_errors": top_errors_list,
+        "by_provider": provider_error_rates
+    })))
+}
+
+/// 获取单个请求日志详情
+pub async fn get_request_log_detail(
+    State(state): State<AppState>,
+    axum::extract::Path(log_id): axum::extract::Path<i32>,
+) -> Result<Json<Value>, StatusCode> {
+    let trace = match ProxyTracing::find_by_id(log_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(Some(trace)) => trace,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to fetch request log detail: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    // 解析JSON字段
+    let phases = trace.get_phases().unwrap_or_default();
+    let performance_metrics = trace.get_performance_metrics().unwrap_or_default();
+    let labels = trace.get_labels().unwrap_or_default();
+    
+    // 构建详细响应（只包含数据库中实际存在的字段）
+    let detail = json!({
+        "id": trace.id,
+        "request_id": trace.request_id,
+        "method": trace.method,
+        "path": trace.path,
+        "provider_name": trace.provider_name,
+        "start_time": trace.start_time,
+        "end_time": trace.end_time,
+        "created_at": trace.created_at,
+        "duration_ms": trace.duration_ms,
+        "response_time_ms": trace.response_time_ms,
+        "status_code": trace.status_code,
+        "is_success": trace.is_success,
+        "is_anomaly": trace.is_anomaly,
+        "health_impact_score": trace.health_impact_score,
+        "tokens": {
+            "prompt": trace.tokens_prompt,
+            "completion": trace.tokens_completion,
+            "total": trace.tokens_total,
+            "efficiency_ratio": trace.token_efficiency_ratio
+        },
+        "error": if trace.error_type.is_some() || trace.error_message.is_some() {
+            json!({
+                "type": trace.error_type,
+                "message": trace.error_message
+            })
+        } else {
+            Value::Null
+        },
+        "trace_level": trace.trace_level,
+        "phases": phases,
+        "performance_metrics": performance_metrics,
+        "labels": labels
+    });
+    
+    Ok(Json(detail))
 }

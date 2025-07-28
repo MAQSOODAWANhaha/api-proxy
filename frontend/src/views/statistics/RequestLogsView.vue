@@ -1,9 +1,22 @@
 <template>
   <div class="request-logs-view">
+    <div class="logs-intro">
+      <el-alert
+        title="日志查询工具"
+        type="info"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          此页面专门用于查询和导出详细的请求日志。如需查看统计分析、趋势图表等，请访问 <router-link to="/statistics" style="color: #409eff;">统计分析</router-link> 页面。
+        </template>
+      </el-alert>
+    </div>
+    
     <el-card class="page-card">
       <template #header>
         <div class="card-header">
-          <h2>请求日志</h2>
+          <h2>日志查询</h2>
           <div class="header-actions">
             <el-button @click="refreshLogs" :loading="loading">
               <el-icon><Refresh /></el-icon>
@@ -578,6 +591,13 @@ onMounted(() => {
 <style scoped>
 .request-logs-view {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.logs-intro {
+  flex-shrink: 0;
 }
 
 .page-card {

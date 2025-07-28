@@ -73,7 +73,7 @@ pub struct UpdateServiceApiRequest {
 }
 
 /// Service API响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ServiceApiResponse {
     /// API服务ID
     pub id: i32,

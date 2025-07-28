@@ -63,15 +63,15 @@ export class StatisticsAPI {
     return HttpClient.get('/statistics/dashboard/cards')
   }
 
-  // 获取请求趋势数据（过去7天）
-  static async getRequestTrend(days: number = 7): Promise<Array<{
+  // 获取仪表盘趋势数据
+  static async getDashboardTrend(params: { days?: number } = {}): Promise<Array<{
     date: string
     requests: number
     successful: number
     failed: number
     tokens: number
   }>> {
-    return HttpClient.get('/statistics/dashboard/trend', { days })
+    return HttpClient.get('/statistics/dashboard/trend', params)
   }
 
   // 获取服务商使用分布
@@ -151,83 +151,15 @@ export class StatisticsAPI {
 
   // ===== Token使用分析 =====
 
-  // 获取Token使用统计
+  // 获取Token使用统计（使用实际的API端点）
   static async getTokenUsage(params: {
-    start_date?: string
-    end_date?: string
+    hours?: number
     group_by?: 'hour' | 'day'
     provider_type?: string
-  } = {}): Promise<{
-    data: Array<{
-      timestamp: string
-      total_tokens: number
-      prompt_tokens: number
-      completion_tokens: number
-      cost_estimate: number
-    }>
-    summary: {
-      total_tokens: number
-      avg_tokens_per_request: number
-      total_cost_estimate: number
-      trend: 'increasing' | 'stable' | 'decreasing'
-    }
-    by_provider: Record<string, {
-      tokens: number
-      percentage: number
-      cost_estimate: number
-    }>
-  }> {
+  } = {}): Promise<any> {
     return HttpClient.get('/statistics/tokens', params)
   }
 
-  // ===== 用户使用分析 =====
-
-  // 获取用户使用排行
-  static async getUserUsageRanking(params: {
-    period?: 'today' | 'week' | 'month'
-    limit?: number
-  } = {}): Promise<Array<{
-    user_id: number
-    username: string
-    total_requests: number
-    total_tokens: number
-    success_rate: number
-    last_active: string
-  }>> {
-    return HttpClient.get('/statistics/users/ranking', params)
-  }
-
-  // ===== 自定义报表 =====
-
-  // 生成自定义报表
-  static async generateCustomReport(params: {
-    start_date: string
-    end_date: string
-    metrics: string[]
-    group_by: 'hour' | 'day'
-    filters?: Record<string, any>
-  }): Promise<{
-    report_id: string
-    status: 'generating' | 'completed' | 'failed'
-    download_url?: string
-    created_at: string
-  }> {
-    return HttpClient.post('/statistics/reports/custom', params)
-  }
-
-  // 获取报表状态
-  static async getReportStatus(reportId: string): Promise<{
-    report_id: string
-    status: 'generating' | 'completed' | 'failed'
-    progress: number
-    download_url?: string
-    error_message?: string
-  }> {
-    return HttpClient.get(`/statistics/reports/${reportId}/status`)
-  }
-
-  // 下载报表
-  static async downloadReport(reportId: string): Promise<void> {
-    return HttpClient.download(`/statistics/reports/${reportId}/download`)
-  }
+  // 注意：以下高级功能暂未实现，只保留核心统计功能
+  // 用户使用分析、自定义报表等功能将在后续版本中实现
 }

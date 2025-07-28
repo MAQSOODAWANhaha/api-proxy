@@ -45,24 +45,16 @@
           </el-sub-menu>
 
           <!-- 统计分析 -->
-          <el-sub-menu index="/statistics">
-            <template #title>
-              <el-icon><DataAnalysis /></el-icon>
-              <span>统计分析</span>
-            </template>
-            <el-menu-item index="/statistics/overview">
-              <el-icon><PieChart /></el-icon>
-              <template #title>数据概览</template>
-            </el-menu-item>
-            <el-menu-item index="/statistics/logs">
-              <el-icon><Document /></el-icon>
-              <template #title>请求日志</template>
-            </el-menu-item>
-            <el-menu-item index="/statistics/analytics">
-              <el-icon><TrendCharts /></el-icon>
-              <template #title>深度分析</template>
-            </el-menu-item>
-          </el-sub-menu>
+          <el-menu-item index="/statistics">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>统计分析</template>
+          </el-menu-item>
+          
+          <!-- 日志查询 -->
+          <el-menu-item index="/logs">
+            <el-icon><Document /></el-icon>
+            <template #title>日志查询</template>
+          </el-menu-item>
 
           <!-- 健康监控 -->
           <el-menu-item index="/health">
@@ -233,8 +225,8 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Cpu, Odometer, Key, Collection, Setting, DataAnalysis, PieChart,
-  Document, TrendCharts, Monitor, Tools, InfoFilled, Files,
+  Cpu, Odometer, Key, Collection, Setting, DataAnalysis, 
+  Document, Monitor, Tools, InfoFilled, Files,
   Fold, Expand, Refresh, FullScreen, Bell, User, ArrowDown,
   SwitchButton
 } from '@element-plus/icons-vue'

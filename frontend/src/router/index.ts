@@ -80,44 +80,24 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'statistics',
         name: 'Statistics',
-        redirect: '/statistics/overview',
+        component: () => import('@/views/statistics/UnifiedStatisticsView.vue'),
         meta: {
           title: '统计分析',
           icon: 'chart',
-          requiresAuth: true
-        },
-        children: [
-          {
-            path: 'overview',
-            name: 'StatisticsOverview',
-            component: () => import('@/views/statistics/OverviewView.vue'),
-            meta: {
-              title: '数据概览',
-              requiresAuth: true,
-              keepAlive: true
-            }
-          },
-          {
-            path: 'logs',
-            name: 'RequestLogs',
-            component: () => import('@/views/statistics/RequestLogsView.vue'),
-            meta: {
-              title: '请求日志',
-              requiresAuth: true,
-              keepAlive: false
-            }
-          },
-          {
-            path: 'analytics',
-            name: 'Analytics',
-            component: () => import('@/views/statistics/AnalyticsView.vue'),
-            meta: {
-              title: '深度分析',
-              requiresAuth: true,
-              keepAlive: true
-            }
-          }
-        ]
+          requiresAuth: true,
+          keepAlive: true
+        }
+      },
+      {
+        path: 'logs',
+        name: 'RequestLogs',
+        component: () => import('@/views/statistics/RequestLogsView.vue'),
+        meta: {
+          title: '日志查询',
+          icon: 'document',
+          requiresAuth: true,
+          keepAlive: false
+        }
       },
       {
         path: 'health',
@@ -181,7 +161,6 @@ const routes: RouteRecordRaw[] = [
           title: '用户中心',
           icon: 'user',
           requiresAuth: true,
-          hideInMenu: true,
           keepAlive: false
         }
       }
