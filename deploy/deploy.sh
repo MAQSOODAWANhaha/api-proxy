@@ -199,27 +199,29 @@ prepare_environment() {
         log_warning "配置文件 $CONFIG_SOURCE 不存在"
     fi
     
+    # 根据环境决定API访问方式
+    local api_base_url=""
+    local ws_url=""
+    
+    if [ "$profile" = "production" ]; then
+        # 生产环境：通过网关访问（80端口）
+        api_base_url="http://${HOST_IP}/api"
+        ws_url="ws://${HOST_IP}/ws"
+    else
+        # 开发环境：直接访问后端（9090端口）
+        api_base_url="http://${HOST_IP}:9090/api"
+        ws_url="ws://${HOST_IP}:9090/ws"
+    fi
+    
     # 更新.env文件中的动态配置
     if [ -f "$ENV_FILE" ]; then
+        log_info "更新现有环境配置文件: $ENV_FILE"
+        
         # 更新CONFIG_FILE
         if grep -q "^CONFIG_FILE=" "$ENV_FILE"; then
             sed -i "s/^CONFIG_FILE=.*/CONFIG_FILE=${CONFIG_SOURCE}/" "$ENV_FILE"
         else
             echo "CONFIG_FILE=${CONFIG_SOURCE}" >> "$ENV_FILE"
-        fi
-        
-        # 根据环境决定API访问方式
-        local api_base_url=""
-        local ws_url=""
-        
-        if [ "$profile" = "production" ]; then
-            # 生产环境：通过网关访问（80端口）
-            api_base_url="http://${HOST_IP}/api"
-            ws_url="ws://${HOST_IP}/ws"
-        else
-            # 开发环境：直接访问后端（9090端口）
-            api_base_url="http://${HOST_IP}:9090/api"
-            ws_url="ws://${HOST_IP}:9090/ws"
         fi
         
         # 更新VITE_API_BASE_URL
@@ -236,7 +238,7 @@ prepare_environment() {
             echo "VITE_WS_URL=${ws_url}" >> "$ENV_FILE"
         fi
         
-        log_info "已更新环境配置: CONFIG_FILE=${CONFIG_SOURCE}, IP=${HOST_IP}"
+        log_info "已更新环境配置: CONFIG_FILE=${CONFIG_SOURCE}, API_URL=${api_base_url}, IP=${HOST_IP}"
     fi
     
     # 创建环境变量文件（如果不存在）
