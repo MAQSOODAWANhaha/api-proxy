@@ -135,8 +135,7 @@ pub async fn list_service_apis(
     let db = state.database.as_ref();
     
     // 构建基础查询
-    let mut select = UserServiceApi::find()
-        .join(JoinType::InnerJoin, user_service_apis::Relation::ProviderType.def());
+    let mut select = UserServiceApi::find();
     
     // 应用筛选条件
     if let Some(user_id) = query.user_id {
@@ -168,28 +167,53 @@ pub async fn list_service_apis(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 转换为响应格式
-    let response_apis: Vec<ServiceApiResponse> = apis_with_provider
+    tracing::debug!("Processing {} service API records", apis_with_provider.len());
+    
+    let response_apis: Result<Vec<ServiceApiResponse>, String> = apis_with_provider
         .into_iter()
         .map(|(api, provider_type)| {
-            let provider = provider_type.unwrap_or_else(|| provider_types::Model {
-                id: api.provider_type_id,
-                name: "unknown".to_string(),
-                display_name: "Unknown".to_string(),
-                base_url: "".to_string(),
-                api_format: "openai".to_string(),
-                default_model: None,
-                max_tokens: None,
-                rate_limit: None,
-                timeout_seconds: None,
-                health_check_path: None,
-                auth_header_format: None,
-                is_active: true,
-                config_json: None,
-                created_at: chrono::Utc::now().naive_utc(),
-                updated_at: chrono::Utc::now().naive_utc(),
+            tracing::debug!("Processing API ID: {}, Provider Type ID: {}", api.id, api.provider_type_id);
+            
+            let provider = match provider_type {
+                Some(p) => {
+                    tracing::debug!("Found provider: {} ({})", p.display_name, p.name);
+                    p
+                },
+                None => {
+                    tracing::warn!("Provider type not found for API ID: {}, using defaults", api.id);
+                    provider_types::Model {
+                        id: api.provider_type_id,
+                        name: "unknown".to_string(),
+                        display_name: "Unknown".to_string(),
+                        base_url: "".to_string(),
+                        api_format: "openai".to_string(),
+                        default_model: None,
+                        max_tokens: None,
+                        rate_limit: None,
+                        timeout_seconds: None,
+                        health_check_path: None,
+                        auth_header_format: None,
+                        is_active: true,
+                        config_json: None,
+                        created_at: chrono::Utc::now().naive_utc(),
+                        updated_at: chrono::Utc::now().naive_utc(),
+                    }
+                }
+            };
+            
+            // 使用新的时间转换方法替代已弃用的from_utc
+            let last_used = api.last_used.map(|dt| {
+                chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()
             });
             
-            ServiceApiResponse {
+            let expires_at = api.expires_at.map(|dt| {
+                chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()
+            });
+            
+            let created_at = chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc).to_rfc3339();
+            let updated_at = chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc).to_rfc3339();
+            
+            Ok(ServiceApiResponse {
                 id: api.id,
                 user_id: api.user_id,
                 provider_type: provider.id.to_string(),
@@ -206,14 +230,22 @@ pub async fn list_service_apis(
                 used_tokens_today: api.used_tokens_today.unwrap_or(0),
                 total_requests: api.total_requests.unwrap_or(0),
                 successful_requests: api.successful_requests.unwrap_or(0),
-                last_used: api.last_used.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
-                expires_at: api.expires_at.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+                last_used,
+                expires_at,
                 is_active: api.is_active,
-                created_at: chrono::DateTime::<Utc>::from_utc(api.created_at, Utc).to_rfc3339(),
-                updated_at: chrono::DateTime::<Utc>::from_utc(api.updated_at, Utc).to_rfc3339(),
-            }
+                created_at,
+                updated_at,
+            })
         })
         .collect();
+    
+    let response_apis = match response_apis {
+        Ok(apis) => apis,
+        Err(e) => {
+            tracing::error!("Error processing service APIs: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
 
     let response = json!({
         "api_keys": response_apis,  // 保持与前端ApiKeyListResponse接口一致
@@ -325,12 +357,22 @@ pub async fn create_service_api(
     // 获取数据库连接
     let db = state.database.as_ref();
     
-    // 查找provider_type_id
-    let provider_type = ProviderType::find()
-        .filter(provider_types::Column::Id.eq(&request.provider_type))
-        .one(db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 查找provider_type_id，支持按name或id查找
+    let provider_type = if let Ok(id) = request.provider_type.parse::<i32>() {
+        // 如果是数字，按ID查找
+        ProviderType::find()
+            .filter(provider_types::Column::Id.eq(id))
+            .one(db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        // 如果是字符串，按name查找
+        ProviderType::find()
+            .filter(provider_types::Column::Name.eq(&request.provider_type))
+            .one(db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
         
     let provider_type_record = match provider_type {
         Some(pt) => pt,
@@ -345,6 +387,28 @@ pub async fn create_service_api(
     // 生成唯一的API密钥和密钥签名
     let api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
     let api_secret = format!("secret_{}", Uuid::new_v4().to_string().replace("-", ""));
+
+    // 检查是否已存在相同服务商类型的API密钥（每种服务商只能有1个）
+    let existing_api = UserServiceApi::find()
+        .filter(user_service_apis::Column::UserId.eq(1)) // TODO: 从认证上下文获取实际用户ID
+        .filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_record.id))
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 如果已存在，返回明确的错误信息
+    if let Some(existing) = existing_api {
+        return Ok(Json(json!({
+            "success": false,
+            "message": format!("{}服务商已存在API密钥，每种服务商只能创建1个API密钥。如需更换，请先删除现有密钥。", provider_type_record.display_name),
+            "error_code": "PROVIDER_API_KEY_EXISTS",
+            "existing_api": {
+                "id": existing.id,
+                "name": existing.name,
+                "created_at": chrono::DateTime::<Utc>::from_naive_utc_and_offset(existing.created_at, Utc).to_rfc3339()
+            }
+        })));
+    }
 
     // 创建新的Service API记录
     let new_service_api = user_service_apis::ActiveModel {
@@ -376,9 +440,13 @@ pub async fn create_service_api(
     let inserted_api = new_service_api
         .insert(db)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!("Failed to insert Service API: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // 构建响应
+    let provider_display_name = provider_type_record.display_name.clone();
     let response_api = ServiceApiResponse {
         id: inserted_api.id,
         user_id: inserted_api.user_id,
@@ -403,10 +471,12 @@ pub async fn create_service_api(
         updated_at: chrono::DateTime::<Utc>::from_utc(inserted_api.updated_at, Utc).to_rfc3339(),
     };
 
+    let message = format!("{}服务API创建成功", provider_display_name);
+
     let response = json!({
         "success": true,
         "api": response_api,
-        "message": "Service API created successfully"
+        "message": message
     });
 
     Ok(Json(response))
