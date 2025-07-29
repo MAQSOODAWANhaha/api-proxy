@@ -20,46 +20,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Validate environment variables
+        id: validate-backend
+        run: |
+          echo "Validating environment variables..."
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "Error: DOCKERHUB_USERNAME is empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Error: DOCKERHUB_TOKEN is empty"
+            exit 1
+          fi
+          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}"
+          echo "Environment variables validated successfully"
           
-      - name: Login to Aliyun Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: registry.cn-hangzhou.aliyuncs.com
-          username: ${{ secrets.ALIYUN_USERNAME }}
-          password: ${{ secrets.ALIYUN_TOKEN }}
-
-      - name: Build and push backend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:${{ github.sha }}
-            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:latest
-            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:buildcache,mode=max
-
-  frontend:
-    runs-on: ubuntu-latest
-    environment: DOCKERHUB
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          # Set outputs for safe tag construction
+          echo "dockerhub_username=${{ secrets.DOCKERHUB_USERNAME }}" >> $GITHUB_OUTPUT
+          echo "github_sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
         
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -74,6 +52,88 @@ jobs:
           username: ${{ secrets.ALIYUN_USERNAME }}
           password: ${{ secrets.ALIYUN_TOKEN }}
 
+      - name: Set image tags
+        id: tags-backend
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          echo "dockerhub_latest=${DOCKERHUB_USERNAME}/proxybackend:latest" >> $GITHUB_OUTPUT
+          echo "dockerhub_sha=${DOCKERHUB_USERNAME}/proxybackend:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "aliyun_latest=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:latest" >> $GITHUB_OUTPUT
+          echo "aliyun_sha=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "cache_ref=${DOCKERHUB_USERNAME}/proxybackend:buildcache" >> $GITHUB_OUTPUT
+          
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.tags-backend.outputs.dockerhub_latest }}
+            ${{ steps.tags-backend.outputs.dockerhub_sha }}
+            ${{ steps.tags-backend.outputs.aliyun_latest }}
+            ${{ steps.tags-backend.outputs.aliyun_sha }}
+          cache-from: type=registry,ref=${{ steps.tags-backend.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.tags-backend.outputs.cache_ref }},mode=max
+
+  frontend:
+    runs-on: ubuntu-latest
+    environment: DOCKERHUB
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Validate environment variables
+        id: validate-frontend
+        run: |
+          echo "Validating environment variables..."
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "Error: DOCKERHUB_USERNAME is empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Error: DOCKERHUB_TOKEN is empty"
+            exit 1
+          fi
+          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}"
+          echo "Environment variables validated successfully"
+          
+          # Set outputs for safe tag construction
+          echo "dockerhub_username=${{ secrets.DOCKERHUB_USERNAME }}" >> $GITHUB_OUTPUT
+          echo "github_sha_short=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+        
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Login to Aliyun Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ secrets.ALIYUN_USERNAME }}
+          password: ${{ secrets.ALIYUN_TOKEN }}
+
+      - name: Set image tags
+        id: tags-frontend
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          echo "dockerhub_latest=${DOCKERHUB_USERNAME}/proxyfrontend:latest" >> $GITHUB_OUTPUT
+          echo "dockerhub_sha=${DOCKERHUB_USERNAME}/proxyfrontend:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "aliyun_latest=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest" >> $GITHUB_OUTPUT
+          echo "aliyun_sha=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "cache_ref=${DOCKERHUB_USERNAME}/proxyfrontend:buildcache" >> $GITHUB_OUTPUT
+          
       - name: Build and push frontend
         uses: docker/build-push-action@v5
         with:
@@ -82,9 +142,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:${{ github.sha }}
-            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest
-            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:buildcache,mode=max
+            ${{ steps.tags-frontend.outputs.dockerhub_latest }}
+            ${{ steps.tags-frontend.outputs.dockerhub_sha }}
+            ${{ steps.tags-frontend.outputs.aliyun_latest }}
+            ${{ steps.tags-frontend.outputs.aliyun_sha }}
+          cache-from: type=registry,ref=${{ steps.tags-frontend.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.tags-frontend.outputs.cache_ref }},mode=max
