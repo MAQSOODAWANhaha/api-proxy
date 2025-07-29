@@ -71,7 +71,7 @@
                 <el-button 
                   type="text" 
                   size="small" 
-                  @click="copyApiKey(row.api_key)"
+                  @click="handleCopyApiKey(row.api_key)"
                 >
                   <el-icon><CopyDocument /></el-icon>
                 </el-button>
@@ -315,7 +315,7 @@
               />
               <el-button 
                 type="primary" 
-                @click="copyApiKey(newApiKey)"
+                @click="handleCopyNewApiKey"
                 style="margin-top: 8px;"
               >
                 <el-icon><CopyDocument /></el-icon>
@@ -353,6 +353,7 @@ import {
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { ApiKeyAPI } from '@/api'
+import { copyApiKey } from '@/utils/clipboard'
 import type { UserServiceApi, CreateServiceApiRequest, SchedulingStrategy, SchedulingStrategyOption, ProviderType } from '@/types'
 
 // 状态
@@ -631,6 +632,36 @@ const confirmRegenerate = async () => {
   }
 }
 
+// 处理复制API密钥（表格中使用）
+const handleCopyApiKey = async (apiKey: string) => {
+  if (!apiKey) {
+    ElMessage.warning('API密钥不能为空')
+    return
+  }
+  
+  try {
+    await copyApiKey(apiKey)
+  } catch (error) {
+    console.error('复制API密钥失败:', error)
+    ElMessage.error('复制失败，请手动选择复制')
+  }
+}
+
+// 处理复制新生成的API密钥
+const handleCopyNewApiKey = async () => {
+  if (!newApiKey.value) {
+    ElMessage.warning('没有可复制的API密钥')
+    return
+  }
+  
+  try {
+    await copyApiKey(newApiKey.value)
+  } catch (error) {
+    console.error('复制新API密钥失败:', error)
+    ElMessage.error('复制失败，请手动选择复制')
+  }
+}
+
 // 显示使用统计
 const showUsageStats = async (api: UserServiceApi) => {
   try {
@@ -658,71 +689,96 @@ const showUsageStats = async (api: UserServiceApi) => {
 const initStatsChart = () => {
   if (!statsChartRef.value || !selectedApiStats.value) return
   
-  if (statsChart.value) {
-    statsChart.value.dispose()
+  try {
+    if (statsChart.value) {
+      statsChart.value.dispose()
+    }
+    
+    statsChart.value = echarts.init(statsChartRef.value)
+    
+    // 模拟数据
+    const mockData = Array.from({ length: 7 }, (_, i) => ({
+      date: new Date(Date.now() - (6 - i) * 24 * 60 * 60 * 1000).toLocaleDateString(),
+      requests: Math.floor(Math.random() * 1000),
+      tokens: Math.floor(Math.random() * 10000),
+      success_rate: 90 + Math.random() * 10
+    }))
+    
+    const option = {
+      title: {
+        text: '使用统计趋势',
+        textStyle: { fontSize: 14 }
+      },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross' }
+      },
+      legend: {
+        data: ['请求数', 'Token数', '成功率']
+      },
+      xAxis: {
+        type: 'category',
+        data: mockData.map(item => item.date),
+        boundaryGap: false
+      },
+      yAxis: [
+        {
+          type: 'value',
+          name: '请求数/Token数',
+          position: 'left',
+          splitLine: {
+            lineStyle: {
+              type: 'dashed'
+            }
+          }
+        },
+        {
+          type: 'value',
+          name: '成功率(%)',
+          position: 'right',
+          min: 0,
+          max: 100,
+          splitLine: {
+            show: false
+          }
+        }
+      ],
+      series: [
+        {
+          name: '请求数',
+          type: 'bar',
+          data: mockData.map(item => item.requests),
+          itemStyle: {
+            color: '#409EFF'
+          }
+        },
+        {
+          name: 'Token数',
+          type: 'line',
+          data: mockData.map(item => item.tokens),
+          smooth: true,
+          itemStyle: {
+            color: '#67C23A'
+          }
+        },
+        {
+          name: '成功率',
+          type: 'line',
+          yAxisIndex: 1,
+          data: mockData.map(item => item.success_rate),
+          smooth: true,
+          itemStyle: {
+            color: '#E6A23C'
+          }
+        }
+      ]
+    }
+    
+    statsChart.value?.setOption(option, true)
+  } catch (error) {
+    console.error('ECharts initialization error:', error)
+    ElMessage.error('图表初始化失败')
   }
-  
-  statsChart.value = echarts.init(statsChartRef.value)
-  
-  // 模拟数据
-  const mockData = Array.from({ length: 7 }, (_, i) => ({
-    date: new Date(Date.now() - (6 - i) * 24 * 60 * 60 * 1000).toLocaleDateString(),
-    requests: Math.floor(Math.random() * 1000),
-    tokens: Math.floor(Math.random() * 10000),
-    success_rate: 90 + Math.random() * 10
-  }))
-  
-  const option = {
-    title: {
-      text: '使用统计趋势',
-      textStyle: { fontSize: 14 }
-    },
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' }
-    },
-    legend: {
-      data: ['请求数', 'Token数', '成功率']
-    },
-    xAxis: {
-      type: 'category',
-      data: mockData.map(item => item.date)
-    },
-    yAxis: [
-      {
-        type: 'value',
-        name: '请求数/Token数',
-        position: 'left'
-      },
-      {
-        type: 'value',
-        name: '成功率(%)',
-        position: 'right',
-        min: 0,
-        max: 100
-      }
-    ],
-    series: [
-      {
-        name: '请求数',
-        type: 'bar',
-        data: mockData.map(item => item.requests)
-      },
-      {
-        name: 'Token数',
-        type: 'line',
-        data: mockData.map(item => item.tokens)
-      },
-      {
-        name: '成功率',
-        type: 'line',
-        yAxisIndex: 1,
-        data: mockData.map(item => item.success_rate)
-      }
-    ]
-  }
-  
-  statsChart.value.setOption(option)
 }
 
 // 分页处理
@@ -743,14 +799,7 @@ const maskApiKey = (key: string) => {
   return key.substring(0, 4) + '*'.repeat(key.length - 8) + key.substring(key.length - 4)
 }
 
-const copyApiKey = async (key: string) => {
-  try {
-    await navigator.clipboard.writeText(key)
-    ElMessage.success('API密钥已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败')
-  }
-}
+// 复制API密钥函数已从 @/utils/clipboard 导入
 
 const formatTime = (timestamp: string) => {
   return new Date(timestamp).toLocaleString('zh-CN')

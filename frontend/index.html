@@ -11,5 +11,32 @@
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
+    <script>
+      // 捕获全局错误，防止浏览器扩展错误影响应用
+      window.addEventListener('error', function(event) {
+        // 忽略来自浏览器扩展的错误
+        if (event.filename && (
+          event.filename.includes('extension://') || 
+          event.filename.includes('content-all.js') ||
+          event.filename.includes('chrome-extension://')
+        )) {
+          event.preventDefault();
+          return false;
+        }
+      });
+      
+      // 捕获Promise rejection错误
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && typeof event.reason === 'object') {
+          const message = event.reason.message || '';
+          // 忽略扩展程序相关的错误
+          if (message.includes('Could not establish connection') || 
+              message.includes('Receiving end does not exist')) {
+            event.preventDefault();
+            return false;
+          }
+        }
+      });
+    </script>
   </body>
 </html>

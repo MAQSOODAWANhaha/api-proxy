@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use chrono::Utc;
+use chrono::{Utc, NaiveDateTime};
 use uuid::Uuid;
 
 /// Service API查询参数
@@ -121,87 +121,102 @@ pub struct ServiceApiResponse {
 
 /// 列出Service APIs
 pub async fn list_service_apis(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(query): Query<ServiceApiQuery>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use entity::provider_types::{self, Entity as ProviderType};
+    use sea_orm::{ColumnTrait, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait, PaginatorTrait};
+    
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
     
-    // TODO: 实现实际的数据库查询
-    // 目前返回模拟数据
-    let mock_apis = vec![
-        ServiceApiResponse {
-            id: 1,
-            user_id: 1,
-            provider_type: "openai".to_string(),
-            provider_name: "OpenAI".to_string(),
-            api_key: "sk-proj-test1234567890abcdef".to_string(),
-            api_secret: "secret_abcd1234".to_string(),
-            name: Some("主要OpenAI服务".to_string()),
-            description: Some("用于生产环境的主要OpenAI API服务".to_string()),
-            scheduling_strategy: "round_robin".to_string(),
-            retry_count: 3,
-            timeout_seconds: 30,
-            rate_limit: 1000,
-            max_tokens_per_day: 100000,
-            used_tokens_today: 15420,
-            total_requests: 5420,
-            successful_requests: 5398,
-            last_used: Some(Utc::now().to_rfc3339()),
-            expires_at: None,
-            is_active: true,
-            created_at: Utc::now().to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-        ServiceApiResponse {
-            id: 2,
-            user_id: 1,
-            provider_type: "anthropic".to_string(),
-            provider_name: "Anthropic".to_string(),
-            api_key: "sk-ant-test9876543210fedcba".to_string(),
-            api_secret: "secret_efgh5678".to_string(),
-            name: Some("Claude备用服务".to_string()),
-            description: Some("Claude AI的备用API服务".to_string()),
-            scheduling_strategy: "weighted".to_string(),
-            retry_count: 2,
-            timeout_seconds: 45,
-            rate_limit: 500,
-            max_tokens_per_day: 50000,
-            used_tokens_today: 8750,
-            total_requests: 2100,
-            successful_requests: 2088,
-            last_used: Some(Utc::now().to_rfc3339()),
-            expires_at: None,
-            is_active: true,
-            created_at: Utc::now().to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-    ];
-
+    // 获取数据库连接
+    let db = state.database.as_ref();
+    
+    // 构建基础查询
+    let mut select = UserServiceApi::find()
+        .join(JoinType::InnerJoin, user_service_apis::Relation::ProviderType.def());
+    
     // 应用筛选条件
-    let filtered_apis: Vec<ServiceApiResponse> = mock_apis.into_iter()
-        .filter(|api| {
-            if let Some(strategy) = &query.scheduling_strategy {
-                if &api.scheduling_strategy != strategy {
-                    return false;
-                }
+    if let Some(user_id) = query.user_id {
+        select = select.filter(user_service_apis::Column::UserId.eq(user_id));
+    }
+    
+    if let Some(strategy) = &query.scheduling_strategy {
+        select = select.filter(user_service_apis::Column::SchedulingStrategy.eq(strategy));
+    }
+    
+    if let Some(is_active) = query.is_active {
+        select = select.filter(user_service_apis::Column::IsActive.eq(is_active));
+    }
+
+    // 获取总数
+    let total = select
+        .clone()
+        .count(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? as u32;
+
+    // 分页查询
+    let apis_with_provider = select
+        .offset(((page - 1) * limit) as u64)
+        .limit(limit as u64)
+        .find_also_related(ProviderType)
+        .all(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 转换为响应格式
+    let response_apis: Vec<ServiceApiResponse> = apis_with_provider
+        .into_iter()
+        .map(|(api, provider_type)| {
+            let provider = provider_type.unwrap_or_else(|| provider_types::Model {
+                id: api.provider_type_id,
+                name: "unknown".to_string(),
+                display_name: "Unknown".to_string(),
+                base_url: "".to_string(),
+                api_format: "openai".to_string(),
+                default_model: None,
+                max_tokens: None,
+                rate_limit: None,
+                timeout_seconds: None,
+                health_check_path: None,
+                auth_header_format: None,
+                is_active: true,
+                config_json: None,
+                created_at: chrono::Utc::now().naive_utc(),
+                updated_at: chrono::Utc::now().naive_utc(),
+            });
+            
+            ServiceApiResponse {
+                id: api.id,
+                user_id: api.user_id,
+                provider_type: provider.id.to_string(),
+                provider_name: provider.display_name,
+                api_key: api.api_key,
+                api_secret: api.api_secret,
+                name: api.name,
+                description: api.description,
+                scheduling_strategy: api.scheduling_strategy.unwrap_or("round_robin".to_string()),
+                retry_count: api.retry_count.unwrap_or(3),
+                timeout_seconds: api.timeout_seconds.unwrap_or(30),
+                rate_limit: api.rate_limit.unwrap_or(0),
+                max_tokens_per_day: api.max_tokens_per_day.unwrap_or(0),
+                used_tokens_today: api.used_tokens_today.unwrap_or(0),
+                total_requests: api.total_requests.unwrap_or(0),
+                successful_requests: api.successful_requests.unwrap_or(0),
+                last_used: api.last_used.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+                expires_at: api.expires_at.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+                is_active: api.is_active,
+                created_at: chrono::DateTime::<Utc>::from_utc(api.created_at, Utc).to_rfc3339(),
+                updated_at: chrono::DateTime::<Utc>::from_utc(api.updated_at, Utc).to_rfc3339(),
             }
-            if let Some(is_active) = query.is_active {
-                if api.is_active != is_active {
-                    return false;
-                }
-            }
-            true
         })
         .collect();
 
-    let total = filtered_apis.len() as u32;
-    let start = ((page - 1) * limit) as usize;
-    let end = (start + limit as usize).min(filtered_apis.len());
-    let page_apis = filtered_apis[start..end].to_vec();
-
     let response = json!({
-        "api_keys": page_apis,  // 保持与前端ApiKeyListResponse接口一致
+        "api_keys": response_apis,  // 保持与前端ApiKeyListResponse接口一致
         "pagination": {
             "page": page,
             "limit": limit,
@@ -215,47 +230,90 @@ pub async fn list_service_apis(
 
 /// 获取单个Service API
 pub async fn get_service_api(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(api_id): Path<i32>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{Entity as UserServiceApi};
+    use entity::provider_types::{self, Entity as ProviderType};
+    use sea_orm::{EntityTrait, JoinType, QuerySelect, RelationTrait};
+    
     if api_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // TODO: 从数据库获取实际数据
-    // 目前返回模拟数据
-    let mock_api = ServiceApiResponse {
-        id: api_id,
-        user_id: 1,
-        provider_type: "openai".to_string(),
-        provider_name: "OpenAI".to_string(),
-        api_key: "sk-proj-test1234567890abcdef".to_string(),
-        api_secret: "secret_abcd1234".to_string(),
-        name: Some("测试OpenAI服务".to_string()),
-        description: Some("用于测试的OpenAI API服务".to_string()),
-        scheduling_strategy: "round_robin".to_string(),
-        retry_count: 3,
-        timeout_seconds: 30,
-        rate_limit: 1000,
-        max_tokens_per_day: 100000,
-        used_tokens_today: 15420,
-        total_requests: 5420,
-        successful_requests: 5398,
-        last_used: Some(Utc::now().to_rfc3339()),
-        expires_at: None,
-        is_active: true,
-        created_at: Utc::now().to_rfc3339(),
-        updated_at: Utc::now().to_rfc3339(),
+    // 获取数据库连接
+    let db = state.database.as_ref();
+    
+    // 查询Service API及其关联的Provider Type
+    let api_with_provider = UserServiceApi::find_by_id(api_id)
+        .join(JoinType::InnerJoin, entity::user_service_apis::Relation::ProviderType.def())
+        .find_also_related(ProviderType)
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (api, provider_type) = match api_with_provider {
+        Some((api, provider)) => (api, provider),
+        None => {
+            return Err(StatusCode::NOT_FOUND);
+        }
     };
 
-    Ok(Json(serde_json::to_value(mock_api).unwrap()))
+    let provider = provider_type.unwrap_or_else(|| provider_types::Model {
+        id: api.provider_type_id,
+        name: "unknown".to_string(),
+        display_name: "Unknown".to_string(),
+        base_url: "".to_string(),
+        api_format: "openai".to_string(),
+        default_model: None,
+        max_tokens: None,
+        rate_limit: None,
+        timeout_seconds: None,
+        health_check_path: None,
+        auth_header_format: None,
+        is_active: true,
+        config_json: None,
+        created_at: chrono::Utc::now().naive_utc(),
+        updated_at: chrono::Utc::now().naive_utc(),
+    });
+
+    // 构建响应
+    let response_api = ServiceApiResponse {
+        id: api.id,
+        user_id: api.user_id,
+        provider_type: provider.id.to_string(),
+        provider_name: provider.display_name,
+        api_key: api.api_key,
+        api_secret: api.api_secret,
+        name: api.name,
+        description: api.description,
+        scheduling_strategy: api.scheduling_strategy.unwrap_or("round_robin".to_string()),
+        retry_count: api.retry_count.unwrap_or(3),
+        timeout_seconds: api.timeout_seconds.unwrap_or(30),
+        rate_limit: api.rate_limit.unwrap_or(0),
+        max_tokens_per_day: api.max_tokens_per_day.unwrap_or(0),
+        used_tokens_today: api.used_tokens_today.unwrap_or(0),
+        total_requests: api.total_requests.unwrap_or(0),
+        successful_requests: api.successful_requests.unwrap_or(0),
+        last_used: api.last_used.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        expires_at: api.expires_at.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        is_active: api.is_active,
+        created_at: chrono::DateTime::<Utc>::from_utc(api.created_at, Utc).to_rfc3339(),
+        updated_at: chrono::DateTime::<Utc>::from_utc(api.updated_at, Utc).to_rfc3339(),
+    };
+
+    Ok(Json(serde_json::to_value(response_api).unwrap()))
 }
 
 /// 创建Service API
 pub async fn create_service_api(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<CreateServiceApiRequest>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use entity::provider_types::{self, Entity as ProviderType};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+    
     // 验证输入
     if request.provider_type.is_empty() {
         return Ok(Json(json!({
@@ -264,42 +322,90 @@ pub async fn create_service_api(
         })));
     }
 
-    // TODO: 实现实际的数据库插入逻辑
-    // 目前返回模拟创建结果
-    let new_api = ServiceApiResponse {
-        id: 999, // 模拟新生成的ID
-        user_id: 1, // TODO: 从认证上下文获取
-        provider_type: request.provider_type.clone(),
-        provider_name: match request.provider_type.as_str() {
-            "openai" => "OpenAI",
-            "anthropic" => "Anthropic", 
-            "google" => "Google",
-            _ => "Unknown Provider"
-        }.to_string(),
-        api_key: format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", "")),
-        api_secret: format!("secret_{}", Uuid::new_v4().to_string().replace("-", "")),
-        name: request.name,
-        description: request.description,
-        scheduling_strategy: request.scheduling_strategy.unwrap_or("round_robin".to_string()),
-        retry_count: request.retry_count.unwrap_or(3),
-        timeout_seconds: request.timeout_seconds.unwrap_or(30),
-        rate_limit: request.rate_limit.unwrap_or(0),
-        max_tokens_per_day: request.max_tokens_per_day.unwrap_or(0),
-        used_tokens_today: 0,
-        total_requests: 0,
-        successful_requests: 0,
-        last_used: None,
-        expires_at: request.expires_in_days.map(|days| {
-            (Utc::now() + chrono::Duration::days(days as i64)).to_rfc3339()
-        }),
-        is_active: request.is_active.unwrap_or(true),
-        created_at: Utc::now().to_rfc3339(),
-        updated_at: Utc::now().to_rfc3339(),
+    // 获取数据库连接
+    let db = state.database.as_ref();
+    
+    // 查找provider_type_id
+    let provider_type = ProviderType::find()
+        .filter(provider_types::Column::Id.eq(&request.provider_type))
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+    let provider_type_record = match provider_type {
+        Some(pt) => pt,
+        None => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Invalid provider type"
+            })));
+        }
+    };
+
+    // 生成唯一的API密钥和密钥签名
+    let api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
+    let api_secret = format!("secret_{}", Uuid::new_v4().to_string().replace("-", ""));
+
+    // 创建新的Service API记录
+    let new_service_api = user_service_apis::ActiveModel {
+        user_id: Set(1), // TODO: 从认证上下文获取实际用户ID
+        provider_type_id: Set(provider_type_record.id),
+        api_key: Set(api_key.clone()),
+        api_secret: Set(api_secret.clone()),
+        name: Set(request.name.clone()),
+        description: Set(request.description.clone()),
+        scheduling_strategy: Set(Some(request.scheduling_strategy.unwrap_or("round_robin".to_string()))),
+        retry_count: Set(Some(request.retry_count.unwrap_or(3))),
+        timeout_seconds: Set(Some(request.timeout_seconds.unwrap_or(30))),
+        rate_limit: Set(request.rate_limit),
+        max_tokens_per_day: Set(request.max_tokens_per_day),
+        used_tokens_today: Set(Some(0)),
+        total_requests: Set(Some(0)),
+        successful_requests: Set(Some(0)),
+        last_used: Set(None),
+        expires_at: Set(request.expires_in_days.map(|days| {
+            (Utc::now() + chrono::Duration::days(days as i64)).naive_utc()
+        })),
+        is_active: Set(request.is_active.unwrap_or(true)),
+        created_at: Set(Utc::now().naive_utc()),
+        updated_at: Set(Utc::now().naive_utc()),
+        ..Default::default()
+    };
+
+    // 插入数据库
+    let inserted_api = new_service_api
+        .insert(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 构建响应
+    let response_api = ServiceApiResponse {
+        id: inserted_api.id,
+        user_id: inserted_api.user_id,
+        provider_type: request.provider_type,
+        provider_name: provider_type_record.display_name,
+        api_key: inserted_api.api_key,
+        api_secret: inserted_api.api_secret,
+        name: inserted_api.name,
+        description: inserted_api.description,
+        scheduling_strategy: inserted_api.scheduling_strategy.unwrap_or("round_robin".to_string()),
+        retry_count: inserted_api.retry_count.unwrap_or(3),
+        timeout_seconds: inserted_api.timeout_seconds.unwrap_or(30),
+        rate_limit: inserted_api.rate_limit.unwrap_or(0),
+        max_tokens_per_day: inserted_api.max_tokens_per_day.unwrap_or(0),
+        used_tokens_today: inserted_api.used_tokens_today.unwrap_or(0),
+        total_requests: inserted_api.total_requests.unwrap_or(0),
+        successful_requests: inserted_api.successful_requests.unwrap_or(0),
+        last_used: inserted_api.last_used.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        expires_at: inserted_api.expires_at.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        is_active: inserted_api.is_active,
+        created_at: chrono::DateTime::<Utc>::from_utc(inserted_api.created_at, Utc).to_rfc3339(),
+        updated_at: chrono::DateTime::<Utc>::from_utc(inserted_api.updated_at, Utc).to_rfc3339(),
     };
 
     let response = json!({
         "success": true,
-        "api": new_api,
+        "api": response_api,
         "message": "Service API created successfully"
     });
 
@@ -308,43 +414,134 @@ pub async fn create_service_api(
 
 /// 更新Service API
 pub async fn update_service_api(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(api_id): Path<i32>,
     Json(request): Json<UpdateServiceApiRequest>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use entity::provider_types::{self, Entity as ProviderType};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+    
     if api_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // TODO: 实现实际的数据库更新逻辑
-    // 目前返回模拟更新结果
-    let updated_api = ServiceApiResponse {
-        id: api_id,
-        user_id: 1,
-        provider_type: "openai".to_string(),
-        provider_name: "OpenAI".to_string(),
-        api_key: "sk-proj-test1234567890abcdef".to_string(),
-        api_secret: "secret_abcd1234".to_string(),
-        name: request.name.or(Some("默认服务名称".to_string())),
-        description: request.description,
-        scheduling_strategy: request.scheduling_strategy.unwrap_or("round_robin".to_string()),
-        retry_count: request.retry_count.unwrap_or(3),
-        timeout_seconds: request.timeout_seconds.unwrap_or(30),
-        rate_limit: request.rate_limit.unwrap_or(0),
-        max_tokens_per_day: request.max_tokens_per_day.unwrap_or(0),
-        used_tokens_today: 15420,
-        total_requests: 5420,
-        successful_requests: 5398,
-        last_used: Some(Utc::now().to_rfc3339()),
-        expires_at: None,
-        is_active: request.is_active.unwrap_or(true),
-        created_at: Utc::now().to_rfc3339(),
-        updated_at: Utc::now().to_rfc3339(),
+    // 获取数据库连接
+    let db = state.database.as_ref();
+    
+    // 查找现有的Service API记录
+    let existing_api = UserServiceApi::find_by_id(api_id)
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+    let existing_record = match existing_api {
+        Some(api) => api,
+        None => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Service API not found"
+            })));
+        }
+    };
+
+    // 创建更新模型
+    let mut update_model = user_service_apis::ActiveModel {
+        id: Set(api_id),  // 指定要更新的记录ID
+        updated_at: Set(Utc::now().naive_utc()),
+        ..Default::default()
+    };
+
+    // 只更新提供的字段
+    if let Some(name) = request.name {
+        update_model.name = Set(Some(name));
+    }
+    
+    if let Some(description) = request.description {
+        update_model.description = Set(Some(description));
+    }
+    
+    if let Some(strategy) = request.scheduling_strategy {
+        update_model.scheduling_strategy = Set(Some(strategy));
+    }
+    
+    if let Some(retry_count) = request.retry_count {
+        update_model.retry_count = Set(Some(retry_count));
+    }
+    
+    if let Some(timeout) = request.timeout_seconds {
+        update_model.timeout_seconds = Set(Some(timeout));
+    }
+    
+    if let Some(rate_limit) = request.rate_limit {
+        update_model.rate_limit = Set(Some(rate_limit));
+    }
+    
+    if let Some(max_tokens) = request.max_tokens_per_day {
+        update_model.max_tokens_per_day = Set(Some(max_tokens));
+    }
+    
+    if let Some(is_active) = request.is_active {
+        update_model.is_active = Set(is_active);
+    }
+
+    // 执行更新
+    let updated_api = update_model
+        .update(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 获取provider类型信息
+    let provider_type = ProviderType::find_by_id(updated_api.provider_type_id)
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .unwrap_or_else(|| provider_types::Model {
+            id: updated_api.provider_type_id,
+            name: "unknown".to_string(),
+            display_name: "Unknown".to_string(),
+            base_url: "".to_string(),
+            api_format: "openai".to_string(),
+            default_model: None,
+            max_tokens: None,
+            rate_limit: None,
+            timeout_seconds: None,
+            health_check_path: None,
+            auth_header_format: None,
+            is_active: true,
+            config_json: None,
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+        });
+
+    // 构建响应
+    let response_api = ServiceApiResponse {
+        id: updated_api.id,
+        user_id: updated_api.user_id,
+        provider_type: provider_type.id.to_string(),
+        provider_name: provider_type.display_name,
+        api_key: updated_api.api_key,
+        api_secret: updated_api.api_secret,
+        name: updated_api.name,
+        description: updated_api.description,
+        scheduling_strategy: updated_api.scheduling_strategy.unwrap_or("round_robin".to_string()),
+        retry_count: updated_api.retry_count.unwrap_or(3),
+        timeout_seconds: updated_api.timeout_seconds.unwrap_or(30),
+        rate_limit: updated_api.rate_limit.unwrap_or(0),
+        max_tokens_per_day: updated_api.max_tokens_per_day.unwrap_or(0),
+        used_tokens_today: updated_api.used_tokens_today.unwrap_or(0),
+        total_requests: updated_api.total_requests.unwrap_or(0),
+        successful_requests: updated_api.successful_requests.unwrap_or(0),
+        last_used: updated_api.last_used.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        expires_at: updated_api.expires_at.map(|dt| chrono::DateTime::<Utc>::from_utc(dt, Utc).to_rfc3339()),
+        is_active: updated_api.is_active,
+        created_at: chrono::DateTime::<Utc>::from_utc(updated_api.created_at, Utc).to_rfc3339(),
+        updated_at: chrono::DateTime::<Utc>::from_utc(updated_api.updated_at, Utc).to_rfc3339(),
     };
 
     let response = json!({
         "success": true,
-        "api": updated_api,
+        "api": response_api,
         "message": format!("Service API {} updated successfully", api_id)
     });
 
@@ -353,14 +550,45 @@ pub async fn update_service_api(
 
 /// 删除Service API
 pub async fn delete_service_api(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(api_id): Path<i32>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{Entity as UserServiceApi};
+    use sea_orm::{EntityTrait};
+    
     if api_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // TODO: 实现实际的数据库删除逻辑（软删除）
+    // 获取数据库连接
+    let db = state.database.as_ref();
+    
+    // 检查记录是否存在
+    let existing_api = UserServiceApi::find_by_id(api_id)
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+    if existing_api.is_none() {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "Service API not found"
+        })));
+    }
+
+    // 执行硬删除（也可以实现软删除通过设置is_active=false）
+    let delete_result = UserServiceApi::delete_by_id(api_id)
+        .exec(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if delete_result.rows_affected == 0 {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "Failed to delete Service API"
+        })));
+    }
+
     let response = json!({
         "success": true,
         "message": format!("Service API {} deleted successfully", api_id)
@@ -371,19 +599,57 @@ pub async fn delete_service_api(
 
 /// 重新生成Service API密钥
 pub async fn regenerate_service_api_key(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(api_id): Path<i32>,
 ) -> Result<Json<Value>, StatusCode> {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    
     if api_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // TODO: 实现实际的密钥重新生成逻辑
-    let new_api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
+    // 获取数据库连接
+    let db = state.database.as_ref();
     
+    // 查找现有的Service API记录
+    let existing_api = UserServiceApi::find_by_id(api_id)
+        .one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+    let existing_record = match existing_api {
+        Some(api) => api,
+        None => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "Service API not found"
+            })));
+        }
+    };
+
+    // 生成新的API密钥和密钥签名
+    let new_api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
+    let new_api_secret = format!("secret_{}", Uuid::new_v4().to_string().replace("-", ""));
+
+    // 创建更新模型，只更新密钥相关字段
+    let update_model = user_service_apis::ActiveModel {
+        id: Set(api_id),
+        api_key: Set(new_api_key.clone()),
+        api_secret: Set(new_api_secret.clone()),
+        updated_at: Set(Utc::now().naive_utc()),
+        ..Default::default()
+    };
+
+    // 执行更新
+    let updated_api = update_model
+        .update(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let response = json!({
         "success": true,
-        "api_key": new_api_key,
+        "api_key": updated_api.api_key,
         "message": "API key regenerated successfully"
     });
 

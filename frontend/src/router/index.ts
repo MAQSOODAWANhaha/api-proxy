@@ -140,6 +140,17 @@ const routes: RouteRecordRaw[] = [
               requiresAuth: true,
               requiresAdmin: true
             }
+          },
+          {
+            path: 'clipboard-debug',
+            name: 'ClipboardDebug',
+            component: () => import('@/views/debug/ClipboardDebugView.vue'),
+            meta: {
+              title: '剪贴板诊断',
+              requiresAuth: true,
+              requiresAdmin: true,
+              hideInMenu: false
+            }
           }
         ]
       },
@@ -193,7 +204,7 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior(to, from, savedPosition) {
+  scrollBehavior(_to, _from, savedPosition) {
     if (savedPosition) {
       return savedPosition
     } else {

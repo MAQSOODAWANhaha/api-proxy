@@ -867,11 +867,6 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.provider-status-item:last-child {
-  border-bottom: none;
 }
 
 .provider-info {
@@ -912,6 +907,8 @@ onUnmounted(() => {
 
 .error-details-card {
   min-height: 300px;
+  border: none;
+  box-shadow: none;
 }
 
 .error-list {
@@ -923,11 +920,6 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.error-item:last-child {
-  border-bottom: none;
 }
 
 .error-info {
@@ -995,9 +987,14 @@ onUnmounted(() => {
   height: calc(100% - 60px);
 }
 
+:deep(.el-card) {
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
 :deep(.el-card__header) {
   padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: none;
 }
 
 :deep(.el-progress-bar__outer) {

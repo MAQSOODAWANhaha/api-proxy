@@ -298,6 +298,7 @@ import {
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { ApiKeyAPI } from '@/api'
+import { copyApiKey } from '@/utils/clipboard'
 import type { UserProviderKey, CreateProviderKeyRequest, ProviderType } from '@/types'
 
 // 状态
@@ -637,14 +638,7 @@ const maskApiKey = (key: string) => {
   return key.substring(0, 4) + '*'.repeat(key.length - 8) + key.substring(key.length - 4)
 }
 
-const copyApiKey = async (key: string) => {
-  try {
-    await navigator.clipboard.writeText(key)
-    ElMessage.success('API密钥已复制到剪贴板')
-  } catch {
-    ElMessage.error('复制失败')
-  }
-}
+// 复制API密钥函数已从 @/utils/clipboard 导入
 
 const formatTime = (timestamp: string) => {
   return new Date(timestamp).toLocaleString('zh-CN')
