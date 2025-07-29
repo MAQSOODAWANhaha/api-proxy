@@ -154,17 +154,32 @@ export class ApiKeyAPI {
   // 获取API密钥健康状态
   static async getHealthStatus(params: {
     user_id?: number
-    provider_type?: ProviderType
+    provider_type?: string
     healthy?: boolean
+    keyword?: string
+    page?: number
+    limit?: number
   } = {}): Promise<{
     statuses: (ApiHealthStatus & {
+      key_id: number
       key_name: string
       provider_name: string
+      response_time: number
+      success_rate: number
+      last_check_time: string
+      error_message?: string
+      is_healthy: boolean
     })[]
     summary: {
       total: number
       healthy: number
       unhealthy: number
+    }
+    pagination?: {
+      page: number
+      limit: number
+      total: number
+      pages: number
     }
   }> {
     return HttpClient.get('/api-keys/health', params)

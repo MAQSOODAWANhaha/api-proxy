@@ -51,12 +51,27 @@
         <!-- 筛选器 -->
         <div class="health-filters">
           <el-form :model="filters" inline>
+            <el-form-item label="关键词搜索">
+              <el-input
+                v-model="filters.keyword"
+                placeholder="输入密钥名称"
+                clearable
+                style="width: 200px"
+                @keyup.enter="searchHealth"
+              >
+                <template #prefix>
+                  <el-icon><Search /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
             <el-form-item label="服务商类型">
               <el-select v-model="filters.provider_type" clearable placeholder="全部">
-                <el-option label="OpenAI" value="openai" />
-                <el-option label="Google" value="google" />
-                <el-option label="Anthropic" value="anthropic" />
-                <el-option label="其他" value="other" />
+                <el-option 
+                  v-for="provider in providerTypes" 
+                  :key="provider.id"
+                  :label="provider.display_name" 
+                  :value="provider.name" 
+                />
               </el-select>
             </el-form-item>
             <el-form-item label="健康状态">
@@ -225,6 +240,7 @@ import {
   Refresh, CircleCheck, CircleClose, Search, RefreshLeft
 } from '@element-plus/icons-vue'
 import { ApiKeyAPI } from '@/api'
+import type { ProviderType } from '@/types'
 
 const loading = ref(false)
 const batchChecking = ref(false)
@@ -239,9 +255,13 @@ const healthSummary = reactive({
   unhealthy: 0
 })
 
+// 动态获取的服务商类型列表
+const providerTypes = ref<ProviderType[]>([])
+
 const filters = reactive({
   provider_type: '',
-  healthy: null as boolean | null
+  healthy: null as boolean | null,
+  keyword: ''
 })
 
 const pagination = reactive({
@@ -256,13 +276,32 @@ const healthRate = computed(() => {
   return Math.round((healthSummary.healthy / healthSummary.total) * 100)
 })
 
+// 获取服务商类型列表
+const fetchProviderTypes = async () => {
+  try {
+    const types = await ApiKeyAPI.getProviderTypes()
+    providerTypes.value = types
+  } catch (error: any) {
+    console.error('Failed to fetch provider types:', error)
+    // 失败时使用默认选项
+    providerTypes.value = [
+      { id: '1', name: 'openai', display_name: 'OpenAI', base_url: '', supported_features: [] },
+      { id: '2', name: 'gemini', display_name: 'Google Gemini', base_url: '', supported_features: [] },
+      { id: '3', name: 'claude', display_name: 'Anthropic Claude', base_url: '', supported_features: [] }
+    ]
+  }
+}
+
 // 获取健康状态数据
 const fetchHealthData = async () => {
   try {
     loading.value = true
     const params = {
       provider_type: filters.provider_type || undefined,
-      healthy: filters.healthy
+      healthy: filters.healthy,
+      keyword: filters.keyword || undefined,
+      page: pagination.page,
+      limit: pagination.size
     }
     
     const response = await ApiKeyAPI.getHealthStatus(params)
@@ -272,6 +311,11 @@ const fetchHealthData = async () => {
     healthSummary.total = response.summary.total
     healthSummary.healthy = response.summary.healthy
     healthSummary.unhealthy = response.summary.unhealthy
+    
+    // 更新分页信息
+    if (response.pagination) {
+      pagination.total = response.pagination.total
+    }
     
   } catch (error: any) {
     ElMessage.error(error.message || '获取健康状态失败')
@@ -288,6 +332,7 @@ const refreshHealth = () => {
 
 // 搜索健康状态
 const searchHealth = () => {
+  pagination.page = 1
   fetchHealthData()
 }
 
@@ -295,6 +340,8 @@ const searchHealth = () => {
 const resetFilters = () => {
   filters.provider_type = ''
   filters.healthy = null
+  filters.keyword = ''
+  pagination.page = 1
   fetchHealthData()
 }
 
@@ -387,7 +434,8 @@ const getSuccessRateColor = (rate: number) => {
   return '#f56c6c'
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await fetchProviderTypes()
   fetchHealthData()
 })
 </script>

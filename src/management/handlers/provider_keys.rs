@@ -114,6 +114,12 @@ pub struct HealthStatusQuery {
     pub provider_type: Option<String>,
     /// 健康状态过滤
     pub healthy: Option<bool>,
+    /// 关键词搜索（密钥名称）
+    pub keyword: Option<String>,
+    /// 页码
+    pub page: Option<u32>,
+    /// 每页大小
+    pub limit: Option<u32>,
 }
 
 /// API健康状态响应
@@ -155,6 +161,21 @@ pub struct HealthStatusListResponse {
     pub statuses: Vec<ApiHealthStatusResponse>,
     /// 概览统计
     pub summary: HealthSummary,
+    /// 分页信息
+    pub pagination: PaginationInfo,
+}
+
+/// 分页信息
+#[derive(Debug, Serialize)]
+pub struct PaginationInfo {
+    /// 当前页码
+    pub page: u32,
+    /// 每页大小
+    pub limit: u32,
+    /// 总记录数
+    pub total: u32,
+    /// 总页数
+    pub pages: u32,
 }
 
 /// 列出Provider Keys
@@ -756,12 +777,26 @@ pub async fn get_provider_keys_health_status(
     State(state): State<AppState>,
     Query(query): Query<HealthStatusQuery>,
 ) -> Result<Json<HealthStatusListResponse>, StatusCode> {
+    use sea_orm::{QuerySelect, PaginatorTrait};
+    
+    let page = query.page.unwrap_or(1);
+    let limit = query.limit.unwrap_or(20);
+    
     // 构建查询条件
     let mut provider_keys_query = UserProviderKeys::find();
     
     // 用户ID过滤
     if let Some(user_id) = query.user_id {
         provider_keys_query = provider_keys_query.filter(user_provider_keys::Column::UserId.eq(user_id));
+    }
+    
+    // 关键词搜索（密钥名称）
+    if let Some(keyword) = &query.keyword {
+        if !keyword.trim().is_empty() {
+            provider_keys_query = provider_keys_query.filter(
+                user_provider_keys::Column::Name.contains(keyword.trim())
+            );
+        }
     }
     
     // 服务商类型过滤
@@ -774,8 +809,20 @@ pub async fn get_provider_keys_health_status(
         }
     }
     
-    // 获取provider keys和相关数据
+    // 获取总数
+    let total_count = provider_keys_query
+        .clone()
+        .count(state.database.as_ref())
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to count provider keys: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })? as u32;
+    
+    // 分页查询provider keys和相关数据
     let provider_keys_result = provider_keys_query
+        .offset(((page - 1) * limit) as u64)
+        .limit(limit as u64)
         .find_also_related(ProviderTypes)
         .all(state.database.as_ref())
         .await;
@@ -871,12 +918,20 @@ pub async fn get_provider_keys_health_status(
         });
     }
     
+    let total_pages = ((total_count as f64) / (limit as f64)).ceil() as u32;
+    
     let response = HealthStatusListResponse {
         statuses: health_statuses,
         summary: HealthSummary {
-            total,
+            total: total_count as i32,
             healthy: healthy_count,
             unhealthy: unhealthy_count,
+        },
+        pagination: PaginationInfo {
+            page,
+            limit,
+            total: total_count,
+            pages: total_pages,
         },
     };
     
