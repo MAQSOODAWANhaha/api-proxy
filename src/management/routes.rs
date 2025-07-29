@@ -180,8 +180,8 @@ fn api_keys_routes() -> Router<AppState> {
         // 调度策略查询
         .route("/scheduling-strategies", get(crate::management::handlers::service_apis::get_scheduling_strategies))
         
-        // TODO: 其他功能暂时不实现  
-        // .route("/health", get(crate::management::handlers::auth::get_api_health))
+        // Provider Keys健康监控接口
+        .route("/health", get(crate::management::handlers::provider_keys::get_provider_keys_health_status))
 }
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
@@ -196,6 +196,7 @@ fn provider_api_keys_routes() -> Router<AppState> {
         .route("/{id}/status", patch(crate::management::handlers::provider_keys::toggle_provider_key_status))
         .route("/{id}/usage", get(crate::management::handlers::provider_keys::get_provider_key_usage))
         .route("/{id}/test", post(crate::management::handlers::provider_keys::test_provider_key))
+        .route("/{id}/health-check", post(crate::management::handlers::provider_keys::trigger_provider_key_health_check))
 }
 
 /// Service API密钥路由（对外API服务管理）

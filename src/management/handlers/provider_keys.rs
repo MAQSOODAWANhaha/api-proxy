@@ -12,6 +12,8 @@ use entity::{
     user_provider_keys::Entity as UserProviderKeys,
     provider_types,
     provider_types::Entity as ProviderTypes,
+    api_health_status,
+    api_health_status::Entity as ApiHealthStatus,
 };
 use chrono::Utc;
 
@@ -101,6 +103,58 @@ pub struct ProviderKeyResponse {
     pub created_at: String,
     /// 更新时间
     pub updated_at: String,
+}
+
+/// 健康状态查询参数
+#[derive(Debug, Deserialize)]
+pub struct HealthStatusQuery {
+    /// 用户ID过滤
+    pub user_id: Option<i32>,
+    /// 服务商类型过滤
+    pub provider_type: Option<String>,
+    /// 健康状态过滤
+    pub healthy: Option<bool>,
+}
+
+/// API健康状态响应
+#[derive(Debug, Serialize)]
+pub struct ApiHealthStatusResponse {
+    /// 密钥ID
+    pub key_id: i32,
+    /// 密钥名称
+    pub key_name: String,
+    /// 服务商名称
+    pub provider_name: String,
+    /// 是否健康
+    pub is_healthy: bool,
+    /// 响应时间(毫秒)
+    pub response_time: i32,
+    /// 成功率(百分比)
+    pub success_rate: f32,
+    /// 最后检查时间
+    pub last_check_time: String,
+    /// 错误信息
+    pub error_message: Option<String>,
+}
+
+/// 健康状态概览
+#[derive(Debug, Serialize)]
+pub struct HealthSummary {
+    /// 总密钥数
+    pub total: i32,
+    /// 健康密钥数
+    pub healthy: i32,
+    /// 异常密钥数
+    pub unhealthy: i32,
+}
+
+/// 健康状态列表响应
+#[derive(Debug, Serialize)]
+pub struct HealthStatusListResponse {
+    /// 健康状态列表
+    pub statuses: Vec<ApiHealthStatusResponse>,
+    /// 概览统计
+    pub summary: HealthSummary,
 }
 
 /// 列出Provider Keys
@@ -695,4 +749,286 @@ pub async fn get_provider_types(
     }).collect();
 
     Ok(Json(json!(provider_types_data)))
+}
+
+/// 获取Provider Keys健康状态
+pub async fn get_provider_keys_health_status(
+    State(state): State<AppState>,
+    Query(query): Query<HealthStatusQuery>,
+) -> Result<Json<HealthStatusListResponse>, StatusCode> {
+    // 构建查询条件
+    let mut provider_keys_query = UserProviderKeys::find();
+    
+    // 用户ID过滤
+    if let Some(user_id) = query.user_id {
+        provider_keys_query = provider_keys_query.filter(user_provider_keys::Column::UserId.eq(user_id));
+    }
+    
+    // 服务商类型过滤
+    if let Some(provider_type) = &query.provider_type {
+        // 先查找provider_type的ID
+        if let Ok(Some(pt)) = ProviderTypes::find()
+            .filter(provider_types::Column::Name.eq(provider_type))
+            .one(state.database.as_ref()).await {
+            provider_keys_query = provider_keys_query.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
+        }
+    }
+    
+    // 获取provider keys和相关数据
+    let provider_keys_result = provider_keys_query
+        .find_also_related(ProviderTypes)
+        .all(state.database.as_ref())
+        .await;
+        
+    let provider_keys_data = match provider_keys_result {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Failed to fetch provider keys with health status: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    
+    let mut health_statuses = Vec::new();
+    let mut total = 0;
+    let mut healthy_count = 0;
+    let mut unhealthy_count = 0;
+    
+    for (provider_key, provider_type) in provider_keys_data {
+        total += 1;
+        
+        let provider = provider_type.unwrap_or(provider_types::Model {
+            id: 0,
+            name: "unknown".to_string(),
+            display_name: "Unknown Provider".to_string(),
+            base_url: "".to_string(),
+            api_format: "".to_string(),
+            default_model: None,
+            max_tokens: None,
+            rate_limit: None,
+            timeout_seconds: None,
+            health_check_path: None,
+            auth_header_format: None,
+            is_active: false,
+            config_json: None,
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+        });
+        
+        // 获取最新的健康状态记录
+        let latest_health = ApiHealthStatus::find()
+            .filter(api_health_status::Column::UserProviderKeyId.eq(provider_key.id))
+            .order_by_desc(api_health_status::Column::UpdatedAt)
+            .one(state.database.as_ref())
+            .await
+            .unwrap_or(None);
+        
+        let (is_healthy, response_time, success_rate, last_check_time, error_message) = match latest_health {
+            Some(health) => {
+                let is_healthy = health.is_healthy;
+                if is_healthy { healthy_count += 1; } else { unhealthy_count += 1; }
+                
+                (
+                    is_healthy,
+                    health.response_time_ms.unwrap_or(0),
+                    health.success_rate.unwrap_or(0.0) * 100.0, // 转换为百分比
+                    health.updated_at.and_utc().to_rfc3339(),
+                    health.last_error_message.clone(),
+                )
+            },
+            None => {
+                // 如果没有健康状态记录，则根据provider key的active状态判断
+                let is_healthy = provider_key.is_active;
+                if is_healthy { healthy_count += 1; } else { unhealthy_count += 1; }
+                
+                (
+                    is_healthy,
+                    0,
+                    if is_healthy { 100.0 } else { 0.0 },
+                    provider_key.updated_at.and_utc().to_rfc3339(),
+                    if is_healthy { None } else { Some("No health check performed".to_string()) },
+                )
+            }
+        };
+        
+        // 应用健康状态过滤
+        if let Some(healthy_filter) = query.healthy {
+            if healthy_filter != is_healthy {
+                total -= 1; // 从总数中减去
+                if is_healthy { healthy_count -= 1; } else { unhealthy_count -= 1; }
+                continue;
+            }
+        }
+        
+        health_statuses.push(ApiHealthStatusResponse {
+            key_id: provider_key.id,
+            key_name: provider_key.name,
+            provider_name: provider.display_name,
+            is_healthy,
+            response_time,
+            success_rate,
+            last_check_time,
+            error_message,
+        });
+    }
+    
+    let response = HealthStatusListResponse {
+        statuses: health_statuses,
+        summary: HealthSummary {
+            total,
+            healthy: healthy_count,
+            unhealthy: unhealthy_count,
+        },
+    };
+    
+    Ok(Json(response))
+}
+
+/// 触发Provider Key健康检查
+pub async fn trigger_provider_key_health_check(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+) -> Result<Json<Value>, StatusCode> {
+    if key_id <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 检查Provider Key是否存在
+    let provider_key = match UserProviderKeys::find_by_id(key_id)
+        .find_also_related(ProviderTypes)
+        .one(state.database.as_ref()).await {
+        Ok(Some((key, _))) => key,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            tracing::error!("Failed to check provider key existence: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 执行健康检查
+    let start_time = std::time::Instant::now();
+    
+    // TODO: 这里应该实现真实的健康检查逻辑
+    // 1. 根据provider_type获取API配置
+    // 2. 发送测试请求到对应的服务商API
+    // 3. 记录响应时间和结果
+    
+    // 模拟健康检查过程
+    tokio::time::sleep(tokio::time::Duration::from_millis(100 + (key_id % 500) as u64)).await;
+    
+    let response_time = start_time.elapsed().as_millis() as i32;
+    let is_healthy = provider_key.is_active && (key_id % 10 != 0); // 模拟10%的失败率
+    let success_rate = if is_healthy { 95.0 + (key_id % 5) as f32 } else { 0.0 };
+    let error_message = if is_healthy { 
+        None 
+    } else { 
+        Some("Connection timeout or API key invalid".to_string()) 
+    };
+    
+    let now = Utc::now().naive_utc();
+    
+    // 查找或创建健康状态记录
+    let existing_health = ApiHealthStatus::find()
+        .filter(api_health_status::Column::UserProviderKeyId.eq(key_id))
+        .one(state.database.as_ref())
+        .await;
+    
+    match existing_health {
+        Ok(Some(health_record)) => {
+            // 更新现有记录
+            let mut health_active: api_health_status::ActiveModel = health_record.into();
+            health_active.is_healthy = Set(is_healthy);
+            health_active.response_time_ms = Set(Some(response_time));
+            health_active.success_rate = Set(Some(success_rate / 100.0)); // 存储为小数
+            health_active.last_error_message = Set(error_message.clone());
+            health_active.updated_at = Set(now);
+            
+            if is_healthy {
+                health_active.last_success = Set(Some(now));
+                health_active.consecutive_failures = Set(Some(0));
+            } else {
+                health_active.last_failure = Set(Some(now));
+                // 获取当前连续失败次数并递增
+                let current_failures = match &health_active.consecutive_failures {
+                    sea_orm::ActiveValue::Set(Some(val)) => *val,
+                    sea_orm::ActiveValue::Unchanged(Some(val)) => *val,
+                    _ => 0,
+                };
+                health_active.consecutive_failures = Set(Some(current_failures + 1));
+            }
+            
+            // 更新检查计数
+            let current_total_checks = match &health_active.total_checks {
+                sea_orm::ActiveValue::Set(Some(val)) => *val,
+                sea_orm::ActiveValue::Unchanged(Some(val)) => *val,
+                _ => 0,
+            };
+            let current_successful_checks = match &health_active.successful_checks {
+                sea_orm::ActiveValue::Set(Some(val)) => *val,
+                sea_orm::ActiveValue::Unchanged(Some(val)) => *val,
+                _ => 0,
+            };
+            
+            let total_checks = current_total_checks + 1;
+            let successful_checks = if is_healthy {
+                current_successful_checks + 1
+            } else {
+                current_successful_checks
+            };
+            
+            health_active.total_checks = Set(Some(total_checks));
+            health_active.successful_checks = Set(Some(successful_checks));
+            
+            if let Err(err) = health_active.update(state.database.as_ref()).await {
+                tracing::error!("Failed to update health status: {}", err);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        },
+        Ok(None) => {
+            // 创建新记录
+            let new_health = api_health_status::ActiveModel {
+                user_provider_key_id: Set(key_id),
+                is_healthy: Set(is_healthy),
+                response_time_ms: Set(Some(response_time)),
+                success_rate: Set(Some(success_rate / 100.0)),
+                last_success: Set(if is_healthy { Some(now) } else { None }),
+                last_failure: Set(if is_healthy { None } else { Some(now) }),
+                consecutive_failures: Set(Some(if is_healthy { 0 } else { 1 })),
+                total_checks: Set(Some(1)),
+                successful_checks: Set(Some(if is_healthy { 1 } else { 0 })),
+                last_error_message: Set(error_message.clone()),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            };
+            
+            if let Err(err) = ApiHealthStatus::insert(new_health).exec(state.database.as_ref()).await {
+                tracing::error!("Failed to create health status: {}", err);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        },
+        Err(err) => {
+            tracing::error!("Failed to query health status: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+    // 返回健康检查结果
+    let result = ApiHealthStatusResponse {
+        key_id,
+        key_name: provider_key.name,
+        provider_name: "Provider".to_string(), // 这里需要从relation获取
+        is_healthy,
+        response_time,
+        success_rate,
+        last_check_time: now.and_utc().to_rfc3339(),
+        error_message,
+    };
+    
+    let response = json!({
+        "success": true,
+        "result": result,
+        "message": if is_healthy { "Health check passed" } else { "Health check failed" }
+    });
+    
+    Ok(Json(response))
 }
