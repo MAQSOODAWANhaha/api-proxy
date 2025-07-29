@@ -127,6 +127,66 @@ pub struct ValidateTokenResponse {
     pub user: Option<UserInfo>,
 }
 
+/// 用户登出
+pub async fn logout(
+    State(_state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, StatusCode> {
+    // 从Authorization头中提取token
+    let auth_header = match headers.get("Authorization") {
+        Some(header) => match header.to_str() {
+            Ok(header_str) => header_str,
+            Err(err) => {
+                tracing::warn!("Invalid Authorization header format: {}", err);
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        },
+        None => {
+            tracing::warn!("No Authorization header found in logout request");
+            return Err(StatusCode::BAD_REQUEST);
+        },
+    };
+
+    // 检查Bearer前缀
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let token = &auth_header[7..]; // 移除"Bearer "前缀
+
+    // 从环境变量或配置获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+    
+    // 验证JWT token
+    let validation = Validation::default();
+    let token_data = match decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::debug!("Token validation failed during logout: {}", err);
+            // 即使token无效，也返回成功，避免客户端异常
+            return Ok(Json(json!({
+                "success": true,
+                "message": "Logout successful"
+            })));
+        }
+    };
+
+    // TODO: 在生产环境中，应该将token加入黑名单
+    // 这里可以将token的jti添加到Redis黑名单中
+    
+    tracing::info!("User {} logged out successfully", token_data.claims.username);
+
+    Ok(Json(json!({
+        "success": true,
+        "message": "Logout successful"
+    })))
+}
+
 /// 验证JWT Token
 pub async fn validate_token(
     State(_state): State<AppState>,

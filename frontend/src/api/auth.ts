@@ -11,14 +11,14 @@ export class AuthAPI {
       return MockDataService.login(data.username, data.password)
     }
     return HttpClient.post<LoginResponse>('/auth/login', data, {
-      loadingText: '登录中...'
+      loadingText: 'Logging in...'
     })
   }
 
   // 用户注册
   static async register(data: RegisterRequest): Promise<{ success: boolean; user: User; message: string }> {
     return HttpClient.post('/auth/register', data, {
-      loadingText: '注册中...'
+      loadingText: 'Registering...'
     })
   }
 
@@ -42,15 +42,26 @@ export class AuthAPI {
 
   // 用户登出
   static async logout(): Promise<{ success: boolean; message: string }> {
-    return HttpClient.post('/auth/logout', undefined, {
-      loadingText: '退出登录中...'
-    })
+    try {
+      const result = await HttpClient.post('/auth/logout', undefined, {
+        loadingText: 'Logging out...',
+        showError: false // 避免在logout失败时显示错误，因为可能token已过期
+      })
+      return result
+    } catch (error) {
+      // 即使logout API调用失败，也应该清理本地状态
+      console.warn('Logout API call failed, but continuing with local cleanup:', error)
+      return {
+        success: true,
+        message: 'Logout completed'
+      }
+    }
   }
 
   // 修改密码
   static async changePassword(data: { old_password: string; new_password: string }): Promise<{ success: boolean; message: string }> {
     return HttpClient.put('/auth/password', data, {
-      loadingText: '修改密码中...'
+      loadingText: 'Changing password...'
     })
   }
 

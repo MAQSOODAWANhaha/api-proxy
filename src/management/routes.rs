@@ -148,12 +148,12 @@ fn user_center_routes() -> Router<AppState> {
 fn auth_routes() -> Router<AppState> {
     Router::new()
         .route("/login", post(crate::management::handlers::auth::login))
+        .route("/logout", post(crate::management::handlers::auth::logout))
         .route("/validate", get(crate::management::handlers::auth::validate_token))
         // TODO: 其他认证功能暂时不实现，专注于核心功能
         // .route("/register", post(crate::management::handlers::auth::register))
         // .route("/profile", get(crate::management::handlers::auth::get_profile))
         // .route("/refresh", post(crate::management::handlers::auth::refresh_token))
-        // .route("/logout", post(crate::management::handlers::auth::logout))
         // .route("/password", put(crate::management::handlers::auth::change_password))
 }
 
