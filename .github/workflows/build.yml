@@ -33,13 +33,6 @@ jobs:
           username: ${{ secrets.ALIYUN_USERNAME }}
           password: ${{ secrets.ALIYUN_TOKEN }}
 
-      - name: Set image tags
-        id: tags-backend
-        run: |
-          echo "dockerhub_latest=${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:latest" >> $GITHUB_OUTPUT
-          echo "aliyun_latest=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:latest" >> $GITHUB_OUTPUT
-          echo "cache_ref=${{ secrets.DOCKERHUB_USERNAME }}/proxybackend:buildcache" >> $GITHUB_OUTPUT
-          
       - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
@@ -48,10 +41,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ steps.tags-backend.outputs.dockerhub_latest }}
-            ${{ steps.tags-backend.outputs.aliyun_latest }}
-          cache-from: type=registry,ref=${{ steps.tags-backend.outputs.cache_ref }}
-          cache-to: type=registry,ref=${{ steps.tags-backend.outputs.cache_ref }},mode=max
+            ${{ secrets.DOCKERHUB_USERNAME }}/proxybacnekd:latest
+            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybacnekd:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxybacnekd:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxybacnekd:buildcache,mode=max
 
   frontend:
     runs-on: ubuntu-latest
@@ -79,13 +72,6 @@ jobs:
           username: ${{ secrets.ALIYUN_USERNAME }}
           password: ${{ secrets.ALIYUN_TOKEN }}
 
-      - name: Set image tags
-        id: tags-frontend
-        run: |
-          echo "dockerhub_latest=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:latest" >> $GITHUB_OUTPUT
-          echo "aliyun_latest=registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest" >> $GITHUB_OUTPUT
-          echo "cache_ref=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:buildcache" >> $GITHUB_OUTPUT
-          
       - name: Build and push frontend
         uses: docker/build-push-action@v5
         with:
@@ -94,7 +80,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ steps.tags-frontend.outputs.dockerhub_latest }}
-            ${{ steps.tags-frontend.outputs.aliyun_latest }}
-          cache-from: type=registry,ref=${{ steps.tags-frontend.outputs.cache_ref }}
-          cache-to: type=registry,ref=${{ steps.tags-frontend.outputs.cache_ref }},mode=max
+            ${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:latest
+            registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/proxyfrontend:buildcache,mode=max
