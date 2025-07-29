@@ -68,6 +68,8 @@
           >
           <el-table-column prop="name" label="密钥名称" width="150" show-overflow-tooltip />
           
+          <el-table-column prop="description" label="描述" show-overflow-tooltip />
+          
           <el-table-column prop="provider_type" label="服务商" width="120">
             <template #default="{ row }">
               <el-tag :type="getProviderTagType(row.provider_type)" size="small">
@@ -97,13 +99,13 @@
             </template>
           </el-table-column>
           
-          <el-table-column prop="max_requests_per_minute" label="请求限制/分钟" width="120">
+          <el-table-column prop="max_requests_per_minute" label="请求限制/分钟" width="140">
             <template #default="{ row }">
               {{ row.max_requests_per_minute || '无限制' }}
             </template>
           </el-table-column>
           
-          <el-table-column prop="max_tokens_per_day" label="Token限制/天" width="120">
+          <el-table-column prop="max_tokens_per_day" label="Token限制/天" width="140">
             <template #default="{ row }">
               {{ formatNumber(row.max_tokens_per_day) || '无限制' }}
             </template>

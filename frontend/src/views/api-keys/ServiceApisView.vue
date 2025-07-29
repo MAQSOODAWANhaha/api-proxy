@@ -186,6 +186,17 @@
           />
         </el-form-item>
         
+        <el-form-item label="服务商类型" prop="provider_type">
+          <el-select v-model="form.provider_type" placeholder="请选择服务商">
+            <el-option 
+              v-for="type in providerTypes" 
+              :key="type.id" 
+              :label="type.display_name" 
+              :value="type.id" 
+            />
+          </el-select>
+        </el-form-item>
+        
         <el-form-item label="调度策略" prop="scheduling_strategy">
           <el-select v-model="form.scheduling_strategy" placeholder="请选择调度策略">
             <el-option 
@@ -342,7 +353,7 @@ import {
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { ApiKeyAPI } from '@/api'
-import type { UserServiceApi, CreateServiceApiRequest, SchedulingStrategy, SchedulingStrategyOption } from '@/types'
+import type { UserServiceApi, CreateServiceApiRequest, SchedulingStrategy, SchedulingStrategyOption, ProviderType } from '@/types'
 
 // 状态
 const loading = ref(false)
@@ -356,6 +367,7 @@ const toggleLoading = ref<number[]>([])
 
 // 数据
 const apisList = ref<UserServiceApi[]>([])
+const providerTypes = ref<ProviderType[]>([])
 const schedulingStrategies = ref<SchedulingStrategyOption[]>([])
 const selectedApiStats = ref<any>(null)
 const selectedApiForRegenerate = ref<UserServiceApi | null>(null)
@@ -366,6 +378,7 @@ const formRef = ref<FormInstance>()
 const form = reactive<CreateServiceApiRequest>({
   name: '',
   description: '',
+  provider_type: '',
   scheduling_strategy: 'round_robin' as SchedulingStrategy,
   retry_count: 3,
   timeout_seconds: 30,
@@ -415,6 +428,9 @@ const formRules: FormRules = {
   description: [
     { max: 200, message: '描述长度不能超过200个字符', trigger: 'blur' }
   ],
+  provider_type: [
+    { required: true, message: '请选择服务商类型', trigger: 'change' }
+  ],
   scheduling_strategy: [
     { required: true, message: '请选择调度策略', trigger: 'change' }
   ],
@@ -459,6 +475,15 @@ const fetchSchedulingStrategies = async () => {
   }
 }
 
+// 获取服务商类型列表
+const fetchProviderTypes = async () => {
+  try {
+    providerTypes.value = await ApiKeyAPI.getProviderTypes()
+  } catch (error: any) {
+    console.error('Failed to fetch provider types:', error)
+  }
+}
+
 // 刷新API服务列表
 const refreshApis = () => {
   fetchApis()
@@ -490,6 +515,7 @@ const showEditDialog = (api: UserServiceApi) => {
   isEdit.value = true
   form.name = api.name
   form.description = api.description || ''
+  form.provider_type = api.provider_type || ''
   form.scheduling_strategy = api.scheduling_strategy
   form.retry_count = api.retry_count
   form.timeout_seconds = api.timeout_seconds
@@ -508,6 +534,7 @@ const resetForm = () => {
   Object.assign(form, {
     name: '',
     description: '',
+    provider_type: '',
     scheduling_strategy: 'round_robin' as SchedulingStrategy,
     retry_count: 3,
     timeout_seconds: 30,
@@ -532,6 +559,7 @@ const submitForm = async () => {
       await ApiKeyAPI.updateServiceApi(form.id, {
         name: form.name,
         description: form.description,
+        provider_type: form.provider_type,
         scheduling_strategy: form.scheduling_strategy,
         retry_count: form.retry_count,
         timeout_seconds: form.timeout_seconds,
@@ -744,6 +772,7 @@ const getStrategyDisplayName = (strategy: string) => {
 }
 
 onMounted(() => {
+  fetchProviderTypes()
   fetchSchedulingStrategies()
   fetchApis()
   calculateTableHeight()
