@@ -843,8 +843,197 @@ curl -X POST http://127.0.0.1:9090/api/api-keys/1/revoke
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:9090/api/endpoint
 ```
 
-## 11. 限制说明
+## 11. AI代理接口
+
+### 11.1 代理端口说明
+
+- **代理端口**: `8080` - 处理所有AI服务代理请求
+- **管理端口**: `9090` - 处理系统管理API请求
+
+### 11.2 OpenAI代理请求
+
+```bash
+# Chat Completions API
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer demo-admin-openai-key-123456789" \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {
+        "role": "user", 
+        "content": "Hello, this is a test message. Please respond briefly."
+      }
+    ],
+    "max_tokens": 50
+  }'
+
+# Models API
+curl -X GET http://localhost:8080/v1/models \
+  -H "Authorization: Bearer demo-admin-openai-key-123456789"
+```
+
+**响应示例** (使用demo key会返回401错误):
+```json
+{
+    "error": {
+        "message": "Incorrect API key provided: sk-demo-****************ey-2. You can find your API key at https://platform.openai.com/account/api-keys.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_api_key"
+    }
+}
+```
+
+### 11.3 Claude (Anthropic) 代理请求
+
+```bash
+# Messages API
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer demo-admin-claude-key-123456789" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-sonnet-20240229",
+    "max_tokens": 50,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, this is a test message. Please respond briefly."
+      }
+    ]
+  }'
+```
+
+**响应示例** (使用demo key会返回401错误):
+```json
+{
+  "type": "error",
+  "error": {
+    "type": "authentication_error",
+    "message": "Invalid bearer token"
+  }
+}
+```
+
+### 11.4 Google Gemini 代理请求
+
+```bash
+# Generate Content API
+curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer demo-admin-gemini-key-123456789" \
+  -d '{
+    "contents": [{
+      "parts": [{
+        "text": "Hello, this is a test message. Please respond briefly."
+      }]
+    }]
+  }'
+
+# 使用其他Gemini模型
+curl -X POST http://localhost:8080/v1/models/gemini-1.5-pro:generateContent \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer demo-admin-gemini-key-123456789" \
+  -d '{
+    "contents": [{
+      "parts": [{
+        "text": "Explain quantum computing in simple terms."
+      }]
+    }]
+  }'
+```
+
+**成功响应示例** (使用有效key):
+```json
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Test message received.\n"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "avgLogprobs": -0.19953311681747438
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 12,
+    "candidatesTokenCount": 5,
+    "totalTokenCount": 17,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 12
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 5
+      }
+    ]
+  },
+  "modelVersion": "gemini-1.5-flash",
+  "responseId": "tnyJaK3kB_6cnvgPtKmf0AQ"
+}
+```
+
+### 11.5 代理特性说明
+
+#### 透明代理设计
+- **路径无关**: 系统不关心具体的API路径，直接透明转发到对应的AI服务商
+- **认证替换**: 自动将用户API key替换为后端真实的provider key
+- **格式保持**: 完全保持原始API格式，不做任何格式转换
+
+#### 支持的认证格式
+- **OpenAI**: `Authorization: Bearer {user_api_key}`
+- **Claude**: `Authorization: Bearer {user_api_key}` + `anthropic-version: 2023-06-01`
+- **Gemini**: `Authorization: Bearer {user_api_key}` (系统内部转换为 `X-goog-api-key`)
+
+#### 代理流程
+1. 用户使用自己的API key发送请求到代理端口8080
+2. 系统验证用户API key的有效性
+3. 根据用户配置选择对应的后端provider key
+4. 替换认证信息并转发请求到真实的AI服务商
+5. 透明返回AI服务商的响应
+
+#### 性能基准测试结果
+| 服务商 | 平均响应时间 | 网络连通性 | 代理状态 |
+|--------|-------------|------------|----------|
+| **Claude** | ~0.20s | ✅ 正常 | ✅ 工作正常 |
+| **OpenAI** | ~0.22s | ✅ 正常 | ✅ 工作正常 |
+| **Gemini** | ~0.84s | ✅ 正常 | ✅ 工作正常 |
+
+### 11.6 错误处理
+
+代理服务会透传AI服务商的原始错误响应，常见错误类型：
+
+**401 Unauthorized** - API Key无效:
+```bash
+# HTTP状态码: 401
+# 响应体包含具体的错误信息，格式因服务商而异
+```
+
+**429 Too Many Requests** - 速率限制:
+```bash
+# HTTP状态码: 429  
+# 会包含重试建议和限制信息
+```
+
+**502 Bad Gateway** - 上游服务器错误:
+```bash
+# HTTP状态码: 502
+# 通常表示AI服务商暂时不可用
+```
+
+## 12. 限制说明
 
 - 当前使用内存数据库，服务重启后数据会丢失
 - 部分接口可能返回模拟数据
 - 健康检查和监控功能可能需要实际的上游服务器配置才能返回真实数据
+- Demo API keys仅用于测试连通性，不会返回真实的AI响应

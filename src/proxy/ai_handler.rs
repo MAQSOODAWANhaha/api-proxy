@@ -6,10 +6,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use anyhow::Result;
 use chrono::Utc;
-use pingora_core::upstreams::peer::HttpPeer;
+use pingora_core::upstreams::peer::{HttpPeer, Peer, PeerOptions};
+use pingora_core::protocols::tls::ALPN;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use reqwest::Client;
+use bytes::Bytes;
 
 use crate::auth::unified::UnifiedAuthManager;
 use crate::config::AppConfig;
@@ -311,7 +314,37 @@ impl AIProxyHandler {
             "Selected upstream peer"
         );
 
-        let peer = HttpPeer::new(upstream_addr, true, String::new());
+        // 创建基础peer
+        let mut peer = HttpPeer::new(upstream_addr, true, provider_type.base_url.clone());
+        
+        // 为Google API配置正确的选项
+        if self.should_use_google_api_key_auth(provider_type) {
+            if let Some(options) = peer.get_mut_peer_options() {
+                // 设置ALPN - 允许HTTP/2和HTTP/1.1协商，优先HTTP/2
+                options.alpn = ALPN::H2H1;
+                
+                // 设置连接超时
+                options.connection_timeout = Some(Duration::from_secs(10));
+                options.total_connection_timeout = Some(Duration::from_secs(15));
+                options.read_timeout = Some(Duration::from_secs(30));
+                options.write_timeout = Some(Duration::from_secs(30));
+                
+                // 设置TLS验证
+                options.verify_cert = true;
+                options.verify_hostname = true;
+                
+                // 设置HTTP/2特定选项
+                options.h2_ping_interval = Some(Duration::from_secs(30));
+                options.max_h2_streams = 100;
+                
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    "Configured peer options for Google API with HTTP/2 support"
+                );
+            }
+        }
+        
         Ok(Box::new(peer))
     }
 
@@ -358,8 +391,9 @@ impl AIProxyHandler {
             );
         }
 
-        // 设置正确的Host头
-        upstream_request.insert_header("host", &provider_type.base_url)
+        // 设置正确的Host头 - 只使用域名，不包含协议
+        let host_name = provider_type.base_url.replace("https://", "").replace("http://", "");
+        upstream_request.insert_header("host", &host_name)
             .map_err(|e| ProxyError::internal(format!("Failed to set host header: {}", e)))?;
 
         // 移除可能暴露客户端信息的头部 - 完全隐藏源信息
@@ -379,23 +413,54 @@ impl AIProxyHandler {
             upstream_request.remove_header(*header);
         }
 
-        // 添加代理标识
-        upstream_request.insert_header("user-agent", "AI-Proxy-Service/1.0")
-            .map_err(|e| ProxyError::internal(format!("Failed to set user-agent: {}", e)))?;
+        // 保持原始用户代理或使用标准浏览器用户代理
+        if upstream_request.headers.get("user-agent").is_none() {
+            upstream_request.insert_header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+                .map_err(|e| ProxyError::internal(format!("Failed to set user-agent: {}", e)))?;
+        }
 
-        // 添加请求ID用于追踪
-        upstream_request.insert_header("x-request-id", &ctx.request_id)
-            .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
+        // 为Google API添加期望的标准头部
+        if self.should_use_google_api_key_auth(provider_type) {
+            // 确保有Accept头
+            if upstream_request.headers.get("accept").is_none() {
+                upstream_request.insert_header("accept", "application/json")
+                    .map_err(|e| ProxyError::internal(format!("Failed to set accept header: {}", e)))?;
+            }
+            
+            // 确保有Accept-Encoding头
+            if upstream_request.headers.get("accept-encoding").is_none() {
+                upstream_request.insert_header("accept-encoding", "gzip, deflate")
+                    .map_err(|e| ProxyError::internal(format!("Failed to set accept-encoding header: {}", e)))?;
+            }
+        }
 
-        tracing::debug!(
+        // 注释掉可能导致问题的自定义头部
+        // upstream_request.insert_header("x-request-id", &ctx.request_id)
+        //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
+
+        // 添加详细的Pingora请求日志用于对比
+        tracing::info!(
             request_id = %ctx.request_id,
+            final_uri = %upstream_request.uri,
+            method = %upstream_request.method,
+            "=== PINGORA REQUEST DETAILS ==="
+        );
+        
+        // 记录所有Pingora请求头用于与reqwest对比
+        let mut pingora_headers = Vec::new();
+        for (name, value) in upstream_request.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                pingora_headers.push(format!("{}: {}", name.as_str(), value_str));
+            }
+        }
+        
+        tracing::info!(
+            request_id = %ctx.request_id,
+            headers = ?pingora_headers,
             backend_key_id = selected_backend.id,
             provider = %provider_type.name,
             auth_preview = %self.sanitize_api_key(&selected_backend.api_key),
-            final_uri = %upstream_request.uri,
-            host_header = ?upstream_request.headers.get("host"),
-            content_type = ?upstream_request.headers.get("content-type"),
-            "Upstream request filtered - auth replaced, source info hidden"
+            "PINGORA HTTP REQUEST HEADERS"
         );
 
         Ok(())
@@ -418,9 +483,11 @@ impl AIProxyHandler {
         upstream_response.remove_header("x-ratelimit-remaining-requests");
         upstream_response.remove_header("x-ratelimit-remaining-tokens");
 
-        // 添加自己的服务器标识
-        upstream_response.insert_header("server", "AI-Proxy-Service")
-            .map_err(|e| ProxyError::internal(format!("Failed to set server header: {}", e)))?;
+        // 保持上游服务器标识或使用通用标识
+        if upstream_response.headers.get("server").is_none() {
+            upstream_response.insert_header("server", "nginx/1.24.0")
+                .map_err(|e| ProxyError::internal(format!("Failed to set server header: {}", e)))?;
+        }
 
         tracing::debug!(
             request_id = %ctx.request_id,
@@ -478,6 +545,190 @@ impl AIProxyHandler {
         }
         
         false
+    }
+
+    /// 使用reqwest处理代理请求
+    pub async fn handle_request_with_reqwest(
+        &self,
+        session: &mut Session,
+        ctx: &ProxyContext,
+    ) -> Result<(), ProxyError> {
+        let selected_backend = ctx.selected_backend.as_ref()
+            .ok_or(ProxyError::internal("Backend not selected"))?;
+        let provider_type = ctx.provider_type.as_ref()
+            .ok_or(ProxyError::internal("Provider type not set"))?;
+
+        // 读取请求体
+        let request_body = self.read_request_body(session).await?;
+        
+        // 构建完整的上游URL
+        let upstream_url = format!("https://{}{}", 
+            provider_type.base_url, 
+            session.req_header().uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("")
+        );
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            upstream_url = %upstream_url,
+            body_length = request_body.len(),
+            "Building reqwest request"
+        );
+
+        // 创建reqwest客户端和请求
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| ProxyError::internal(format!("Failed to create HTTP client: {}", e)))?;
+
+        let mut request_builder = client
+            .post(&upstream_url)
+            .body(request_body.clone());
+
+        // 透明传递原始请求的大部分头部，实现真正的透明代理
+        let headers_to_skip = [
+            "host", "authorization", "x-goog-api-key", "connection", 
+            "transfer-encoding", "content-length", "expect"
+        ];
+        
+        for (name, value) in session.req_header().headers.iter() {
+            let name_str = name.as_str().to_lowercase();
+            if !headers_to_skip.contains(&name_str.as_str()) {
+                if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                    request_builder = request_builder.header(name.as_str(), value_str);
+                }
+            }
+        }
+
+        // 确保有User-Agent头部，如果原始请求没有则使用常见的浏览器UA
+        if session.req_header().headers.get("user-agent").is_none() {
+            request_builder = request_builder
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36");
+        }
+
+        // 根据提供商类型设置认证头
+        if self.should_use_google_api_key_auth(provider_type) {
+            request_builder = request_builder
+                .header("X-goog-api-key", &selected_backend.api_key);
+        } else {
+            let auth_format = provider_type.auth_header_format.as_deref().unwrap_or("Bearer {key}");
+            let auth_value = auth_format.replace("{key}", &selected_backend.api_key);
+            request_builder = request_builder
+                .header("Authorization", &auth_value);
+        }
+
+        // 发送请求 - 添加详细的请求日志
+        tracing::info!(
+            request_id = %ctx.request_id,
+            url = %upstream_url,
+            method = "POST",
+            "=== REQWEST REQUEST DETAILS ==="
+        );
+        
+        // 记录所有请求头用于对比
+        let mut debug_headers = Vec::new();
+        for (name, value) in session.req_header().headers.iter() {
+            let name_str = name.as_str().to_lowercase();
+            if !headers_to_skip.contains(&name_str.as_str()) {
+                if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                    debug_headers.push(format!("{}: {}", name.as_str(), value_str));
+                }
+            }
+        }
+        debug_headers.push(format!("X-goog-api-key: {}***{}", &selected_backend.api_key[..4], &selected_backend.api_key[selected_backend.api_key.len()-4..]));
+        
+        if session.req_header().headers.get("user-agent").is_none() {
+            debug_headers.push("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36".to_string());
+        }
+        
+        tracing::info!(
+            request_id = %ctx.request_id,
+            headers = ?debug_headers,
+            body_length = request_body.len(),
+            "REQWEST HTTP REQUEST HEADERS"
+        );
+
+        let response = request_builder.send().await
+            .map_err(|e| ProxyError::bad_gateway(format!("Request failed: {}", e)))?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let response_body = response.bytes().await
+            .map_err(|e| ProxyError::bad_gateway(format!("Failed to read response body: {}", e)))?;
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            status = %status,
+            response_size = response_body.len(),
+            "Received response from upstream"
+        );
+
+        // 将响应写回给客户端
+        self.write_response_to_session(session, status.as_u16(), headers, response_body).await?;
+
+        Ok(())
+    }
+
+    /// 读取请求体
+    async fn read_request_body(&self, session: &mut Session) -> Result<Bytes, ProxyError> {
+        use pingora_http::ResponseHeader;
+        
+        // 从session中读取请求体
+        // 注意：这里需要根据Pingora的具体API来实现
+        // 暂时返回空的请求体，稍后完善
+        let body = match session.read_request_body().await {
+            Ok(Some(body)) => body,
+            Ok(None) => Bytes::new(),
+            Err(e) => {
+                return Err(ProxyError::bad_gateway(format!("Failed to read request body: {:?}", e)));
+            }
+        };
+
+        Ok(body)
+    }
+
+    /// 将响应写回session
+    async fn write_response_to_session(
+        &self,
+        session: &mut Session,
+        status_code: u16,
+        headers: reqwest::header::HeaderMap,
+        body: Bytes,
+    ) -> Result<(), ProxyError> {
+        use pingora_http::StatusCode;
+
+        // 构建响应头
+        let mut response_header = pingora_http::ResponseHeader::build(
+            StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Some(headers.len() + 2) // 预估头部数量
+        ).map_err(|e| ProxyError::internal(format!("Failed to build response header: {:?}", e)))?;
+
+        // 添加响应头 - 克隆头部值来避免生命周期问题
+        for (name, value) in headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                let name_string = name.as_str().to_string();
+                let value_string = value_str.to_string();
+                let _ = response_header.insert_header(name_string, value_string);
+            }
+        }
+
+        // 添加通用服务器头部（避免暴露代理身份）
+        let _ = response_header.insert_header("Server", "nginx/1.24.0");
+        let _ = response_header.insert_header("Content-Length", &body.len().to_string());
+
+        // 发送响应头
+        session.write_response_header(Box::new(response_header), false).await
+            .map_err(|e| ProxyError::internal(format!("Failed to write response header: {:?}", e)))?;
+
+        // 发送响应体
+        if !body.is_empty() {
+            session.write_response_body(Some(body), true).await
+                .map_err(|e| ProxyError::internal(format!("Failed to write response body: {:?}", e)))?;
+        } else {
+            session.finish_body().await
+                .map_err(|e| ProxyError::internal(format!("Failed to finish empty body: {:?}", e)))?;
+        }
+
+        Ok(())
     }
 
     /// 净化API密钥用于日志记录

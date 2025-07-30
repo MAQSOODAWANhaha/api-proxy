@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use pingora_core::{prelude::*, upstreams::peer::HttpPeer, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
+use pingora_core::protocols::Digest;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -123,9 +124,28 @@ impl ProxyHttp for ProxyService {
             Ok(_) => {
                 tracing::debug!(
                     request_id = %ctx.request_id,
-                    "AI proxy request preparation completed successfully"
+                    "AI proxy request preparation completed successfully - using Pingora upstream"
                 );
-                Ok(false) // 继续处理请求
+                
+                // Ok(false) pingora 暂时实现有问题
+                // 使用reqwest混合实现以对比请求日志
+                match self.ai_handler.handle_request_with_reqwest(session, ctx).await {
+                    Ok(_) => {
+                        tracing::debug!(
+                            request_id = %ctx.request_id,
+                            "Request handled successfully with reqwest"
+                        );
+                        Ok(true) // 请求已处理完成，不需要继续
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            request_id = %ctx.request_id,
+                            error = %e,
+                            "Failed to handle request with reqwest"
+                        );
+                        Err(Error::explain(ErrorType::HTTPStatus(502), format!("Proxy error: {}", e)))
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!(
@@ -202,20 +222,60 @@ impl ProxyHttp for ProxyService {
         Ok(())
     }
 
-    async fn logging(
+    async fn connected_to_upstream(
         &self,
         _session: &mut Session,
+        reused: bool,
+        peer: &HttpPeer,
+        #[cfg(unix)] _fd: std::os::unix::io::RawFd,
+        #[cfg(windows)] _sock: std::os::windows::io::RawSocket,
+        _digest: Option<&Digest>,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<()> {
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            reused = reused,
+            peer_addr = ?peer._address,
+            sni = %peer.sni,
+            "Connected to upstream - monitoring protocol negotiation"
+        );
+        
+        // 这里可以获取协商的协议信息
+        // 不幸的是，Session的upstream_session在这个时候可能还没有完全建立
+        // 但我们可以记录连接状态
+        
+        Ok(())
+    }
+
+    async fn logging(
+        &self,
+        session: &mut Session,
         e: Option<&Error>,
         ctx: &mut Self::CTX,
     ) {
         let duration = ctx.start_time.elapsed();
         
         if let Some(error) = e {
+            // 获取更多的上下文信息
+            let request_info = format!(
+                "method={} uri={} headers={:?}",
+                session.req_header().method,
+                session.req_header().uri,
+                session.req_header().headers
+            );
+            
             tracing::error!(
                 request_id = %ctx.request_id,
                 error = %error,
+                error_type = ?error.etype,
+                error_source = ?error.esource,
+                error_context = ?error.context,
                 duration_ms = duration.as_millis(),
-                "AI proxy request failed"
+                request_info = %request_info,
+                selected_backend = ?ctx.selected_backend.as_ref().map(|b| format!("id={} key_preview={}", b.id, 
+                    if b.api_key.len() > 8 { format!("{}***{}", &b.api_key[..4], &b.api_key[b.api_key.len()-4..]) } else { "***".to_string() })),
+                provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
+                "AI proxy request failed with detailed context"
             );
         } else {
             tracing::debug!(
