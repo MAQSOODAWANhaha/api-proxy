@@ -85,11 +85,9 @@ function validateConfig(config) {
     errors.push('WebSocket URL is required')
   }
   
-  // 验证 URL 格式
-  try {
-    new URL(config.api.baseURL)
-  } catch (e) {
-    errors.push(`Invalid API baseURL: ${config.api.baseURL}`)
+  // 验证 URL 格式 - 支持相对路径和绝对路径
+  if (!config.api.baseURL.startsWith('/') && !config.api.baseURL.startsWith('http://') && !config.api.baseURL.startsWith('https://')) {
+    errors.push(`Invalid API baseURL format: ${config.api.baseURL}`)
   }
   
   if (errors.length > 0) {
