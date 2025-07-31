@@ -68,13 +68,13 @@ validate_env_vars() {
         export VITE_WS_URL="ws://localhost:9090/ws"
     fi
     
-    # 验证 URL 格式
-    if ! echo "$VITE_API_BASE_URL" | grep -qE '^https?://'; then
+    # 验证 URL 格式 - 支持相对路径和绝对路径
+    if ! echo "$VITE_API_BASE_URL" | grep -qE '^(https?://|/)'; then
         log_error "VITE_API_BASE_URL 格式无效: $VITE_API_BASE_URL"
         errors=$((errors + 1))
     fi
     
-    if ! echo "$VITE_WS_URL" | grep -qE '^wss?://'; then
+    if ! echo "$VITE_WS_URL" | grep -qE '^(wss?://|/)'; then
         log_error "VITE_WS_URL 格式无效: $VITE_WS_URL"
         errors=$((errors + 1))
     fi
