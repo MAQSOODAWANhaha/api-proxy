@@ -9,6 +9,7 @@ use crate::{
     statistics::service::StatisticsService,
     management::server::{ManagementServer, ManagementConfig},
     proxy::PingoraProxyServer,
+    trace::{UnifiedTraceSystem, unified::UnifiedTracerConfig},
 };
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -23,6 +24,7 @@ pub struct SharedServices {
     pub adapter_manager: Arc<AdapterManager>,
     pub load_balancer_manager: Arc<LoadBalancerManager>,
     pub statistics_service: Arc<StatisticsService>,
+    pub trace_system: Option<Arc<UnifiedTraceSystem>>,
 }
 
 /// 双端口服务器启动函数
@@ -243,6 +245,30 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
         StatisticsService::new(config_arc.clone(), unified_cache_manager.clone())
     );
 
+    // 初始化追踪系统（如果启用）
+    let trace_system = if config_arc.is_trace_enabled() {
+        info!("🔍 Initializing unified trace system...");
+        
+        let trace_config = config_arc.get_trace_config().unwrap();
+        let unified_tracer_config = UnifiedTracerConfig {
+            enabled: trace_config.enabled,
+            basic_sampling_rate: if trace_config.default_trace_level >= 0 { 1.0 } else { 0.0 },
+            detailed_sampling_rate: if trace_config.default_trace_level >= 1 { trace_config.sampling_rate } else { 0.0 },
+            full_sampling_rate: if trace_config.default_trace_level >= 2 { trace_config.sampling_rate } else { 0.1 * trace_config.sampling_rate },
+            batch_size: trace_config.max_batch_size,
+            batch_interval_secs: trace_config.flush_interval,
+            buffer_size: trace_config.max_batch_size * 2,
+            health_scoring_enabled: trace_config.enable_health_metrics,
+        };
+        
+        let trace_system = Arc::new(UnifiedTraceSystem::new(db.clone(), unified_tracer_config));
+        info!("✅ Unified trace system initialized");
+        Some(trace_system)
+    } else {
+        info!("⚠️  Trace system disabled in configuration");
+        None
+    };
+
     info!("✅ All shared services initialized successfully");
 
     let shared_services = SharedServices {
@@ -252,6 +278,7 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
         adapter_manager,
         load_balancer_manager,
         statistics_service,
+        trace_system,
     };
 
     Ok((config_arc, db, shared_services))

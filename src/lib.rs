@@ -13,6 +13,7 @@ pub mod statistics;
 pub mod tls;
 pub mod providers;
 pub mod cache;
+pub mod trace;
 pub mod utils;
 pub mod error;
 pub mod dual_port_setup;

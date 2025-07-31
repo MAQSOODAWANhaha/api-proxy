@@ -122,7 +122,8 @@ impl PingoraProxyServer {
             Arc::clone(&self.config),
             db.clone(),
             cache.clone(),
-            auth_manager.clone()
+            auth_manager.clone(),
+            None  // trace_system 暂时为 None，在这个独立启动中不使用追踪
         ).map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 创建 HTTP 代理服务
@@ -229,7 +230,8 @@ impl PingoraProxyServer {
                 Arc::clone(&self.config),
                 db.clone(),
                 cache.clone(),
-                auth_manager.clone()
+                auth_manager.clone(),
+                None  // trace_system 暂时为 None，在这个独立启动中不使用追踪
             ).map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
             Ok::<_, ProxyError>(ai_proxy)

@@ -83,7 +83,8 @@ impl ProxyServer {
             Arc::clone(&self.config),
             db.clone(),
             cache.clone(),
-            auth_manager.clone()
+            auth_manager.clone(),
+            None  // trace_system 在独立启动中暂时为 None
         ).map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 配置 HTTP 代理服务
@@ -103,7 +104,8 @@ impl ProxyServer {
                 Arc::clone(&self.config),
                 db.clone(),
                 cache.clone(),
-                auth_manager.clone()
+                auth_manager.clone(),
+                None  // trace_system 在独立启动中暂时为 None
             ).map_err(|e| ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e)))?;
             
             let _https_proxy = http_proxy_service(&server.configuration, proxy_service_https);

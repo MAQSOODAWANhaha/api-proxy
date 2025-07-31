@@ -7,9 +7,18 @@
     <title>AI代理系统管理平台</title>
     <meta name="description" content="企业级AI服务代理平台管理界面" />
     <meta name="keywords" content="AI代理,API管理,负载均衡,监控统计" />
+    
+    <!-- 运行时配置注入 - 这些值将在容器启动时被替换 -->
+    <meta name="api-base-url" content="{{VITE_API_BASE_URL}}" />
+    <meta name="ws-url" content="{{VITE_WS_URL}}" />
+    <meta name="app-version" content="{{VITE_APP_VERSION}}" />
+    <meta name="log-level" content="{{VITE_LOG_LEVEL}}" />
+    <meta name="mock-data" content="{{VITE_USE_MOCK}}" />
   </head>
   <body>
     <div id="app"></div>
+    <!-- 运行时配置脚本 - 必须在应用启动前加载 -->
+    <script src="/config.js"></script>
     <script type="module" src="/src/main.ts"></script>
     <script>
       // 捕获全局错误，防止浏览器扩展错误影响应用

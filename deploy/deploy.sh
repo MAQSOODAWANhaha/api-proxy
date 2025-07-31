@@ -328,10 +328,12 @@ build_images() {
         source "$ENV_FILE"
         set +a  # 关闭自动导出
         log_info "已加载环境变量: VITE_API_BASE_URL=${VITE_API_BASE_URL}, CONFIG_FILE=${CONFIG_FILE}"
+        log_info "注意: 前端使用运行时配置注入，环境变量将在容器启动时注入到应用中"
     fi
     
-    # 构建镜像，使用--env-file确保Docker Compose读取环境变量
-    docker compose --env-file "$ENV_FILE" build --no-cache
+    # 构建镜像 - 新版本支持通用构建（无需构建时环境变量）
+    # 环境变量将在运行时注入，因此构建阶段不再需要传递环境变量
+    docker compose build --no-cache
     
     log_success "镜像构建完成"
 }

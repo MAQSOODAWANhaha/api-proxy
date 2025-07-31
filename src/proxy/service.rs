@@ -15,6 +15,7 @@ use crate::config::AppConfig;
 use crate::auth::unified::UnifiedAuthManager;
 use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
 use crate::cache::UnifiedCacheManager;
+use crate::trace::{UnifiedTraceSystem, unified::UnifiedProxyTracer};
 use sea_orm::DatabaseConnection;
 
 /// AI 代理服务 - 透明代理设计
@@ -23,6 +24,8 @@ pub struct ProxyService {
     config: Arc<AppConfig>,
     /// AI代理处理器
     ai_handler: Arc<AIProxyHandler>,
+    /// 统一追踪器
+    tracer: Option<Arc<UnifiedProxyTracer>>,
 }
 
 impl ProxyService {
@@ -32,12 +35,16 @@ impl ProxyService {
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
         auth_manager: Arc<UnifiedAuthManager>,
+        trace_system: Option<Arc<UnifiedTraceSystem>>,
     ) -> pingora_core::Result<Self> {
         // 创建调度器注册表
         let schedulers = Arc::new(crate::proxy::ai_handler::SchedulerRegistry::new(
             db.clone(),
             cache.clone(),
         ));
+
+        // 获取追踪器
+        let tracer = trace_system.as_ref().map(|ts| ts.tracer());
 
         // 创建AI代理处理器
         let ai_handler = Arc::new(AIProxyHandler::new(
@@ -46,11 +53,16 @@ impl ProxyService {
             config.clone(),
             auth_manager,
             schedulers,
+            tracer.clone(),
         ));
+
+        // 保留trace_system引用获取的tracer
+        let tracer = trace_system.map(|ts| ts.tracer());
 
         Ok(Self {
             config,
             ai_handler,
+            tracer,
         })
     }
 
@@ -72,11 +84,22 @@ impl ProxyHttp for ProxyService {
     type CTX = ProxyContext;
 
     fn new_ctx(&self) -> Self::CTX {
-        ProxyContext {
+        let mut ctx = ProxyContext {
             request_id: Uuid::new_v4().to_string(),
             start_time: Instant::now(),
             ..Default::default()
+        };
+
+        // 设置追踪启用标志（实际追踪将在 request_filter 中开始）
+        if let Some(_tracer) = &self.tracer {
+            ctx.trace_enabled = true;
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                "Trace will be started when request info is available"
+            );
         }
+
+        ctx
     }
 
     async fn request_filter(
@@ -218,6 +241,24 @@ impl ProxyHttp for ProxyService {
             tokens_used = ctx.tokens_used,
             "AI proxy response processed"
         );
+
+        // 完成追踪（如果启用）
+        if ctx.trace_enabled {
+            if let Some(tracer) = &self.tracer {
+                let is_success = status_code < 400;
+                if let Err(e) = tracer.complete_trace(
+                    &ctx.request_id,
+                    status_code,
+                    is_success,
+                ).await {
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Failed to complete trace"
+                    );
+                }
+            }
+        }
         
         Ok(())
     }

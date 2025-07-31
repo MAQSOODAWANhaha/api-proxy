@@ -39,22 +39,25 @@ services:
       start_period: 40s
 
   # ================================
-  # 前端服务 (Vue.js + Nginx)
+  # 前端服务 (Vue.js + Nginx) - 运行时配置注入
   # ================================
   frontend:
     build:
       context: ..
       dockerfile: ./deploy/Dockerfile.frontend
-      args:
-        - VITE_API_BASE_URL=${VITE_API_BASE_URL}
-        - VITE_WS_URL=${VITE_WS_URL}
+      # 移除构建时参数，支持通用镜像构建
     container_name: api-proxy-frontend
     restart: unless-stopped
     ports:
       - "3000:80"  # 前端Web界面
     environment:
+      # 运行时环境变量注入
       - VITE_API_BASE_URL=${VITE_API_BASE_URL}
       - VITE_WS_URL=${VITE_WS_URL}
+      - VITE_APP_VERSION=${VITE_APP_VERSION:-1.0.0}
+      - VITE_LOG_LEVEL=${VITE_LOG_LEVEL:-info}
+      - VITE_USE_MOCK=${VITE_USE_MOCK:-false}
+      - DEBUG=${DEBUG:-false}
     networks:
       - api-proxy-network
     depends_on:
@@ -64,7 +67,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # ================================
   # Redis缓存服务

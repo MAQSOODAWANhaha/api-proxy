@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use chrono::{DateTime, Utc, NaiveDateTime};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde_json;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -158,7 +158,7 @@ impl UnifiedTrace {
         if matches!(self.trace_level, TraceLevel::Detailed | TraceLevel::Full) {
             self.phases.push(PhaseInfo {
                 phase: phase_name.to_string(),
-                start_time: Utc::now(),
+                start_time: Utc::now().naive_utc(),
                 end_time: None,
                 duration_ms: None,
                 status: "in_progress".to_string(),
@@ -172,10 +172,10 @@ impl UnifiedTrace {
         if matches!(self.trace_level, TraceLevel::Detailed | TraceLevel::Full) {
             if let Some(phase) = self.phases.iter_mut().rev().find(|p| p.phase == phase_name && p.status == "in_progress") {
                 let end_time = Utc::now();
-                phase.end_time = Some(end_time);
+                phase.end_time = Some(end_time.naive_utc());
                 phase.status = status.to_string();
                 phase.details = details;
-                phase.duration_ms = Some((end_time - phase.start_time).num_milliseconds() as u64);
+                phase.duration_ms = Some((end_time.naive_utc() - phase.start_time).num_milliseconds() as u64);
             }
         }
     }
@@ -427,6 +427,27 @@ impl UnifiedProxyTracer {
         Ok(())
     }
     
+    /// 开始阶段追踪
+    pub async fn start_phase(&self, request_id: &str, phase_name: &str) -> Result<()> {
+        self.update_trace(request_id, |trace| {
+            trace.start_phase(phase_name);
+        }).await
+    }
+    
+    /// 完成阶段追踪
+    pub async fn complete_phase(
+        &self, 
+        request_id: &str, 
+        phase_name: &str, 
+        success: bool, 
+        details: Option<&str>
+    ) -> Result<()> {
+        let status = if success { "completed" } else { "failed" };
+        self.update_trace(request_id, |trace| {
+            trace.complete_phase(phase_name, status, details.map(|s| s.to_string()));
+        }).await
+    }
+    
     /// 确定追踪级别
     fn determine_trace_level(&self) -> TraceLevel {
         use rand::Rng;
@@ -503,12 +524,13 @@ impl UnifiedProxyTracer {
             active_models.push(trace.to_active_model()?);
         }
         
+        let batch_size = active_models.len();
         // 批量插入
         proxy_tracing::Entity::insert_many(active_models)
             .exec(db)
             .await?;
         
-        debug!("Successfully wrote {} traces to database", active_models.len());
+        debug!("Successfully wrote {} traces to database", batch_size);
         Ok(())
     }
     

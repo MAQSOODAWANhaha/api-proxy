@@ -18,6 +18,7 @@ use crate::auth::unified::UnifiedAuthManager;
 use crate::config::AppConfig;
 use crate::error::ProxyError;
 use crate::cache::UnifiedCacheManager;
+use crate::trace::unified::UnifiedProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
     user_provider_keys::{self, Entity as UserProviderKeys},
@@ -36,6 +37,8 @@ pub struct AIProxyHandler {
     auth_manager: Arc<UnifiedAuthManager>,
     /// 负载均衡调度器注册表
     schedulers: Arc<SchedulerRegistry>,
+    /// 统一追踪器
+    tracer: Option<Arc<UnifiedProxyTracer>>,
 }
 
 /// 请求上下文
@@ -55,6 +58,10 @@ pub struct ProxyContext {
     pub retry_count: u32,
     /// 使用的tokens
     pub tokens_used: u32,
+    /// 是否启用追踪
+    pub trace_enabled: bool,
+    /// 选择的提供商名称
+    pub selected_provider: Option<String>,
 }
 
 impl Default for ProxyContext {
@@ -67,6 +74,8 @@ impl Default for ProxyContext {
             start_time: std::time::Instant::now(),
             retry_count: 0,
             tokens_used: 0,
+            trace_enabled: false,
+            selected_provider: None,
         }
     }
 }
@@ -90,6 +99,7 @@ impl AIProxyHandler {
         config: Arc<AppConfig>,
         auth_manager: Arc<UnifiedAuthManager>,
         schedulers: Arc<SchedulerRegistry>,
+        tracer: Option<Arc<UnifiedProxyTracer>>,
     ) -> Self {
         Self {
             db,
@@ -97,6 +107,7 @@ impl AIProxyHandler {
             config,
             auth_manager,
             schedulers,
+            tracer,
         }
     }
 
@@ -113,10 +124,45 @@ impl AIProxyHandler {
             "Starting AI proxy request preparation"
         );
 
+        // 开始追踪（如果启用）
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let method = session.req_header().method.as_str().to_string();
+                // 我们还没有 user_service_api_id，所以先用默认值，稍后更新
+                if let Err(e) = tracer.start_trace(ctx.request_id.clone(), 0, method).await {
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Failed to start trace"
+                    );
+                    ctx.trace_enabled = false; // 禁用追踪
+                } else {
+                    let _ = tracer.start_phase(&ctx.request_id, "preparation").await;
+                }
+            }
+        }
+
         // 步骤1: 身份验证 - 验证是哪个用户创建的哪种服务提供商的token
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "authentication").await;
+            }
+        }
+        
         let api_key = self.extract_api_key(session)?;
         let user_service_api = self.authenticate_api_key(&api_key).await?;
         ctx.user_service_api = Some(user_service_api.clone());
+        
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "authentication", 
+                    true, 
+                    Some("User authenticated successfully")
+                ).await;
+            }
+        }
         
         tracing::debug!(
             request_id = %ctx.request_id,
@@ -127,7 +173,24 @@ impl AIProxyHandler {
         );
 
         // 步骤2: 速率验证 - 对这个用户创建的服务商的速率限制
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "rate_limit_check").await;
+            }
+        }
+        
         self.check_rate_limit(&user_service_api).await?;
+        
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "rate_limit_check", 
+                    true, 
+                    Some("Rate limit check passed")
+                ).await;
+            }
+        }
         
         tracing::debug!(
             request_id = %ctx.request_id,
@@ -136,13 +199,60 @@ impl AIProxyHandler {
         );
 
         // 步骤3: 获取提供商类型信息
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "provider_lookup").await;
+            }
+        }
+        
         let provider_type = self.get_provider_type(user_service_api.provider_type_id).await?;
         ctx.provider_type = Some(provider_type.clone());
+        ctx.selected_provider = Some(provider_type.name.clone());
+        
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "provider_lookup", 
+                    true, 
+                    Some(&format!("Provider {} configured", provider_type.name))
+                ).await;
+            }
+        }
 
         // 步骤4: 根据token查找数据库中配置的转发策略
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "backend_selection").await;
+            }
+        }
+        
         let scheduler = self.get_scheduler(&user_service_api.scheduling_strategy)?;
         let selected_backend = scheduler.select_backend(&user_service_api).await?;
         ctx.selected_backend = Some(selected_backend.clone());
+        
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "backend_selection", 
+                    true, 
+                    Some(&format!("Backend key {} selected", selected_backend.id))
+                ).await;
+            }
+        }
+
+        // 完成准备阶段
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "preparation", 
+                    true, 
+                    Some("Request preparation completed")
+                ).await;
+            }
+        }
 
         let elapsed = start.elapsed();
         tracing::info!(
@@ -553,14 +663,46 @@ impl AIProxyHandler {
         session: &mut Session,
         ctx: &ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 开始追踪请求转发阶段
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "request_forwarding").await;
+            }
+        }
+
         let selected_backend = ctx.selected_backend.as_ref()
             .ok_or(ProxyError::internal("Backend not selected"))?;
         let provider_type = ctx.provider_type.as_ref()
             .ok_or(ProxyError::internal("Provider type not set"))?;
 
+        // 开始追踪请求体读取
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "request_body_read").await;
+            }
+        }
+
         // 读取请求体
         let request_body = self.read_request_body(session).await?;
         
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "request_body_read", 
+                    true, 
+                    Some(&format!("Request body read: {} bytes", request_body.len()))
+                ).await;
+            }
+        }
+        
+        // 开始追踪上游请求构建
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "upstream_request_build").await;
+            }
+        }
+
         // 构建完整的上游URL
         let upstream_url = format!("https://{}{}", 
             provider_type.base_url, 
@@ -616,6 +758,24 @@ impl AIProxyHandler {
                 .header("Authorization", &auth_value);
         }
 
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "upstream_request_build", 
+                    true, 
+                    Some(&format!("Request built for {}", upstream_url))
+                ).await;
+            }
+        }
+
+        // 开始追踪上游请求发送
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "upstream_request_send").await;
+            }
+        }
+
         // 发送请求 - 添加详细的请求日志
         tracing::info!(
             request_id = %ctx.request_id,
@@ -647,13 +807,72 @@ impl AIProxyHandler {
             "REQWEST HTTP REQUEST HEADERS"
         );
 
-        let response = request_builder.send().await
-            .map_err(|e| ProxyError::bad_gateway(format!("Request failed: {}", e)))?;
+        let response = match request_builder.send().await {
+            Ok(response) => response,
+            Err(e) => {
+                // 记录请求发送失败
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_phase(
+                            &ctx.request_id, 
+                            "upstream_request_send", 
+                            false, 
+                            Some(&format!("Request send failed: {}", e))
+                        ).await;
+                    }
+                }
+                return Err(ProxyError::bad_gateway(format!("Request failed: {}", e)));
+            }
+        };
+
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "upstream_request_send", 
+                    true, 
+                    Some("Request sent successfully")
+                ).await;
+            }
+        }
+
+        // 开始追踪响应处理
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "response_processing").await;
+            }
+        }
 
         let status = response.status();
         let headers = response.headers().clone();
-        let response_body = response.bytes().await
-            .map_err(|e| ProxyError::bad_gateway(format!("Failed to read response body: {}", e)))?;
+        let response_body = match response.bytes().await {
+            Ok(body) => body,
+            Err(e) => {
+                // 记录响应读取失败
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_phase(
+                            &ctx.request_id, 
+                            "response_processing", 
+                            false, 
+                            Some(&format!("Response read failed: {}", e))
+                        ).await;
+                    }
+                }
+                return Err(ProxyError::bad_gateway(format!("Failed to read response body: {}", e)));
+            }
+        };
+
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "response_processing", 
+                    true, 
+                    Some(&format!("Response processed: {} bytes, status {}", response_body.len(), status.as_u16()))
+                ).await;
+            }
+        }
 
         tracing::info!(
             request_id = %ctx.request_id,
@@ -662,8 +881,33 @@ impl AIProxyHandler {
             "Received response from upstream"
         );
 
+        // 开始追踪响应写入
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.start_phase(&ctx.request_id, "response_write").await;
+            }
+        }
+
         // 将响应写回给客户端
         self.write_response_to_session(session, status.as_u16(), headers, response_body).await?;
+
+        if let Some(tracer) = &self.tracer {
+            if ctx.trace_enabled {
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "response_write", 
+                    true, 
+                    Some("Response written to client")
+                ).await;
+                // 完成整个请求转发阶段
+                let _ = tracer.complete_phase(
+                    &ctx.request_id, 
+                    "request_forwarding", 
+                    true, 
+                    Some("Request forwarding completed successfully")
+                ).await;
+            }
+        }
 
         Ok(())
     }
