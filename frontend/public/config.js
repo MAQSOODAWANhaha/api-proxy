@@ -8,13 +8,13 @@
 // 默认配置（后备配置，防止配置文件缺失）
 const DEFAULT_CONFIG = {
   api: {
-    baseURL: 'http://localhost:9090/api',
+    baseURL: '/api',
     timeout: 30000,
     retryCount: 3,
     retryDelay: 1000
   },
   websocket: {
-    url: 'ws://localhost:9090/ws',
+    url: '/ws',
     reconnectInterval: 5000,
     maxReconnectAttempts: 5,
     pingInterval: 30000

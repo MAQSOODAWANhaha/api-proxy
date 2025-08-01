@@ -159,7 +159,7 @@ export const useAppStore = defineStore('app', () => {
   
   // 应用配置
   const config = ref({
-    apiBaseUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9090',
+    apiBaseUrl: import.meta.env.VITE_API_BASE_URL || '/api',
     enableDebug: import.meta.env.DEV,
     version: import.meta.env.VITE_APP_VERSION || '1.0.0',
     maxRetryAttempts: 3,

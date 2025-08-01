@@ -1,19 +1,20 @@
 // HTTP客户端封装
 
-import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse, type AxiosError } from 'axios'
+import axios, { type AxiosInstance, type InternalAxiosRequestConfig, type AxiosResponse, type AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { config } from '@/config'
 import { errorHandler } from './errorHandler'
 import { loadingManager } from './loading'
-import type { ApiResponse, ErrorResponse } from '@/types'
+import type { ErrorResponse } from '@/types'
 
-// 扩展AxiosRequestConfig类型
+// 扩展InternalAxiosRequestConfig类型
 declare module 'axios' {
-  interface AxiosRequestConfig {
+  interface InternalAxiosRequestConfig {
     metadata?: {
       requestKey?: string
       loadingId?: string
     }
+    loadingText?: string
   }
 }
 
@@ -29,13 +30,13 @@ const http: AxiosInstance = axios.create({
 })
 
 // 生成请求唯一标识
-const generateRequestKey = (config: AxiosRequestConfig): string => {
+const generateRequestKey = (config: InternalAxiosRequestConfig): string => {
   const { method, url, params, data } = config
   return `${method}:${url}:${JSON.stringify(params)}:${JSON.stringify(data)}`
 }
 
 // 取消重复请求
-const cancelDuplicateRequest = (config: AxiosRequestConfig) => {
+const cancelDuplicateRequest = (config: InternalAxiosRequestConfig) => {
   const requestKey = generateRequestKey(config)
   
   if (pendingRequests.has(requestKey)) {
@@ -58,7 +59,7 @@ const removePendingRequest = (requestKey: string) => {
 
 // 请求拦截器
 http.interceptors.request.use(
-  (requestConfig: AxiosRequestConfig) => {
+  (requestConfig: InternalAxiosRequestConfig) => {
     // 动态设置 baseURL（支持运行时配置）
     if (!requestConfig.baseURL) {
       requestConfig.baseURL = config.api.baseURL
@@ -79,7 +80,7 @@ http.interceptors.request.use(
     // 根据配置显示全局 loading
     if (requestConfig.headers?.['X-Show-Loading'] === 'true') {
       // 从metadata中获取loadingText，避免在HTTP头中传递非ASCII字符
-      const loadingText = (requestConfig as any).loadingText || 'Loading...'
+      const loadingText = requestConfig.loadingText || 'Loading...'
       const loadingId = loadingManager.showRequestLoading(loadingText)
       requestConfig.metadata = { ...requestConfig.metadata, loadingId }
     }

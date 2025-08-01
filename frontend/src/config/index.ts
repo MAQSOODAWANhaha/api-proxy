@@ -62,7 +62,7 @@ export const config = {
   // API相关配置
   api: {
     get baseURL() {
-      return getRuntimeConfig('api.baseURL', 'http://localhost:9090/api')
+      return getRuntimeConfig('api.baseURL', '/api')
     },
     timeout: 30000,
     retryCount: 3,
@@ -114,7 +114,7 @@ export const config = {
   // WebSocket配置
   websocket: {
     get url() {
-      return getRuntimeConfig('websocket.url', 'ws://localhost:9090/ws')
+      return getRuntimeConfig('websocket.url', '/ws')
     },
     reconnectInterval: 5000,
     maxReconnectAttempts: 5,

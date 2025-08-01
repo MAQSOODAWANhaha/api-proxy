@@ -60,12 +60,12 @@ validate_env_vars() {
     
     if [ -z "${VITE_API_BASE_URL:-}" ]; then
         log_warn "VITE_API_BASE_URL 未设置，使用默认值"
-        export VITE_API_BASE_URL="http://localhost:9090/api"
+        export VITE_API_BASE_URL="/api"
     fi
     
     if [ -z "${VITE_WS_URL:-}" ]; then
         log_warn "VITE_WS_URL 未设置，使用默认值"
-        export VITE_WS_URL="ws://localhost:9090/ws"
+        export VITE_WS_URL="/ws"
     fi
     
     # 验证 URL 格式 - 支持相对路径和绝对路径

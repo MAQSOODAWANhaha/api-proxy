@@ -6,7 +6,7 @@ use std::sync::Arc;
 use log::info;
 use pingora_core::{
     server::{configuration::Opt, Server},
-    tls::listeners::TlsSettings,
+    listeners::tls::TlsSettings,
 };
 use pingora_proxy::http_proxy_service;
 use crate::config::AppConfig;
