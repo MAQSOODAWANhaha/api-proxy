@@ -113,6 +113,9 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     info!("📋 Loading configuration...");
     let config_manager = ConfigManager::new().await?;
     let mut config = config_manager.get_config().await;
+    
+    // 应用追踪相关的命令行参数覆盖
+    apply_trace_overrides_internal(&mut config, matches);
 
     // 应用命令行参数覆盖
     if let Some(server) = config.server.as_mut() {
@@ -282,4 +285,61 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     };
 
     Ok((config_arc, db, shared_services))
+}
+
+/// 内部追踪配置覆盖函数
+fn apply_trace_overrides_internal(config: &mut AppConfig, matches: &ArgMatches) {
+    use crate::config::TraceConfig;
+    use std::process;
+    use tracing::{info, error};
+    
+    let mut trace_modified = false;
+    
+    // 确保有追踪配置
+    if config.trace.is_none() {
+        config.trace = Some(TraceConfig::default());
+    }
+    
+    let trace_config = config.trace.as_mut().unwrap();
+    
+    // 处理启用/禁用追踪
+    if matches.get_flag("enable_trace") {
+        info!("🔧 Enabling tracing system from CLI");
+        trace_config.enabled = true;
+        trace_modified = true;
+    }
+    
+    if matches.get_flag("disable_trace") {
+        info!("🔧 Disabling tracing system from CLI");
+        trace_config.enabled = false;
+        trace_modified = true;
+    }
+    
+    // 处理追踪级别
+    if let Some(level) = matches.get_one::<i32>("trace_level") {
+        if *level >= 0 && *level <= 2 {
+            info!("🔧 Overriding trace level from CLI: {}", level);
+            trace_config.default_trace_level = *level;
+            trace_modified = true;
+        } else {
+            error!("❌ Invalid trace level: {}. Must be 0-2", level);
+            process::exit(1);
+        }
+    }
+    
+    // 处理采样率
+    if let Some(rate) = matches.get_one::<f64>("trace_sampling_rate") {
+        if *rate >= 0.0 && *rate <= 1.0 {
+            info!("🔧 Overriding trace sampling rate from CLI: {}", rate);
+            trace_config.sampling_rate = *rate;
+            trace_modified = true;
+        } else {
+            error!("❌ Invalid sampling rate: {}. Must be 0.0-1.0", rate);
+            process::exit(1);
+        }
+    }
+    
+    if trace_modified {
+        info!("✅ Trace configuration updated from CLI arguments");
+    }
 }

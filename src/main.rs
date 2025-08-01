@@ -7,7 +7,7 @@ use std::process;
 use tracing::{error, info};
 use clap::{Arg, Command, ArgMatches};
 use api_proxy::{
-    config::ConfigManager,
+    config::{ConfigManager, TraceConfig},
     error::Result,
     dual_port_setup,
 };
@@ -90,6 +90,24 @@ fn build_cli() -> Command {
             .long("daemon")
             .help("Run as daemon (background process)")
             .action(clap::ArgAction::SetTrue))
+        .arg(Arg::new("enable_trace")
+            .long("enable-trace")
+            .help("Enable request tracing system")
+            .action(clap::ArgAction::SetTrue))
+        .arg(Arg::new("disable_trace")
+            .long("disable-trace")
+            .help("Disable request tracing system")
+            .action(clap::ArgAction::SetTrue))
+        .arg(Arg::new("trace_level")
+            .long("trace-level")
+            .help("Set tracing level (0=basic, 1=detailed, 2=full)")
+            .value_name("LEVEL")
+            .value_parser(clap::value_parser!(i32)))
+        .arg(Arg::new("trace_sampling_rate")
+            .long("trace-sampling-rate")
+            .help("Set tracing sampling rate (0.0-1.0)")
+            .value_name("RATE")
+            .value_parser(clap::value_parser!(f64)))
 }
 
 /// 带日志级别的初始化函数
@@ -123,7 +141,10 @@ fn run_config_check(matches: &ArgMatches) -> Result<()> {
     rt.block_on(async {
         // 验证配置文件
         let config_manager = ConfigManager::new().await?;
-        let config = config_manager.get_config().await;
+        let mut config = config_manager.get_config().await;
+        
+        // 应用CLI参数覆盖以显示正确的配置信息
+        apply_trace_overrides(&mut config, matches);
         
         info!("✓ Configuration file is valid");
         info!("  Server: {}:{}", config.server.as_ref().map_or("0.0.0.0", |s| &s.host), config.server.as_ref().map_or(8080, |s| s.port));
@@ -136,6 +157,23 @@ fn run_config_check(matches: &ArgMatches) -> Result<()> {
         info!("  Redis: {}", config.redis.url);
         info!("  Workers: {}", config.server.as_ref().map_or(1, |s| s.workers));
         
+        // 显示追踪配置信息
+        if let Some(trace_config) = &config.trace {
+            info!("  Tracing: {} (level={})", 
+                  if trace_config.enabled { "enabled" } else { "disabled" },
+                  trace_config.default_trace_level);
+            info!("  Trace Sampling: {}", trace_config.sampling_rate);
+            info!("  Trace Batch Size: {}", trace_config.max_batch_size);
+            info!("  Trace Flush Interval: {}s", trace_config.flush_interval);
+            if trace_config.enable_phases {
+                info!("  Trace Features: phases=✓ health={}  performance={}", 
+                      if trace_config.enable_health_metrics { "✓" } else { "✗" },
+                      if trace_config.enable_performance_metrics { "✓" } else { "✗" });
+            }
+        } else {
+            info!("  Tracing: not configured");
+        }
+        
         // 测试数据库连接
         info!("Testing database connection...");
         let _db = api_proxy::database::init_database(&config.database.url).await?;
@@ -146,4 +184,57 @@ fn run_config_check(matches: &ArgMatches) -> Result<()> {
     })?;
 
     Ok(())
+}
+
+/// 应用追踪相关的命令行参数覆盖
+fn apply_trace_overrides(config: &mut api_proxy::config::AppConfig, matches: &ArgMatches) {
+    let mut trace_modified = false;
+    
+    // 确保有追踪配置
+    if config.trace.is_none() {
+        config.trace = Some(TraceConfig::default());
+    }
+    
+    let trace_config = config.trace.as_mut().unwrap();
+    
+    // 处理启用/禁用追踪
+    if matches.get_flag("enable_trace") {
+        info!("🔧 Enabling tracing system from CLI");
+        trace_config.enabled = true;
+        trace_modified = true;
+    }
+    
+    if matches.get_flag("disable_trace") {
+        info!("🔧 Disabling tracing system from CLI");
+        trace_config.enabled = false;
+        trace_modified = true;
+    }
+    
+    // 处理追踪级别
+    if let Some(level) = matches.get_one::<i32>("trace_level") {
+        if *level >= 0 && *level <= 2 {
+            info!("🔧 Overriding trace level from CLI: {}", level);
+            trace_config.default_trace_level = *level;
+            trace_modified = true;
+        } else {
+            error!("❌ Invalid trace level: {}. Must be 0-2", level);
+            process::exit(1);
+        }
+    }
+    
+    // 处理采样率
+    if let Some(rate) = matches.get_one::<f64>("trace_sampling_rate") {
+        if *rate >= 0.0 && *rate <= 1.0 {
+            info!("🔧 Overriding trace sampling rate from CLI: {}", rate);
+            trace_config.sampling_rate = *rate;
+            trace_modified = true;
+        } else {
+            error!("❌ Invalid sampling rate: {}. Must be 0.0-1.0", rate);
+            process::exit(1);
+        }
+    }
+    
+    if trace_modified {
+        info!("✅ Trace configuration updated from CLI arguments");
+    }
 }

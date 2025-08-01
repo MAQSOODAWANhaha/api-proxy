@@ -9,7 +9,7 @@ mod crypto;
 mod watcher;
 mod manager;
 
-pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig, TlsConfig};
+pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig, TlsConfig, TraceConfig};
 pub use dual_port_config::{DualPortServerConfig, EnabledServices, ManagementPortConfig, ProxyPortConfig};
 pub use database::DatabaseConfig;
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
