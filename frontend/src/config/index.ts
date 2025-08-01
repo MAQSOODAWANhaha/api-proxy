@@ -36,8 +36,6 @@ const getFromBuildTimeEnv = (path: string, fallback?: any) => {
       return import.meta.env.VITE_APP_VERSION || fallback
     case 'development.logLevel':
       return import.meta.env.VITE_LOG_LEVEL || fallback
-    case 'development.mockData':
-      return import.meta.env.VITE_USE_MOCK === 'true' || fallback
     default:
       return fallback
   }
@@ -201,9 +199,6 @@ export const config = {
 
   // 开发配置
   development: {
-    get mockData() {
-      return getRuntimeConfig('development.mockData', import.meta.env.VITE_USE_MOCK === 'true')
-    },
     get showDevtools() {
       return getRuntimeConfig('development.showDevtools', import.meta.env.DEV)
     },

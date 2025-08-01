@@ -1,7 +1,6 @@
 // 系统相关API
 
 import { HttpClient } from '@/utils/http'
-import { MockDataService, useMockData } from '@/utils/mockData'
 import type {
   HealthCheckResponse,
   DetailedHealthResponse,
@@ -21,9 +20,6 @@ export class SystemAPI {
 
   // 基础健康检查
   static async getHealth(): Promise<HealthCheckResponse> {
-    if (useMockData) {
-      return MockDataService.getHealthCheck()
-    }
     return HttpClient.get('/health')
   }
 
@@ -36,9 +32,6 @@ export class SystemAPI {
 
   // 获取系统信息
   static async getSystemInfo(): Promise<SystemInfo> {
-    if (useMockData) {
-      return MockDataService.getSystemInfo()
-    }
     return HttpClient.get('/system/info')
   }
 

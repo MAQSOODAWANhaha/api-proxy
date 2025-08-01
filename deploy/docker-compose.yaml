@@ -5,14 +5,13 @@ services:
   # 后端服务 (Rust + Pingora)
   # ================================
   backend:
-    build:
-      context: ..
-      dockerfile: ./deploy/Dockerfile.backend
+    image: registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:latest
+    pull_policy: always
     container_name: api-proxy-backend
     restart: unless-stopped
     ports:
-      - "8080:8080"  # Pingora代理服务
-      - "9090:9090"  # Axum管理API
+      - "8080:8080" # Pingora代理服务
+      - "9090:9090" # Axum管理API
     volumes:
       # 数据持久化
       - backend_data:/app/data
@@ -42,14 +41,12 @@ services:
   # 前端服务 (Vue.js + Nginx) - 运行时配置注入
   # ================================
   frontend:
-    build:
-      context: ..
-      dockerfile: ./deploy/Dockerfile.frontend
-      # 移除构建时参数，支持通用镜像构建
+    image: registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest
+    pull_policy: always
     container_name: api-proxy-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"  # 前端Web界面
+      - "3000:80" # 前端Web界面
     environment:
       # 运行时环境变量注入
       - VITE_API_BASE_URL=${VITE_API_BASE_URL}
@@ -97,18 +94,18 @@ services:
     container_name: api-proxy-gateway
     restart: unless-stopped
     ports:
-      - "80:80"    # HTTP
-      - "443:443"  # HTTPS (如果配置了SSL)
+      - "80:80" # HTTP
+      - "443:443" # HTTPS (如果配置了SSL)
     volumes:
       - ./nginx-gateway.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro  # SSL证书目录
+      - ./ssl:/etc/nginx/ssl:ro # SSL证书目录
     networks:
       - api-proxy-network
     depends_on:
       - frontend
       - backend
     profiles:
-      - production  # 仅在生产环境启用
+      - production # 仅在生产环境启用
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s

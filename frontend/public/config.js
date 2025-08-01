@@ -27,7 +27,6 @@ const DEFAULT_CONFIG = {
     debug: false
   },
   development: {
-    mockData: false,
     showDevtools: false,
     logLevel: 'info'
   }
@@ -40,7 +39,6 @@ function loadRuntimeConfig() {
   const wsURL = document.querySelector('meta[name="ws-url"]')?.getAttribute('content')
   const appVersion = document.querySelector('meta[name="app-version"]')?.getAttribute('content')
   const logLevel = document.querySelector('meta[name="log-level"]')?.getAttribute('content')
-  const mockData = document.querySelector('meta[name="mock-data"]')?.getAttribute('content')
   
   // 构建运行时配置
   const runtimeConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
@@ -63,10 +61,6 @@ function loadRuntimeConfig() {
   // 开发配置
   if (logLevel && logLevel !== '{{VITE_LOG_LEVEL}}') {
     runtimeConfig.development.logLevel = logLevel
-  }
-  
-  if (mockData && mockData !== '{{VITE_USE_MOCK}}') {
-    runtimeConfig.development.mockData = mockData === 'true'
   }
   
   return runtimeConfig

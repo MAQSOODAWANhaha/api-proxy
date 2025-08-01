@@ -113,9 +113,6 @@ inject_env_vars() {
     log_debug "替换 LOG_LEVEL: ${VITE_LOG_LEVEL:-info}"
     sed -i "s|{{VITE_LOG_LEVEL}}|${VITE_LOG_LEVEL:-info}|g" "$INDEX_FILE"
     
-    log_debug "替换 USE_MOCK: ${VITE_USE_MOCK:-false}"
-    sed -i "s|{{VITE_USE_MOCK}}|${VITE_USE_MOCK:-false}|g" "$INDEX_FILE"
-    
     log_info "环境变量注入完成"
 }
 
@@ -175,7 +172,6 @@ show_startup_info() {
     log_info "WebSocket URL: $VITE_WS_URL"
     log_info "App Version: ${VITE_APP_VERSION:-1.0.0}"
     log_info "Log Level: ${VITE_LOG_LEVEL:-info}"
-    log_info "Mock Data: ${VITE_USE_MOCK:-false}"
     log_info "Debug Mode: ${DEBUG:-false}"
     log_info "==================================="
 }

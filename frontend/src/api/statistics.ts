@@ -1,7 +1,6 @@
 // 统计数据相关API
 
 import { HttpClient } from '@/utils/http'
-import { MockDataService, useMockData } from '@/utils/mockData'
 import type {
   StatisticsOverview,
   RequestStatistics,
@@ -28,9 +27,6 @@ export class StatisticsAPI {
 
   // 获取请求日志列表
   static async getRequestLogs(params: RequestLogParams = {}): Promise<RequestLogListResponse> {
-    if (useMockData) {
-      return MockDataService.getRequestLogs(params)
-    }
     return HttpClient.get('/statistics/logs', params)
   }
 

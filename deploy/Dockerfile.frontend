@@ -73,7 +73,6 @@ ENV VITE_API_BASE_URL=http://localhost:9090/api
 ENV VITE_WS_URL=ws://localhost:9090/ws
 ENV VITE_APP_VERSION=1.0.0
 ENV VITE_LOG_LEVEL=info
-ENV VITE_USE_MOCK=false
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

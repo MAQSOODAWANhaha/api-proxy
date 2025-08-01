@@ -6,7 +6,6 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import '@/assets/css/main.css'
-import { initializeMockData } from '@/utils/mockData'
 
 import App from './App.vue'
 
@@ -45,10 +44,5 @@ app.config.warnHandler = (msg, vm, trace) => {
   }
 }
 
-// 初始化模拟数据检测并启动应用
-initializeMockData().then(() => {
-  app.mount('#app')
-}).catch(error => {
-  console.error('Failed to initialize app:', error)
-  app.mount('#app')
-})
+// 启动应用
+app.mount('#app')

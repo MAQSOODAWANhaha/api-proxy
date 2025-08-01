@@ -1,7 +1,6 @@
 // API密钥管理相关API
 
 import { HttpClient } from '@/utils/http'
-import { MockDataService, useMockData } from '@/utils/mockData'
 import type {
   UserProviderKey,
   UserServiceApi,
@@ -23,18 +22,6 @@ export class ApiKeyAPI {
     keys: UserProviderKey[]
     pagination: any
   }> {
-    if (useMockData) {
-      const apiKeys = await MockDataService.getApiKeys()
-      return {
-        keys: apiKeys as any,
-        pagination: {
-          page: params.page || 1,
-          limit: params.limit || 20,
-          total: apiKeys.length,
-          pages: Math.ceil(apiKeys.length / (params.limit || 20))
-        }
-      }
-    }
     return HttpClient.get('/api-keys/provider', params)
   }
 

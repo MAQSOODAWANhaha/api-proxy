@@ -75,21 +75,17 @@ check_docker() {
     log_success "Docker环境检查通过"
 }
 
-# 获取主机IP地址（支持公网IP检测和用户指定）
-get_host_ip() {
-    local public_ip=""
+# 获取本地IP地址（仅开发环境使用）
+get_local_ip() {
     local local_ip=""
-    local final_ip=""
     
-    # 首先检查是否通过环境变量指定了IP
+    # 优先使用环境变量
     if [[ -n "$DEPLOY_IP" ]]; then
         echo "$DEPLOY_IP"
         return
     fi
     
-    log_info "正在检测IP地址..."
-    
-    # 获取内网IP
+    # 自动检测本地IP
     if command -v hostname &> /dev/null; then
         local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
@@ -102,76 +98,9 @@ get_host_ip() {
         local_ip=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
     fi
     
-    # 尝试获取公网IP
-    if command -v curl &> /dev/null; then
-        log_info "尝试获取公网IP..."
-        public_ip=$(timeout 10 curl -s ifconfig.me 2>/dev/null || timeout 10 curl -s ipinfo.io/ip 2>/dev/null || timeout 10 curl -s icanhazip.com 2>/dev/null)
-        
-        # 验证IP格式
-        if [[ ! "$public_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            public_ip=""
-        fi
-    fi
-    
-    # 显示检测结果并让用户选择
-    echo ""
-    echo -e "${BLUE}检测到以下IP地址:${NC}"
-    
-    options_count=0
-    declare -a ip_options
-    
-    if [[ -n "$public_ip" ]]; then
-        options_count=$((options_count + 1))
-        ip_options[$options_count]="$public_ip"
-        echo -e "${GREEN}[$options_count]${NC} 公网IP: $public_ip ${YELLOW}(推荐用于生产环境)${NC}"
-    fi
-    
-    if [[ -n "$local_ip" && "$local_ip" != "$public_ip" ]]; then
-        options_count=$((options_count + 1))
-        ip_options[$options_count]="$local_ip"
-        echo -e "${GREEN}[$options_count]${NC} 内网IP: $local_ip ${YELLOW}(推荐用于开发环境)${NC}"
-    fi
-    
-    options_count=$((options_count + 1))
-    ip_options[$options_count]="custom"
-    echo -e "${GREEN}[$options_count]${NC} 手动输入IP地址"
-    
-    echo ""
-    
-    # 让用户选择
-    while true; do
-        read -p "请选择要使用的IP地址 [1-$options_count]: " choice
-        
-        if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [[ $choice -le $options_count ]]; then
-            if [[ "${ip_options[$choice]}" == "custom" ]]; then
-                while true; do
-                    read -p "请输入IP地址: " custom_ip
-                    if [[ "$custom_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-                        final_ip="$custom_ip"
-                        break
-                    else
-                        log_warning "IP地址格式不正确，请重新输入"
-                    fi
-                done
-            else
-                final_ip="${ip_options[$choice]}"
-            fi
-            break
-        else
-            log_warning "无效选择，请输入1-$options_count之间的数字"
-        fi
-    done
-    
-    # 默认回退
-    if [ -z "$final_ip" ]; then
-        final_ip="${local_ip:-127.0.0.1}"
-    fi
-    
-    echo "$final_ip"
+    # 返回检测到的IP或默认值
+    echo "${local_ip:-127.0.0.1}"
 }
-
-# 全局变量：主机IP地址
-HOST_IP=""
 
 # 创建必要的目录和文件
 prepare_environment() {
@@ -181,12 +110,8 @@ prepare_environment() {
     # 创建必要的目录
     mkdir -p "$SCRIPT_DIR/certs"
     mkdir -p "$SCRIPT_DIR/config"
-    mkdir -p "$SCRIPT_DIR/ssl"
+    mkdir -p "$SCRIPT_DIR/ssl" 
     mkdir -p "$SCRIPT_DIR/logs"
-    
-    # 获取主机IP地址（设为全局变量）
-    HOST_IP=$(get_host_ip)
-    log_info "检测到主机IP地址: $HOST_IP"
     
     # 根据环境选择配置文件
     if [ "$profile" = "production" ]; then
@@ -202,67 +127,26 @@ prepare_environment() {
         log_warning "配置文件 $CONFIG_SOURCE 不存在"
     fi
     
-    # 根据环境决定API访问方式
+    # 根据环境决定前端配置
     local api_base_url=""
     local ws_url=""
     
     if [ "$profile" = "production" ]; then
-        # 生产环境：通过网关访问（80端口）
-        api_base_url="http://${HOST_IP}/api"
-        ws_url="ws://${HOST_IP}/ws"
+        # 生产环境：使用相对路径，nginx网关自动处理
+        log_info "生产环境：使用相对路径配置，通过nginx网关访问"
+        api_base_url="/api"
+        ws_url="/ws"
     else
-        # 开发环境：直接访问后端（9090端口）
-        api_base_url="http://${HOST_IP}:9090/api"
-        ws_url="ws://${HOST_IP}:9090/ws"
+        # 开发环境：检测本地IP并直接访问后端
+        local local_ip=$(get_local_ip)
+        log_info "开发环境：检测到本地IP: $local_ip"
+        api_base_url="http://${local_ip}:9090/api"
+        ws_url="ws://${local_ip}:9090/ws"
     fi
     
-    # 更新.env文件中的动态配置
-    if [ -f "$ENV_FILE" ]; then
-        log_info "更新现有环境配置文件: $ENV_FILE"
-        
-        # 更新CONFIG_FILE
-        if grep -q "^CONFIG_FILE=" "$ENV_FILE"; then
-            sed -i "s/^CONFIG_FILE=.*/CONFIG_FILE=${CONFIG_SOURCE}/" "$ENV_FILE"
-        else
-            echo "CONFIG_FILE=${CONFIG_SOURCE}" >> "$ENV_FILE"
-        fi
-        
-        # 更新VITE_API_BASE_URL
-        if grep -q "^VITE_API_BASE_URL=" "$ENV_FILE"; then
-            sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=${api_base_url}|" "$ENV_FILE"
-        else
-            echo "VITE_API_BASE_URL=${api_base_url}" >> "$ENV_FILE"
-        fi
-        
-        # 更新VITE_WS_URL
-        if grep -q "^VITE_WS_URL=" "$ENV_FILE"; then
-            sed -i "s|^VITE_WS_URL=.*|VITE_WS_URL=${ws_url}|" "$ENV_FILE"
-        else
-            echo "VITE_WS_URL=${ws_url}" >> "$ENV_FILE"
-        fi
-        
-        log_info "已更新环境配置: CONFIG_FILE=${CONFIG_SOURCE}, API_URL=${api_base_url}, IP=${HOST_IP}"
-    fi
-    
-    # 创建环境变量文件（如果不存在）
-    if [ ! -f "$ENV_FILE" ]; then
-        log_info "创建环境配置文件: $ENV_FILE"
-        
-        # 根据环境决定API访问方式
-        local api_base_url=""
-        local ws_url=""
-        
-        if [ "$profile" = "production" ]; then
-            # 生产环境：通过网关访问（80端口）
-            api_base_url="http://$HOST_IP/api"
-            ws_url="ws://$HOST_IP/ws"
-        else
-            # 开发环境：直接访问后端（9090端口）
-            api_base_url="http://$HOST_IP:9090/api"
-            ws_url="ws://$HOST_IP:9090/ws"
-        fi
-        
-        cat > "$ENV_FILE" << EOF
+    # 创建或更新.env文件
+    log_info "创建环境配置文件: $ENV_FILE"
+    cat > "$ENV_FILE" << EOF
 # AI代理平台环境配置
 
 # 应用配置
@@ -301,19 +185,18 @@ TLS_KEY_PATH=/app/certs/key.pem
 ENABLE_METRICS=true
 METRICS_PORT=9091
 
-# 前端配置 - 动态IP地址
+# 前端配置
 VITE_API_BASE_URL=$api_base_url
 VITE_WS_URL=$ws_url
+VITE_APP_VERSION=1.0.0
+VITE_LOG_LEVEL=info
+VITE_USE_MOCK=false
 
 # 后端配置文件
 CONFIG_FILE=$CONFIG_SOURCE
 EOF
-        log_success "环境配置文件已创建，请根据需要修改: $ENV_FILE"
-    fi
     
-    # 配置文件已通过环境特定文件管理，无需复制
-    
-    log_success "环境准备完成"
+    log_success "环境配置完成: API_URL=${api_base_url}, WS_URL=${ws_url}"
 }
 
 # 构建镜像
@@ -338,30 +221,66 @@ build_images() {
     log_success "镜像构建完成"
 }
 
-# 启动服务
-start_services() {
-    local profile="${1:-default}"
-    
-    log_step "启动服务 (profile: $profile)"
+# 智能检测并启动服务
+detect_and_start_services() {
+    log_step "智能检测环境配置并启动服务"
     
     cd "$SCRIPT_DIR"
     
-    # 使用.env文件
+    # 加载环境变量
     if [ -f "$ENV_FILE" ]; then
-        set -a  # 自动导出所有变量
+        set -a
         source "$ENV_FILE"
-        set +a  # 关闭自动导出
-    fi
-    
-    if [ "$profile" = "production" ]; then
-        # 生产环境包括网关
-        docker compose --env-file "$ENV_FILE" --profile production up -d
+        set +a
+        
+        # 智能检测：相对路径 = 生产环境，绝对路径 = 开发环境
+        if [[ "$VITE_API_BASE_URL" == "/api"* ]]; then
+            log_info "检测到生产环境配置 (API URL: $VITE_API_BASE_URL)"
+            log_info "启动完整服务栈，包含nginx网关"
+            docker compose --env-file "$ENV_FILE" --profile production up -d
+        else
+            log_info "检测到开发环境配置 (API URL: $VITE_API_BASE_URL)"
+            log_info "启动开发服务栈，直接暴露端口"
+            docker compose --env-file "$ENV_FILE" up -d
+        fi
     else
-        # 开发环境不包括网关
-        docker compose --env-file "$ENV_FILE" up -d
+        log_error "未找到环境配置文件: $ENV_FILE"
+        log_info "请先运行 ./deploy.sh install 或 ./deploy.sh install-prod"
+        exit 1
     fi
     
     log_success "服务启动完成"
+}
+
+# 启动服务
+start_services() {
+    local profile="${1:-auto}"
+    
+    # 如果没有明确指定profile或指定为auto，则智能检测
+    if [ "$profile" = "auto" ] || [ -z "$profile" ]; then
+        detect_and_start_services
+    else
+        log_step "启动服务 (profile: $profile)"
+        
+        cd "$SCRIPT_DIR"
+        
+        # 使用.env文件
+        if [ -f "$ENV_FILE" ]; then
+            set -a  # 自动导出所有变量
+            source "$ENV_FILE"
+            set +a  # 关闭自动导出
+        fi
+        
+        if [ "$profile" = "production" ]; then
+            # 生产环境包括网关
+            docker compose --env-file "$ENV_FILE" --profile production up -d
+        else
+            # 开发环境不包括网关
+            docker compose --env-file "$ENV_FILE" up -d
+        fi
+        
+        log_success "服务启动完成"
+    fi
 }
 
 # 停止服务
@@ -376,7 +295,7 @@ stop_services() {
 
 # 重启服务
 restart_services() {
-    local profile="${1:-default}"
+    local profile="${1:-auto}"
     
     log_step "重启服务"
     
@@ -469,50 +388,53 @@ database_operation() {
 
 # 显示访问信息
 show_access_info() {
-    local profile="${1:-default}"
-    local host_ip="${2:-}"
-    
     log_step "部署完成"
-    
-    # 使用传入的IP地址，如果没有则从.env文件获取
-    local ip="$host_ip"
-    if [ -z "$ip" ] && [ -f "$ENV_FILE" ]; then
-        ip=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | sed 's|.*://||' | sed 's|/.*||' | sed 's|:.*||')
-    fi
-    
-    # 如果仍然获取不到IP，使用localhost作为备用
-    if [ -z "$ip" ]; then
-        ip="localhost"
-    fi
     
     echo ""
     echo -e "${GREEN}==================== 🎉 部署成功 ====================${NC}"
     echo ""
     
+    # 检测当前运行的环境
+    local is_production=false
     if docker compose ps | grep -q "api-proxy-gateway"; then
-        echo -e "${BLUE}🌍 生产环境访问地址 (通过网关):${NC}"
-        echo -e "  📱 前端界面: ${GREEN}http://$ip${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理API:  ${GREEN}http://$ip/api${NC}"
-        echo -e "  🤖 AI代理:   ${GREEN}http://$ip/v1${NC}"
+        is_production=true
+    fi
+    
+    if [ "$is_production" = true ]; then
+        echo -e "${BLUE}🌍 生产环境 - 通过nginx网关访问:${NC}"
+        echo -e "  📱 前端界面: ${GREEN}http://您的服务器IP${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理API:  ${GREEN}http://您的服务器IP/api${NC}"
+        echo -e "  🤖 AI代理:   ${GREEN}http://您的服务器IP/v1${NC}"
         echo ""
-        echo -e "${YELLOW}📌 重要说明:${NC}"
-        echo "  • 生产环境所有请求都通过80端口的Nginx网关转发"
-        echo -e "  • 前端会自动请求 ${GREEN}http://$ip/api${NC} 接口"
-        echo "  • 确保防火墙开放80和443端口供外部访问"
+        echo -e "${YELLOW}📌 生产环境特点:${NC}"
+        echo "  • 所有请求通过80端口nginx网关统一入口"
+        echo "  • 前端使用相对路径，自动适配域名"
+        echo "  • 支持SSL/TLS加密（需配置证书）"
+        echo "  • 适合公网部署和生产使用"
         echo ""
-        echo -e "${BLUE}🔧 直接访问后端服务（调试用）:${NC}"
-        echo "  • 管理API: http://$ip:9090/api"
-        echo "  • AI代理: http://$ip:8080/v1"
+        echo -e "${BLUE}🔧 直接访问后端（调试用）:${NC}"
+        echo "  • 管理API: http://您的服务器IP:9090/api"
+        echo "  • AI代理: http://您的服务器IP:8080/v1"
     else
-        echo -e "${BLUE}🛠️ 开发环境访问地址:${NC}"
-        echo -e "  📱 前端界面: ${GREEN}http://$ip:3000${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理API:  ${GREEN}http://$ip:9090/api${NC}"
-        echo -e "  🤖 AI代理:   ${GREEN}http://$ip:8080/v1${NC}"
-        echo -e "  📊 Redis:    ${GREEN}redis://$ip:6379${NC}"
+        # 从.env获取IP地址用于显示
+        local dev_ip="localhost"
+        if [ -f "$ENV_FILE" ]; then
+            local api_url=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | cut -d'=' -f2)
+            if [[ "$api_url" == http://* ]]; then
+                dev_ip=$(echo "$api_url" | sed 's|http://||' | sed 's|:.*||')
+            fi
+        fi
+        
+        echo -e "${BLUE}🛠️ 开发环境 - 直接端口访问:${NC}"
+        echo -e "  📱 前端界面: ${GREEN}http://${dev_ip}:3000${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理API:  ${GREEN}http://${dev_ip}:9090/api${NC}"
+        echo -e "  🤖 AI代理:   ${GREEN}http://${dev_ip}:8080/v1${NC}"
+        echo -e "  📊 Redis:    ${GREEN}redis://${dev_ip}:6379${NC}"
         echo ""
-        echo -e "${YELLOW}📌 开发环境说明:${NC}"
-        echo -e "  • 前端直接请求 ${GREEN}http://$ip:9090/api${NC} 接口"
-        echo "  • 无网关转发，各服务独立端口访问"
+        echo -e "${YELLOW}📌 开发环境特点:${NC}"
+        echo "  • 各服务独立端口，便于调试"
+        echo "  • 无网关层，直接访问后端服务"
+        echo "  • 适合本地开发和测试"
     fi
     
     echo ""
@@ -522,13 +444,10 @@ show_access_info() {
     echo -e "  ⏹️  停止服务: ${GREEN}./deploy.sh stop${NC}"
     echo -e "  🔄 重启服务: ${GREEN}./deploy.sh restart${NC}"
     echo ""
-    echo -e "${BLUE}🌍 外部访问提示:${NC}"
-    if [ "$ip" != "localhost" ] && [ "$ip" != "127.0.0.1" ]; then
-        echo -e "  ✅ 已配置外部IP: ${GREEN}$ip${NC}"
-        echo "  📋 请确保防火墙规则允许访问相应端口"
-    else
-        echo -e "  💡 如需外部访问，请使用: ${GREEN}DEPLOY_IP=你的公网IP ./deploy.sh install-prod${NC}"
-    fi
+    echo -e "${BLUE}🚀 部署提示:${NC}"
+    echo "  • 生产环境：零配置，nginx自动处理域名和路径"
+    echo "  • 开发环境：如需外部访问，设置 DEPLOY_IP=你的IP"
+    echo "  • 环境切换：重新运行对应的 install 命令即可"
     echo ""
     echo -e "${GREEN}==================================================${NC}"
 }
@@ -540,28 +459,44 @@ AI代理平台一键部署脚本
 
 用法: $0 <命令> [选项]
 
-命令:
-  install              安装并启动所有服务
-  install-prod         安装并启动生产环境（包含网关）
-  start [profile]      启动服务 (default|production)
-  stop                 停止服务
-  restart [profile]    重启服务
-  status               查看服务状态
-  logs [service] [lines] 查看日志 (默认所有服务，100行)
-  build                构建Docker镜像
-  cleanup [--images]   清理资源（加--images删除镜像）
+核心命令:
+  install              开发环境 - 直接端口访问，需要IP配置
+  install-prod         生产环境 - nginx网关，零IP配置
+  start                智能启动 - 自动检测环境配置
+  stop                 停止所有服务
+  restart              重启服务（保持当前环境配置）
+
+管理命令:
+  status               查看服务运行状态
+  logs [service]       查看服务日志
+  build                重新构建Docker镜像
+  cleanup [--images]   清理Docker资源
   backup               备份数据库
   restore <file>       恢复数据库
-  info [host]          显示访问信息
   help                 显示此帮助信息
 
-示例:
-  $0 install                    # 开发环境安装
-  $0 install-prod               # 生产环境安装
-  $0 logs backend 50            # 查看后端服务最近50行日志
-  $0 restart production         # 重启生产环境
-  $0 backup                     # 备份数据库
-  $0 info 192.168.1.100        # 显示指定主机的访问信息
+环境说明:
+  开发环境 (install)：
+    • 各服务独立端口：前端:3000, 后端:9090, Redis:6379
+    • 需要检测本地IP地址，支持外部访问
+    • 无nginx网关，直接访问各服务
+    • 适合：本地开发、调试、测试
+
+  生产环境 (install-prod)：
+    • 统一nginx网关入口，仅使用80/443端口
+    • 前端使用相对路径，自动适配域名
+    • 零IP配置，部署即用
+    • 适合：公网部署、生产使用
+
+环境变量:
+  DEPLOY_IP=<IP>       指定开发环境使用的IP地址
+
+使用示例:
+  ./deploy.sh install-prod         # 生产环境，零配置部署
+  ./deploy.sh install              # 开发环境，自动检测IP
+  DEPLOY_IP=192.168.1.100 ./deploy.sh install  # 指定IP的开发环境
+  ./deploy.sh logs backend         # 查看后端日志
+  ./deploy.sh restart              # 重启（保持环境）
 
 EOF
 }
@@ -578,25 +513,25 @@ main() {
             prepare_environment "default"
             build_images
             start_services "default"
-            show_access_info "default" "$HOST_IP"
+            show_access_info
             ;;
         "install-prod")
             check_docker
             prepare_environment "production"
             build_images
             start_services "production"
-            show_access_info "production" "$HOST_IP"
+            show_access_info
             ;;
         "start")
             check_docker
-            start_services "$2"
+            detect_and_start_services
             ;;
         "stop")
             stop_services
             ;;
         "restart")
             check_docker
-            restart_services "$2"
+            restart_services "${2:-auto}"
             ;;
         "status")
             show_status

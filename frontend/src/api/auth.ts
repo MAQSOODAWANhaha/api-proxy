@@ -1,15 +1,11 @@
 // 认证相关API
 
 import { HttpClient } from '@/utils/http'
-import { MockDataService, useMockData } from '@/utils/mockData'
 import type { LoginRequest, LoginResponse, RegisterRequest, User } from '@/types'
 
 export class AuthAPI {
   // 用户登录
   static async login(data: LoginRequest): Promise<LoginResponse> {
-    if (useMockData) {
-      return MockDataService.login(data.username, data.password)
-    }
     return HttpClient.post<LoginResponse>('/auth/login', data, {
       loadingText: 'Logging in...'
     })
@@ -24,9 +20,6 @@ export class AuthAPI {
 
   // 获取当前用户信息
   static async getCurrentUser(): Promise<User> {
-    if (useMockData) {
-      return MockDataService.getUser()
-    }
     return HttpClient.get<User>('/auth/profile', undefined, {
       showLoading: false // 用户信息获取不显示loading
     })
