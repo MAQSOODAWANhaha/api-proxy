@@ -20,9 +20,8 @@ declare module 'axios' {
 // 活跃的请求映射（用于取消重复请求）
 const pendingRequests = new Map<string, AbortController>()
 
-// 创建axios实例
+// 创建axios实例 - 不设置baseURL，在请求拦截器中动态设置
 const http: AxiosInstance = axios.create({
-  baseURL: config.api.baseURL,
   timeout: config.api.timeout,
   headers: {
     'Content-Type': 'application/json',
@@ -59,40 +58,45 @@ const removePendingRequest = (requestKey: string) => {
 
 // 请求拦截器
 http.interceptors.request.use(
-  (config: AxiosRequestConfig) => {
+  (requestConfig: AxiosRequestConfig) => {
+    // 动态设置 baseURL（支持运行时配置）
+    if (!requestConfig.baseURL) {
+      requestConfig.baseURL = config.api.baseURL
+    }
+    
     // 添加认证token
     const token = localStorage.getItem('api_proxy_token')
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (token && requestConfig.headers) {
+      requestConfig.headers.Authorization = `Bearer ${token}`
     }
 
     // 处理重复请求（可选，通过配置控制）
-    if (config.headers?.['X-Cancel-Duplicate'] !== 'false') {
-      const requestKey = cancelDuplicateRequest(config)
-      config.metadata = { requestKey }
+    if (requestConfig.headers?.['X-Cancel-Duplicate'] !== 'false') {
+      const requestKey = cancelDuplicateRequest(requestConfig)
+      requestConfig.metadata = { requestKey }
     }
     
     // 根据配置显示全局 loading
-    if (config.headers?.['X-Show-Loading'] === 'true') {
+    if (requestConfig.headers?.['X-Show-Loading'] === 'true') {
       // 从metadata中获取loadingText，避免在HTTP头中传递非ASCII字符
-      const loadingText = (config as any).loadingText || 'Loading...'
+      const loadingText = (requestConfig as any).loadingText || 'Loading...'
       const loadingId = loadingManager.showRequestLoading(loadingText)
-      config.metadata = { ...config.metadata, loadingId }
+      requestConfig.metadata = { ...requestConfig.metadata, loadingId }
     }
 
     // 添加请求ID（用于调试）
     if (import.meta.env.DEV) {
       const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      if (config.headers) {
-        config.headers['X-Request-ID'] = requestId
+      if (requestConfig.headers) {
+        requestConfig.headers['X-Request-ID'] = requestId
       }
-      console.log(`[HTTP Request] ${config.method?.toUpperCase()} ${config.url}`, {
+      console.log(`[HTTP Request] ${requestConfig.method?.toUpperCase()} ${requestConfig.url}`, {
         requestId,
-        config,
+        config: requestConfig,
       })
     }
 
-    return config
+    return requestConfig
   },
   (error: AxiosError) => {
     console.error('[HTTP Request Error]', error)
