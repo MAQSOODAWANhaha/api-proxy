@@ -62,6 +62,8 @@ pub struct ProxyContext {
     pub trace_enabled: bool,
     /// 选择的提供商名称
     pub selected_provider: Option<String>,
+    /// 连接超时时间(秒)
+    pub timeout_seconds: Option<i32>,
 }
 
 impl Default for ProxyContext {
@@ -76,6 +78,7 @@ impl Default for ProxyContext {
             tokens_used: 0,
             trace_enabled: false,
             selected_provider: None,
+            timeout_seconds: None,
         }
     }
 }
@@ -200,7 +203,7 @@ impl AIProxyHandler {
             "Rate limit check passed"
         );
 
-        // 步骤3: 获取提供商类型信息
+        // 步骤3: 获取提供商类型信息和配置
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
                 let _ = tracer.start_phase(&ctx.request_id, "provider_lookup").await;
@@ -210,6 +213,26 @@ impl AIProxyHandler {
         let provider_type = self.get_provider_type(user_service_api.provider_type_id).await?;
         ctx.provider_type = Some(provider_type.clone());
         ctx.selected_provider = Some(provider_type.name.clone());
+        
+        // 获取动态配置包括超时设置
+        if let Ok(Some(provider_config)) = self.provider_config_manager.get_provider_by_name(&provider_type.name).await {
+            ctx.timeout_seconds = provider_config.timeout_seconds;
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                timeout_seconds = ?ctx.timeout_seconds,
+                "Loaded dynamic timeout configuration"
+            );
+        } else {
+            // 使用provider_types表中的默认超时
+            ctx.timeout_seconds = provider_type.timeout_seconds;
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                timeout_seconds = ?ctx.timeout_seconds,
+                "Using provider_types default timeout configuration"
+            );
+        }
         
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
@@ -429,17 +452,22 @@ impl AIProxyHandler {
         // 创建基础peer
         let mut peer = HttpPeer::new(upstream_addr, true, provider_type.base_url.clone());
         
+        // 获取动态超时配置，默认30秒
+        let connection_timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let total_timeout_secs = connection_timeout_secs + 5; // 总超时比连接超时多5秒
+        let read_timeout_secs = connection_timeout_secs * 2; // 读取超时是连接超时的2倍
+        
         // 为Google API配置正确的选项
         if self.should_use_google_api_key_auth(provider_type) {
             if let Some(options) = peer.get_mut_peer_options() {
                 // 设置ALPN - 允许HTTP/2和HTTP/1.1协商，优先HTTP/2
                 options.alpn = ALPN::H2H1;
                 
-                // 设置连接超时
-                options.connection_timeout = Some(Duration::from_secs(10));
-                options.total_connection_timeout = Some(Duration::from_secs(15));
-                options.read_timeout = Some(Duration::from_secs(30));
-                options.write_timeout = Some(Duration::from_secs(30));
+                // 设置动态超时配置
+                options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
+                options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
+                options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
+                options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
                 
                 // 设置TLS验证
                 options.verify_cert = true;
@@ -452,7 +480,27 @@ impl AIProxyHandler {
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     provider = %provider_type.name,
-                    "Configured peer options for Google API with HTTP/2 support"
+                    connection_timeout_s = connection_timeout_secs,
+                    total_timeout_s = total_timeout_secs,
+                    read_timeout_s = read_timeout_secs,
+                    "Configured peer options for Google API with dynamic timeout"
+                );
+            }
+        } else {
+            // 为其他服务商也应用动态超时配置
+            if let Some(options) = peer.get_mut_peer_options() {
+                options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
+                options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
+                options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
+                options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
+                
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    connection_timeout_s = connection_timeout_secs,
+                    total_timeout_s = total_timeout_secs,
+                    read_timeout_s = read_timeout_secs,
+                    "Configured peer options with dynamic timeout"
                 );
             }
         }

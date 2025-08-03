@@ -920,9 +920,9 @@ curl -X POST http://localhost:8080/v1/messages \
 
 ```bash
 # Generate Content API
-curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
+curl -X POST http://localhost:8080/v1/models/gemini-2.5-flash:generateContent \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer demo-admin-gemini-key-123456789" \
+  -H "Authorization: Bearer sk-api-858762ff211246b1be90302b711d2188" \
   -d '{
     "contents": [{
       "parts": [{

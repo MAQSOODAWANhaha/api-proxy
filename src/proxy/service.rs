@@ -303,6 +303,7 @@ impl ProxyHttp for ProxyService {
                 selected_backend = ?ctx.selected_backend.as_ref().map(|b| format!("id={} key_preview={}", b.id,
                     if b.api_key.len() > 8 { format!("{}***{}", &b.api_key[..4], &b.api_key[b.api_key.len()-4..]) } else { "***".to_string() })),
                 provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
+                timeout_seconds = ?ctx.timeout_seconds,
                 "AI proxy request failed with detailed context"
             );
         } else {
