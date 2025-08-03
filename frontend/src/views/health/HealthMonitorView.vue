@@ -94,13 +94,14 @@
         </div>
 
         <!-- 健康状态表格 -->
-        <el-table
-          :data="healthList"
-          v-loading="loading"
-          stripe
-          border
-          style="width: 100%"
-        >
+        <div class="table-container">
+          <el-table
+            :data="healthList"
+            v-loading="loading"
+            stripe
+            border
+            style="width: 100%"
+          >
           <el-table-column prop="key_name" label="密钥名称" width="150" show-overflow-tooltip />
           
           <el-table-column prop="provider_name" label="服务商" width="120">
@@ -177,19 +178,20 @@
               </el-button>
             </template>
           </el-table-column>
-        </el-table>
+          </el-table>
 
-        <!-- 分页 -->
-        <div class="pagination-wrapper">
-          <el-pagination
-            v-model:current-page="pagination.page"
-            v-model:page-size="pagination.size"
-            :page-sizes="[20, 50, 100]"
-            :total="pagination.total"
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="handleSizeChange"
-            @current-change="handleCurrentChange"
-          />
+          <!-- 分页 -->
+          <div class="pagination-wrapper">
+            <el-pagination
+              v-model:current-page="pagination.page"
+              v-model:page-size="pagination.size"
+              :page-sizes="[20, 50, 100]"
+              :total="pagination.total"
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleSizeChange"
+              @current-change="handleCurrentChange"
+            />
+          </div>
         </div>
       </div>
     </el-card>
@@ -521,13 +523,112 @@ onMounted(async () => {
 
 /* 筛选器 */
 .health-filters {
-  margin-bottom: 20px;
-  padding: 16px;
-  background: #f8f9fa;
-  border-radius: 6px;
+  flex-shrink: 0;
+  margin-bottom: 16px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
 }
 
-/* 表格样式 */
+.health-filters .el-form {
+  margin-bottom: 0;
+}
+
+.health-filters .el-form-item {
+  margin-bottom: 0;
+  margin-right: 24px;
+}
+
+.health-filters .el-form-item:last-child {
+  margin-right: 0;
+}
+
+.health-filters .el-select {
+  width: 160px;
+}
+
+.health-filters .el-input {
+  width: 200px;
+}
+
+.health-filters .el-button {
+  margin-left: 8px;
+}
+
+.health-filters .el-button:first-child {
+  margin-left: 0;
+}
+
+/* 表格容器 */
+.table-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.table-container .el-table {
+  flex: 1;
+}
+
+.table-container .el-table .el-table__header-wrapper {
+  background: #fafafa;
+}
+
+.table-container .el-table th {
+  background: #fafafa !important;
+  color: #374151;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 12px 0;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.table-container .el-table td {
+  padding: 14px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.table-container .el-table .el-table__row:hover {
+  background: #f9fafb;
+}
+
+.table-container .el-table .el-table__row:hover td {
+  background: transparent;
+}
+
+/* 表格滚动优化 */
+.table-container .el-table__body-wrapper {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 3px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+.table-container .el-table__body-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* 表格内容样式 */
 .response-time-good {
   color: #67c23a;
   font-weight: 500;
@@ -554,9 +655,22 @@ onMounted(async () => {
 }
 
 .pagination-wrapper {
-  margin-top: 20px;
+  flex-shrink: 0;
+  padding: 16px 20px;
+  background: #fafafa;
+  border-top: 1px solid #e5e7eb;
   display: flex;
   justify-content: center;
+  align-items: center;
+}
+
+.pagination-wrapper .el-pagination {
+  margin: 0;
+}
+
+.pagination-wrapper .el-pagination .el-pagination__total {
+  color: #6b7280;
+  font-size: 13px;
 }
 
 /* 健康检查详情 */
@@ -583,13 +697,64 @@ onMounted(async () => {
     font-size: 24px;
   }
   
+  .health-filters {
+    padding: 16px;
+  }
+  
   .health-filters .el-form {
     flex-direction: column;
+    gap: 16px;
   }
   
   .health-filters .el-form-item {
-    margin-bottom: 16px;
+    margin-bottom: 0;
     margin-right: 0;
+    width: 100%;
+  }
+  
+  .health-filters .el-select,
+  .health-filters .el-input {
+    width: 100%;
+  }
+  
+  .pagination-wrapper {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  
+  .pagination-wrapper .el-pagination {
+    width: 100%;
+    text-align: center;
+  }
+  
+  .table-container .el-table .el-table__cell {
+    padding: 8px 4px;
+  }
+  
+  .header-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .header-actions .el-button {
+    width: 100%;
+  }
+}
+
+/* 中等屏幕优化 */
+@media (max-width: 1024px) {
+  .health-filters .el-form {
+    flex-wrap: wrap;
+  }
+  
+  .health-filters .el-form-item {
+    margin-right: 16px;
+    margin-bottom: 12px;
+  }
+  
+  .table-container .el-table .el-table__cell {
+    padding: 10px 6px;
   }
 }
 
@@ -605,5 +770,16 @@ onMounted(async () => {
 :deep(.el-progress__text) {
   font-size: 12px !important;
   color: white !important;
+}
+
+/* 保持与其他页面一致的Element Plus样式 */
+:deep(.table-container .el-table .cell) {
+  padding: 8px 12px;
+}
+
+:deep(.table-container .el-table .el-table__header .cell) {
+  padding: 12px 8px;
+  color: #374151;
+  font-weight: 600;
 }
 </style>
