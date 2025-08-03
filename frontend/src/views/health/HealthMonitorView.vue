@@ -132,12 +132,12 @@
             </template>
           </el-table-column>
           
-          <el-table-column prop="success_rate" label="成功率" width="100">
+          <el-table-column prop="success_rate" label="成功率" width="120">
             <template #default="{ row }">
               <el-progress
                 :percentage="row.success_rate"
                 :color="getSuccessRateColor(row.success_rate)"
-                :stroke-width="6"
+                :stroke-width="8"
                 text-inside
                 :format="() => `${row.success_rate}%`"
               />
@@ -732,6 +732,19 @@ onMounted(async () => {
     padding: 8px 4px;
   }
   
+  /* 移动端进度条优化 */
+  :deep(.table-container .el-progress) {
+    max-width: 80px;
+  }
+  
+  :deep(.table-container .el-progress .el-progress-bar__outer) {
+    height: 16px !important;
+  }
+  
+  :deep(.table-container .el-progress .el-progress__text) {
+    font-size: 10px !important;
+  }
+  
   .header-actions {
     flex-direction: column;
     gap: 8px;
@@ -756,6 +769,11 @@ onMounted(async () => {
   .table-container .el-table .el-table__cell {
     padding: 10px 6px;
   }
+  
+  /* 中等屏幕进度条优化 */
+  :deep(.table-container .el-progress) {
+    max-width: 90px;
+  }
 }
 
 /* Element Plus 样式覆盖 */
@@ -764,12 +782,33 @@ onMounted(async () => {
 }
 
 :deep(.el-progress-bar__inner) {
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 :deep(.el-progress__text) {
-  font-size: 12px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
   color: white !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+:deep(.el-progress-bar) {
+  padding-right: 0 !important;
+  margin-right: 0 !important;
+}
+
+:deep(.el-progress) {
+  line-height: 1;
+}
+
+:deep(.el-progress .el-progress-bar) {
+  padding-right: 0;
+  margin-right: 0;
+}
+
+:deep(.el-progress .el-progress__text) {
+  margin-left: 0 !important;
+  position: static !important;
 }
 
 /* 保持与其他页面一致的Element Plus样式 */
@@ -781,5 +820,41 @@ onMounted(async () => {
   padding: 12px 8px;
   color: #374151;
   font-weight: 600;
+}
+
+/* 成功率列的进度条优化 */
+:deep(.table-container .el-progress) {
+  width: 100%;
+  max-width: 100px;
+}
+
+:deep(.table-container .el-progress .el-progress-bar) {
+  padding-right: 0;
+  margin-right: 0;
+  flex: 1;
+}
+
+:deep(.table-container .el-progress .el-progress-bar__outer) {
+  height: 20px !important;
+  background-color: #f0f2f5;
+  border-radius: 4px;
+}
+
+:deep(.table-container .el-progress .el-progress-bar__inner) {
+  height: 100% !important;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+}
+
+:deep(.table-container .el-progress .el-progress__text) {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: white !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  margin: 0 !important;
+  line-height: 1 !important;
 }
 </style>
