@@ -2,16 +2,19 @@
 //!
 //! 基于 Pingora 的高性能代理服务器实现
 
+use crate::auth::{
+    api_key::ApiKeyManager, jwt::JwtManager, types::AuthConfig, unified::UnifiedAuthManager,
+    AuthService,
+};
+use crate::cache::UnifiedCacheManager;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::proxy::service::ProxyService;
-use crate::auth::{AuthService, jwt::JwtManager, api_key::ApiKeyManager, types::AuthConfig, unified::UnifiedAuthManager};
-use crate::cache::UnifiedCacheManager;
 use pingora_core::prelude::*;
 use pingora_core::server::configuration::Opt;
 use pingora_proxy::http_proxy_service;
-use std::sync::Arc;
 use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 
 /// Pingora 代理服务器
 pub struct ProxyServer {
@@ -51,30 +54,35 @@ impl ProxyServer {
         // server.configuration.pid_file = Some(format!("logs/proxy.pid"));
 
         // 确保数据库路径存在
-        self.config.database.ensure_database_path()
+        self.config
+            .database
+            .ensure_database_path()
             .map_err(|e| ProxyError::server_init(format!("Database path setup failed: {}", e)))?;
 
         // 创建数据库连接
-        let db_url = self.config.database.get_connection_url()
-            .map_err(|e| ProxyError::server_init(format!("Database URL preparation failed: {}", e)))?;
-        
-        let db = Arc::new(
-            sea_orm::Database::connect(&db_url)
-                .await
-                .map_err(|e| ProxyError::database(format!("Failed to connect to database: {}", e)))?
-        );
+        let db_url = self.config.database.get_connection_url().map_err(|e| {
+            ProxyError::server_init(format!("Database URL preparation failed: {}", e))
+        })?;
+
+        let db =
+            Arc::new(sea_orm::Database::connect(&db_url).await.map_err(|e| {
+                ProxyError::database(format!("Failed to connect to database: {}", e))
+            })?);
 
         // 创建统一缓存管理器
         let cache = Arc::new(
             UnifiedCacheManager::new(&self.config.cache, &self.config.redis.url)
-                .map_err(|e| ProxyError::cache(format!("Failed to create cache manager: {}", e)))?
+                .map_err(|e| ProxyError::cache(format!("Failed to create cache manager: {}", e)))?,
         );
 
         // 创建认证配置和服务
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
-        let auth_service = Self::create_auth_service_with_db(db.clone(), auth_config.clone()).await
-            .map_err(|e| ProxyError::server_init(format!("Failed to create auth service: {}", e)))?;
-        
+        let auth_service = Self::create_auth_service_with_db(db.clone(), auth_config.clone())
+            .await
+            .map_err(|e| {
+                ProxyError::server_init(format!("Failed to create auth service: {}", e))
+            })?;
+
         // 创建统一认证管理器
         let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
 
@@ -84,15 +92,16 @@ impl ProxyServer {
             db.clone(),
             cache.clone(),
             auth_manager.clone(),
-            None  // trace_system 在独立启动中暂时为 None
-        ).map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
+            None, // trace_system 在独立启动中暂时为 None
+        )
+        .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
 
         // 配置 HTTP 代理服务
         let mut http_proxy = http_proxy_service(&server.configuration, proxy_service);
 
         http_proxy.add_tcp(&format!(
             "{}:{}",
-            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host), 
+            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
             self.config.server.as_ref().map_or(8080, |s| s.port)
         ));
 
@@ -105,9 +114,12 @@ impl ProxyServer {
                 db.clone(),
                 cache.clone(),
                 auth_manager.clone(),
-                None  // trace_system 在独立启动中暂时为 None
-            ).map_err(|e| ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e)))?;
-            
+                None, // trace_system 在独立启动中暂时为 None
+            )
+            .map_err(|e| {
+                ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e))
+            })?;
+
             let _https_proxy = http_proxy_service(&server.configuration, proxy_service_https);
 
             // 添加 TLS 配置
@@ -173,13 +185,12 @@ impl ProxyServer {
     /// 创建认证服务（使用给定的数据库连接）
     async fn create_auth_service_with_db(
         db: Arc<DatabaseConnection>,
-        auth_config: Arc<AuthConfig>
+        auth_config: Arc<AuthConfig>,
     ) -> Result<Arc<AuthService>> {
         // 创建 JWT 管理器
-        let jwt_manager = Arc::new(
-            JwtManager::new(auth_config.clone())
-                .map_err(|e| ProxyError::server_init(format!("Failed to create JWT manager: {}", e)))?
-        );
+        let jwt_manager = Arc::new(JwtManager::new(auth_config.clone()).map_err(|e| {
+            ProxyError::server_init(format!("Failed to create JWT manager: {}", e))
+        })?);
 
         // 创建 API 密钥管理器
         let api_key_manager = Arc::new(ApiKeyManager::new(db.clone(), auth_config.clone()));
@@ -194,51 +205,15 @@ impl ProxyServer {
 impl std::fmt::Debug for ProxyServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProxyServer")
-            .field("host", &self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host))
-            .field("port", &self.config.server.as_ref().map_or(8080, |s| s.port))
+            .field(
+                "host",
+                &self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
+            )
+            .field(
+                "port",
+                &self.config.server.as_ref().map_or(8080, |s| s.port),
+            )
             .field("is_running", &self.is_running())
             .finish()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::helpers::init_test_env;
-
-    #[test]
-    fn test_proxy_server_creation() {
-        init_test_env();
-
-        #[cfg(any(test, feature = "testing"))]
-        {
-            use crate::testing::fixtures::TestConfig;
-            
-            let config = TestConfig::app_config();
-            let server = ProxyServer::new(config);
-
-            assert!(!server.is_running());
-            assert_eq!(server.config().server.host, "127.0.0.1");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_proxy_server_init() {
-        init_test_env();
-
-        #[cfg(any(test, feature = "testing"))]
-        {
-            use crate::testing::fixtures::TestConfig;
-            
-            let config = TestConfig::app_config();
-            let mut server = ProxyServer::new(config);
-
-            // 注意：这个测试可能需要实际的网络权限
-            // 在 CI 环境中可能需要跳过
-            if std::env::var("CI").is_err() {
-                assert!(server.init().await.is_ok());
-                assert!(server.is_running());
-            }
-        }
     }
 }

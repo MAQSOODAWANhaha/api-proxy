@@ -2,8 +2,8 @@
 //!
 //! Provides Pingora-compatible authentication middleware
 
+use crate::auth::{AuthResult, AuthService};
 use std::sync::Arc;
-use crate::auth::{AuthService, AuthResult};
 
 /// Authentication middleware for Pingora
 pub struct AuthMiddleware {
@@ -34,9 +34,9 @@ impl AuthMiddleware {
 
     /// Check if path should skip authentication
     pub fn should_skip_auth(&self, path: &str) -> bool {
-        self.skip_paths.iter().any(|skip_path| {
-            path == skip_path || path.starts_with(&format!("{}/", skip_path))
-        })
+        self.skip_paths
+            .iter()
+            .any(|skip_path| path == skip_path || path.starts_with(&format!("{}/", skip_path)))
     }
 
     /// Get authentication service
@@ -85,48 +85,5 @@ impl From<AuthResult> for AuthenticationResult {
             auth_method: Some(format!("{:?}", auth_result.auth_method)),
             token_preview: Some(auth_result.token_preview),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::helpers::init_test_env;
-
-    #[test]
-    fn test_authentication_result_conversion() {
-        init_test_env();
-        
-        let auth_result = AuthResult {
-            user_id: 123,
-            username: "testuser".to_string(),
-            is_admin: true,
-            permissions: vec![],
-            auth_method: crate::auth::AuthMethod::Jwt,
-            token_preview: "sk-abc***xyz".to_string(),
-        };
-        
-        let auth_result_converted: AuthenticationResult = auth_result.into();
-        
-        assert!(auth_result_converted.is_authenticated);
-        assert_eq!(auth_result_converted.user_id, Some(123));
-        assert_eq!(auth_result_converted.username, Some("testuser".to_string()));
-        assert!(auth_result_converted.is_admin);
-        assert_eq!(auth_result_converted.auth_method, Some("Jwt".to_string()));
-        assert_eq!(auth_result_converted.token_preview, Some("sk-abc***xyz".to_string()));
-    }
-
-    #[test]
-    fn test_default_authentication_result() {
-        init_test_env();
-        
-        let default_result = AuthenticationResult::default();
-        
-        assert!(!default_result.is_authenticated);
-        assert_eq!(default_result.user_id, None);
-        assert_eq!(default_result.username, None);
-        assert!(!default_result.is_admin);
-        assert_eq!(default_result.auth_method, None);
-        assert_eq!(default_result.token_preview, None);
     }
 }

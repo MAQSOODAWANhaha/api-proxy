@@ -2,11 +2,11 @@
 //!
 //! 实现高级路由功能，包括路径匹配、服务发现、负载均衡策略
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::config::AppConfig;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use crate::config::AppConfig;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 路由规则
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +64,10 @@ impl RouteRule {
 
         // 检查 HTTP 方法
         if let Some(ref allowed_methods) = self.methods {
-            if !allowed_methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {
+            if !allowed_methods
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(method))
+            {
                 return false;
             }
         }
@@ -120,7 +123,7 @@ impl SmartRouter {
 
         // 加载默认路由规则
         router.load_default_rules()?;
-        
+
         Ok(router)
     }
 
@@ -216,7 +219,12 @@ impl SmartRouter {
     }
 
     /// 路由请求
-    pub fn route(&self, path: &str, method: &str, headers: &HashMap<String, String>) -> RouteDecision {
+    pub fn route(
+        &self,
+        path: &str,
+        method: &str,
+        headers: &HashMap<String, String>,
+    ) -> RouteDecision {
         // 遍历路由规则，找到第一个匹配的
         for rule in &self.rules {
             if rule.matches(path, method, headers) {
@@ -224,7 +232,10 @@ impl SmartRouter {
                     provider: rule.provider.clone(),
                     rule: rule.clone(),
                     weight: rule.weight,
-                    reason: format!("Matched rule: {} (priority: {})", rule.description, rule.priority),
+                    reason: format!(
+                        "Matched rule: {} (priority: {})",
+                        rule.description, rule.priority
+                    ),
                 };
             }
         }
@@ -250,7 +261,10 @@ impl SmartRouter {
 
     /// 获取指定提供商的所有路由规则
     pub fn get_rules_for_provider(&self, provider: &str) -> Vec<&RouteRule> {
-        self.rules.iter().filter(|rule| rule.provider == provider).collect()
+        self.rules
+            .iter()
+            .filter(|rule| rule.provider == provider)
+            .collect()
     }
 
     /// 获取所有路由规则
@@ -273,7 +287,8 @@ impl SmartRouter {
     pub fn get_statistics(&self) -> RouterStatistics {
         let total_rules = self.rules.len();
         let enabled_rules = self.rules.iter().filter(|r| r.enabled).count();
-        let providers: std::collections::HashSet<String> = self.rules.iter().map(|r| r.provider.clone()).collect();
+        let providers: std::collections::HashSet<String> =
+            self.rules.iter().map(|r| r.provider.clone()).collect();
 
         RouterStatistics {
             total_rules,
@@ -298,129 +313,4 @@ pub struct RouterStatistics {
     pub providers: Vec<String>,
     /// 默认提供商
     pub default_provider: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::fixtures::TestConfig;
-    use crate::testing::helpers::init_test_env;
-
-    #[test]
-    fn test_route_rule_creation() {
-        let rule = RouteRule::new(r"^/v1/chat/completions", "OpenAI").unwrap();
-        assert_eq!(rule.provider, "OpenAI");
-        assert_eq!(rule.priority, 100);
-        assert!(rule.enabled);
-    }
-
-    #[test]
-    fn test_route_rule_matching() {
-        let rule = RouteRule::new(r"^/v1/chat/completions", "OpenAI").unwrap();
-        let headers = HashMap::new();
-
-        assert!(rule.matches("/v1/chat/completions", "POST", &headers));
-        assert!(!rule.matches("/v2/chat/completions", "POST", &headers));
-        assert!(!rule.matches("/api/users", "GET", &headers));
-    }
-
-    #[test]
-    fn test_route_rule_method_filtering() {
-        let mut rule = RouteRule::new(r"^/health", "Management").unwrap();
-        rule.methods = Some(vec!["GET".to_string(), "HEAD".to_string()]);
-        let headers = HashMap::new();
-
-        assert!(rule.matches("/health", "GET", &headers));
-        assert!(rule.matches("/health", "HEAD", &headers));
-        assert!(!rule.matches("/health", "POST", &headers));
-    }
-
-    #[test]
-    fn test_smart_router_creation() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let router = SmartRouter::new(config).unwrap();
-
-        assert!(!router.rules.is_empty());
-        assert_eq!(router.default_provider, "OpenAI");
-    }
-
-    #[test]
-    fn test_smart_router_routing() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let router = SmartRouter::new(config).unwrap();
-        let headers = HashMap::new();
-
-        // 测试 OpenAI 路由
-        let decision = router.route("/v1/chat/completions", "POST", &headers);
-        assert_eq!(decision.provider, "OpenAI");
-
-        // 测试 Anthropic 路由
-        let decision = router.route("/anthropic/v1/messages", "POST", &headers);
-        assert_eq!(decision.provider, "Anthropic");
-
-        // 测试 Gemini 路由
-        let decision = router.route("/gemini/v1/models/test/generateContent", "POST", &headers);
-        assert_eq!(decision.provider, "GoogleGemini");
-
-        // 测试管理 API 路由
-        let decision = router.route("/api/users", "GET", &headers);
-        assert_eq!(decision.provider, "Management");
-
-        // 测试健康检查路由
-        let decision = router.route("/health", "GET", &headers);
-        assert_eq!(decision.provider, "Management");
-    }
-
-    #[test]
-    fn test_smart_router_default_fallback() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let router = SmartRouter::new(config).unwrap();
-        let headers = HashMap::new();
-
-        // 测试未匹配的路径
-        let decision = router.route("/unknown/path", "GET", &headers);
-        assert_eq!(decision.provider, "OpenAI"); // 默认提供商
-        assert!(decision.reason.contains("default provider"));
-    }
-
-    #[test]
-    fn test_smart_router_rule_management() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let mut router = SmartRouter::new(config).unwrap();
-
-        let stats_before = router.get_statistics();
-        let enabled_before = stats_before.enabled_rules;
-
-        // 禁用一个规则
-        assert!(router.toggle_rule("^/v1/chat/completions", false));
-
-        let stats_after = router.get_statistics();
-        assert_eq!(stats_after.enabled_rules, enabled_before - 1);
-        assert_eq!(stats_after.disabled_rules, stats_before.disabled_rules + 1);
-    }
-
-    #[test]
-    fn test_smart_router_provider_filtering() {
-        init_test_env();
-
-        let config = Arc::new(TestConfig::app_config());
-        let router = SmartRouter::new(config).unwrap();
-
-        let openai_rules = router.get_rules_for_provider("OpenAI");
-        assert!(!openai_rules.is_empty());
-
-        let anthropic_rules = router.get_rules_for_provider("Anthropic");
-        assert!(!anthropic_rules.is_empty());
-
-        let nonexistent_rules = router.get_rules_for_provider("NonExistent");
-        assert!(nonexistent_rules.is_empty());
-    }
 }

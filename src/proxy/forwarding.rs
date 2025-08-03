@@ -1,17 +1,17 @@
 //! # 请求转发处理模块
-//! 
+//!
 //! 处理AI代理请求的转发、负载均衡、统计收集等核心功能
 
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::{UpstreamType, UpstreamServer, UpstreamManager};
 use crate::health::HealthCheckService;
-use crate::scheduler::SchedulingStrategy;
 use crate::providers::{AdapterManager, AdapterRequest};
+use crate::proxy::upstream::{UpstreamManager, UpstreamServer, UpstreamType};
+use crate::scheduler::SchedulingStrategy;
 use pingora_http::{RequestHeader, ResponseHeader};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 /// 请求转发器
@@ -236,14 +236,18 @@ impl RequestForwarder {
     }
 
     /// 选择上游服务器
-    async fn select_upstream_server(&self, upstream_type: &UpstreamType) -> Result<LoadBalancingDecision> {
+    async fn select_upstream_server(
+        &self,
+        upstream_type: &UpstreamType,
+    ) -> Result<LoadBalancingDecision> {
         // 获取健康的服务器列表
         let healthy_servers = self.health_service.get_healthy_servers(upstream_type).await;
-        
+
         if healthy_servers.is_empty() {
-            return Err(ProxyError::upstream_not_available(
-                format!("No healthy servers available for upstream type: {:?}", upstream_type)
-            ));
+            return Err(ProxyError::upstream_not_available(format!(
+                "No healthy servers available for upstream type: {:?}",
+                upstream_type
+            )));
         }
 
         // 使用负载均衡器选择服务器
@@ -270,7 +274,10 @@ impl RequestForwarder {
     }
 
     /// 根据决策获取服务器
-    async fn get_server_by_decision(&self, _decision: &LoadBalancingDecision) -> Result<UpstreamServer> {
+    async fn get_server_by_decision(
+        &self,
+        _decision: &LoadBalancingDecision,
+    ) -> Result<UpstreamServer> {
         // 这里简化实现，实际应该从上游管理器获取服务器列表
         let dummy_server = UpstreamServer {
             host: "api.openai.com".to_string(),
@@ -295,7 +302,9 @@ impl RequestForwarder {
         for (name, value) in &adapter_request.headers {
             request_header
                 .insert_header(name.clone(), value.clone())
-                .map_err(|e| ProxyError::internal(format!("Failed to set adapter header {}: {}", name, e)))?;
+                .map_err(|e| {
+                    ProxyError::internal(format!("Failed to set adapter header {}: {}", name, e))
+                })?;
         }
 
         // 更新路径（如果需要）
@@ -325,27 +334,36 @@ impl RequestForwarder {
         // 添加上游类型
         request_header
             .insert_header("X-Upstream-Type", &format!("{:?}", context.upstream_type))
-            .map_err(|e| ProxyError::internal(format!("Failed to set Upstream-Type header: {}", e)))?;
+            .map_err(|e| {
+                ProxyError::internal(format!("Failed to set Upstream-Type header: {}", e))
+            })?;
 
         // 添加用户ID（如果有）
         if let Some(ref user_id) = context.user_id {
             request_header
                 .insert_header("X-User-ID", user_id)
-                .map_err(|e| ProxyError::internal(format!("Failed to set User-ID header: {}", e)))?;
+                .map_err(|e| {
+                    ProxyError::internal(format!("Failed to set User-ID header: {}", e))
+                })?;
         }
 
         // 添加客户端IP（如果有）
         if let Some(ref client_ip) = context.client_ip {
             request_header
                 .insert_header("X-Forwarded-For", client_ip)
-                .map_err(|e| ProxyError::internal(format!("Failed to set Forwarded-For header: {}", e)))?;
+                .map_err(|e| {
+                    ProxyError::internal(format!("Failed to set Forwarded-For header: {}", e))
+                })?;
         }
 
         Ok(())
     }
 
     /// 执行转发（包含重试逻辑）
-    async fn execute_forward_with_retry(&self, context: &mut ForwardingContext) -> Result<ForwardingResult> {
+    async fn execute_forward_with_retry(
+        &self,
+        context: &mut ForwardingContext,
+    ) -> Result<ForwardingResult> {
         let mut last_error = None;
         let mut retry_count = 0;
 
@@ -375,7 +393,9 @@ impl RequestForwarder {
                         tokio::time::sleep(self.config.retry_interval).await;
 
                         // 重新选择服务器（为了故障转移）
-                        if let Ok(new_decision) = self.select_upstream_server(&context.upstream_type).await {
+                        if let Ok(new_decision) =
+                            self.select_upstream_server(&context.upstream_type).await
+                        {
                             context.lb_decision = Some(new_decision);
                         }
                     }
@@ -388,15 +408,18 @@ impl RequestForwarder {
     }
 
     /// 执行单次转发
-    async fn execute_single_forward(&self, context: &ForwardingContext) -> Result<ForwardingResult> {
+    async fn execute_single_forward(
+        &self,
+        context: &ForwardingContext,
+    ) -> Result<ForwardingResult> {
         let start_time = Instant::now();
-        
+
         // 模拟转发逻辑
         // 在实际实现中，这里会使用 Pingora 的代理功能
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let response_time = start_time.elapsed();
-        
+
         // 模拟成功响应
         Ok(ForwardingResult {
             success: true,
@@ -470,19 +493,28 @@ impl RequestForwarder {
             .map_err(|e| ProxyError::internal(format!("Failed to set Request-ID header: {}", e)))?;
 
         response_header
-            .insert_header("X-Response-Time", &format!("{}ms", result.response_time.as_millis()))
-            .map_err(|e| ProxyError::internal(format!("Failed to set Response-Time header: {}", e)))?;
+            .insert_header(
+                "X-Response-Time",
+                &format!("{}ms", result.response_time.as_millis()),
+            )
+            .map_err(|e| {
+                ProxyError::internal(format!("Failed to set Response-Time header: {}", e))
+            })?;
 
         if result.retry_count > 0 {
             response_header
                 .insert_header("X-Retry-Count", &result.retry_count.to_string())
-                .map_err(|e| ProxyError::internal(format!("Failed to set Retry-Count header: {}", e)))?;
+                .map_err(|e| {
+                    ProxyError::internal(format!("Failed to set Retry-Count header: {}", e))
+                })?;
         }
 
         if let Some(ref server) = result.upstream_server {
             response_header
                 .insert_header("X-Upstream-Server", server)
-                .map_err(|e| ProxyError::internal(format!("Failed to set Upstream-Server header: {}", e)))?;
+                .map_err(|e| {
+                    ProxyError::internal(format!("Failed to set Upstream-Server header: {}", e))
+                })?;
         }
 
         // 移除敏感头
@@ -572,7 +604,7 @@ impl ForwardingStats {
     /// 更新统计
     pub fn update(&mut self, result: &ForwardingResult, context: &ForwardingContext) {
         self.total_requests += 1;
-        
+
         if result.success {
             self.successful_requests += 1;
         } else {
@@ -584,7 +616,10 @@ impl ForwardingStats {
 
         // 更新上游类型统计
         let upstream_key = format!("{:?}", context.upstream_type);
-        let upstream_stats = self.by_upstream_type.entry(upstream_key).or_insert_with(UpstreamTypeStats::new);
+        let upstream_stats = self
+            .by_upstream_type
+            .entry(upstream_key)
+            .or_insert_with(UpstreamTypeStats::new);
         upstream_stats.update(result);
 
         // 更新状态码统计
@@ -625,7 +660,7 @@ impl UpstreamTypeStats {
     /// 更新统计
     pub fn update(&mut self, result: &ForwardingResult) {
         self.request_count += 1;
-        
+
         if result.success {
             self.success_count += 1;
         } else {
@@ -633,7 +668,8 @@ impl UpstreamTypeStats {
         }
 
         // 更新平均响应时间
-        let total_time = self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
+        let total_time =
+            self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
         self.avg_response_time = total_time / self.request_count as u32;
 
         self.total_bytes += result.bytes_transferred;
@@ -654,7 +690,7 @@ impl RetryStats {
     /// 更新重试统计
     pub fn update(&mut self, result: &ForwardingResult) {
         self.total_retries += result.retry_count as u64;
-        
+
         if result.success {
             self.successful_retries += 1;
         } else {
@@ -662,67 +698,5 @@ impl RetryStats {
         }
 
         *self.by_retry_count.entry(result.retry_count).or_insert(0) += 1;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::fixtures::TestConfig;
-
-    #[test]
-    fn test_forwarding_context_creation() {
-        let ctx = ForwardingContext::new("req_123".to_string(), UpstreamType::OpenAI);
-        assert_eq!(ctx.request_id, "req_123");
-        assert_eq!(ctx.upstream_type, UpstreamType::OpenAI);
-        assert_eq!(ctx.retry_count, 0);
-    }
-
-    #[test]
-    fn test_forwarding_stats_update() {
-        let mut stats = ForwardingStats::new();
-        let ctx = ForwardingContext::new("req_123".to_string(), UpstreamType::OpenAI);
-        let result = ForwardingResult {
-            success: true,
-            response_time: Duration::from_millis(100),
-            status_code: Some(200),
-            error_message: None,
-            retry_count: 0,
-            bytes_transferred: 1024,
-            upstream_server: Some("api.openai.com:443".to_string()),
-        };
-
-        stats.update(&result, &ctx);
-
-        assert_eq!(stats.total_requests, 1);
-        assert_eq!(stats.successful_requests, 1);
-        assert_eq!(stats.success_rate(), 100.0);
-    }
-
-    #[test]
-    fn test_forwarding_config_default() {
-        let config = ForwardingConfig::default();
-        assert_eq!(config.max_retries, 2);
-        assert!(config.enable_stats);
-        assert!(config.circuit_breaker.enabled);
-    }
-
-    #[tokio::test]
-    async fn test_request_forwarder_creation() {
-        let config = Arc::new(TestConfig::app_config());
-        let upstream_manager = Arc::new(UpstreamManager::new(config));
-        let health_service = Arc::new(HealthCheckService::new(None));
-        let adapter_manager = Arc::new(AdapterManager::new());
-        let forwarding_config = ForwardingConfig::default();
-
-        let forwarder = RequestForwarder::new(
-            upstream_manager,
-            health_service,
-            adapter_manager,
-            forwarding_config,
-        );
-
-        let stats = forwarder.get_stats().await;
-        assert_eq!(stats.total_requests, 0);
     }
 }

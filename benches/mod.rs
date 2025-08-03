@@ -4,15 +4,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-mod cache_benchmarks;
-mod database_benchmarks;
-
 pub use cache_benchmarks::*;
 pub use database_benchmarks::*;
 
-criterion_group!(
-    benches,
-    cache_benchmark,
-    database_benchmark
-);
+criterion_group!(benches, cache_benchmark, database_benchmark);
 criterion_main!(benches);
