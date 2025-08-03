@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::auth::unified::UnifiedAuthManager;
 use crate::cache::UnifiedCacheManager;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager};
 use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
 use crate::trace::{unified::UnifiedProxyTracer, UnifiedTraceSystem};
 use sea_orm::DatabaseConnection;
@@ -35,6 +35,7 @@ impl ProxyService {
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
         auth_manager: Arc<UnifiedAuthManager>,
+        provider_config_manager: Arc<ProviderConfigManager>,
         trace_system: Option<Arc<UnifiedTraceSystem>>,
     ) -> pingora_core::Result<Self> {
         // 创建调度器注册表
@@ -54,6 +55,7 @@ impl ProxyService {
             auth_manager,
             schedulers,
             tracer.clone(),
+            provider_config_manager,
         ));
 
         // 保留trace_system引用获取的tracer

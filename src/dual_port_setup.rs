@@ -1,6 +1,6 @@
 /// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
 use crate::{
-    config::{AppConfig, ConfigManager},
+    config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
     auth::{service::AuthService, UnifiedAuthManager, create_unified_auth_manager},
     health::service::HealthCheckService,
@@ -24,6 +24,7 @@ pub struct SharedServices {
     pub adapter_manager: Arc<AdapterManager>,
     pub load_balancer_manager: Arc<LoadBalancerManager>,
     pub statistics_service: Arc<StatisticsService>,
+    pub provider_config_manager: Arc<ProviderConfigManager>,
     pub trace_system: Option<Arc<UnifiedTraceSystem>>,
 }
 
@@ -186,33 +187,68 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
         AuthService::new(jwt_manager.clone(), api_key_manager.clone(), db.clone(), auth_config.clone())
     );
     
+    // 初始化统一缓存管理器
+    let unified_cache_manager = Arc::new(
+        crate::cache::abstract_cache::UnifiedCacheManager::new(&config_arc.cache, &config_arc.redis.url)
+            .map_err(|e| crate::error::ProxyError::server_init(format!("Cache manager init failed: {}", e)))?
+    );
+    
+    // 初始化服务商配置管理器
+    info!("🔧 Initializing provider configuration manager...");
+    let provider_config_manager = Arc::new(
+        ProviderConfigManager::new(db.clone(), unified_cache_manager.clone())
+    );
+
     let health_service = Arc::new(
         HealthCheckService::new(None)
     );
     
-    // 添加一些模拟服务器到健康检查服务
-    if let Err(e) = health_service.add_server(
-        "api.openai.com:443".to_string(),
-        crate::proxy::upstream::UpstreamType::OpenAI,
-        None
-    ).await {
-        warn!("Failed to add OpenAI server to health check: {}", e);
-    }
-    
-    if let Err(e) = health_service.add_server(
-        "generativelanguage.googleapis.com:443".to_string(),
-        crate::proxy::upstream::UpstreamType::GoogleGemini,
-        None
-    ).await {
-        warn!("Failed to add Gemini server to health check: {}", e);
-    }
-    
-    if let Err(e) = health_service.add_server(
-        "api.anthropic.com:443".to_string(),
-        crate::proxy::upstream::UpstreamType::Anthropic,
-        None
-    ).await {
-        warn!("Failed to add Anthropic server to health check: {}", e);
+    // 使用动态配置添加服务器到健康检查服务
+    info!("🏥 Adding dynamic provider servers to health check service...");
+    match provider_config_manager.get_active_providers().await {
+        Ok(providers) => {
+            for provider in providers {
+                let upstream_type = match provider.name.to_lowercase().as_str() {
+                    "openai" => crate::proxy::upstream::UpstreamType::OpenAI,
+                    "anthropic" | "claude" => crate::proxy::upstream::UpstreamType::Anthropic,
+                    "gemini" | "google" => crate::proxy::upstream::UpstreamType::GoogleGemini,
+                    _ => crate::proxy::upstream::UpstreamType::Custom(provider.name.clone()),
+                };
+                
+                if let Err(e) = health_service.add_server(
+                    provider.upstream_address.clone(),
+                    upstream_type,
+                    None
+                ).await {
+                    warn!("Failed to add {} server ({}) to health check: {}", 
+                          provider.display_name, provider.upstream_address, e);
+                } else {
+                    info!("✅ Added {} server ({}) to health check", 
+                          provider.display_name, provider.upstream_address);
+                }
+            }
+        }
+        Err(e) => {
+            error!("❌ Failed to load provider configurations for health check: {}", e);
+            warn!("🔄 Falling back to default hardcoded addresses for health check");
+            
+            // Fallback to hardcoded addresses
+            let fallback_servers = [
+                ("api.openai.com:443", crate::proxy::upstream::UpstreamType::OpenAI, "OpenAI"),
+                ("generativelanguage.googleapis.com:443", crate::proxy::upstream::UpstreamType::GoogleGemini, "Google Gemini"),
+                ("api.anthropic.com:443", crate::proxy::upstream::UpstreamType::Anthropic, "Anthropic Claude"),
+            ];
+            
+            for (address, upstream_type, name) in fallback_servers {
+                if let Err(e) = health_service.add_server(
+                    address.to_string(),
+                    upstream_type,
+                    None
+                ).await {
+                    warn!("Failed to add fallback {} server to health check: {}", name, e);
+                }
+            }
+        }
     }
     
     // 启动健康检查服务
@@ -227,12 +263,6 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     let load_balancer_manager = Arc::new(
         LoadBalancerManager::new(config_arc.clone())
             .map_err(|e| crate::error::ProxyError::server_init(format!("Load balancer init failed: {}", e)))?
-    );
-    
-    // 初始化统一缓存管理器
-    let unified_cache_manager = Arc::new(
-        crate::cache::abstract_cache::UnifiedCacheManager::new(&config_arc.cache, &config_arc.redis.url)
-            .map_err(|e| crate::error::ProxyError::server_init(format!("Cache manager init failed: {}", e)))?
     );
     
     // 创建统一认证管理器
@@ -281,6 +311,7 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
         adapter_manager,
         load_balancer_manager,
         statistics_service,
+        provider_config_manager,
         trace_system,
     };
 

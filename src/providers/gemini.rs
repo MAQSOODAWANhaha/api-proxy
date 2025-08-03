@@ -3,13 +3,12 @@
 //! 实现对 Google Gemini API 的适配，包括请求转换、响应处理和流式传输
 
 use crate::providers::{
-    types::{
-        AdapterRequest, AdapterResponse, ProviderError, ProviderResult, StreamChunk,
-        ChatMessage, ChatChoice, ChatCompletionResponse, ChatCompletionRequest,
-        Usage, MessageRole,
-    },
-    traits::ProviderAdapter,
     models::GeminiModel,
+    traits::ProviderAdapter,
+    types::{
+        AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
+        ChatMessage, MessageRole, ProviderError, ProviderResult, StreamChunk, Usage,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -206,8 +205,10 @@ pub struct GeminiPromptFeedback {
 impl Default for GeminiConfig {
     fn default() -> Self {
         Self {
-            base_url: "https://generativelanguage.googleapis.com".to_string(),
-            api_version: "v1beta".to_string(),
+            base_url: std::env::var("GEMINI_BASE_URL")
+                .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string()),
+            api_version: std::env::var("GEMINI_API_VERSION")
+                .unwrap_or_else(|_| "v1beta".to_string()),
             supported_models: GeminiModel::all(),
             default_model: GeminiModel::default(),
             timeout_seconds: 30,
@@ -220,10 +221,10 @@ impl GeminiAdapter {
     /// 创建新的 Gemini 适配器
     pub fn new() -> Self {
         let config = GeminiConfig::default();
-        
+
         // 配置支持的端点
         let mut supported_endpoints = HashMap::new();
-        
+
         // Chat Completions API
         supported_endpoints.insert(
             "/v1/chat/completions".to_string(),
@@ -266,7 +267,10 @@ impl GeminiAdapter {
     }
 
     /// 转换 OpenAI 聊天请求为 Gemini 格式
-    fn transform_openai_to_gemini_chat(&self, request: &ChatCompletionRequest) -> ProviderResult<GeminiChatRequest> {
+    fn transform_openai_to_gemini_chat(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> ProviderResult<GeminiChatRequest> {
         // 转换消息
         let contents = self.convert_messages_to_gemini(&request.messages)?;
 
@@ -298,7 +302,10 @@ impl GeminiAdapter {
     }
 
     /// 转换消息格式
-    fn convert_messages_to_gemini(&self, messages: &[ChatMessage]) -> ProviderResult<Vec<GeminiContent>> {
+    fn convert_messages_to_gemini(
+        &self,
+        messages: &[ChatMessage],
+    ) -> ProviderResult<Vec<GeminiContent>> {
         let mut contents = Vec::new();
 
         for message in messages {
@@ -309,7 +316,7 @@ impl GeminiAdapter {
                     // Gemini 不直接支持 system 消息，将其转换为用户消息
                     warn!("Converting system message to user message for Gemini compatibility");
                     "user"
-                },
+                }
                 MessageRole::Tool => {
                     // 工具消息处理
                     "function"
@@ -330,7 +337,11 @@ impl GeminiAdapter {
     }
 
     /// 转换 Gemini 响应为 OpenAI 格式
-    fn transform_gemini_to_openai_chat(&self, gemini_response: &GeminiChatResponse, request_model: &str) -> ProviderResult<ChatCompletionResponse> {
+    fn transform_gemini_to_openai_chat(
+        &self,
+        gemini_response: &GeminiChatResponse,
+        request_model: &str,
+    ) -> ProviderResult<ChatCompletionResponse> {
         if gemini_response.candidates.is_empty() {
             return Err(ProviderError::ApiError {
                 status_code: 500,
@@ -346,7 +357,9 @@ impl GeminiAdapter {
             }
 
             // 提取文本内容
-            let content = candidate.content.parts
+            let content = candidate
+                .content
+                .parts
                 .iter()
                 .map(|part| part.text.clone())
                 .collect::<Vec<_>>()
@@ -368,13 +381,14 @@ impl GeminiAdapter {
         }
 
         // 转换使用统计
-        let usage = gemini_response.usage_metadata.as_ref().map(|usage_meta| {
-            Usage {
+        let usage = gemini_response
+            .usage_metadata
+            .as_ref()
+            .map(|usage_meta| Usage {
                 prompt_tokens: usage_meta.prompt_token_count.unwrap_or(0),
                 completion_tokens: usage_meta.candidates_token_count.unwrap_or(0),
                 total_tokens: usage_meta.total_token_count.unwrap_or(0),
-            }
-        });
+            });
 
         Ok(ChatCompletionResponse {
             id: format!("chatcmpl-{}", fastrand::u64(..)),
@@ -400,8 +414,9 @@ impl GeminiAdapter {
         }
 
         // 解析 JSON 响应
-        let response: GeminiChatResponse = serde_json::from_str(chunk_str)
-            .map_err(|e| ProviderError::SerializationError(format!("Failed to parse Gemini response: {}", e)))?;
+        let response: GeminiChatResponse = serde_json::from_str(chunk_str).map_err(|e| {
+            ProviderError::SerializationError(format!("Failed to parse Gemini response: {}", e))
+        })?;
 
         // 转换为 OpenAI 格式
         if !response.candidates.is_empty() {
@@ -426,7 +441,7 @@ impl GeminiAdapter {
                 });
 
                 return Ok(Some(StreamChunk::data(
-                    format!("data: {}\n\n", chunk_data).into_bytes()
+                    format!("data: {}\n\n", chunk_data).into_bytes(),
                 )));
             }
         }
@@ -447,10 +462,9 @@ impl GeminiAdapter {
             &self.config.default_model.to_string()
         };
 
-        format!("{}/{}/models/{}:generateContent", 
-            self.config.base_url, 
-            self.config.api_version, 
-            model_name
+        format!(
+            "{}/{}/models/{}:generateContent",
+            self.config.base_url, self.config.api_version, model_name
         )
     }
 
@@ -496,15 +510,18 @@ impl ProviderAdapter for GeminiAdapter {
             "/v1/chat/completions" => {
                 // 解析 OpenAI 格式请求
                 let openai_request: ChatCompletionRequest = if let Some(ref body) = request.body {
-                    serde_json::from_value(body.clone())
-                        .map_err(|e| ProviderError::InvalidRequest(format!("Invalid request body: {}", e)))?
+                    serde_json::from_value(body.clone()).map_err(|e| {
+                        ProviderError::InvalidRequest(format!("Invalid request body: {}", e))
+                    })?
                 } else {
-                    return Err(ProviderError::InvalidRequest("Missing request body".to_string()));
+                    return Err(ProviderError::InvalidRequest(
+                        "Missing request body".to_string(),
+                    ));
                 };
 
                 // 转换为 Gemini 格式
                 let gemini_request = self.transform_openai_to_gemini_chat(&openai_request)?;
-                
+
                 // 获取目标路径
                 let model = &openai_request.model;
                 let target_path = self.get_model_path(model);
@@ -512,26 +529,48 @@ impl ProviderAdapter for GeminiAdapter {
                 // 构建新的请求
                 let mut transformed_request = request.clone();
                 transformed_request.path = target_path;
-                transformed_request.body = Some(serde_json::to_value(gemini_request)
-                    .map_err(|e| ProviderError::SerializationError(format!("Failed to serialize request: {}", e)))?);
+                transformed_request.body =
+                    Some(serde_json::to_value(gemini_request).map_err(|e| {
+                        ProviderError::SerializationError(format!(
+                            "Failed to serialize request: {}",
+                            e
+                        ))
+                    })?);
 
-                // 更新头部
+                // 更新头部 - Gemini 使用 X-goog-api-key 而不是 Authorization Bearer
                 transformed_request.headers.remove("authorization");
-                if let Some(api_key) = transformed_request.headers.get("x-api-key") {
-                    transformed_request.headers.insert("authorization".to_string(), format!("Bearer {}", api_key));
+
+                // 处理API密钥认证：优先使用x-goog-api-key，否则从x-api-key转换
+                if transformed_request.headers.get("x-goog-api-key").is_none() {
+                    if let Some(api_key) = transformed_request.headers.get("x-api-key") {
+                        transformed_request
+                            .headers
+                            .insert("x-goog-api-key".to_string(), api_key.clone());
+                        transformed_request.headers.remove("x-api-key"); // 移除原始的 x-api-key 头部
+                    }
                 }
 
                 Ok(transformed_request)
-            },
+            }
             _ => {
                 warn!("Unsupported endpoint: {}", request.path);
-                Err(ProviderError::UnsupportedOperation(format!("Endpoint not supported: {}", request.path)))
+                Err(ProviderError::UnsupportedOperation(format!(
+                    "Endpoint not supported: {}",
+                    request.path
+                )))
             }
         }
     }
 
-    fn transform_response(&self, response: &AdapterResponse, original_request: &AdapterRequest) -> ProviderResult<AdapterResponse> {
-        debug!("Transforming response for endpoint: {}", original_request.path);
+    fn transform_response(
+        &self,
+        response: &AdapterResponse,
+        original_request: &AdapterRequest,
+    ) -> ProviderResult<AdapterResponse> {
+        debug!(
+            "Transforming response for endpoint: {}",
+            original_request.path
+        );
 
         if !response.is_success() {
             return Ok(response.clone());
@@ -540,12 +579,19 @@ impl ProviderAdapter for GeminiAdapter {
         match original_request.path.as_str() {
             "/v1/chat/completions" => {
                 // 解析 Gemini 响应
-                let gemini_response: GeminiChatResponse = serde_json::from_value(response.body.clone())
-                    .map_err(|e| ProviderError::SerializationError(format!("Failed to parse Gemini response: {}", e)))?;
+                let gemini_response: GeminiChatResponse =
+                    serde_json::from_value(response.body.clone()).map_err(|e| {
+                        ProviderError::SerializationError(format!(
+                            "Failed to parse Gemini response: {}",
+                            e
+                        ))
+                    })?;
 
                 // 提取原始请求中的模型名称
                 let model = if let Some(ref body) = original_request.body {
-                    if let Ok(openai_req) = serde_json::from_value::<ChatCompletionRequest>(body.clone()) {
+                    if let Ok(openai_req) =
+                        serde_json::from_value::<ChatCompletionRequest>(body.clone())
+                    {
                         openai_req.model
                     } else {
                         self.config.default_model.to_string()
@@ -555,39 +601,55 @@ impl ProviderAdapter for GeminiAdapter {
                 };
 
                 // 转换为 OpenAI 格式
-                let openai_response = self.transform_gemini_to_openai_chat(&gemini_response, &model)?;
-                
-                let response_body = serde_json::to_value(&openai_response)
-                    .map_err(|e| ProviderError::SerializationError(format!("Failed to serialize response: {}", e)))?;
+                let openai_response =
+                    self.transform_gemini_to_openai_chat(&gemini_response, &model)?;
+
+                let response_body = serde_json::to_value(&openai_response).map_err(|e| {
+                    ProviderError::SerializationError(format!(
+                        "Failed to serialize response: {}",
+                        e
+                    ))
+                })?;
 
                 let mut transformed_response = response.clone();
                 transformed_response.body = response_body;
-                
+
                 Ok(transformed_response)
-            },
+            }
             _ => {
-                warn!("Unsupported endpoint for response transformation: {}", original_request.path);
+                warn!(
+                    "Unsupported endpoint for response transformation: {}",
+                    original_request.path
+                );
                 Ok(response.clone())
             }
         }
     }
 
-    fn handle_streaming_chunk(&self, chunk: &[u8], _request: &AdapterRequest) -> ProviderResult<Option<StreamChunk>> {
+    fn handle_streaming_chunk(
+        &self,
+        chunk: &[u8],
+        _request: &AdapterRequest,
+    ) -> ProviderResult<Option<StreamChunk>> {
         self.parse_streaming_chunk(chunk)
     }
 
     fn validate_request(&self, request: &AdapterRequest) -> ProviderResult<()> {
         // 验证端点支持
         if !self.supports_endpoint(&request.path) {
-            return Err(ProviderError::UnsupportedOperation(
-                format!("Endpoint {} not supported by Gemini adapter", request.path)
-            ));
+            return Err(ProviderError::UnsupportedOperation(format!(
+                "Endpoint {} not supported by Gemini adapter",
+                request.path
+            )));
         }
 
-        // 验证API密钥
-        if request.get_header("x-api-key").is_none() && request.get_authorization().is_none() {
+        // 验证API密钥 - Gemini 可以接受 x-api-key 或 x-goog-api-key
+        if request.get_header("x-api-key").is_none()
+            && request.get_header("x-goog-api-key").is_none()
+            && request.get_authorization().is_none()
+        {
             return Err(ProviderError::AuthenticationFailed(
-                "Missing API key for Gemini".to_string()
+                "Missing API key for Gemini (expected x-api-key, x-goog-api-key, or authorization header)".to_string()
             ));
         }
 
@@ -596,10 +658,10 @@ impl ProviderAdapter for GeminiAdapter {
             "/v1/chat/completions" => {
                 if request.body.is_none() {
                     return Err(ProviderError::InvalidRequest(
-                        "Missing request body for chat completions".to_string()
+                        "Missing request body for chat completions".to_string(),
                     ));
                 }
-            },
+            }
             _ => {}
         }
 
@@ -645,9 +707,7 @@ mod tests {
         let adapter = GeminiAdapter::new();
         let request = ChatCompletionRequest {
             model: "gemini-1.5-pro".to_string(),
-            messages: vec![
-                ChatMessage::user("Hello world"),
-            ],
+            messages: vec![ChatMessage::user("Hello world")],
             parameters: ModelParameters {
                 temperature: Some(0.7),
                 max_tokens: Some(100),
@@ -665,8 +725,14 @@ mod tests {
     #[test]
     fn test_gemini_config_default() {
         let config = GeminiConfig::default();
-        assert_eq!(config.base_url, "https://generativelanguage.googleapis.com");
-        assert_eq!(config.api_version, "v1beta");
+        // 使用动态配置，优先从环境变量获取，否则使用默认值
+        let expected_base_url = std::env::var("GEMINI_BASE_URL")
+            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
+        let expected_api_version =
+            std::env::var("GEMINI_API_VERSION").unwrap_or_else(|_| "v1beta".to_string());
+
+        assert_eq!(config.base_url, expected_base_url);
+        assert_eq!(config.api_version, expected_api_version);
         assert!(!config.supported_models.is_empty());
     }
 

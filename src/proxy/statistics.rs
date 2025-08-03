@@ -730,7 +730,7 @@ mod tests {
             error_message: None,
             retry_count: 0,
             bytes_transferred: 1024,
-            upstream_server: Some("api.openai.com:443".to_string()),
+            upstream_server: Some("test-upstream-server:443".to_string()),
         };
 
         assert!(collector.record_request_completion(&context, &result).await.is_ok());

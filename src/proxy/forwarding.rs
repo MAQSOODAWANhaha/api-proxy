@@ -273,23 +273,27 @@ impl RequestForwarder {
         })
     }
 
-    /// 根据决策获取服务器
+    /// 根据决策获取服务器（使用上游管理器动态获取）
     async fn get_server_by_decision(
         &self,
-        _decision: &LoadBalancingDecision,
+        decision: &LoadBalancingDecision,
     ) -> Result<UpstreamServer> {
-        // 这里简化实现，实际应该从上游管理器获取服务器列表
-        let dummy_server = UpstreamServer {
-            host: "api.openai.com".to_string(),
-            port: 443,
-            use_tls: true,
-            weight: 100,
-            max_connections: Some(1000),
-            timeout_ms: 30000,
-            health_check_interval: 30000,
-            is_healthy: true,
-        };
-        Ok(dummy_server)
+        // 从上游管理器获取服务器列表
+        let all_servers = self.upstream_manager.get_all_upstreams();
+        
+        // 查找对应的服务器
+        for (upstream_type, servers) in all_servers {
+            if decision.server_index < servers.len() {
+                let (server, _metrics) = &servers[decision.server_index];
+                return Ok(server.clone());
+            }
+        }
+        
+        // 如果找不到，返回错误
+        Err(ProxyError::upstream_not_found(format!(
+            "Server not found for decision: server_index={}, reason={}",
+            decision.server_index, decision.reason
+        )))
     }
 
     /// 应用适配器修改

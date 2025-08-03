@@ -13,7 +13,7 @@ use pingora_proxy::Session;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::auth::unified::UnifiedAuthManager;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
 use crate::cache::UnifiedCacheManager;
 use crate::trace::unified::UnifiedProxyTracer;
@@ -37,6 +37,8 @@ pub struct AIProxyHandler {
     schedulers: Arc<SchedulerRegistry>,
     /// 统一追踪器
     tracer: Option<Arc<UnifiedProxyTracer>>,
+    /// 服务商配置管理器
+    provider_config_manager: Arc<ProviderConfigManager>,
 }
 
 /// 请求上下文
@@ -98,6 +100,7 @@ impl AIProxyHandler {
         auth_manager: Arc<UnifiedAuthManager>,
         schedulers: Arc<SchedulerRegistry>,
         tracer: Option<Arc<UnifiedProxyTracer>>,
+        provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
         Self {
             db,
@@ -106,6 +109,7 @@ impl AIProxyHandler {
             auth_manager,
             schedulers,
             tracer,
+            provider_config_manager,
         }
     }
 
@@ -630,29 +634,47 @@ impl AIProxyHandler {
         0
     }
 
-    /// 判断提供商是否使用 X-goog-api-key 认证方式
+    /// 判断提供商是否使用 X-goog-api-key 认证方式（使用动态配置）
     fn should_use_google_api_key_auth(&self, provider_type: &provider_types::Model) -> bool {
-        // 检查提供商名称
-        let provider_name = provider_type.name.to_lowercase();
-        if provider_name.contains("gemini") || provider_name.contains("google") {
-            return true;
-        }
+        // 创建ProviderConfig以供ProviderConfigManager使用
+        let provider_config = crate::config::ProviderConfig {
+            id: provider_type.id,
+            name: provider_type.name.clone(),
+            display_name: provider_type.display_name.clone(),
+            base_url: provider_type.base_url.clone(),
+            https_url: if provider_type.base_url.starts_with("http") {
+                provider_type.base_url.clone()
+            } else {
+                format!("https://{}", provider_type.base_url)
+            },
+            upstream_address: if provider_type.base_url.contains(':') {
+                provider_type.base_url.clone()
+            } else {
+                format!("{}:443", provider_type.base_url)
+            },
+            api_format: provider_type.api_format.clone(),
+            default_model: provider_type.default_model.clone(),
+            max_tokens: provider_type.max_tokens,
+            rate_limit: provider_type.rate_limit,
+            timeout_seconds: provider_type.timeout_seconds,
+            health_check_path: provider_type.health_check_path.clone().unwrap_or_else(|| "/models".to_string()),
+            auth_header_format: provider_type.auth_header_format.clone().unwrap_or_else(|| "Bearer {key}".to_string()),
+            is_active: provider_type.is_active,
+            config_json: provider_type.config_json.as_ref().and_then(|s| serde_json::from_str(s).ok()),
+        };
         
-        // 检查认证头格式配置
-        if let Some(auth_format) = &provider_type.auth_header_format {
-            let auth_format_lower = auth_format.to_lowercase();
-            if auth_format_lower.contains("x-goog-api-key") {
-                return true;
-            }
-        }
+        // 使用ProviderConfigManager的动态判断逻辑
+        let uses_google_auth = self.provider_config_manager.uses_google_api_key_auth(&provider_config);
         
-        // 检查基础 URL
-        if provider_type.base_url.contains("googleapis.com") || 
-           provider_type.base_url.contains("generativelanguage.googleapis.com") {
-            return true;
-        }
+        tracing::debug!(
+            provider_name = %provider_type.name,
+            base_url = %provider_type.base_url,
+            auth_format = ?provider_type.auth_header_format,
+            uses_google_auth = uses_google_auth,
+            "Dynamic Google API key authentication check completed"
+        );
         
-        false
+        uses_google_auth
     }
 
 

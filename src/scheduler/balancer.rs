@@ -130,6 +130,34 @@ impl LoadBalancer {
         Ok(())
     }
 
+    /// 移除指定上游类型的所有服务器
+    pub fn remove_all_servers(&self, upstream_type: &UpstreamType) {
+        {
+            let mut servers = self.servers.write().unwrap();
+            if let Some(server_list) = servers.remove(upstream_type) {
+                tracing::info!("Removed {} servers for upstream type: {:?}", server_list.len(), upstream_type);
+            }
+        }
+
+        // 清理相关的指标数据
+        {
+            let mut metrics = self.metrics.write().unwrap();
+            let mut success_counts = self.success_counts.write().unwrap();
+            let mut failure_counts = self.failure_counts.write().unwrap();
+
+            let keys_to_remove: Vec<String> = metrics.keys()
+                .filter(|key| key.starts_with(&format!("{:?}:", upstream_type)))
+                .cloned()
+                .collect();
+
+            for key in keys_to_remove {
+                metrics.remove(&key);
+                success_counts.remove(&key);
+                failure_counts.remove(&key);
+            }
+        }
+    }
+
     /// 选择服务器
     pub fn select_server(&self, upstream_type: &UpstreamType) -> Result<(UpstreamServer, SchedulingResult)> {
         let servers = {

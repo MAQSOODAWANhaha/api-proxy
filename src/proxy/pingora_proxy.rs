@@ -8,7 +8,7 @@ use crate::auth::{
     AuthService,
 };
 use crate::cache::UnifiedCacheManager;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::tls::manager::TlsCertificateManager;
 use log::info;
@@ -128,6 +128,10 @@ impl PingoraProxyServer {
         info!("Creating unified auth manager...");
         let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
 
+        // 创建服务商配置管理器
+        info!("Creating provider config manager...");
+        let provider_config_manager = Arc::new(ProviderConfigManager::new(db.clone(), cache.clone()));
+
         // 创建 AI 代理服务
         info!("Creating AI proxy service...");
         let ai_proxy = ProxyService::new(
@@ -135,6 +139,7 @@ impl PingoraProxyServer {
             db.clone(),
             cache.clone(),
             auth_manager.clone(),
+            provider_config_manager,
             None, // trace_system 暂时为 None，在这个独立启动中不使用追踪
         )
         .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
@@ -247,6 +252,10 @@ impl PingoraProxyServer {
             info!("Creating unified auth manager...");
             let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
 
+            // 创建服务商配置管理器
+            info!("Creating provider config manager...");
+            let provider_config_manager = Arc::new(ProviderConfigManager::new(db.clone(), cache.clone()));
+
             // 创建 AI 代理服务
             info!("Creating AI proxy service...");
             let ai_proxy = ProxyService::new(
@@ -254,6 +263,7 @@ impl PingoraProxyServer {
                 db.clone(),
                 cache.clone(),
                 auth_manager.clone(),
+                provider_config_manager,
                 None, // trace_system 暂时为 None，在这个独立启动中不使用追踪
             )
             .map_err(|e| {

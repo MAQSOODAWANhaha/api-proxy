@@ -2,7 +2,7 @@
 //!
 //! 管理 AI 服务提供商的上游连接
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager, ProviderConfig};
 use crate::error::{ProxyError, Result};
 use crate::scheduler::balancer::LoadBalancerConfig;
 use crate::scheduler::{LoadBalancer, SchedulingStrategy};
@@ -100,6 +100,7 @@ impl UpstreamServer {
 pub struct UpstreamManager {
     config: Arc<AppConfig>,
     load_balancer: LoadBalancer,
+    provider_config_manager: Option<Arc<ProviderConfigManager>>,
 }
 
 impl UpstreamManager {
@@ -115,6 +116,7 @@ impl UpstreamManager {
         let mut manager = Self {
             config,
             load_balancer: LoadBalancer::new(lb_config),
+            provider_config_manager: None,
         };
 
         manager.initialize_default_upstreams();
@@ -129,8 +131,49 @@ impl UpstreamManager {
         let mut manager = Self {
             config,
             load_balancer: LoadBalancer::new(lb_config),
+            provider_config_manager: None,
         };
 
+        manager.initialize_default_upstreams();
+        manager
+    }
+
+    /// 使用动态服务商配置创建管理器（推荐）
+    pub fn with_provider_config(
+        config: Arc<AppConfig>,
+        provider_config_manager: Arc<ProviderConfigManager>,
+    ) -> Self {
+        let lb_config = LoadBalancerConfig {
+            default_strategy: SchedulingStrategy::RoundRobin,
+            health_check_interval: Duration::from_secs(30),
+            auto_failover: true,
+            ..Default::default()
+        };
+
+        let mut manager = Self {
+            config,
+            load_balancer: LoadBalancer::new(lb_config),
+            provider_config_manager: Some(provider_config_manager),
+        };
+
+        // 使用异步初始化，这里先用默认配置，实际应该在异步环境中调用 initialize_dynamic_upstreams
+        manager.initialize_default_upstreams();
+        manager
+    }
+
+    /// 使用动态服务商配置和自定义负载均衡配置创建管理器
+    pub fn with_provider_and_lb_config(
+        config: Arc<AppConfig>,
+        provider_config_manager: Arc<ProviderConfigManager>,
+        lb_config: LoadBalancerConfig,
+    ) -> Self {
+        let mut manager = Self {
+            config,
+            load_balancer: LoadBalancer::new(lb_config),
+            provider_config_manager: Some(provider_config_manager),
+        };
+
+        // 使用异步初始化，这里先用默认配置，实际应该在异步环境中调用 initialize_dynamic_upstreams
         manager.initialize_default_upstreams();
         manager
     }
@@ -157,6 +200,123 @@ impl UpstreamManager {
             .unwrap();
 
         tracing::info!("Initialized default upstream servers with load balancer");
+    }
+
+    /// 从数据库动态初始化上游服务器（替代硬编码）
+    pub async fn initialize_dynamic_upstreams(&mut self) -> Result<()> {
+        if let Some(ref provider_manager) = self.provider_config_manager {
+            match provider_manager.get_active_providers().await {
+                Ok(providers) => {
+                    tracing::info!("Loading {} active providers from database", providers.len());
+                    
+                    for provider in providers {
+                        let upstream_type = self.provider_config_to_upstream_type(&provider);
+                        let upstream_server = self.provider_config_to_upstream_server(&provider)?;
+                        
+                        // 清除旧的服务器配置（如果存在）
+                        self.load_balancer.remove_all_servers(&upstream_type);
+                        
+                        // 添加新的服务器配置
+                        if let Err(e) = self.load_balancer.add_server(upstream_type.clone(), upstream_server) {
+                            tracing::warn!("Failed to add upstream server for {}: {}", provider.name, e);
+                            continue;
+                        }
+                        
+                        tracing::debug!(
+                            "Added upstream server: {} -> {} ({})",
+                            provider.name,
+                            provider.upstream_address,
+                            if provider.base_url.contains("443") { "TLS" } else { "HTTP" }
+                        );
+                    }
+                    
+                    tracing::info!("Successfully initialized dynamic upstream servers");
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load providers from database: {}", e);
+                    tracing::warn!("Falling back to default hardcoded configuration");
+                    self.initialize_default_upstreams();
+                    Err(e)
+                }
+            }
+        } else {
+            tracing::warn!("No provider config manager available, using default configuration");
+            self.initialize_default_upstreams();
+            Ok(())
+        }
+    }
+
+    /// 将ProviderConfig转换为UpstreamType
+    fn provider_config_to_upstream_type(&self, config: &ProviderConfig) -> UpstreamType {
+        match config.name.to_lowercase().as_str() {
+            "openai" => UpstreamType::OpenAI,
+            "anthropic" | "claude" => UpstreamType::Anthropic,
+            "gemini" | "google" => UpstreamType::GoogleGemini,
+            _ => UpstreamType::Custom(config.name.clone()),
+        }
+    }
+
+    /// 将ProviderConfig转换为UpstreamServer
+    fn provider_config_to_upstream_server(&self, config: &ProviderConfig) -> Result<UpstreamServer> {
+        // 解析地址和端口
+        let (host, port) = if config.upstream_address.contains(':') {
+            let parts: Vec<&str> = config.upstream_address.splitn(2, ':').collect();
+            if parts.len() != 2 {
+                return Err(ProxyError::config(&format!(
+                    "Invalid upstream address format: {}", config.upstream_address
+                )));
+            }
+            let port = parts[1].parse::<u16>().map_err(|_| {
+                ProxyError::config(&format!(
+                    "Invalid port in upstream address: {}", config.upstream_address
+                ))
+            })?;
+            (parts[0].to_string(), port)
+        } else {
+            (config.upstream_address.clone(), 443) // 默认HTTPS端口
+        };
+
+        // 判断是否使用TLS（通常端口443或明确配置）
+        let use_tls = port == 443 || config.base_url.starts_with("https");
+
+        let mut server = UpstreamServer::new(host, port, use_tls);
+        
+        // 应用配置中的超时设置
+        if let Some(timeout_seconds) = config.timeout_seconds {
+            server.timeout_ms = (timeout_seconds as u64) * 1000;
+        }
+
+        // 从配置JSON中提取其他设置
+        if let Some(ref json_config) = config.config_json {
+            if let Some(weight) = json_config.get("weight").and_then(|v| v.as_u64()) {
+                server.weight = weight as u32;
+            }
+            if let Some(max_connections) = json_config.get("max_connections").and_then(|v| v.as_u64()) {
+                server.max_connections = Some(max_connections as u32);
+            }
+            if let Some(health_check_interval) = json_config.get("health_check_interval").and_then(|v| v.as_u64()) {
+                server.health_check_interval = health_check_interval * 1000; // 转换为毫秒
+            }
+        }
+
+        Ok(server)
+    }
+
+    /// 刷新上游服务器配置（重新从数据库加载）
+    pub async fn refresh_upstreams(&mut self) -> Result<()> {
+        if let Some(ref provider_manager) = self.provider_config_manager {
+            // 刷新提供商配置缓存
+            if let Err(e) = provider_manager.refresh_cache().await {
+                tracing::warn!("Failed to refresh provider config cache: {}", e);
+            }
+            
+            // 重新初始化上游服务器
+            self.initialize_dynamic_upstreams().await
+        } else {
+            tracing::warn!("Cannot refresh upstreams: no provider config manager");
+            Ok(())
+        }
     }
 
     /// 获取指定类型的上游服务器（已弃用，使用select_upstream代替）

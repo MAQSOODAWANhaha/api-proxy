@@ -7,7 +7,7 @@ use crate::auth::{
     AuthService,
 };
 use crate::cache::UnifiedCacheManager;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::proxy::service::ProxyService;
 use pingora_core::prelude::*;
@@ -86,12 +86,16 @@ impl ProxyServer {
         // 创建统一认证管理器
         let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
 
+        // 创建服务商配置管理器
+        let provider_config_manager = Arc::new(ProviderConfigManager::new(db.clone(), cache.clone()));
+
         // 创建代理服务
         let proxy_service = ProxyService::new(
             Arc::clone(&self.config),
             db.clone(),
             cache.clone(),
             auth_manager.clone(),
+            provider_config_manager.clone(),
             None, // trace_system 在独立启动中暂时为 None
         )
         .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
@@ -114,6 +118,7 @@ impl ProxyServer {
                 db.clone(),
                 cache.clone(),
                 auth_manager.clone(),
+                provider_config_manager.clone(),
                 None, // trace_system 在独立启动中暂时为 None
             )
             .map_err(|e| {

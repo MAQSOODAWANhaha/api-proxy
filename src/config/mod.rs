@@ -8,6 +8,7 @@ mod database;
 mod crypto;
 mod watcher;
 mod manager;
+mod provider_config;
 
 pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig, TlsConfig, TraceConfig};
 pub use dual_port_config::{DualPortServerConfig, EnabledServices, ManagementPortConfig, ProxyPortConfig};
@@ -15,6 +16,7 @@ pub use database::DatabaseConfig;
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use watcher::{ConfigEvent, ConfigWatcher};
 pub use manager::ConfigManager;
+pub use provider_config::{ProviderConfigManager, ProviderConfig};
 
 use std::env;
 use std::path::Path;
