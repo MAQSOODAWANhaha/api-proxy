@@ -2,7 +2,7 @@
 
 use crate::management::server::AppState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, HeaderMap};
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -11,6 +11,59 @@ use entity::{users, users::Entity as Users};
 use chrono::Utc;
 use bcrypt::{hash, DEFAULT_COST};
 use rand::{distributions::Alphanumeric, Rng};
+use jsonwebtoken::{decode, DecodingKey, Validation};
+
+/// JWT Claims (与auth.rs保持一致)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    /// 用户ID
+    pub sub: String,
+    /// 用户名
+    pub username: String,
+    /// 是否为管理员
+    pub is_admin: bool,
+    /// 过期时间
+    pub exp: usize,
+    /// 签发时间
+    pub iat: usize,
+}
+
+/// 从Authorization头中提取JWT用户信息
+fn extract_user_from_jwt(headers: &HeaderMap) -> Result<Claims, StatusCode> {
+    // 从Authorization头中提取token
+    let auth_header = headers
+        .get("Authorization")
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .to_str()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // 检查Bearer前缀
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let token = &auth_header[7..]; // 移除"Bearer "前缀
+
+    // 从环境变量或配置获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+    
+    // 验证JWT token
+    let validation = Validation::default();
+    let token_data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // 检查token是否过期
+    let now = chrono::Utc::now().timestamp() as usize;
+    if token_data.claims.exp < now {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    Ok(token_data.claims)
+}
 
 /// 用户查询参数
 #[derive(Debug, Deserialize)]
@@ -299,10 +352,11 @@ pub struct ChangePasswordRequest {
 /// 获取用户档案
 pub async fn get_user_profile(
     State(state): State<AppState>,
-    // TODO: 从JWT token中获取用户ID
+    headers: HeaderMap,
 ) -> Result<Json<Value>, StatusCode> {
-    // 临时使用管理员用户 (ID=1)
-    let user_id = 1;
+    // 从JWT token中获取用户信息
+    let claims = extract_user_from_jwt(&headers)?;
+    let user_id: i32 = claims.sub.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     
     let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
         Ok(Some(user)) => user,
@@ -332,10 +386,12 @@ pub async fn get_user_profile(
 /// 更新用户档案
 pub async fn update_user_profile(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<UpdateProfileRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    // 临时使用管理员用户 (ID=1)
-    let user_id = 1;
+    // 从JWT token中获取用户信息
+    let claims = extract_user_from_jwt(&headers)?;
+    let user_id: i32 = claims.sub.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     
     // 验证邮箱格式
     if let Some(ref email) = request.email {
@@ -392,10 +448,12 @@ pub async fn update_user_profile(
 /// 修改密码
 pub async fn change_password(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<ChangePasswordRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    // 临时使用管理员用户 (ID=1)
-    let user_id = 1;
+    // 从JWT token中获取用户信息
+    let claims = extract_user_from_jwt(&headers)?;
+    let user_id: i32 = claims.sub.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     
     // 验证新密码强度
     if request.new_password.len() < 6 {

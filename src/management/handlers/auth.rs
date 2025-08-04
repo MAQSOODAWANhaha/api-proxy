@@ -16,6 +16,7 @@ use entity::{
 };
 use chrono::{Utc, Duration};
 use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
+use bcrypt;
 use rand;
 
 /// 登录请求
@@ -64,9 +65,9 @@ pub struct Claims {
     pub iat: usize,
 }
 
-/// 用户登录（临时简化版本，暂时放开认证）
+/// 用户登录（完整密码验证版本）
 pub async fn login(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
     // 基本输入验证
@@ -74,14 +75,48 @@ pub async fn login(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // 临时：直接返回成功响应，不做密码验证
+    // 从数据库查找用户
+    use entity::users::{Entity as Users, Column as UserColumn};
+    let user = match Users::find()
+        .filter(UserColumn::Username.eq(&request.username))
+        .filter(UserColumn::IsActive.eq(true))
+        .one(state.database.as_ref())
+        .await 
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            tracing::warn!("Login attempt with non-existent or inactive user: {}", request.username);
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        Err(err) => {
+            tracing::error!("Database error during login: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 验证密码
+    match bcrypt::verify(&request.password, &user.password_hash) {
+        Ok(true) => {
+            tracing::info!("Successful login for user: {}", request.username);
+        }
+        Ok(false) => {
+            tracing::warn!("Failed login attempt - invalid password for user: {}", request.username);
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        Err(err) => {
+            tracing::error!("Password verification error: {}", err);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // 创建JWT token
     let now = Utc::now();
     let exp = now + Duration::hours(24);
     
     let claims = Claims {
-        sub: "1".to_string(),
-        username: request.username.clone(),
-        is_admin: true, // 临时设为管理员
+        sub: user.id.to_string(),
+        username: user.username.clone(),
+        is_admin: user.is_admin,
         exp: exp.timestamp() as usize,
         iat: now.timestamp() as usize,
     };
@@ -102,15 +137,15 @@ pub async fn login(
         }
     };
 
-    tracing::info!("User {} logged in successfully (simplified mode)", request.username);
+    tracing::info!("User {} logged in successfully", request.username);
 
     let response = LoginResponse {
         token,
         user: UserInfo {
-            id: 1,
-            username: request.username,
-            email: "admin@example.com".to_string(),
-            is_admin: true,
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_admin: user.is_admin,
         },
     };
 
@@ -189,7 +224,7 @@ pub async fn logout(
 
 /// 验证JWT Token
 pub async fn validate_token(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ValidateTokenResponse>, StatusCode> {
     // 记录所有请求头用于调试
@@ -249,12 +284,26 @@ pub async fn validate_token(
         return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
     }
 
+    // 从数据库获取用户信息
+    let user_id: i32 = token_data.claims.sub.parse().unwrap_or(1);
+    let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            tracing::warn!("Token valid but user {} not found in database", user_id);
+            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        }
+        Err(err) => {
+            tracing::error!("Database error during token validation: {}", err);
+            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        }
+    };
+
     // 构造用户信息
     let user_info = UserInfo {
-        id: token_data.claims.sub.parse().unwrap_or(1),
-        username: token_data.claims.username,
-        email: "admin@example.com".to_string(), // 临时固定值
-        is_admin: token_data.claims.is_admin,
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        is_admin: user.is_admin,
     };
 
     Ok(Json(ValidateTokenResponse {
