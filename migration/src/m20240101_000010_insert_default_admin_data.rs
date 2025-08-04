@@ -7,7 +7,7 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // 插入默认管理员用户
-        // 密码: admin123 (bcrypt hash)
+        // 密码: *** (bcrypt hash)
         manager
             .exec_stmt(
                 Query::insert()
@@ -23,7 +23,7 @@ impl MigrationTrait for Migration {
                     .values_panic([
                         "admin".into(),
                         "admin@api-proxy.local".into(),
-                        "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8.OG7I0dOVFgtNKGl6e".into(), // admin123
+                        "$2b$12$LMURIch2lHkm1y1uhuh1HOJ/RDlGjddn6NCiAOCuvsjjmHMXiGTn2".into(),
                         "default_salt_32_chars_long_12345".into(),
                         true.into(),
                         true.into(),
