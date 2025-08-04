@@ -131,10 +131,11 @@ fn user_routes() -> Router<AppState> {
 
 /// 用户中心路由（为前端兼容性提供 /user/* 路径）
 fn user_center_routes() -> Router<AppState> {
-    use axum::routing::put;
+    use axum::routing::{put, post};
     Router::new()
         .route("/profile", get(crate::management::handlers::users::get_user_profile))
         .route("/profile", put(crate::management::handlers::users::update_user_profile))
+        .route("/password", post(crate::management::handlers::users::change_password))
         // TODO: 高级用户功能暂时不实现
         // .route("/avatar", post(crate::management::handlers::users::upload_avatar))
         // .route("/security", get(crate::management::handlers::users::get_security_settings))

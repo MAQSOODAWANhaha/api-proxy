@@ -268,8 +268,8 @@ appStore.setPageTitle('用户中心')
 <style scoped>
 .user-center-view {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 40px 20px;
+  padding: 24px;
+  background: #f5f5f5;
 }
 
 .container {
@@ -280,20 +280,20 @@ appStore.setPageTitle('用户中心')
 /* 页面标题 */
 .page-header {
   text-align: center;
-  margin-bottom: 40px;
-  color: white;
+  margin-bottom: 32px;
+  color: #333;
 }
 
 .page-header h2 {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 600;
-  margin: 0 0 12px 0;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin: 0 0 8px 0;
+  color: #333;
 }
 
 .page-description {
-  font-size: 16px;
-  opacity: 0.9;
+  font-size: 14px;
+  color: #666;
   margin: 0;
 }
 
@@ -301,11 +301,10 @@ appStore.setPageTitle('用户中心')
 .password-card,
 .security-tips-card {
   margin-bottom: 24px;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border: 1px solid #dcdfe6;
+  background: #fff;
 }
 
 .card-header {
@@ -409,7 +408,6 @@ appStore.setPageTitle('用户中心')
 
 .tip-item:hover {
   background: #f0f2f5;
-  transform: translateY(-2px);
 }
 
 .tip-icon {
@@ -493,8 +491,8 @@ appStore.setPageTitle('用户中心')
 :deep(.el-card__header) {
   padding: 20px 24px;
   border-bottom: 1px solid #f0f0f0;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 16px 16px 0 0;
+  background: #fafafa;
+  border-radius: 8px 8px 0 0;
 }
 
 :deep(.el-card__body) {
@@ -512,36 +510,36 @@ appStore.setPageTitle('用户中心')
 }
 
 :deep(.el-input__wrapper) {
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
   transition: all 0.3s ease;
 }
 
 :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-color: #c0c4cc;
 }
 
 :deep(.el-input.is-focus .el-input__wrapper) {
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
 }
 
 :deep(.el-button) {
-  border-radius: 8px;
+  border-radius: 4px;
   font-weight: 500;
   transition: all 0.3s ease;
 }
 
 :deep(.el-button:hover) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0.8;
 }
 
 :deep(.el-button--primary) {
-  background: linear-gradient(45deg, #409eff, #667eea);
-  border: none;
+  background: #409eff;
+  border-color: #409eff;
 }
 
 :deep(.el-button--primary:hover) {
-  background: linear-gradient(45deg, #66b1ff, #7c8ceb);
+  background: #66b1ff;
+  border-color: #66b1ff;
 }
 </style>
