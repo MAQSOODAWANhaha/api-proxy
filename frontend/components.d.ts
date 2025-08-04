@@ -57,7 +57,6 @@ declare module 'vue' {
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
-    ElUpload: typeof import('element-plus/es')['ElUpload']
     EmptyState: typeof import('./src/components/ui/EmptyState.vue')['default']
     GaugeChart: typeof import('./src/components/charts/GaugeChart.vue')['default']
     LineChart: typeof import('./src/components/charts/LineChart.vue')['default']

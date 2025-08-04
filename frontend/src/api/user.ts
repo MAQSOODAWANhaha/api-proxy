@@ -164,4 +164,15 @@ export class UserAPI {
   }> {
     return HttpClient.get('/user/login-history', params)
   }
+
+  // 修改密码
+  static async changePassword(data: {
+    current_password: string
+    new_password: string
+  }): Promise<{
+    success: boolean
+    message: string
+  }> {
+    return HttpClient.post('/user/password', data)
+  }
 }

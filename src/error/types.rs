@@ -147,6 +147,24 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
+
+    /// 连接超时错误
+    #[error("连接超时: {message}")]
+    ConnectionTimeout {
+        message: String,
+        timeout_seconds: u64,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 读取超时错误
+    #[error("读取超时: {message}")]
+    ReadTimeout {
+        message: String,
+        timeout_seconds: u64,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
 }
 
 impl ProxyError {
@@ -322,6 +340,50 @@ impl ProxyError {
         Self::UpstreamNotAvailable {
             message: message.into(),
             source: None,
+        }
+    }
+
+    /// 创建连接超时错误
+    pub fn connection_timeout<T: Into<String>>(message: T, timeout_seconds: u64) -> Self {
+        Self::ConnectionTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: None,
+        }
+    }
+
+    /// 创建带来源的连接超时错误
+    pub fn connection_timeout_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        timeout_seconds: u64,
+        source: E,
+    ) -> Self {
+        Self::ConnectionTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建读取超时错误
+    pub fn read_timeout<T: Into<String>>(message: T, timeout_seconds: u64) -> Self {
+        Self::ReadTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: None,
+        }
+    }
+
+    /// 创建带来源的读取超时错误
+    pub fn read_timeout_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        timeout_seconds: u64,
+        source: E,
+    ) -> Self {
+        Self::ReadTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: Some(source.into()),
         }
     }
 }

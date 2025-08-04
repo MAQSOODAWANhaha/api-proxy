@@ -8,6 +8,7 @@ use anyhow::Result;
 use chrono::Utc;
 use pingora_core::upstreams::peer::{HttpPeer, Peer};
 use pingora_core::protocols::tls::ALPN;
+use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
@@ -733,6 +734,104 @@ impl AIProxyHandler {
             format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
         } else {
             "***".to_string()
+        }
+    }
+
+    /// 检测并转换Pingora错误为ProxyError
+    pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {
+        let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let provider_name = ctx.provider_type
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown");
+        let provider_url = ctx.provider_type
+            .as_ref()
+            .map(|p| p.base_url.as_str())
+            .unwrap_or("unknown");
+
+        match &error.etype {
+            ErrorType::ConnectTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Connection timeout to upstream provider"
+                );
+                ProxyError::connection_timeout(
+                    format!("Failed to connect to {} ({}) within {}s", 
+                           provider_name, provider_url, timeout_secs),
+                    timeout_secs
+                )
+            },
+            ErrorType::ReadTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Read timeout from upstream provider"
+                );
+                ProxyError::read_timeout(
+                    format!("Read timeout when communicating with {} ({}) after {}s", 
+                           provider_name, provider_url, timeout_secs),
+                    timeout_secs
+                )
+            },
+            ErrorType::WriteTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Write timeout to upstream provider"
+                );
+                ProxyError::read_timeout(
+                    format!("Write timeout when sending data to {} ({}) after {}s", 
+                           provider_name, provider_url, timeout_secs),
+                    timeout_secs
+                )
+            },
+            ErrorType::ConnectError => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    "Failed to connect to upstream provider"
+                );
+                ProxyError::network(
+                    format!("Failed to connect to {} ({})", provider_name, provider_url)
+                )
+            },
+            ErrorType::ConnectRefused => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    "Connection refused by upstream provider"
+                );
+                ProxyError::upstream_not_available(
+                    format!("Connection refused by {} ({})", provider_name, provider_url)
+                )
+            },
+            ErrorType::HTTPStatus(status) if *status >= 500 => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    status = *status,
+                    "Upstream provider returned server error"
+                );
+                ProxyError::bad_gateway(
+                    format!("Upstream {} returned server error: {}", provider_name, status)
+                )
+            },
+            _ => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    error_type = ?error.etype,
+                    error_source = ?error.esource,
+                    "Upstream error"
+                );
+                ProxyError::network(
+                    format!("Network error when communicating with {} ({})", provider_name, provider_url)
+                )
+            }
         }
     }
 }

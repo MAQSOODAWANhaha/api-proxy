@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use pingora_core::protocols::Digest;
 use pingora_core::{prelude::*, upstreams::peer::HttpPeer, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
-use pingora_proxy::{ProxyHttp, Session};
+use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -166,20 +166,32 @@ impl ProxyHttp for ProxyService {
                 // 根据错误类型返回相应的HTTP状态码
                 match e {
                     crate::error::ProxyError::Authentication { .. } => {
-                        let msg = e.to_string();
+                        let msg = format!(r#"{{"error":"{}","code":"AUTH_ERROR"}}"#, e);
                         Err(Error::explain(ErrorType::HTTPStatus(401), msg))
                     }
                     crate::error::ProxyError::RateLimit { .. } => {
-                        let msg = e.to_string();
+                        let msg = format!(r#"{{"error":"{}","code":"RATE_LIMIT"}}"#, e);
                         Err(Error::explain(ErrorType::HTTPStatus(429), msg))
                     }
+                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => {
+                        let msg = format!(r#"{{"error":"Connection timeout after {}s","code":"CONNECTION_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds);
+                        Err(Error::explain(ErrorType::HTTPStatus(504), msg))
+                    }
+                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => {
+                        let msg = format!(r#"{{"error":"Read timeout after {}s","code":"READ_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds);
+                        Err(Error::explain(ErrorType::HTTPStatus(504), msg))
+                    }
+                    crate::error::ProxyError::Network { message, .. } => {
+                        let msg = format!(r#"{{"error":"Network error: {}","code":"NETWORK_ERROR"}}"#, message);
+                        Err(Error::explain(ErrorType::HTTPStatus(502), msg))
+                    }
                     crate::error::ProxyError::BadGateway { .. } => {
-                        let msg = e.to_string();
+                        let msg = format!(r#"{{"error":"{}","code":"BAD_GATEWAY"}}"#, e);
                         Err(Error::explain(ErrorType::HTTPStatus(502), msg))
                     }
                     _ => Err(Error::explain(
                         ErrorType::HTTPStatus(500),
-                        "Internal server error",
+                        r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#,
                     )),
                 }
             }
@@ -195,7 +207,32 @@ impl ProxyHttp for ProxyService {
         self.ai_handler
             .select_upstream_peer(ctx)
             .await
-            .map_err(|_e| Error::new(ErrorType::InternalError))
+            .map_err(|e| {
+                match e {
+                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => {
+                        Error::explain(
+                            ErrorType::HTTPStatus(504),
+                            format!(r#"{{"error":"Connection timeout after {}s","code":"UPSTREAM_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds)
+                        )
+                    }
+                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => {
+                        Error::explain(
+                            ErrorType::HTTPStatus(504),
+                            format!(r#"{{"error":"Read timeout after {}s","code":"READ_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds)
+                        )
+                    }
+                    crate::error::ProxyError::Network { message, .. } => {
+                        Error::explain(
+                            ErrorType::HTTPStatus(502),
+                            format!(r#"{{"error":"Network error: {}","code":"NETWORK_ERROR"}}"#, message)
+                        )
+                    }
+                    _ => Error::explain(
+                        ErrorType::HTTPStatus(500),
+                        r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#
+                    )
+                }
+            })
     }
 
     async fn upstream_request_filter(
@@ -208,7 +245,19 @@ impl ProxyHttp for ProxyService {
         self.ai_handler
             .filter_upstream_request(session, upstream_request, ctx)
             .await
-            .map_err(|_e| Error::new(ErrorType::InternalError))
+            .map_err(|e| {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    "Failed to filter upstream request"
+                );
+                match e {
+                    crate::error::ProxyError::Network { .. } => {
+                        Error::explain(ErrorType::HTTPStatus(502), "Network error during request processing")
+                    }
+                    _ => Error::new(ErrorType::InternalError)
+                }
+            })
     }
 
     async fn response_filter(
@@ -221,7 +270,14 @@ impl ProxyHttp for ProxyService {
         self.ai_handler
             .filter_upstream_response(upstream_response, ctx)
             .await
-            .map_err(|_e| Error::new(ErrorType::InternalError))?;
+            .map_err(|e| {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    "Failed to filter upstream response"
+                );
+                Error::new(ErrorType::InternalError)
+            })?;
 
         // 记录响应时间和状态
         let response_time = ctx.start_time.elapsed();
@@ -280,10 +336,68 @@ impl ProxyHttp for ProxyService {
         Ok(())
     }
 
+    async fn fail_to_proxy(
+        &self,
+        _session: &mut Session,
+        e: &Error,
+        ctx: &mut Self::CTX,
+    ) -> FailToProxy {
+        // 检测超时和网络错误，进行错误转换
+        let is_timeout_or_network_error = matches!(
+            &e.etype,
+            ErrorType::ConnectTimedout 
+                | ErrorType::ReadTimedout 
+                | ErrorType::WriteTimedout
+                | ErrorType::ConnectError
+                | ErrorType::ConnectRefused
+        );
+
+        if is_timeout_or_network_error {
+            let converted_error = self.ai_handler.convert_pingora_error(e, ctx);
+            
+            tracing::error!(
+                request_id = %ctx.request_id,
+                original_error = %e,
+                converted_error = %converted_error,
+                "Converting network/timeout error to user-friendly response"
+            );
+
+            // 返回转换后的错误信息，让 Pingora 处理 HTTP 响应
+            let error_code = match converted_error {
+                crate::error::ProxyError::ConnectionTimeout { .. } => 504,
+                crate::error::ProxyError::ReadTimeout { .. } => 504, 
+                crate::error::ProxyError::Network { .. } => 502,
+                crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
+                _ => 502,
+            };
+
+            return FailToProxy {
+                error_code,
+                can_reuse_downstream: false, // 对于超时和网络错误，不重用连接
+            };
+        }
+
+        // 对于其他错误，使用默认错误码并不重用连接
+        FailToProxy {
+            error_code: 500,
+            can_reuse_downstream: false,
+        }
+    }
+
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
         let duration = ctx.start_time.elapsed();
 
         if let Some(error) = e {
+            // 检测是否为超时或网络错误，并进行详细记录
+            let is_timeout_error = matches!(
+                &error.etype,
+                ErrorType::ConnectTimedout | ErrorType::ReadTimedout | ErrorType::WriteTimedout
+            );
+            let is_network_error = matches!(
+                &error.etype,
+                ErrorType::ConnectError | ErrorType::ConnectRefused
+            );
+
             // 获取更多的上下文信息
             let request_info = format!(
                 "method={} uri={} headers={:?}",
@@ -304,8 +418,21 @@ impl ProxyHttp for ProxyService {
                     if b.api_key.len() > 8 { format!("{}***{}", &b.api_key[..4], &b.api_key[b.api_key.len()-4..]) } else { "***".to_string() })),
                 provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
                 timeout_seconds = ?ctx.timeout_seconds,
+                is_timeout_error = is_timeout_error,
+                is_network_error = is_network_error,
                 "AI proxy request failed with detailed context"
             );
+
+            // 如果是超时或网络错误，使用AI处理器进行错误转换
+            if is_timeout_error || is_network_error {
+                let converted_error = self.ai_handler.convert_pingora_error(error, ctx);
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    original_error = %error,
+                    converted_error = %converted_error,
+                    "Converted Pingora error to ProxyError for better user experience"
+                );
+            }
         } else {
             tracing::debug!(
                 request_id = %ctx.request_id,
