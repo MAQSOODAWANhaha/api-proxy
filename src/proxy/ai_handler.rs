@@ -13,11 +13,10 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::unified::UnifiedAuthManager;
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
-use crate::trace::unified::UnifiedProxyTracer;
+use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
     user_provider_keys::{self, Entity as UserProviderKeys},
@@ -32,12 +31,10 @@ pub struct AIProxyHandler {
     cache: Arc<UnifiedCacheManager>,
     /// 配置
     config: Arc<AppConfig>,
-    /// 统一认证管理器
-    auth_manager: Arc<UnifiedAuthManager>,
     /// 负载均衡调度器注册表
     schedulers: Arc<SchedulerRegistry>,
-    /// 统一追踪器
-    tracer: Option<Arc<UnifiedProxyTracer>>,
+    /// 即时写入追踪器
+    tracer: Option<Arc<ImmediateProxyTracer>>,
     /// 服务商配置管理器
     provider_config_manager: Arc<ProviderConfigManager>,
 }
@@ -101,16 +98,14 @@ impl AIProxyHandler {
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
         config: Arc<AppConfig>,
-        auth_manager: Arc<UnifiedAuthManager>,
         schedulers: Arc<SchedulerRegistry>,
-        tracer: Option<Arc<UnifiedProxyTracer>>,
+        tracer: Option<Arc<ImmediateProxyTracer>>,
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
         Self {
             db,
             cache,
             config,
-            auth_manager,
             schedulers,
             tracer,
             provider_config_manager,
@@ -130,52 +125,38 @@ impl AIProxyHandler {
             "Starting AI proxy request preparation"
         );
 
-        // 开始追踪（如果启用）
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let method = session.req_header().method.as_str().to_string();
-                // 我们还没有 user_service_api_id，所以先用默认值，稍后更新
-                if let Err(e) = tracer.start_trace(ctx.request_id.clone(), 0, method).await {
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        error = %e,
-                        "Failed to start trace"
-                    );
-                    ctx.trace_enabled = false; // 禁用追踪
-                } else {
-                    let _ = tracer.start_phase(&ctx.request_id, "preparation").await;
-                }
-            }
-        }
+        // 追踪将在认证后开始，因为需要user_service_api_id
 
         // 步骤1: 身份验证 - 验证是哪个用户创建的哪种服务提供商的token
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer.start_phase(&ctx.request_id, "authentication").await;
-            }
-        }
-
         let api_key = self.extract_api_key(session)?;
         let user_service_api = self.authenticate_api_key(&api_key).await?;
         ctx.user_service_api = Some(user_service_api.clone());
 
+        // 开始即时追踪（认证成功后，现在有了user_service_api_id）
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
-                // 更新追踪记录中的真实用户服务API ID
-                let _ = tracer
-                    .update_trace(&ctx.request_id, |trace| {
-                        trace.user_service_api_id = user_service_api.id;
-                    })
-                    .await;
+                let method = session.req_header().method.as_str().to_string();
+                let path = Some(session.req_header().uri.path().to_string());
+                let client_ip = session.client_addr().map(|ip| ip.to_string());
+                let user_agent = session.req_header().headers.get("user-agent")
+                    .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+                    .map(|s| s.to_string());
 
-                let _ = tracer
-                    .complete_phase(
-                        &ctx.request_id,
-                        "authentication",
-                        true,
-                        Some("User authenticated successfully"),
-                    )
-                    .await;
+                if let Err(e) = tracer.start_trace(
+                    ctx.request_id.clone(),
+                    user_service_api.id,
+                    method,
+                    path,
+                    client_ip,
+                    user_agent,
+                ).await {
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Failed to start immediate trace"
+                    );
+                    ctx.trace_enabled = false; // 禁用追踪
+                }
             }
         }
 
@@ -188,27 +169,23 @@ impl AIProxyHandler {
         );
 
         // 步骤2: 速率验证 - 对这个用户创建的服务商的速率限制
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .start_phase(&ctx.request_id, "rate_limit_check")
-                    .await;
-            }
-        }
-
-        self.check_rate_limit(&user_service_api).await?;
-
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .complete_phase(
+        if let Err(e) = self.check_rate_limit(&user_service_api).await {
+            // 速率限制失败时立即记录到数据库
+            if let Some(tracer) = &self.tracer {
+                if ctx.trace_enabled {
+                    let _ = tracer.complete_trace(
                         &ctx.request_id,
-                        "rate_limit_check",
-                        true,
-                        Some("Rate limit check passed"),
-                    )
-                    .await;
+                        429, // Rate limit exceeded
+                        false,
+                        None,
+                        None,
+                        None,
+                        Some("rate_limit_exceeded".to_string()),
+                        Some(e.to_string()),
+                    ).await;
+                }
             }
+            return Err(e);
         }
 
         tracing::debug!(
@@ -218,15 +195,29 @@ impl AIProxyHandler {
         );
 
         // 步骤3: 获取提供商类型信息和配置
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer.start_phase(&ctx.request_id, "provider_lookup").await;
-            }
-        }
-
-        let provider_type = self
+        let provider_type = match self
             .get_provider_type(user_service_api.provider_type_id)
-            .await?;
+            .await {
+            Ok(provider_type) => provider_type,
+            Err(e) => {
+                // 提供商类型获取失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("provider_type_not_found".to_string()),
+                            Some(e.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(e);
+            }
+        };
         ctx.provider_type = Some(provider_type.clone());
         ctx.selected_provider = Some(provider_type.name.clone());
 
@@ -267,56 +258,63 @@ impl AIProxyHandler {
             "Applied timeout configuration with correct priority"
         );
 
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .complete_phase(
-                        &ctx.request_id,
-                        "provider_lookup",
-                        true,
-                        Some(&format!("Provider {} configured", provider_type.name)),
-                    )
-                    .await;
-            }
-        }
 
         // 步骤4: 根据token查找数据库中配置的转发策略
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .start_phase(&ctx.request_id, "backend_selection")
-                    .await;
+        let scheduler = match self.get_scheduler(&user_service_api.scheduling_strategy) {
+            Ok(scheduler) => scheduler,
+            Err(e) => {
+                // 调度器获取失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("scheduler_not_found".to_string()),
+                            Some(e.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(e);
             }
-        }
-
-        let scheduler = self.get_scheduler(&user_service_api.scheduling_strategy)?;
-        let selected_backend = scheduler.select_backend(&user_service_api).await?;
+        };
+        
+        let selected_backend = match scheduler.select_backend(&user_service_api).await {
+            Ok(backend) => backend,
+            Err(e) => {
+                // 后端选择失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            503, // Service unavailable
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("backend_selection_failed".to_string()),
+                            Some(e.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(e);
+            }
+        };
         ctx.selected_backend = Some(selected_backend.clone());
 
+        // 更新追踪信息（如果启用）
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
-                let _ = tracer
-                    .complete_phase(
-                        &ctx.request_id,
-                        "backend_selection",
-                        true,
-                        Some(&format!("Backend key {} selected", selected_backend.id)),
-                    )
-                    .await;
-            }
-        }
-
-        // 完成准备阶段
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .complete_phase(
-                        &ctx.request_id,
-                        "preparation",
-                        true,
-                        Some("Request preparation completed"),
-                    )
-                    .await;
+                let _ = tracer.update_trace_info(
+                    &ctx.request_id,
+                    Some(provider_type.name.clone()),
+                    None, // model_used将在响应处理时设置
+                    None, // upstream_addr将在peer选择时设置
+                    None, // request_size将在请求处理时设置
+                ).await;
             }
         }
 
@@ -514,10 +512,28 @@ impl AIProxyHandler {
         &self,
         ctx: &ProxyContext,
     ) -> Result<Box<HttpPeer>, ProxyError> {
-        let provider_type = ctx
-            .provider_type
-            .as_ref()
-            .ok_or(ProxyError::internal("Provider type not set"))?;
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider_type) => provider_type,
+            None => {
+                let error = ProxyError::internal("Provider type not set");
+                // 上游对等体选择失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("upstream_peer_selection_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
+        };
 
         // 构建上游地址，确保使用HTTPS
         let upstream_addr = if provider_type.base_url.contains(':') {
@@ -599,14 +615,51 @@ impl AIProxyHandler {
         upstream_request: &mut RequestHeader,
         ctx: &ProxyContext,
     ) -> Result<(), ProxyError> {
-        let selected_backend = ctx
-            .selected_backend
-            .as_ref()
-            .ok_or(ProxyError::internal("Backend not selected"))?;
-        let provider_type = ctx
-            .provider_type
-            .as_ref()
-            .ok_or(ProxyError::internal("Provider type not set"))?;
+        let selected_backend = match ctx.selected_backend.as_ref() {
+            Some(backend) => backend,
+            None => {
+                let error = ProxyError::internal("Backend not selected");
+                // 请求转发失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("request_forwarding_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
+        };
+        
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider_type) => provider_type,
+            None => {
+                let error = ProxyError::internal("Provider type not set");
+                // 请求转发失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("request_forwarding_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
+        };
 
         // 根据提供商类型处理认证信息
         upstream_request.remove_header("authorization");
@@ -619,11 +672,25 @@ impl AIProxyHandler {
         // 根据提供商类型选择认证方式
         if self.should_use_google_api_key_auth(provider_type) {
             // Gemini/Google APIs：使用 X-goog-api-key 头部认证
-            upstream_request
-                .insert_header("x-goog-api-key", &selected_backend.api_key)
-                .map_err(|e| {
-                    ProxyError::internal(format!("Failed to set x-goog-api-key header: {}", e))
-                })?;
+            if let Err(e) = upstream_request.insert_header("x-goog-api-key", &selected_backend.api_key) {
+                let error = ProxyError::internal(format!("Failed to set x-goog-api-key header: {}", e));
+                // 头部设置失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("header_setting_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
 
             tracing::debug!(
                 request_id = %ctx.request_id,
@@ -634,9 +701,25 @@ impl AIProxyHandler {
         } else {
             // 其他服务商：使用 Authorization 头部认证
             let auth_value = auth_format.replace("{key}", &selected_backend.api_key);
-            upstream_request
-                .insert_header("authorization", &auth_value)
-                .map_err(|e| ProxyError::internal(format!("Failed to set auth header: {}", e)))?;
+            if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
+                let error = ProxyError::internal(format!("Failed to set auth header: {}", e));
+                // 头部设置失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("header_setting_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
 
             tracing::debug!(
                 request_id = %ctx.request_id,
@@ -651,9 +734,25 @@ impl AIProxyHandler {
             .base_url
             .replace("https://", "")
             .replace("http://", "");
-        upstream_request
-            .insert_header("host", &host_name)
-            .map_err(|e| ProxyError::internal(format!("Failed to set host header: {}", e)))?;
+        if let Err(e) = upstream_request.insert_header("host", &host_name) {
+            let error = ProxyError::internal(format!("Failed to set host header: {}", e));
+            // 头部设置失败时立即记录到数据库
+            if let Some(tracer) = &self.tracer {
+                if ctx.trace_enabled {
+                    let _ = tracer.complete_trace(
+                        &ctx.request_id,
+                        500, // Internal server error
+                        false,
+                        None,
+                        None,
+                        None,
+                        Some("header_setting_failed".to_string()),
+                        Some(error.to_string()),
+                    ).await;
+                }
+            }
+            return Err(error);
+        }
 
         // 移除可能暴露客户端信息的头部 - 完全隐藏源信息
         let headers_to_remove = [
@@ -674,19 +773,50 @@ impl AIProxyHandler {
 
         // 保持原始用户代理或使用标准浏览器用户代理
         if upstream_request.headers.get("user-agent").is_none() {
-            upstream_request.insert_header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
-                .map_err(|e| ProxyError::internal(format!("Failed to set user-agent: {}", e)))?;
+            if let Err(e) = upstream_request.insert_header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36") {
+                let error = ProxyError::internal(format!("Failed to set user-agent: {}", e));
+                // 头部设置失败时立即记录到数据库
+                if let Some(tracer) = &self.tracer {
+                    if ctx.trace_enabled {
+                        let _ = tracer.complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            None,
+                            Some("header_setting_failed".to_string()),
+                            Some(error.to_string()),
+                        ).await;
+                    }
+                }
+                return Err(error);
+            }
         }
 
         // 为Google API添加期望的标准头部
         if self.should_use_google_api_key_auth(provider_type) {
             // 确保有Accept头
             if upstream_request.headers.get("accept").is_none() {
-                upstream_request
-                    .insert_header("accept", "application/json")
-                    .map_err(|e| {
-                        ProxyError::internal(format!("Failed to set accept header: {}", e))
-                    })?;
+                if let Err(e) = upstream_request.insert_header("accept", "application/json") {
+                    let error = ProxyError::internal(format!("Failed to set accept header: {}", e));
+                    // 头部设置失败时立即记录到数据库
+                    if let Some(tracer) = &self.tracer {
+                        if ctx.trace_enabled {
+                            let _ = tracer.complete_trace(
+                                &ctx.request_id,
+                                500, // Internal server error
+                                false,
+                                None,
+                                None,
+                                None,
+                                Some("header_setting_failed".to_string()),
+                                Some(error.to_string()),
+                            ).await;
+                        }
+                    }
+                    return Err(error);
+                }
             }
 
             // 智能处理Accept-Encoding：只有当原始客户端请求支持压缩时才请求压缩
@@ -702,11 +832,25 @@ impl AIProxyHandler {
             if client_supports_compression
                 && upstream_request.headers.get("accept-encoding").is_none()
             {
-                upstream_request
-                    .insert_header("accept-encoding", "gzip, deflate")
-                    .map_err(|e| {
-                        ProxyError::internal(format!("Failed to set accept-encoding header: {}", e))
-                    })?;
+                if let Err(e) = upstream_request.insert_header("accept-encoding", "gzip, deflate") {
+                    let error = ProxyError::internal(format!("Failed to set accept-encoding header: {}", e));
+                    // 头部设置失败时立即记录到数据库
+                    if let Some(tracer) = &self.tracer {
+                        if ctx.trace_enabled {
+                            let _ = tracer.complete_trace(
+                                &ctx.request_id,
+                                500, // Internal server error
+                                false,
+                                None,
+                                None,
+                                None,
+                                Some("header_setting_failed".to_string()),
+                                Some(error.to_string()),
+                            ).await;
+                        }
+                    }
+                    return Err(error);
+                }
 
                 tracing::debug!(
                     request_id = %ctx.request_id,

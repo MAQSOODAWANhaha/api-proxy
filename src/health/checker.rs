@@ -330,7 +330,7 @@ impl Default for HealthChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     #[tokio::test]
     async fn test_health_checker_creation() {

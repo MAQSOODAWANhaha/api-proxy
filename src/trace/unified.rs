@@ -4,17 +4,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use anyhow::Result;
-use chrono::{DateTime, Utc, NaiveDateTime};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use chrono::{DateTime, Utc};
+use sea_orm::{DatabaseConnection, EntityTrait, Set};
 use serde_json;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
-use uuid::Uuid;
+use tracing::{debug, error, warn};
 
 use entity::proxy_tracing::{self, TraceLevel, PhaseInfo, PerformanceMetrics, QualityMetrics};
-use super::models::*;
 
 /// 统一代理追踪器配置
 #[derive(Debug, Clone)]
@@ -44,9 +42,9 @@ impl Default for UnifiedTracerConfig {
             basic_sampling_rate: 1.0,      // 100% 基础统计
             detailed_sampling_rate: 0.1,   // 10% 详细追踪
             full_sampling_rate: 0.01,      // 1% 完整追踪
-            batch_size: 100,
-            batch_interval_secs: 5,
-            buffer_size: 1000,
+            batch_size: 50,                // 减小批次大小，更频繁写入
+            batch_interval_secs: 10,       // 增加间隔时间，适应长请求
+            buffer_size: 2000,             // 增大缓冲区，支持更多并发长请求
             health_scoring_enabled: true,
         }
     }
@@ -560,31 +558,62 @@ impl UnifiedProxyTracer {
                 }
                 
                 // 清理过期的活跃追踪
-                Self::cleanup_stale_traces(&active_traces).await;
+                Self::cleanup_stale_traces(&db, &active_traces).await;
             }
         });
     }
     
     /// 清理过期的活跃追踪
-    async fn cleanup_stale_traces(active_traces: &Arc<RwLock<HashMap<String, UnifiedTrace>>>) {
-        let cutoff_time = Utc::now() - chrono::Duration::minutes(10);
-        let mut to_remove = Vec::new();
+    async fn cleanup_stale_traces(
+        db: &Arc<DatabaseConnection>,
+        active_traces: &Arc<RwLock<HashMap<String, UnifiedTrace>>>,
+    ) {
+        // 调整超时时间为30分钟，适应长时间请求
+        let cutoff_time = Utc::now() - chrono::Duration::minutes(30);
+        let mut stale_traces = Vec::new();
         
         {
             let traces = active_traces.read().await;
             for (request_id, trace) in traces.iter() {
                 if trace.start_time < cutoff_time {
-                    to_remove.push(request_id.clone());
+                    stale_traces.push((request_id.clone(), trace.clone()));
                 }
             }
         }
         
-        if !to_remove.is_empty() {
-            let mut traces = active_traces.write().await;
-            for request_id in &to_remove {
-                traces.remove(request_id);
+        if !stale_traces.is_empty() {
+            // 先尝试将过期的追踪记录写入数据库，避免数据丢失
+            let mut traces_to_save = Vec::new();
+            for (_request_id, mut trace) in stale_traces {
+                // 标记为超时完成
+                trace.complete(408, false); // 408 Request Timeout
+                trace.error_type = Some("timeout".to_string());
+                trace.error_message = Some("Request exceeded maximum tracking time".to_string());
+                traces_to_save.push(trace);
             }
-            warn!("Cleaned up {} stale traces", to_remove.len());
+            
+            // 写入数据库保存过期记录
+            if let Err(e) = Self::write_traces_batch(db, traces_to_save).await {
+                error!("Failed to save stale traces before cleanup: {}", e);
+            }
+            
+            // 然后清理内存中的记录
+            let mut traces = active_traces.write().await;
+            let mut removed_count = 0;
+            let cutoff_time_check = Utc::now() - chrono::Duration::minutes(30);
+            
+            traces.retain(|_, trace| {
+                if trace.start_time < cutoff_time_check {
+                    removed_count += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+            
+            if removed_count > 0 {
+                warn!("Cleaned up {} stale traces (saved to database as timeout)", removed_count);
+            }
         }
     }
     

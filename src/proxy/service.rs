@@ -11,11 +11,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::auth::unified::UnifiedAuthManager;
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
-use crate::trace::{unified::UnifiedProxyTracer, UnifiedTraceSystem};
+use crate::trace::{immediate::ImmediateProxyTracer, UnifiedTraceSystem};
 use sea_orm::DatabaseConnection;
 
 /// AI 代理服务 - 透明代理设计
@@ -24,8 +23,8 @@ pub struct ProxyService {
     config: Arc<AppConfig>,
     /// AI代理处理器
     ai_handler: Arc<AIProxyHandler>,
-    /// 统一追踪器
-    tracer: Option<Arc<UnifiedProxyTracer>>,
+    /// 即时写入追踪器
+    tracer: Option<Arc<ImmediateProxyTracer>>,
 }
 
 impl ProxyService {
@@ -34,7 +33,6 @@ impl ProxyService {
         config: Arc<AppConfig>,
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
-        auth_manager: Arc<UnifiedAuthManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
         trace_system: Option<Arc<UnifiedTraceSystem>>,
     ) -> pingora_core::Result<Self> {
@@ -44,22 +42,21 @@ impl ProxyService {
             cache.clone(),
         ));
 
-        // 获取追踪器
-        let tracer = trace_system.as_ref().map(|ts| ts.tracer());
+        // 获取即时写入追踪器
+        let tracer = trace_system.as_ref().and_then(|ts| ts.immediate_tracer());
 
         // 创建AI代理处理器
         let ai_handler = Arc::new(AIProxyHandler::new(
             db,
             cache,
             config.clone(),
-            auth_manager,
             schedulers,
             tracer.clone(),
             provider_config_manager,
         ));
 
-        // 保留trace_system引用获取的tracer
-        let tracer = trace_system.map(|ts| ts.tracer());
+        // 保留trace_system引用获取的即时写入tracer
+        let tracer = trace_system.and_then(|ts| ts.immediate_tracer());
 
         Ok(Self {
             config,
@@ -295,14 +292,24 @@ impl ProxyHttp for ProxyService {
         if ctx.trace_enabled {
             if let Some(tracer) = &self.tracer {
                 let is_success = status_code < 400;
-                if let Err(e) = tracer
-                    .complete_trace(&ctx.request_id, status_code, is_success)
-                    .await
-                {
+                let response_size = upstream_response.headers.get("content-length")
+                    .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+                    .and_then(|s| s.parse::<u64>().ok());
+                
+                if let Err(e) = tracer.complete_trace(
+                    &ctx.request_id,
+                    status_code,
+                    is_success,
+                    response_size,
+                    None, // tokens_prompt - 通常从响应头或响应体提取
+                    None, // tokens_completion - 通常从响应头或响应体提取
+                    if is_success { None } else { Some("request_failed".to_string()) },
+                    if is_success { None } else { Some(format!("HTTP {}", status_code)) },
+                ).await {
                     tracing::warn!(
                         request_id = %ctx.request_id,
                         error = %e,
-                        "Failed to complete trace"
+                        "Failed to complete immediate trace"
                     );
                 }
             }
@@ -362,6 +369,38 @@ impl ProxyHttp for ProxyService {
                 "Converting network/timeout error to user-friendly response"
             );
 
+            // 上游连接失败时立即记录到数据库
+            if ctx.trace_enabled {
+                if let Some(tracer) = &self.tracer {
+                    let error_code = match converted_error {
+                        crate::error::ProxyError::ConnectionTimeout { .. } => 504,
+                        crate::error::ProxyError::ReadTimeout { .. } => 504, 
+                        crate::error::ProxyError::Network { .. } => 502,
+                        crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
+                        _ => 502,
+                    };
+                    
+                    let error_type = match converted_error {
+                        crate::error::ProxyError::ConnectionTimeout { .. } => "connection_timeout",
+                        crate::error::ProxyError::ReadTimeout { .. } => "read_timeout", 
+                        crate::error::ProxyError::Network { .. } => "network_error",
+                        crate::error::ProxyError::UpstreamNotAvailable { .. } => "upstream_unavailable",
+                        _ => "upstream_connection_failed",
+                    };
+                    
+                    let _ = tracer.complete_trace(
+                        &ctx.request_id,
+                        error_code,
+                        false,
+                        None,
+                        None,
+                        None,
+                        Some(error_type.to_string()),
+                        Some(converted_error.to_string()),
+                    ).await;
+                }
+            }
+
             // 返回转换后的错误信息，让 Pingora 处理 HTTP 响应
             let error_code = match converted_error {
                 crate::error::ProxyError::ConnectionTimeout { .. } => 504,
@@ -378,6 +417,22 @@ impl ProxyHttp for ProxyService {
         }
 
         // 对于其他错误，使用默认错误码并不重用连接
+        // 其他类型的连接失败也记录
+        if ctx.trace_enabled {
+            if let Some(tracer) = &self.tracer {
+                let _ = tracer.complete_trace(
+                    &ctx.request_id,
+                    500,
+                    false,
+                    None,
+                    None,
+                    None,
+                    Some("proxy_error".to_string()),
+                    Some(format!("Pingora error: {}", e)),
+                ).await;
+            }
+        }
+        
         FailToProxy {
             error_code: 500,
             can_reuse_downstream: false,

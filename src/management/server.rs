@@ -13,7 +13,7 @@ use anyhow::Result;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Json;
-use axum::routing::{get, post, put, patch, delete};
+use axum::routing::get;
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;

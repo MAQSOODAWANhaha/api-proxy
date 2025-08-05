@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use chrono::{Utc, NaiveDateTime};
+use chrono::Utc;
 use uuid::Uuid;
 
 /// Service API查询参数
@@ -126,7 +126,7 @@ pub async fn list_service_apis(
 ) -> Result<Json<Value>, StatusCode> {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use entity::provider_types::{self, Entity as ProviderType};
-    use sea_orm::{ColumnTrait, EntityTrait, JoinType, QueryFilter, QuerySelect, RelationTrait, PaginatorTrait};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, PaginatorTrait};
     
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
@@ -490,7 +490,7 @@ pub async fn update_service_api(
 ) -> Result<Json<Value>, StatusCode> {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use entity::provider_types::{self, Entity as ProviderType};
-    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
     
     if api_id <= 0 {
         return Err(StatusCode::BAD_REQUEST);

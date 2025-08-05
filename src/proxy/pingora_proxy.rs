@@ -2,16 +2,11 @@
 //!
 //! 基于 Pingora 0.5.0 实现的高性能 AI 代理服务器
 
-use super::service::ProxyService;
-use crate::auth::{
-    api_key::ApiKeyManager, jwt::JwtManager, types::AuthConfig, unified::UnifiedAuthManager,
-    AuthService,
-};
-use crate::cache::UnifiedCacheManager;
-use crate::config::{AppConfig, ProviderConfigManager};
+use super::builder::ProxyServerBuilder;
+use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::tls::manager::TlsCertificateManager;
-use log::info;
+// 使用 tracing 替代 log
 use pingora_core::{
     listeners::tls::TlsSettings,
     server::{configuration::Opt, Server},
@@ -42,11 +37,11 @@ impl PingoraProxyServer {
             if let Some(tls_config) = &config_arc.tls {
                 match TlsCertificateManager::new(Arc::new(tls_config.clone())) {
                     Ok(manager) => {
-                        info!("TLS certificate manager initialized");
+                        tracing::info!("TLS certificate manager initialized");
                         Some(Arc::new(manager))
                     }
                     Err(e) => {
-                        log::error!("Failed to initialize TLS manager: {}", e);
+                        tracing::error!("Failed to initialize TLS manager: {}", e);
                         None
                     }
                 }
@@ -77,98 +72,46 @@ impl PingoraProxyServer {
         // env_logger::init();
 
         // 创建服务器配置
-        info!("Creating Pingora server configuration...");
+        tracing::info!("Creating Pingora server configuration...");
         let opt = Opt::default();
         let mut server = Server::new(Some(opt)).map_err(|e| {
             ProxyError::server_init(format!("Failed to create Pingora server: {}", e))
         })?;
 
-        info!("Bootstrapping Pingora server...");
+        tracing::info!("Bootstrapping Pingora server...");
         server.bootstrap();
 
-        // 使用共享数据库连接或创建新连接
-        let db = if let Some(shared_db) = &self.db {
-            info!("Using shared database connection...");
-            shared_db.clone()
-        } else {
-            // 确保数据库路径存在
-            info!("Setting up database path...");
-            self.config.database.ensure_database_path().map_err(|e| {
-                ProxyError::server_init(format!("Database path setup failed: {}", e))
-            })?;
-
-            // 创建数据库连接
-            info!("Creating database connection...");
-            let db_url = self.config.database.get_connection_url().map_err(|e| {
-                ProxyError::server_init(format!("Database URL preparation failed: {}", e))
-            })?;
-
-            Arc::new(sea_orm::Database::connect(&db_url).await.map_err(|e| {
-                ProxyError::database(format!("Failed to connect to database: {}", e))
-            })?)
-        };
-
-        // 创建统一缓存管理器
-        info!("Creating unified cache manager...");
-        let cache = Arc::new(
-            UnifiedCacheManager::new(&self.config.cache, &self.config.redis.url)
-                .map_err(|e| ProxyError::cache(format!("Failed to create cache manager: {}", e)))?,
-        );
-
-        // 创建认证配置和服务
-        info!("Creating auth config and service...");
-        let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
-        let auth_service = Self::create_auth_service_with_db(db.clone(), auth_config.clone())
-            .await
-            .map_err(|e| {
-                ProxyError::server_init(format!("Failed to create auth service: {}", e))
-            })?;
-
-        // 创建统一认证管理器
-        info!("Creating unified auth manager...");
-        let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
-
-        // 创建服务商配置管理器
-        info!("Creating provider config manager...");
-        let provider_config_manager = Arc::new(ProviderConfigManager::new(db.clone(), cache.clone()));
-
-        // 创建 AI 代理服务
-        info!("Creating AI proxy service...");
-        let ai_proxy = ProxyService::new(
-            Arc::clone(&self.config),
-            db.clone(),
-            cache.clone(),
-            auth_manager.clone(),
-            provider_config_manager,
-            None, // trace_system 暂时为 None，在这个独立启动中不使用追踪
-        )
-        .map_err(|e| ProxyError::server_init(format!("Failed to create proxy service: {}", e)))?;
+        // 使用构建器创建所有组件
+        let mut builder = ProxyServerBuilder::new(self.config.clone());
+        
+        // 如果有共享数据库连接，使用它
+        if let Some(shared_db) = &self.db {
+            builder = builder.with_database(shared_db.clone());
+        }
+        
+        let components = builder.build_components().await?;
 
         // 创建 HTTP 代理服务
-        let mut proxy_service = http_proxy_service(&server.configuration, ai_proxy);
+        let mut proxy_service = http_proxy_service(&server.configuration, components.proxy_service);
 
-        // 添加监听地址
-        proxy_service.add_tcp(&format!(
-            "{}:{}",
-            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            self.config.server.as_ref().map_or(8080, |s| s.port)
-        ));
+        // 添加监听地址  
+        proxy_service.add_tcp(&builder.get_server_address());
 
         // 如果配置了 HTTPS，添加 TLS 监听器
         if self.config.server.as_ref().map_or(0, |s| s.https_port) > 0 {
             let https_port = self.config.server.as_ref().map_or(0, |s| s.https_port);
-            info!("HTTPS listener configured on port {}", https_port);
+            tracing::info!("HTTPS listener configured on port {}", https_port);
 
             if let Some(tls_manager) = &self.tls_manager {
                 match self.setup_tls_listener(https_port, tls_manager).await {
-                    Ok(()) => info!("TLS listener successfully configured"),
+                    Ok(()) => tracing::info!("TLS listener successfully configured"),
                     Err(e) => {
-                        log::error!("Failed to setup TLS listener: {}", e);
+                        tracing::error!("Failed to setup TLS listener: {}", e);
                         return Err(e);
                     }
                 }
             } else {
-                log::warn!(
+                tracing::warn!(
                     "HTTPS port configured but TLS manager not available, skipping TLS setup"
                 );
             }
@@ -180,10 +123,9 @@ impl PingoraProxyServer {
         // let health_check_service = self.create_health_check_service();
         // server.add_service(health_check_service);
 
-        info!(
-            "Starting Pingora proxy server on {}:{}",
-            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            self.config.server.as_ref().map_or(8080, |s| s.port)
+        tracing::info!(
+            "Starting Pingora proxy server on {}",
+            builder.get_server_address()
         );
 
         // 启动服务器 - run_forever 返回 ! 类型，永不返回
@@ -193,13 +135,13 @@ impl PingoraProxyServer {
     /// 启动服务器（同步版本）
     pub fn start_sync(&self) -> Result<()> {
         // 创建服务器配置
-        info!("Creating Pingora server configuration...");
+        tracing::info!("Creating Pingora server configuration...");
         let opt = Opt::default();
         let mut server = Server::new(Some(opt)).map_err(|e| {
             ProxyError::server_init(format!("Failed to create Pingora server: {}", e))
         })?;
 
-        info!("Bootstrapping Pingora server...");
+        tracing::info!("Bootstrapping Pingora server...");
         server.bootstrap();
 
         // 创建运行时用于异步初始化
@@ -208,101 +150,49 @@ impl PingoraProxyServer {
         })?;
 
         // 在运行时中执行异步初始化
-        let ai_proxy = rt.block_on(async {
-            // 使用共享数据库连接或创建新连接
-            let db = if let Some(shared_db) = &self.db {
-                info!("Using shared database connection...");
-                shared_db.clone()
-            } else {
-                // 确保数据库路径存在
-                info!("Setting up database path...");
-                self.config.database.ensure_database_path().map_err(|e| {
-                    ProxyError::server_init(format!("Database path setup failed: {}", e))
-                })?;
-
-                // 创建数据库连接
-                info!("Creating database connection...");
-                let db_url = self.config.database.get_connection_url().map_err(|e| {
-                    ProxyError::server_init(format!("Database URL preparation failed: {}", e))
-                })?;
-
-                Arc::new(sea_orm::Database::connect(&db_url).await.map_err(|e| {
-                    ProxyError::database(format!("Failed to connect to database: {}", e))
-                })?)
-            };
-
-            // 创建统一缓存管理器
-            info!("Creating unified cache manager...");
-            let cache = Arc::new(
-                UnifiedCacheManager::new(&self.config.cache, &self.config.redis.url).map_err(
-                    |e| ProxyError::cache(format!("Failed to create cache manager: {}", e)),
-                )?,
-            );
-
-            // 创建认证配置和服务
-            info!("Creating auth config and service...");
-            let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
-            let auth_service = Self::create_auth_service_with_db(db.clone(), auth_config.clone())
-                .await
-                .map_err(|e| {
-                    ProxyError::server_init(format!("Failed to create auth service: {}", e))
-                })?;
-
-            // 创建统一认证管理器
-            info!("Creating unified auth manager...");
-            let auth_manager = Arc::new(UnifiedAuthManager::new(auth_service, auth_config));
-
-            // 创建服务商配置管理器
-            info!("Creating provider config manager...");
-            let provider_config_manager = Arc::new(ProviderConfigManager::new(db.clone(), cache.clone()));
-
-            // 创建 AI 代理服务
-            info!("Creating AI proxy service...");
-            let ai_proxy = ProxyService::new(
-                Arc::clone(&self.config),
-                db.clone(),
-                cache.clone(),
-                auth_manager.clone(),
-                provider_config_manager,
-                None, // trace_system 暂时为 None，在这个独立启动中不使用追踪
-            )
-            .map_err(|e| {
-                ProxyError::server_init(format!("Failed to create proxy service: {}", e))
-            })?;
-
-            Ok::<_, ProxyError>(ai_proxy)
+        let components = rt.block_on(async {
+            // 使用构建器创建所有组件
+            let mut builder = ProxyServerBuilder::new(self.config.clone());
+            
+            // 如果有共享数据库连接，使用它
+            if let Some(shared_db) = &self.db {
+                builder = builder.with_database(shared_db.clone());
+            }
+            
+            builder.build_components().await
         })?;
 
         // 创建 HTTP 代理服务
-        info!("Setting up HTTP proxy service...");
-        let mut proxy_service = http_proxy_service(&server.configuration, ai_proxy);
+        tracing::info!("Setting up HTTP proxy service...");
+        let mut proxy_service = http_proxy_service(&server.configuration, components.proxy_service);
 
         // 添加监听地址
-        proxy_service.add_tcp(&format!(
+        let server_address = format!(
             "{}:{}",
             self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
             self.config.server.as_ref().map_or(8080, |s| s.port)
-        ));
+        );
+        proxy_service.add_tcp(&server_address);
 
         // 如果配置了 HTTPS，添加 TLS 监听器
         if self.config.server.as_ref().map_or(0, |s| s.https_port) > 0 {
             let https_port = self.config.server.as_ref().map_or(0, |s| s.https_port);
-            info!("HTTPS listener configured on port {}", https_port);
+            tracing::info!("HTTPS listener configured on port {}", https_port);
 
             if let Some(tls_manager) = &self.tls_manager {
                 // 在运行时中执行TLS设置
                 rt.block_on(async {
                     match self.setup_tls_listener(https_port, tls_manager).await {
-                        Ok(()) => info!("TLS listener successfully configured"),
+                        Ok(()) => tracing::info!("TLS listener successfully configured"),
                         Err(e) => {
-                            log::error!("Failed to setup TLS listener: {}", e);
+                            tracing::error!("Failed to setup TLS listener: {}", e);
                             return Err(e);
                         }
                     }
                     Ok::<_, ProxyError>(())
                 })?;
             } else {
-                log::warn!(
+                tracing::warn!(
                     "HTTPS port configured but TLS manager not available, skipping TLS setup"
                 );
             }
@@ -310,34 +200,15 @@ impl PingoraProxyServer {
 
         server.add_service(proxy_service);
 
-        info!(
-            "Starting Pingora proxy server on {}:{}",
-            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            self.config.server.as_ref().map_or(8080, |s| s.port)
+        tracing::info!(
+            "Starting Pingora proxy server on {}",
+            server_address
         );
 
         // 启动服务器 - run_forever 返回 ! 类型，永不返回
         server.run_forever();
     }
 
-    /// 创建认证服务（使用给定的数据库连接）
-    async fn create_auth_service_with_db(
-        db: Arc<sea_orm::DatabaseConnection>,
-        auth_config: Arc<AuthConfig>,
-    ) -> Result<Arc<AuthService>> {
-        // 创建 JWT 管理器
-        let jwt_manager = Arc::new(JwtManager::new(auth_config.clone()).map_err(|e| {
-            ProxyError::server_init(format!("Failed to create JWT manager: {}", e))
-        })?);
-
-        // 创建 API 密钥管理器
-        let api_key_manager = Arc::new(ApiKeyManager::new(db.clone(), auth_config.clone()));
-
-        // 创建认证服务
-        let auth_service = AuthService::new(jwt_manager, api_key_manager, db, auth_config);
-
-        Ok(Arc::new(auth_service))
-    }
 
     /// 设置 TLS 监听器
     async fn setup_tls_listener(
@@ -345,7 +216,7 @@ impl PingoraProxyServer {
         https_port: u16,
         tls_manager: &Arc<TlsCertificateManager>,
     ) -> Result<()> {
-        info!("Setting up TLS listener on port {}", https_port);
+        tracing::info!("Setting up TLS listener on port {}", https_port);
 
         // 确保所有配置的域名都有有效证书
         let certificates = tls_manager.ensure_all_certificates().await.map_err(|e| {
@@ -363,7 +234,7 @@ impl PingoraProxyServer {
 
         // 为每个证书创建 TLS 配置
         for cert_info in &certificates {
-            info!("Setting up TLS for domain: {}", cert_info.domain);
+            tracing::info!("Setting up TLS for domain: {}", cert_info.domain);
 
             // 创建 TLS 设置
             let _tls_settings = self.create_tls_settings(&cert_info)?;
@@ -376,19 +247,19 @@ impl PingoraProxyServer {
             );
 
             // 创建 TLS 设置并记录配置
-            info!(
+            tracing::info!(
                 "TLS configuration prepared for domain {} on {}",
                 cert_info.domain, tls_addr
             );
-            info!("Certificate path: {}", cert_info.cert_path.display());
-            info!("Key path: {}", cert_info.key_path.display());
+            tracing::info!("Certificate path: {}", cert_info.cert_path.display());
+            tracing::info!("Key path: {}", cert_info.key_path.display());
 
             // 在真实实现中，这里会将 TLS 设置应用到代理服务
             // 由于 Pingora API 的复杂性，这里先记录配置信息
-            log::warn!(
+            tracing::warn!(
                 "TLS listener configuration prepared but not yet applied to Pingora service"
             );
-            log::warn!(
+            tracing::warn!(
                 "TLS configuration: domain={}, cert={}, key={}",
                 cert_info.domain,
                 cert_info.cert_path.display(),
@@ -396,7 +267,7 @@ impl PingoraProxyServer {
             );
         }
 
-        info!(
+        tracing::info!(
             "TLS setup completed for {} certificate(s)",
             certificates.len()
         );
@@ -411,9 +282,9 @@ impl PingoraProxyServer {
         // 3. 设置协议版本和密码套件
         // 4. 配置 SNI 支持
 
-        info!("Creating TLS settings for domain: {}", cert_info.domain);
-        info!("Certificate file: {}", cert_info.cert_path.display());
-        info!("Private key file: {}", cert_info.key_path.display());
+        tracing::info!("Creating TLS settings for domain: {}", cert_info.domain);
+        tracing::info!("Certificate file: {}", cert_info.cert_path.display());
+        tracing::info!("Private key file: {}", cert_info.key_path.display());
 
         // 检查证书文件是否存在
         if !cert_info.cert_path.exists() {
@@ -438,7 +309,7 @@ impl PingoraProxyServer {
         )
         .map_err(|e| ProxyError::server_init(format!("Failed to create TLS settings: {}", e)))?;
 
-        info!("TLS settings created for domain: {}", cert_info.domain);
+        tracing::info!("TLS settings created for domain: {}", cert_info.domain);
         Ok(tls_settings)
     }
 
@@ -450,7 +321,7 @@ impl PingoraProxyServer {
     /// 手动续期所有证书
     pub async fn renew_all_certificates(&self) -> Result<()> {
         if let Some(tls_manager) = &self.tls_manager {
-            info!("Starting manual certificate renewal");
+            tracing::info!("Starting manual certificate renewal");
 
             let domains = if let Some(tls_config) = &self.config.tls {
                 tls_config.domains.clone()
@@ -463,17 +334,17 @@ impl PingoraProxyServer {
             for domain in domains {
                 match tls_manager.manual_renew_certificate(&domain).await {
                     Ok(()) => {
-                        info!("Successfully renewed certificate for domain: {}", domain);
+                        tracing::info!("Successfully renewed certificate for domain: {}", domain);
                         success_count += 1;
                     }
                     Err(e) => {
-                        log::error!("Failed to renew certificate for domain {}: {}", domain, e);
+                        tracing::error!("Failed to renew certificate for domain {}: {}", domain, e);
                         error_count += 1;
                     }
                 }
             }
 
-            info!(
+            tracing::info!(
                 "Certificate renewal completed: {} succeeded, {} failed",
                 success_count, error_count
             );

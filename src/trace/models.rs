@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// 请求追踪数据 - 完整的请求生命周期记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
