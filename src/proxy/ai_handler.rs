@@ -161,6 +161,11 @@ impl AIProxyHandler {
         
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
+                // 更新追踪记录中的真实用户服务API ID
+                let _ = tracer.update_trace(&ctx.request_id, |trace| {
+                    trace.user_service_api_id = user_service_api.id;
+                }).await;
+                
                 let _ = tracer.complete_phase(
                     &ctx.request_id, 
                     "authentication", 
@@ -215,25 +220,34 @@ impl AIProxyHandler {
         ctx.provider_type = Some(provider_type.clone());
         ctx.selected_provider = Some(provider_type.name.clone());
         
-        // 获取动态配置包括超时设置
-        if let Ok(Some(provider_config)) = self.provider_config_manager.get_provider_by_name(&provider_type.name).await {
-            ctx.timeout_seconds = provider_config.timeout_seconds;
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                provider = %provider_type.name,
-                timeout_seconds = ?ctx.timeout_seconds,
-                "Loaded dynamic timeout configuration"
-            );
+        // 设置超时配置，优先级：用户配置 > 动态配置 > 默认配置
+        ctx.timeout_seconds = if let Some(user_timeout) = user_service_api.timeout_seconds {
+            // 优先使用用户配置的超时时间
+            Some(user_timeout)
+        } else if let Ok(Some(provider_config)) = self.provider_config_manager.get_provider_by_name(&provider_type.name).await {
+            // 其次使用动态配置的超时时间
+            provider_config.timeout_seconds
         } else {
-            // 使用provider_types表中的默认超时
-            ctx.timeout_seconds = provider_type.timeout_seconds;
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                provider = %provider_type.name,
-                timeout_seconds = ?ctx.timeout_seconds,
-                "Using provider_types default timeout configuration"
-            );
-        }
+            // 最后使用provider_types表中的默认超时时间
+            provider_type.timeout_seconds
+        };
+        
+        let timeout_source = if user_service_api.timeout_seconds.is_some() {
+            "user_service_api configuration (highest priority)"
+        } else if let Ok(Some(_)) = self.provider_config_manager.get_provider_by_name(&provider_type.name).await {
+            "dynamic provider configuration"
+        } else {
+            "provider_types default configuration"
+        };
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            timeout_seconds = ?ctx.timeout_seconds,
+            source = timeout_source,
+            user_config = ?user_service_api.timeout_seconds,
+            "Applied timeout configuration with correct priority"
+        );
         
         if let Some(tracer) = &self.tracer {
             if ctx.trace_enabled {
@@ -453,7 +467,7 @@ impl AIProxyHandler {
         // 创建基础peer
         let mut peer = HttpPeer::new(upstream_addr, true, provider_type.base_url.clone());
         
-        // 获取动态超时配置，默认30秒
+        // 获取超时配置，如果前面的配置逻辑未设置则使用30秒fallback
         let connection_timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
         let total_timeout_secs = connection_timeout_secs + 5; // 总超时比连接超时多5秒
         let read_timeout_secs = connection_timeout_secs * 2; // 读取超时是连接超时的2倍
@@ -739,7 +753,7 @@ impl AIProxyHandler {
 
     /// 检测并转换Pingora错误为ProxyError
     pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {
-        let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64; // 使用配置的超时或30秒fallback
         let provider_name = ctx.provider_type
             .as_ref()
             .map(|p| p.name.as_str())

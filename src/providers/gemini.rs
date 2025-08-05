@@ -211,7 +211,7 @@ impl Default for GeminiConfig {
                 .unwrap_or_else(|_| "v1beta".to_string()),
             supported_models: GeminiModel::all(),
             default_model: GeminiModel::default(),
-            timeout_seconds: 30,
+            timeout_seconds: 30, // 默认值，实际使用时会被数据库配置覆盖
             max_retries: 3,
         }
     }
