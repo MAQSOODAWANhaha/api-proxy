@@ -7,6 +7,7 @@ use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::tls::manager::TlsCertificateManager;
 // 使用 tracing 替代 log
+use crate::trace::UnifiedTraceSystem;
 use pingora_core::{
     listeners::tls::TlsSettings,
     server::{configuration::Opt, Server},
@@ -20,6 +21,8 @@ pub struct PingoraProxyServer {
     tls_manager: Option<Arc<TlsCertificateManager>>,
     /// 共享数据库连接
     db: Option<Arc<sea_orm::DatabaseConnection>>,
+    /// 统一追踪系统
+    trace_system: Option<Arc<UnifiedTraceSystem>>,
 }
 
 impl PingoraProxyServer {
@@ -56,6 +59,7 @@ impl PingoraProxyServer {
             config: config_arc,
             tls_manager,
             db: None,
+            trace_system: None,
         }
     }
 
@@ -63,6 +67,18 @@ impl PingoraProxyServer {
     pub fn new_with_db(config: AppConfig, db: Arc<sea_orm::DatabaseConnection>) -> Self {
         let mut server = Self::new(config);
         server.db = Some(db);
+        server
+    }
+
+    /// 创建新的代理服务器（带数据库连接和追踪系统）
+    pub fn new_with_db_and_trace(
+        config: AppConfig, 
+        db: Arc<sea_orm::DatabaseConnection>,
+        trace_system: Arc<UnifiedTraceSystem>
+    ) -> Self {
+        let mut server = Self::new(config);
+        server.db = Some(db);
+        server.trace_system = Some(trace_system);
         server
     }
 
@@ -83,18 +99,23 @@ impl PingoraProxyServer {
 
         // 使用构建器创建所有组件
         let mut builder = ProxyServerBuilder::new(self.config.clone());
-        
+
         // 如果有共享数据库连接，使用它
         if let Some(shared_db) = &self.db {
             builder = builder.with_database(shared_db.clone());
         }
-        
+
+        // 如果有追踪系统，传递给构建器
+        if let Some(trace_system) = &self.trace_system {
+            builder = builder.with_trace_system(trace_system.clone());
+        }
+
         let components = builder.build_components().await?;
 
         // 创建 HTTP 代理服务
         let mut proxy_service = http_proxy_service(&server.configuration, components.proxy_service);
 
-        // 添加监听地址  
+        // 添加监听地址
         proxy_service.add_tcp(&builder.get_server_address());
 
         // 如果配置了 HTTPS，添加 TLS 监听器
@@ -153,12 +174,17 @@ impl PingoraProxyServer {
         let components = rt.block_on(async {
             // 使用构建器创建所有组件
             let mut builder = ProxyServerBuilder::new(self.config.clone());
-            
+
             // 如果有共享数据库连接，使用它
             if let Some(shared_db) = &self.db {
                 builder = builder.with_database(shared_db.clone());
             }
-            
+
+            // 如果有追踪系统，传递给构建器
+            if let Some(trace_system) = &self.trace_system {
+                builder = builder.with_trace_system(trace_system.clone());
+            }
+
             builder.build_components().await
         })?;
 
@@ -200,15 +226,11 @@ impl PingoraProxyServer {
 
         server.add_service(proxy_service);
 
-        tracing::info!(
-            "Starting Pingora proxy server on {}",
-            server_address
-        );
+        tracing::info!("Starting Pingora proxy server on {}", server_address);
 
         // 启动服务器 - run_forever 返回 ! 类型，永不返回
         server.run_forever();
     }
-
 
     /// 设置 TLS 监听器
     async fn setup_tls_listener(
@@ -249,7 +271,8 @@ impl PingoraProxyServer {
             // 创建 TLS 设置并记录配置
             tracing::info!(
                 "TLS configuration prepared for domain {} on {}",
-                cert_info.domain, tls_addr
+                cert_info.domain,
+                tls_addr
             );
             tracing::info!("Certificate path: {}", cert_info.cert_path.display());
             tracing::info!("Key path: {}", cert_info.key_path.display());
@@ -346,7 +369,8 @@ impl PingoraProxyServer {
 
             tracing::info!(
                 "Certificate renewal completed: {} succeeded, {} failed",
-                success_count, error_count
+                success_count,
+                error_count
             );
 
             if error_count > 0 {
