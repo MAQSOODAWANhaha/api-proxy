@@ -199,6 +199,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bcrypt",
+ "bytes",
  "chrono",
  "clap 4.5.41",
  "criterion",
