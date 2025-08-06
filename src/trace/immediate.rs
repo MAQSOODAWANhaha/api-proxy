@@ -210,6 +210,34 @@ impl ImmediateProxyTracer {
         error_type: Option<String>,
         error_message: Option<String>,
     ) -> Result<()> {
+        self.complete_trace_with_details(
+            request_id,
+            status_code,
+            is_success,
+            response_size,
+            tokens_prompt,
+            tokens_completion,
+            error_type,
+            error_message,
+            None, // request_details
+            None, // response_details
+        ).await
+    }
+
+    /// 完成追踪 - 包含详细的请求响应信息
+    pub async fn complete_trace_with_details(
+        &self,
+        request_id: &str,
+        status_code: u16,
+        is_success: bool,
+        response_size: Option<u64>,
+        tokens_prompt: Option<u32>,
+        tokens_completion: Option<u32>,
+        error_type: Option<String>,
+        error_message: Option<String>,
+        request_details: Option<serde_json::Value>,
+        response_details: Option<serde_json::Value>,
+    ) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -237,11 +265,44 @@ impl ImmediateProxyTracer {
         // 异常检测
         let is_anomaly = self.detect_anomaly(status_code, is_success, token_efficiency_ratio);
         
+        // 构建详细性能指标JSON（包含请求响应详情）
+        let performance_metrics = if request_details.is_some() || response_details.is_some() {
+            let mut metrics = serde_json::Map::new();
+            if let Some(req_details) = request_details {
+                metrics.insert("request".to_string(), req_details);
+            }
+            if let Some(resp_details) = response_details {
+                metrics.insert("response".to_string(), resp_details);
+            }
+            Some(serde_json::Value::Object(metrics).to_string())
+        } else {
+            None
+        };
+        
+        // 获取起始时间并计算持续时间
+        let start_time_result = proxy_tracing::Entity::find()
+            .filter(proxy_tracing::Column::RequestId.eq(request_id))
+            .select_only()
+            .column(proxy_tracing::Column::StartTime)
+            .into_tuple::<Option<chrono::NaiveDateTime>>()
+            .one(&*self.db)
+            .await?;
+            
+        let (duration_ms, response_time_ms) = if let Some(Some(start_time)) = start_time_result {
+            let duration = end_time.signed_duration_since(start_time);
+            let duration_ms = duration.num_milliseconds();
+            (Some(duration_ms), Some(duration_ms as i32))
+        } else {
+            (None, None)
+        };
+
         // 构建完成更新模型
         let complete_model = proxy_tracing::ActiveModel {
             status_code: Set(Some(status_code as i32)),
             is_success: Set(is_success),
             end_time: Set(Some(end_time)),
+            duration_ms: Set(duration_ms),
+            response_time_ms: Set(response_time_ms),
             response_size: Set(response_size.map(|s| s as i32)),
             tokens_prompt: Set(tokens_prompt.map(|t| t as i32)),
             tokens_completion: Set(tokens_completion.map(|t| t as i32)),
@@ -251,6 +312,7 @@ impl ImmediateProxyTracer {
             error_message: Set(error_message),
             health_impact_score: Set(health_impact_score),
             is_anomaly: Set(Some(is_anomaly)),
+            performance_metrics: Set(performance_metrics),
             ..Default::default()
         };
         

@@ -3,6 +3,7 @@
 //! 基于设计文档实现的透明AI代理服务，专注身份验证、速率限制和转发策略
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use pingora_core::protocols::Digest;
 use pingora_core::{prelude::*, upstreams::peer::HttpPeer, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
@@ -288,34 +289,32 @@ impl ProxyHttp for ProxyService {
             "AI proxy response processed"
         );
 
-        // 完成追踪（如果启用）
-        if ctx.trace_enabled {
-            if let Some(tracer) = &self.tracer {
-                let is_success = status_code < 400;
-                let response_size = upstream_response.headers.get("content-length")
-                    .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-                    .and_then(|s| s.parse::<u64>().ok());
-                
-                if let Err(e) = tracer.complete_trace(
-                    &ctx.request_id,
-                    status_code,
-                    is_success,
-                    response_size,
-                    None, // tokens_prompt - 通常从响应头或响应体提取
-                    None, // tokens_completion - 通常从响应头或响应体提取
-                    if is_success { None } else { Some("request_failed".to_string()) },
-                    if is_success { None } else { Some(format!("HTTP {}", status_code)) },
-                ).await {
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        error = %e,
-                        "Failed to complete immediate trace"
-                    );
-                }
-            }
-        }
-
         Ok(())
+    }
+
+    fn response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<Option<std::time::Duration>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        // 收集响应体数据块
+        if let Some(data) = body {
+            ctx.response_details.add_body_chunk(data);
+            
+            tracing::trace!(
+                request_id = %ctx.request_id,
+                chunk_size = data.len(),
+                total_size = ctx.response_details.body_chunks.len(),
+                "Collected response body chunk"
+            );
+        }
+        
+        Ok(None)
     }
 
     async fn connected_to_upstream(
@@ -489,6 +488,57 @@ impl ProxyHttp for ProxyService {
                 );
             }
         } else {
+            // 成功请求完成，记录追踪信息
+            if let Some(tracer) = &self.tracer {
+                if ctx.trace_enabled {
+                    // 从上下文获取响应信息
+                    let status_code = session.response_written()
+                        .map(|resp| resp.status.as_u16())
+                        .unwrap_or(200);
+                    
+                    // 注意：响应时间在complete_trace方法内部计算
+                    // let response_time_ms = duration.as_millis() as u64;
+                    
+                    // 使用详细的token信息
+                    let tokens_prompt = ctx.token_usage.prompt_tokens;
+                    let tokens_completion = ctx.token_usage.completion_tokens;
+                    
+                    // 获取响应体大小（如果可用）
+                    let response_size = session.response_written()
+                        .and_then(|resp| {
+                            resp.headers.get("content-length")
+                                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+                                .and_then(|s| s.parse::<u64>().ok())
+                        });
+                    
+                    // 完成响应体数据收集
+                    ctx.response_details.finalize_body();
+                    
+                    // 构建请求详情JSON
+                    let request_json = serde_json::to_value(&ctx.request_details)
+                        .map_err(|e| tracing::warn!("Failed to serialize request details: {}", e))
+                        .ok();
+                    
+                    // 构建响应详情JSON (使用可序列化版本)
+                    let response_json = serde_json::to_value(&crate::proxy::ai_handler::SerializableResponseDetails::from(&ctx.response_details))
+                        .map_err(|e| tracing::warn!("Failed to serialize response details: {}", e))
+                        .ok();
+                    
+                    let _ = tracer.complete_trace_with_details(
+                        &ctx.request_id,
+                        status_code,
+                        true, // 成功标志
+                        response_size,
+                        tokens_prompt,
+                        tokens_completion,
+                        None, // 无错误类型
+                        None, // 无错误消息
+                        request_json,  // 请求详情
+                        response_json, // 响应详情
+                    ).await;
+                }
+            }
+            
             tracing::debug!(
                 request_id = %ctx.request_id,
                 duration_ms = duration.as_millis(),

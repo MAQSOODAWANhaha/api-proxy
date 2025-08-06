@@ -39,6 +39,105 @@ pub struct AIProxyHandler {
     provider_config_manager: Arc<ProviderConfigManager>,
 }
 
+/// Token使用详情
+#[derive(Clone, Debug, Default)]
+pub struct TokenUsage {
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: u32,
+}
+
+/// 请求详情
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct RequestDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    /// 真实客户端IP地址（考虑代理情况）
+    pub client_ip: String,
+    /// 用户代理字符串
+    pub user_agent: Option<String>,
+    /// 来源页面
+    pub referer: Option<String>,
+    /// 请求方法
+    pub method: String,
+    /// 请求路径
+    pub path: String,
+    /// 请求协议版本
+    pub protocol_version: Option<String>,
+}
+
+/// 响应详情
+#[derive(Clone, Debug, Default)]
+pub struct ResponseDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    pub content_encoding: Option<String>,
+    /// 响应体数据块累积(用于收集响应体数据)
+    pub body_chunks: Vec<u8>,
+}
+
+/// 响应详情的序列化版本(不包含body_chunks)
+#[derive(serde::Serialize)]
+pub struct SerializableResponseDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    pub content_encoding: Option<String>,
+}
+
+impl From<&ResponseDetails> for SerializableResponseDetails {
+    fn from(details: &ResponseDetails) -> Self {
+        Self {
+            headers: details.headers.clone(),
+            body: details.body.clone(),
+            body_size: details.body_size,
+            content_type: details.content_type.clone(),
+            content_encoding: details.content_encoding.clone(),
+        }
+    }
+}
+
+impl ResponseDetails {
+    /// 添加响应体数据块
+    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
+        self.body_chunks.extend_from_slice(chunk);
+    }
+    
+    /// 完成响应体收集，将累积的数据转换为字符串
+    pub fn finalize_body(&mut self) {
+        if !self.body_chunks.is_empty() {
+            // 尝试将响应体转换为UTF-8字符串
+            match String::from_utf8(self.body_chunks.clone()) {
+                Ok(body_str) => {
+                    // 对于大的响应体，只保留前64KB
+                    if body_str.len() > 65536 {
+                        self.body = Some(format!("{}...[truncated {} bytes]", 
+                            &body_str[..65536], 
+                            body_str.len() - 65536));
+                    } else {
+                        self.body = Some(body_str);
+                    }
+                }
+                Err(_) => {
+                    // 如果不是有效的UTF-8，保存为十六进制字符串（仅前1KB）
+                    let truncated_chunks = if self.body_chunks.len() > 1024 {
+                        &self.body_chunks[..1024]
+                    } else {
+                        &self.body_chunks
+                    };
+                    self.body = Some(format!("binary-data:{}", hex::encode(truncated_chunks)));
+                }
+            }
+            // 更新实际的body_size
+            self.body_size = Some(self.body_chunks.len() as u64);
+        }
+    }
+}
+
 /// 请求上下文
 #[derive(Debug, Clone)]
 pub struct ProxyContext {
@@ -54,8 +153,14 @@ pub struct ProxyContext {
     pub start_time: std::time::Instant,
     /// 重试次数
     pub retry_count: u32,
-    /// 使用的tokens
+    /// 使用的tokens（向后兼容）
     pub tokens_used: u32,
+    /// 详细的Token使用信息
+    pub token_usage: TokenUsage,
+    /// 请求详情
+    pub request_details: RequestDetails,
+    /// 响应详情
+    pub response_details: ResponseDetails,
     /// 是否启用追踪
     pub trace_enabled: bool,
     /// 选择的提供商名称
@@ -74,6 +179,9 @@ impl Default for ProxyContext {
             start_time: std::time::Instant::now(),
             retry_count: 0,
             tokens_used: 0,
+            token_usage: TokenUsage::default(),
+            request_details: RequestDetails::default(),
+            response_details: ResponseDetails::default(),
             trace_enabled: false,
             selected_provider: None,
             timeout_seconds: None,
@@ -137,18 +245,17 @@ impl AIProxyHandler {
             if ctx.trace_enabled {
                 let method = session.req_header().method.as_str().to_string();
                 let path = Some(session.req_header().uri.path().to_string());
-                let client_ip = session.client_addr().map(|ip| ip.to_string());
-                let user_agent = session.req_header().headers.get("user-agent")
-                    .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-                    .map(|s| s.to_string());
+                
+                // 使用增强的客户端信息收集
+                let (client_ip, user_agent, _referer) = self.collect_client_info(session);
 
                 if let Err(e) = tracer.start_trace(
                     ctx.request_id.clone(),
                     user_service_api.id,
                     method,
                     path,
-                    client_ip,
-                    user_agent,
+                    Some(client_ip.clone()),
+                    user_agent.clone(),
                 ).await {
                     tracing::warn!(
                         request_id = %ctx.request_id,
@@ -157,6 +264,14 @@ impl AIProxyHandler {
                     );
                     ctx.trace_enabled = false; // 禁用追踪
                 }
+                
+                // 记录客户端信息到日志
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    client_ip = %client_ip,
+                    user_agent = ?user_agent,
+                    "Client information collected"
+                );
             }
         }
 
@@ -613,8 +728,11 @@ impl AIProxyHandler {
         &self,
         session: &Session,
         upstream_request: &mut RequestHeader,
-        ctx: &ProxyContext,
+        ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 收集请求头信息
+        self.collect_request_details(session, ctx);
+        
         let selected_backend = match ctx.selected_backend.as_ref() {
             Some(backend) => backend,
             None => {
@@ -900,6 +1018,164 @@ impl AIProxyHandler {
         Ok(())
     }
 
+    /// 获取真实客户端IP地址（考虑代理情况）
+    fn get_real_client_ip(&self, session: &Session) -> String {
+        let req_header = session.req_header();
+        
+        // 1. 优先检查 X-Forwarded-For 头
+        if let Some(forwarded_for) = req_header.headers.get("x-forwarded-for")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok()) {
+            // X-Forwarded-For 可能包含多个IP，取第一个（最原始的客户端IP）
+            if let Some(first_ip) = forwarded_for.split(',').next() {
+                let ip = first_ip.trim();
+                if !ip.is_empty() && ip != "unknown" {
+                    return ip.to_string();
+                }
+            }
+        }
+        
+        // 2. 检查 X-Real-IP 头
+        if let Some(real_ip) = req_header.headers.get("x-real-ip")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok()) {
+            let ip = real_ip.trim();
+            if !ip.is_empty() && ip != "unknown" {
+                return ip.to_string();
+            }
+        }
+        
+        // 3. 检查 CF-Connecting-IP (Cloudflare)
+        if let Some(cf_ip) = req_header.headers.get("cf-connecting-ip")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok()) {
+            let ip = cf_ip.trim();
+            if !ip.is_empty() && ip != "unknown" {
+                return ip.to_string();
+            }
+        }
+        
+        // 4. 最后使用直接连接的客户端地址
+        session.client_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+    
+    /// 收集完整的客户端信息
+    fn collect_client_info(&self, session: &Session) -> (String, Option<String>, Option<String>) {
+        let req_header = session.req_header();
+        
+        // 获取真实客户端IP
+        let client_ip = self.get_real_client_ip(session);
+        
+        // 获取User-Agent
+        let user_agent = req_header.headers.get("user-agent")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+            
+        // 获取Referer
+        let referer = req_header.headers.get("referer")
+            .or_else(|| req_header.headers.get("referrer")) // 支持两种拼写
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+        
+        (client_ip, user_agent, referer)
+    }
+    
+    /// 收集请求详情
+    fn collect_request_details(&self, session: &Session, ctx: &mut ProxyContext) {
+        let req_header = session.req_header();
+        
+        // 收集请求头
+        let mut headers = std::collections::HashMap::new();
+        for (name, value) in req_header.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                headers.insert(name.as_str().to_string(), value_str.to_string());
+            }
+        }
+        
+        // 获取Content-Type
+        let content_type = req_header.headers.get("content-type")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+        
+        // 获取Content-Length（请求体大小）
+        let body_size = req_header.headers.get("content-length")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .and_then(|s| s.parse::<u64>().ok());
+            
+        // 收集完整的客户端信息
+        let (client_ip, user_agent, referer) = self.collect_client_info(session);
+        
+        // 获取协议版本
+        let protocol_version = Some(format!("{:?}", req_header.version));
+        
+        ctx.request_details = RequestDetails {
+            headers,
+            body_size,
+            content_type,
+            client_ip: client_ip.clone(),
+            user_agent: user_agent.clone(),
+            referer,
+            method: req_header.method.as_str().to_string(),
+            path: req_header.uri.path().to_string(),
+            protocol_version,
+        };
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            headers_count = ctx.request_details.headers.len(),
+            content_type = ?ctx.request_details.content_type,
+            body_size = ?ctx.request_details.body_size,
+            client_ip = %client_ip,
+            user_agent = ?user_agent,
+            method = %ctx.request_details.method,
+            path = %ctx.request_details.path,
+            "Collected comprehensive request details"
+        );
+    }
+
+    /// 收集响应头信息
+    fn collect_response_headers(&self, upstream_response: &ResponseHeader, ctx: &mut ProxyContext) {
+        // 收集响应头
+        let mut headers = std::collections::HashMap::new();
+        for (name, value) in upstream_response.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                headers.insert(name.as_str().to_string(), value_str.to_string());
+            }
+        }
+        
+        // 获取Content-Type
+        let content_type = upstream_response.headers.get("content-type")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+        
+        // 获取Content-Length（响应体大小）
+        let body_size = upstream_response.headers.get("content-length")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        
+        // 获取Content-Encoding
+        let content_encoding = upstream_response.headers.get("content-encoding")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+        
+        ctx.response_details = ResponseDetails {
+            headers,
+            body: None, // 响应体稍后在response body处理时收集
+            body_size,
+            content_type,
+            content_encoding,
+            body_chunks: Vec::new(), // 初始化为空的Vec
+        };
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            response_headers_count = ctx.response_details.headers.len(),
+            content_type = ?ctx.response_details.content_type,
+            content_encoding = ?ctx.response_details.content_encoding,
+            body_size = ?ctx.response_details.body_size,
+            "Collected response headers"
+        );
+    }
+
     /// 过滤上游响应
     pub async fn filter_upstream_response(
         &self,
@@ -907,7 +1183,11 @@ impl AIProxyHandler {
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
         // 提取token使用信息
-        ctx.tokens_used = self.extract_token_usage(upstream_response);
+        ctx.token_usage = self.extract_detailed_token_usage(upstream_response);
+        ctx.tokens_used = ctx.token_usage.total_tokens;  // 向后兼容
+        
+        // 收集响应头信息
+        self.collect_response_headers(upstream_response, ctx);
 
         // ========== 压缩响应处理 ==========
         // 检测响应是否被压缩
@@ -1011,7 +1291,60 @@ impl AIProxyHandler {
         Ok(())
     }
 
-    /// 提取token使用信息
+    /// 提取详细的token使用信息
+    fn extract_detailed_token_usage(&self, response: &ResponseHeader) -> TokenUsage {
+        // 尝试提取详细的token信息
+        let prompt_tokens = self.extract_single_token_value(response, &[
+            "x-openai-prompt-tokens",
+            "x-anthropic-input-tokens", 
+            "x-google-input-tokens",
+            "x-prompt-tokens",
+        ]);
+        
+        let completion_tokens = self.extract_single_token_value(response, &[
+            "x-openai-completion-tokens",
+            "x-anthropic-output-tokens",
+            "x-google-output-tokens", 
+            "x-completion-tokens",
+        ]);
+        
+        let total_tokens = self.extract_single_token_value(response, &[
+            "x-openai-total-tokens",
+            "x-anthropic-total-tokens",
+            "x-google-total-tokens",
+            "x-total-tokens",
+        ]).unwrap_or_else(|| {
+            // 如果没有total_tokens头，尝试计算
+            match (prompt_tokens, completion_tokens) {
+                (Some(p), Some(c)) => p + c,
+                (Some(p), None) => p,
+                (None, Some(c)) => c,
+                (None, None) => 0,
+            }
+        });
+        
+        TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        }
+    }
+    
+    /// 提取单个token值
+    fn extract_single_token_value(&self, response: &ResponseHeader, header_names: &[&str]) -> Option<u32> {
+        for header_name in header_names {
+            if let Some(header_value) = response.headers.get(*header_name) {
+                if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
+                    if let Ok(tokens) = tokens_str.parse::<u32>() {
+                        return Some(tokens);
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// 提取token使用信息（向后兼容方法）
     fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
         // 尝试从不同的响应头中提取token使用信息
         let token_headers = [
