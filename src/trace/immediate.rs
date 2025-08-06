@@ -268,14 +268,33 @@ impl ImmediateProxyTracer {
         // 构建详细性能指标JSON（包含请求响应详情）
         let performance_metrics = if request_details.is_some() || response_details.is_some() {
             let mut metrics = serde_json::Map::new();
-            if let Some(req_details) = request_details {
-                metrics.insert("request".to_string(), req_details);
+            let mut components = Vec::new();
+            
+            if let Some(req_details) = &request_details {
+                metrics.insert("request".to_string(), req_details.clone());
+                components.push("request");
             }
-            if let Some(resp_details) = response_details {
-                metrics.insert("response".to_string(), resp_details);
+            if let Some(resp_details) = &response_details {
+                metrics.insert("response".to_string(), resp_details.clone());
+                components.push("response");
             }
-            Some(serde_json::Value::Object(metrics).to_string())
+            
+            match serde_json::Value::Object(metrics).to_string() {
+                json_str => {
+                    tracing::info!(
+                        request_id = %request_id,
+                        components = ?components,
+                        json_length = json_str.len(),
+                        "Constructed performance_metrics JSON for database storage"
+                    );
+                    Some(json_str)
+                }
+            }
         } else {
+            tracing::debug!(
+                request_id = %request_id,
+                "No detailed request/response data available for performance_metrics"
+            );
             None
         };
         
@@ -312,7 +331,7 @@ impl ImmediateProxyTracer {
             error_message: Set(error_message),
             health_impact_score: Set(health_impact_score),
             is_anomaly: Set(Some(is_anomaly)),
-            performance_metrics: Set(performance_metrics),
+            performance_metrics: Set(performance_metrics.clone()),
             ..Default::default()
         };
         
@@ -324,14 +343,18 @@ impl ImmediateProxyTracer {
             .await?;
         
         if update_result.rows_affected > 0 {
-            debug!(
+            info!(
                 request_id = %request_id,
                 status_code = status_code,
                 is_success = is_success,
                 tokens_total = ?tokens_total,
                 health_score = ?health_impact_score,
+                duration_ms = ?duration_ms,
+                response_time_ms = ?response_time_ms,
+                performance_metrics_stored = performance_metrics.is_some(),
+                performance_metrics_size = performance_metrics.as_ref().map(|m| m.len()),
                 rows_affected = update_result.rows_affected,
-                "Completed immediate proxy trace"
+                "Completed immediate proxy trace with detailed performance metrics"
             );
         } else {
             error!(

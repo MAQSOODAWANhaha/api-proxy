@@ -306,7 +306,7 @@ impl ProxyHttp for ProxyService {
         if let Some(data) = body {
             ctx.response_details.add_body_chunk(data);
             
-            tracing::trace!(
+            tracing::info!(
                 request_id = %ctx.request_id,
                 chunk_size = data.len(),
                 total_size = ctx.response_details.body_chunks.len(),
@@ -514,17 +514,56 @@ impl ProxyHttp for ProxyService {
                     // 完成响应体数据收集
                     ctx.response_details.finalize_body();
                     
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        response_body_size = ctx.response_details.body_size,
+                        body_collected = ctx.response_details.body.is_some(),
+                        "Finalized response body collection"
+                    );
+                    
                     // 构建请求详情JSON
-                    let request_json = serde_json::to_value(&ctx.request_details)
-                        .map_err(|e| tracing::warn!("Failed to serialize request details: {}", e))
-                        .ok();
+                    let request_json = match serde_json::to_value(&ctx.request_details) {
+                        Ok(json) => {
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                headers_count = ctx.request_details.headers.len(),
+                                "Successfully serialized request details to JSON"
+                            );
+                            Some(json)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                "Failed to serialize request details to JSON"
+                            );
+                            None
+                        }
+                    };
                     
                     // 构建响应详情JSON (使用可序列化版本)
-                    let response_json = serde_json::to_value(&crate::proxy::ai_handler::SerializableResponseDetails::from(&ctx.response_details))
-                        .map_err(|e| tracing::warn!("Failed to serialize response details: {}", e))
-                        .ok();
+                    let serializable_response = crate::proxy::ai_handler::SerializableResponseDetails::from(&ctx.response_details);
+                    let response_json = match serde_json::to_value(&serializable_response) {
+                        Ok(json) => {
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                response_headers_count = serializable_response.headers.len(),
+                                response_body_exists = serializable_response.body.is_some(),
+                                "Successfully serialized response details to JSON"
+                            );
+                            Some(json)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                "Failed to serialize response details to JSON"
+                            );
+                            None
+                        }
+                    };
                     
-                    let _ = tracer.complete_trace_with_details(
+                    match tracer.complete_trace_with_details(
                         &ctx.request_id,
                         status_code,
                         true, // 成功标志
@@ -533,9 +572,25 @@ impl ProxyHttp for ProxyService {
                         tokens_completion,
                         None, // 无错误类型
                         None, // 无错误消息
-                        request_json,  // 请求详情
-                        response_json, // 响应详情
-                    ).await;
+                        request_json.clone(),  // 请求详情
+                        response_json.clone(), // 响应详情
+                    ).await {
+                        Ok(_) => {
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                has_request_json = request_json.is_some(),
+                                has_response_json = response_json.is_some(),
+                                "Successfully stored trace with detailed request/response information"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                "Failed to store trace with detailed information"
+                            );
+                        }
+                    }
                 }
             }
             

@@ -104,25 +104,55 @@ impl From<&ResponseDetails> for SerializableResponseDetails {
 impl ResponseDetails {
     /// 添加响应体数据块
     pub fn add_body_chunk(&mut self, chunk: &[u8]) {
+        let prev_size = self.body_chunks.len();
         self.body_chunks.extend_from_slice(chunk);
+        
+        // 只在累积大小达到特定阈值时记录日志（避免过多日志）
+        let new_size = self.body_chunks.len();
+        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
+            tracing::debug!(
+                chunk_size = chunk.len(),
+                total_size = new_size,
+                "Response body chunk added (milestone reached)"
+            );
+        }
     }
     
     /// 完成响应体收集，将累积的数据转换为字符串
     pub fn finalize_body(&mut self) {
+        let original_chunks_len = self.body_chunks.len();
+        
         if !self.body_chunks.is_empty() {
+            tracing::debug!(
+                raw_body_size = original_chunks_len,
+                "Starting response body finalization"
+            );
+            
             // 尝试将响应体转换为UTF-8字符串
             match String::from_utf8(self.body_chunks.clone()) {
                 Ok(body_str) => {
+                    let original_str_len = body_str.len();
+                    
                     // 对于大的响应体，只保留前64KB
                     if body_str.len() > 65536 {
                         self.body = Some(format!("{}...[truncated {} bytes]", 
                             &body_str[..65536], 
                             body_str.len() - 65536));
+                        tracing::info!(
+                            original_size = original_str_len,
+                            stored_size = 65536,
+                            truncated_bytes = original_str_len - 65536,
+                            "Response body finalized as UTF-8 string (truncated)"
+                        );
                     } else {
                         self.body = Some(body_str);
+                        tracing::info!(
+                            body_size = original_str_len,
+                            "Response body finalized as UTF-8 string (complete)"
+                        );
                     }
                 }
-                Err(_) => {
+                Err(utf8_error) => {
                     // 如果不是有效的UTF-8，保存为十六进制字符串（仅前1KB）
                     let truncated_chunks = if self.body_chunks.len() > 1024 {
                         &self.body_chunks[..1024]
@@ -130,10 +160,19 @@ impl ResponseDetails {
                         &self.body_chunks
                     };
                     self.body = Some(format!("binary-data:{}", hex::encode(truncated_chunks)));
+                    
+                    tracing::info!(
+                        raw_size = original_chunks_len,
+                        encoded_size = truncated_chunks.len(),
+                        utf8_error = %utf8_error,
+                        "Response body finalized as hex-encoded binary data"
+                    );
                 }
             }
             // 更新实际的body_size
             self.body_size = Some(self.body_chunks.len() as u64);
+        } else {
+            tracing::debug!("No response body chunks to finalize (empty response)");
         }
     }
 }
@@ -1119,7 +1158,7 @@ impl AIProxyHandler {
             protocol_version,
         };
         
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
             headers_count = ctx.request_details.headers.len(),
             content_type = ?ctx.request_details.content_type,
@@ -1166,7 +1205,7 @@ impl AIProxyHandler {
             body_chunks: Vec::new(), // 初始化为空的Vec
         };
         
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
             response_headers_count = ctx.response_details.headers.len(),
             content_type = ?ctx.response_details.content_type,
