@@ -198,6 +198,82 @@ impl ImmediateProxyTracer {
         Ok(())
     }
     
+    /// 更新扩展的请求信息（包含更多字段）
+    pub async fn update_extended_trace_info(
+        &self,
+        request_id: &str,
+        provider_name: Option<String>,
+        provider_type_id: Option<i32>,
+        backend_key_id: Option<i32>,
+        model_used: Option<String>,
+        upstream_addr: Option<String>,
+        request_size: Option<u64>,
+        user_provider_key_id: Option<i32>,
+    ) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        
+        // 构建更新模型
+        let mut update_model = proxy_tracing::ActiveModel {
+            ..Default::default()
+        };
+        
+        let mut updated_fields = Vec::new();
+        
+        if let Some(provider) = provider_name {
+            update_model.provider_name = Set(Some(provider.clone()));
+            updated_fields.push(format!("provider_name={}", provider));
+        }
+        if let Some(provider_id) = provider_type_id {
+            update_model.provider_type_id = Set(Some(provider_id));
+            updated_fields.push(format!("provider_type_id={}", provider_id));
+        }
+        if let Some(backend_id) = backend_key_id {
+            update_model.backend_key_id = Set(Some(backend_id));
+            updated_fields.push(format!("backend_key_id={}", backend_id));
+        }
+        if let Some(model) = model_used {
+            update_model.model_used = Set(Some(model.clone()));
+            updated_fields.push(format!("model_used={}", model));
+        }
+        if let Some(addr) = upstream_addr {
+            update_model.upstream_addr = Set(Some(addr.clone()));
+            updated_fields.push(format!("upstream_addr={}", addr));
+        }
+        if let Some(size) = request_size {
+            update_model.request_size = Set(Some(size as i32));
+            updated_fields.push(format!("request_size={}", size));
+        }
+        if let Some(user_key_id) = user_provider_key_id {
+            update_model.user_provider_key_id = Set(Some(user_key_id));
+            updated_fields.push(format!("user_provider_key_id={}", user_key_id));
+        }
+        
+        // 更新数据库记录
+        let update_result = proxy_tracing::Entity::update_many()
+            .filter(proxy_tracing::Column::RequestId.eq(request_id))
+            .set(update_model)
+            .exec(&*self.db)
+            .await?;
+        
+        if update_result.rows_affected > 0 {
+            info!(
+                request_id = %request_id,
+                rows_affected = update_result.rows_affected,
+                updated_fields = ?updated_fields,
+                "Updated extended trace information"
+            );
+        } else {
+            tracing::warn!(
+                request_id = %request_id,
+                "No trace record found to update extended info"
+            );
+        }
+        
+        Ok(())
+    }
+    
     /// 完成追踪 - 更新最终结果
     pub async fn complete_trace(
         &self,
