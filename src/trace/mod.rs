@@ -3,74 +3,37 @@
 //! 负责收集代理请求的详细追踪数据，用于健康状态监控和性能分析
 
 pub mod models;
-pub mod unified;
 pub mod immediate;
 
 pub use models::*;
-pub use unified::{UnifiedProxyTracer, UnifiedTracerConfig, UnifiedTrace};
 pub use immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 /// 统一追踪系统入口
-pub enum UnifiedTraceSystem {
-    /// 内存缓存模式（原有实现，将被废弃）
-    Buffered {
-        tracer: Arc<UnifiedProxyTracer>,
-    },
-    /// 即时写入模式（新的推荐实现）
-    Immediate {
-        tracer: Arc<ImmediateProxyTracer>,
-    },
+/// 
+/// 现在只支持即时写入模式，确保长时间请求不会导致内存泄漏
+pub struct UnifiedTraceSystem {
+    tracer: Arc<ImmediateProxyTracer>,
 }
 
 impl UnifiedTraceSystem {
-    /// 创建新的统一追踪系统（内存缓存模式，将被废弃）
-    #[deprecated(note = "Use new_immediate() instead for better performance with long-running requests")]
-    pub fn new(
-        db: Arc<sea_orm::DatabaseConnection>,
-        config: UnifiedTracerConfig,
-    ) -> Self {
-        let tracer = Arc::new(UnifiedProxyTracer::new(db, config));
-        
-        Self::Buffered {
-            tracer,
-        }
-    }
-    
-    /// 创建新的即时写入追踪系统（推荐）
+    /// 创建新的即时写入追踪系统
     pub fn new_immediate(
         db: Arc<sea_orm::DatabaseConnection>,
         config: ImmediateTracerConfig,
     ) -> Self {
         let tracer = Arc::new(ImmediateProxyTracer::new(db, config));
         
-        Self::Immediate {
+        Self {
             tracer,
         }
     }
 
-    /// 获取内存缓存追踪器（已废弃）
-    #[deprecated(note = "Use immediate_tracer() instead")]
-    pub fn tracer(&self) -> Option<Arc<UnifiedProxyTracer>> {
-        match self {
-            Self::Buffered { tracer } => Some(tracer.clone()),
-            Self::Immediate { .. } => None,
-        }
-    }
-    
     /// 获取即时写入追踪器
     pub fn immediate_tracer(&self) -> Option<Arc<ImmediateProxyTracer>> {
-        match self {
-            Self::Buffered { .. } => None,
-            Self::Immediate { tracer } => Some(tracer.clone()),
-        }
-    }
-    
-    /// 判断是否为即时写入模式
-    pub fn is_immediate(&self) -> bool {
-        matches!(self, Self::Immediate { .. })
+        Some(self.tracer.clone())
     }
 }
 

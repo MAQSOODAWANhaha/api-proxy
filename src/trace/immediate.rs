@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
-use sea_orm::{DatabaseConnection, EntityTrait, Set, NotSet, ColumnTrait, QueryFilter, QuerySelect, ActiveModelBehavior};
+use sea_orm::{DatabaseConnection, EntityTrait, Set, NotSet, ColumnTrait, QueryFilter, QuerySelect};
 use tracing::{debug, error, info};
 use entity::proxy_tracing::{self, TraceLevel};
 
