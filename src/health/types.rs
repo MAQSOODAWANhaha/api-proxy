@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant, SystemTime};
 use std::collections::HashMap;
-use crate::proxy::upstream::UpstreamType;
+use crate::proxy::upstream::ProviderId;
 
 /// 健康检查结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,8 +43,8 @@ pub enum HealthCheckType {
 pub struct ServerHealthStatus {
     /// 服务器地址
     pub server_address: String,
-    /// 上游类型
-    pub upstream_type: UpstreamType,
+    /// 提供商ID
+    pub provider_id: ProviderId,
     /// 当前健康状态
     pub is_healthy: bool,
     /// 最后检查时间
@@ -97,8 +97,8 @@ pub struct HealthCheckTask {
     pub id: String,
     /// 服务器地址
     pub server_address: String,
-    /// 上游类型
-    pub upstream_type: UpstreamType,
+    /// 提供商ID
+    pub provider_id: ProviderId,
     /// 检查配置
     pub config: HealthCheckConfig,
     /// 下次检查时间
@@ -143,10 +143,10 @@ impl Default for HealthCheckConfig {
 
 impl ServerHealthStatus {
     /// 创建新的健康状态
-    pub fn new(server_address: String, upstream_type: UpstreamType) -> Self {
+    pub fn new(server_address: String, provider_id: ProviderId) -> Self {
         Self {
             server_address,
-            upstream_type,
+            provider_id,
             is_healthy: true, // 默认假设健康
             last_check: None,
             last_healthy: None,
@@ -302,14 +302,14 @@ impl HealthCheckTask {
     /// 创建新的健康检查任务
     pub fn new(
         server_address: String,
-        upstream_type: UpstreamType,
+        provider_id: ProviderId,
         config: HealthCheckConfig,
     ) -> Self {
-        let id = format!("{}:{}", upstream_type.to_string(), server_address);
+        let id = format!("{}:{}", provider_id.to_string(), server_address);
         Self {
             id,
             server_address,
-            upstream_type,
+            provider_id,
             config,
             next_check: Instant::now(),
             status: TaskStatus::Pending,
@@ -332,17 +332,6 @@ impl HealthCheckTask {
     }
 }
 
-impl UpstreamType {
-    /// 转换为字符串
-    pub fn to_string(&self) -> String {
-        match self {
-            UpstreamType::OpenAI => "openai".to_string(),
-            UpstreamType::Anthropic => "anthropic".to_string(),
-            UpstreamType::GoogleGemini => "gemini".to_string(),
-            UpstreamType::Custom(name) => format!("custom-{}", name),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -362,7 +351,8 @@ mod tests {
 
     #[test]
     fn test_server_health_status_update() {
-        let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), UpstreamType::OpenAI);
+        let provider_id = ProviderId::from_database_id(1);
+        let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), provider_id);
         
         // 模拟失败
         let failure = HealthCheckResult::failure("Connection timeout".to_string(), HealthCheckType::Http);
@@ -374,7 +364,8 @@ mod tests {
 
     #[test]
     fn test_health_score_calculation() {
-        let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), UpstreamType::OpenAI);
+        let provider_id = ProviderId::from_database_id(1);
+        let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), provider_id);
         
         // 添加成功结果
         for _ in 0..5 {
@@ -389,9 +380,10 @@ mod tests {
     #[test]
     fn test_task_scheduling() {
         let config = HealthCheckConfig::default();
+        let provider_id = ProviderId::from_database_id(1);
         let mut task = HealthCheckTask::new(
             "127.0.0.1:8080".to_string(),
-            UpstreamType::OpenAI,
+            provider_id,
             config,
         );
         

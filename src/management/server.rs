@@ -5,7 +5,7 @@
 use crate::auth::service::AuthService;
 use crate::config::AppConfig;
 use crate::health::service::HealthCheckService as HealthService;
-use crate::providers::manager::AdapterManager;
+use crate::providers::DynamicAdapterManager;
 use crate::scheduler::manager::LoadBalancerManager;
 use crate::statistics::service::StatisticsService;
 use sea_orm::DatabaseConnection;
@@ -76,11 +76,13 @@ pub struct AppState {
     /// 健康检查服务
     pub health_service: Arc<HealthService>,
     /// 适配器管理器
-    pub adapter_manager: Arc<AdapterManager>,
+    pub adapter_manager: Arc<DynamicAdapterManager>,
     /// 负载均衡管理器
     pub load_balancer_manager: Arc<LoadBalancerManager>,
     /// 统计服务
     pub statistics_service: Arc<StatisticsService>,
+    /// 提供商解析服务
+    pub provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
 }
 
 /// 管理服务器
@@ -101,9 +103,10 @@ impl ManagementServer {
         database: Arc<DatabaseConnection>,
         auth_service: Arc<AuthService>,
         health_service: Arc<HealthService>,
-        adapter_manager: Arc<AdapterManager>,
+        adapter_manager: Arc<DynamicAdapterManager>,
         load_balancer_manager: Arc<LoadBalancerManager>,
         statistics_service: Arc<StatisticsService>,
+        provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
     ) -> Result<Self> {
         let state = AppState {
             config: app_config,
@@ -113,6 +116,7 @@ impl ManagementServer {
             adapter_manager,
             load_balancer_manager,
             statistics_service,
+            provider_resolver,
         };
 
         let router = Self::create_router(state.clone(), &config)?;
@@ -289,7 +293,7 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> Result<Json
             "avg_response_time": health_status.avg_response_time,
             "is_running": health_status.is_running
         },
-        "adapters": state.adapter_manager.get_adapter_stats(),
+        "adapters": state.adapter_manager.get_adapter_stats().await,
         "load_balancers": "TODO: 添加负载均衡器状态"
     });
 

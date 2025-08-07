@@ -82,7 +82,7 @@ monitoring = true
 # 请求追踪配置
 [trace]
 enabled = true
-default_trace_level = 1  # 0=基础, 1=详细, 2=完整
+default_trace_level = 2  # 0=基础, 1=详细, 2=完整
 sampling_rate = 1.0      # 采样率，1.0=100%采样，0.1=10%采样
 max_batch_size = 100     # 批量处理大小
 flush_interval = 10      # 刷新间隔（秒）

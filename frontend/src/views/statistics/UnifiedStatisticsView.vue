@@ -122,32 +122,68 @@
             <template #header>
               <div class="card-header">
                 <h3>服务商状态</h3>
-                <el-button type="text" @click="refreshProviderStatus">
+                <el-button type="text" @click="refreshProviderStatus" :loading="providerStatusLoading">
                   <el-icon><Refresh /></el-icon>
                 </el-button>
               </div>
             </template>
-            <div class="provider-status-list" v-loading="providerStatusLoading">
+            <div class="provider-status-container" v-loading="providerStatusLoading">
               <div 
                 v-for="provider in providerStatusList" 
                 :key="provider.provider"
-                class="provider-status-item"
+                class="provider-status-card"
               >
-                <div class="provider-info">
-                  <div class="provider-name">{{ provider.provider }}</div>
-                  <div class="provider-metrics">
-                    <span class="requests-count">{{ formatNumber(provider.requests) }} 请求</span>
-                    <span class="success-rate">{{ provider.percentage.toFixed(1) }}%</span>
+                <div class="provider-header">
+                  <div class="provider-avatar">
+                    <div class="provider-icon" :class="getProviderIconClass(provider.provider)">
+                      {{ getProviderIcon(provider.provider) }}
+                    </div>
+                  </div>
+                  <div class="provider-basic-info">
+                    <div class="provider-name">{{ getProviderDisplayName(provider.provider) }}</div>
+                    <div class="provider-type">{{ provider.provider }}</div>
+                  </div>
+                  <div class="provider-status-badge">
+                    <el-tag 
+                      :type="getStatusTagType(provider.percentage)" 
+                      size="small" 
+                      effect="dark"
+                    >
+                      {{ getStatusText(provider.percentage) }}
+                    </el-tag>
                   </div>
                 </div>
-                <div class="provider-health">
+                
+                <div class="provider-metrics">
+                  <div class="metric-row">
+                    <div class="metric-item">
+                      <span class="metric-label">请求数</span>
+                      <span class="metric-value requests">{{ formatNumber(provider.requests) }}</span>
+                    </div>
+                    <div class="metric-item">
+                      <span class="metric-label">占比</span>
+                      <span class="metric-value percentage">{{ provider.percentage.toFixed(1) }}%</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="provider-progress">
+                  <div class="progress-label">
+                    <span>使用率</span>
+                    <span class="progress-value">{{ provider.percentage.toFixed(1) }}%</span>
+                  </div>
                   <el-progress 
                     :percentage="provider.percentage" 
-                    :stroke-width="6"
+                    :stroke-width="8"
                     :show-text="false"
                     :color="getHealthColor(provider.percentage)"
+                    class="custom-progress"
                   />
                 </div>
+              </div>
+              
+              <div v-if="providerStatusList.length === 0" class="empty-providers">
+                <el-empty description="暂无服务商数据" :image-size="60" />
               </div>
             </div>
           </el-card>
@@ -246,8 +282,9 @@ import {
   DataAnalysis, CircleCheck, Coin, Timer, Refresh
 } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { StatisticsAPI } from '@/api'
+import { StatisticsAPI, ApiKeyAPI } from '@/api'
 import { useAppStore } from '@/stores'
+import type { ProviderType } from '@/types'
 
 const appStore = useAppStore()
 
@@ -260,6 +297,8 @@ const providerStatusList = ref<any[]>([])
 const tokenData = ref<any>(null)
 const errorData = ref<any>(null)
 const topErrors = ref<any[]>([])
+const providerTypes = ref<ProviderType[]>([])
+const errorTypes = ref<any[]>([]) // 用于存储从后端获取的错误类型
 
 // 加载状态
 const providerStatusLoading = ref(false)
@@ -717,9 +756,66 @@ const getHealthColor = (percentage: number) => {
   return '#f56c6c'
 }
 
+// 从数据库获取服务商信息
+const getProviderInfo = (providerName: string) => {
+  const providerType = providerTypes.value.find(p => 
+    p.name.toLowerCase() === providerName.toLowerCase() ||
+    p.display_name.toLowerCase() === providerName.toLowerCase()
+  )
+  return providerType || { name: providerName, display_name: providerName, id: providerName }
+}
+
+// 获取服务商图标（基于名称生成）
+const getProviderIcon = (provider: string) => {
+  // 简单的图标生成策略，可以根据需要调整
+  const firstChar = provider.charAt(0).toUpperCase()
+  const iconMap: Record<string, string> = {
+    'O': '🤖', 'G': '💎', 'C': '🎯', 'A': '🧠', 'M': '🔮', 'H': '⚡'
+  }
+  return iconMap[firstChar] || '🔧'
+}
+
+// 获取服务商图标样式类
+const getProviderIconClass = (provider: string) => {
+  return `provider-icon-${provider.toLowerCase().replace(/\s+/g, '-')}`
+}
+
+// 获取服务商显示名称
+const getProviderDisplayName = (provider: string) => {
+  const providerInfo = getProviderInfo(provider)
+  return providerInfo.display_name || provider
+}
+
+// 获取状态标签类型
+const getStatusTagType = (percentage: number) => {
+  if (percentage >= 50) return 'success'
+  if (percentage >= 20) return 'warning'
+  return 'info'
+}
+
+// 获取状态文本
+const getStatusText = (percentage: number) => {
+  if (percentage >= 50) return '活跃'
+  if (percentage >= 20) return '正常'
+  return '空闲'
+}
+
 // 生命周期
+// 获取服务商类型列表
+const fetchProviderTypes = async () => {
+  try {
+    providerTypes.value = await ApiKeyAPI.getProviderTypes()
+  } catch (error: any) {
+    console.error('获取服务商类型失败:', error)
+    ElMessage.error('获取服务商类型失败')
+  }
+}
+
 onMounted(async () => {
   appStore.setPageTitle('统计分析')
+  
+  // 获取服务商类型（优先获取，以便后续数据展示时使用）
+  await fetchProviderTypes()
   
   // 初始化图表
   await initCharts()
@@ -857,47 +953,196 @@ onUnmounted(() => {
   width: 100%;
 }
 
-/* 服务商状态列表 */
-.provider-status-list {
+/* 服务商状态容器 */
+.provider-status-container {
   height: 320px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 0;
 }
 
-.provider-status-item {
+.provider-status-card {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.provider-status-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.provider-status-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+  border-color: #cbd5e1;
+}
+
+.provider-header {
   display: flex;
   align-items: center;
-  padding: 12px 0;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.provider-info {
+.provider-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.provider-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
+  color: white;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s;
+}
+
+.provider-icon:hover {
+  transform: scale(1.05);
+}
+
+.provider-icon.openai-icon {
+  background: linear-gradient(135deg, #10a37f 0%, #1a7f64 100%);
+}
+
+.provider-icon.gemini-icon {
+  background: linear-gradient(135deg, #4285f4 0%, #1a73e8 100%);
+}
+
+.provider-icon.claude-icon {
+  background: linear-gradient(135deg, #ff6b35 0%, #d63031 100%);
+}
+
+.provider-icon.google-icon {
+  background: linear-gradient(135deg, #34a853 0%, #137333 100%);
+}
+
+.provider-icon.anthropic-icon {
+  background: linear-gradient(135deg, #6366f1 0%, #4338ca 100%);
+}
+
+.provider-icon.default-icon {
+  background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+}
+
+.provider-basic-info {
   flex: 1;
+  min-width: 0;
 }
 
 .provider-name {
-  font-size: 14px;
-  color: #333;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 2px;
+  line-height: 1.2;
+}
+
+.provider-type {
+  font-size: 12px;
+  color: #64748b;
   font-weight: 500;
-  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.provider-status-badge {
+  flex-shrink: 0;
 }
 
 .provider-metrics {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
+  margin-bottom: 12px;
 }
 
-.requests-count {
-  color: #409eff;
+.metric-row {
+  display: flex;
+  gap: 24px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.metric-value.requests {
+  color: #3b82f6;
+}
+
+.metric-value.percentage {
+  color: #059669;
+}
+
+.provider-progress {
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
   font-weight: 500;
 }
 
-.success-rate {
-  color: #67c23a;
+.progress-label > span:first-child {
+  color: #475569;
 }
 
-.provider-health {
-  width: 100px;
-  margin-left: 12px;
+.progress-value {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.custom-progress {
+  margin: 0;
+}
+
+.empty-providers {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  color: #64748b;
 }
 
 /* 错误详情 */

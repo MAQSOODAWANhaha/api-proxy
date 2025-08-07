@@ -29,7 +29,7 @@ pub async fn list_adapters(State(state): State<AppState>) -> Result<Json<Value>,
     };
     
     // 获取运行时适配器统计信息
-    let adapter_stats = state.adapter_manager.get_adapter_stats();
+    let adapter_stats = state.adapter_manager.get_adapter_stats().await;
     
     let mut adapters = Vec::new();
     
@@ -50,8 +50,6 @@ pub async fn list_adapters(State(state): State<AppState>) -> Result<Json<Value>,
             "health_check_path": provider.health_check_path,
             "auth_header_format": provider.auth_header_format,
             "status": if provider.is_active { "active" } else { "inactive" },
-            "supported_endpoints": runtime_stats.map(|s| s.supported_endpoints).unwrap_or(0),
-            "endpoints": runtime_stats.map(|s| s.endpoints.clone()).unwrap_or_default(),
             "version": "1.0.0",
             "created_at": provider.created_at,
             "updated_at": provider.updated_at
@@ -103,9 +101,8 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
     }
     
     // 获取运行时适配器统计信息
-    let adapter_stats = state.adapter_manager.get_adapter_stats();
+    let adapter_stats = state.adapter_manager.get_adapter_stats().await;
     
-    let mut total_endpoints = 0;
     let mut stats_by_type = std::collections::HashMap::new();
     let mut detailed_stats = std::collections::HashMap::new();
     
@@ -113,22 +110,18 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
         let runtime_stats = adapter_stats.get(&provider.name);
         let usage_count = provider_usage_stats.get(&provider.id).unwrap_or(&0);
         
-        let endpoints = runtime_stats.map(|s| s.supported_endpoints).unwrap_or(0);
-        total_endpoints += endpoints;
         
         // 按API格式分组统计
         let type_entry = stats_by_type
             .entry(provider.api_format.clone())
             .or_insert_with(|| json!({
                 "adapters": 0,
-                "endpoints": 0,
                 "active_configs": 0,
                 "names": []
             }));
         
         if let Some(type_obj) = type_entry.as_object_mut() {
             type_obj["adapters"] = json!(type_obj["adapters"].as_u64().unwrap_or(0) + 1);
-            type_obj["endpoints"] = json!(type_obj["endpoints"].as_u64().unwrap_or(0) + endpoints as u64);
             type_obj["active_configs"] = json!(type_obj["active_configs"].as_u64().unwrap_or(0) + *usage_count);
             
             if let Some(names_array) = type_obj["names"].as_array_mut() {
@@ -142,11 +135,9 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
             "display_name": provider.display_name,
             "api_format": provider.api_format,
             "base_url": provider.base_url,
-            "supported_endpoints": endpoints,
             "active_configurations": usage_count,
             "runtime_info": runtime_stats.map(|s| json!({
-                "upstream_type": s.upstream_type,
-                "endpoints": s.endpoints
+                "api_format": s.api_format
             })),
             "health_status": get_adapter_health_status(&state, &provider.name).await,
             "rate_limit": provider.rate_limit,
@@ -158,7 +149,6 @@ pub async fn get_adapter_stats(State(state): State<AppState>) -> Result<Json<Val
     let response = json!({
         "summary": {
             "total_adapters": provider_types.len(),
-            "total_endpoints": total_endpoints,
             "adapter_types": stats_by_type.len(),
             "total_active_configs": provider_usage_stats.values().sum::<u64>()
         },

@@ -189,21 +189,40 @@
               <div 
                 v-for="error in topErrors" 
                 :key="error.error_type"
-                class="error-item"
+                class="error-card"
               >
-                <div class="error-info">
-                  <div class="error-type">{{ error.error_type }}</div>
-                  <div class="error-meta">
-                    <span class="error-count">{{ error.count }}次</span>
-                    <span class="error-rate">{{ error.percentage.toFixed(1) }}%</span>
+                <div class="error-header">
+                  <div class="error-avatar">
+                    <div class="error-icon" :class="getErrorIconClass(error.error_type)">
+                      {{ getErrorIcon(error.error_type) }}
+                    </div>
+                  </div>
+                  <div class="error-basic-info">
+                    <div class="error-type-name">{{ getErrorDisplayName(error.error_type) }}</div>
+                    <div class="error-type-code">{{ error.error_type }}</div>
+                  </div>
+                  <div class="error-status-badge">
+                    <el-tag :type="getErrorTagType(error.percentage)" size="small" effect="dark">
+                      {{ getErrorLevelText(error.percentage) }}
+                    </el-tag>
                   </div>
                 </div>
-                <div class="error-progress">
+                <div class="error-metrics">
+                  <div class="error-metric-item">
+                    <span class="error-metric-label">错误次数</span>
+                    <span class="error-metric-value error-count">{{ error.count }}次</span>
+                  </div>
+                  <div class="error-metric-item">
+                    <span class="error-metric-label">错误比例</span>
+                    <span class="error-metric-value error-rate">{{ error.percentage.toFixed(1) }}%</span>
+                  </div>
+                </div>
+                <div class="error-progress-bar">
                   <el-progress 
                     :percentage="error.percentage" 
-                    :stroke-width="6"
+                    :stroke-width="8"
                     :show-text="false"
-                    color="#f56c6c"
+                    :color="getErrorProgressColor(error.percentage)"
                   />
                 </div>
               </div>
@@ -608,6 +627,58 @@ const getChangeClass = (change: number) => {
   return change > 0 ? 'positive' : 'negative'
 }
 
+// 错误相关辅助函数
+const getErrorIcon = (errorType: string) => {
+  // 根据错误类型返回合适的图标
+  const lowerType = errorType.toLowerCase()
+  if (lowerType.includes('rate') || lowerType.includes('limit')) return '⏰'
+  if (lowerType.includes('auth') || lowerType.includes('key')) return '🔑'
+  if (lowerType.includes('timeout') || lowerType.includes('connect')) return '⏱️'
+  if (lowerType.includes('quota') || lowerType.includes('usage')) return '📊'
+  if (lowerType.includes('invalid') || lowerType.includes('format')) return '⚠️'
+  if (lowerType.includes('server') || lowerType.includes('500')) return '🔧'
+  if (lowerType.includes('network') || lowerType.includes('connection')) return '🌐'
+  return '❌'
+}
+
+const getErrorIconClass = (errorType: string) => {
+  return `error-icon-${errorType.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
+}
+
+const getErrorDisplayName = (errorType: string) => {
+  // 错误类型显示名称映射
+  const nameMap: Record<string, string> = {
+    'rate_limit_exceeded': '速率限制超出',
+    'authentication_failed': '认证失败',
+    'quota_exceeded': '配额超出',
+    'timeout_error': '超时错误',
+    'connection_error': '连接错误',
+    'server_error': '服务器错误',
+    'invalid_request': '无效请求',
+    'network_error': '网络错误'
+  }
+  return nameMap[errorType.toLowerCase()] || errorType
+}
+
+const getErrorTagType = (percentage: number) => {
+  if (percentage >= 10) return 'danger'
+  if (percentage >= 5) return 'warning'
+  return 'info'
+}
+
+const getErrorLevelText = (percentage: number) => {
+  if (percentage >= 10) return '高频'
+  if (percentage >= 5) return '中频'
+  if (percentage >= 1) return '低频'
+  return '偶发'
+}
+
+const getErrorProgressColor = (percentage: number) => {
+  if (percentage >= 10) return '#f56c6c'
+  if (percentage >= 5) return '#e6a23c'
+  return '#909399'
+}
+
 // 生命周期
 onMounted(async () => {
   appStore.setPageTitle('数据概览')
@@ -775,51 +846,149 @@ onUnmounted(() => {
 .error-list {
   height: 320px;
   overflow-y: auto;
-}
-
-.error-item {
-  padding: 12px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.error-item:last-child {
-  border-bottom: none;
-}
-
-.error-info {
+  padding: 8px 0;
+  gap: 12px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
+  flex-direction: column;
 }
 
-.error-type {
-  font-size: 14px;
-  color: #333;
+/* 错误卡片样式 - 与服务商状态卡片保持一致 */
+.error-card {
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.error-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(135deg, #f56c6c 0%, #ff8a80 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.error-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(245, 108, 108, 0.15);
+  border-color: #f56c6c;
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.error-avatar {
+  flex-shrink: 0;
+}
+
+.error-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  background: linear-gradient(135deg, #f56c6c 0%, #ff8a80 100%);
+  color: white;
   font-weight: 500;
+  box-shadow: 0 4px 12px rgba(245, 108, 108, 0.25);
+}
+
+.error-basic-info {
   flex: 1;
+  min-width: 0;
+}
+
+.error-type-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.4;
+  margin-bottom: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.error-meta {
+.error-type-code {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-status-badge {
+  flex-shrink: 0;
+}
+
+.error-metrics {
   display: flex;
-  gap: 8px;
-  font-size: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 8px 0;
+  background: rgba(248, 250, 252, 0.5);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.error-metric-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.error-metric-label {
+  font-size: 10px;
+  color: #9ca3af;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.error-metric-value {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .error-count {
   color: #f56c6c;
-  font-weight: 500;
 }
 
 .error-rate {
-  color: #666;
+  color: #6b7280;
 }
 
-.error-progress {
-  margin-top: 4px;
+.error-progress-bar {
+  margin-top: 8px;
+}
+
+.error-progress-bar .el-progress {
+  margin: 0;
+}
+
+.error-progress-bar .el-progress-bar__outer {
+  background-color: rgba(245, 108, 108, 0.1);
+  border-radius: 6px;
+}
+
+.error-progress-bar .el-progress-bar__inner {
+  border-radius: 6px;
+  background: linear-gradient(135deg, #f56c6c 0%, #ff8a80 100%);
 }
 
 .empty-errors {

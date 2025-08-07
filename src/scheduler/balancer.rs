@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Duration;
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::{UpstreamServer, UpstreamType};
+use crate::proxy::upstream::{UpstreamServer, ProviderId};
 use super::algorithms::{SchedulingAlgorithm, create_scheduler};
 use super::types::{ServerMetrics, SchedulingResult, SchedulingStrategy};
 
@@ -43,11 +43,11 @@ pub struct LoadBalancer {
     /// 配置
     config: LoadBalancerConfig,
     /// 按类型分组的服务器
-    servers: RwLock<HashMap<UpstreamType, Vec<UpstreamServer>>>,
+    servers: RwLock<HashMap<ProviderId, Vec<UpstreamServer>>>,
     /// 服务器指标
     metrics: RwLock<HashMap<String, ServerMetrics>>,
     /// 调度算法
-    schedulers: RwLock<HashMap<UpstreamType, Box<dyn SchedulingAlgorithm>>>,
+    schedulers: RwLock<HashMap<ProviderId, Box<dyn SchedulingAlgorithm>>>,
     /// 故障计数器
     failure_counts: RwLock<HashMap<String, u32>>,
     /// 成功计数器
@@ -73,12 +73,12 @@ impl LoadBalancer {
     }
 
     /// 添加服务器
-    pub fn add_server(&self, upstream_type: UpstreamType, server: UpstreamServer) -> Result<()> {
-        let server_key = self.server_key(&upstream_type, &server);
+    pub fn add_server(&self, provider_id: ProviderId, server: UpstreamServer) -> Result<()> {
+        let server_key = self.server_key(&provider_id, &server);
         
         {
             let mut servers = self.servers.write().unwrap();
-            servers.entry(upstream_type.clone()).or_insert_with(Vec::new).push(server);
+            servers.entry(provider_id.clone()).or_insert_with(Vec::new).push(server);
         }
 
         {
@@ -88,8 +88,8 @@ impl LoadBalancer {
 
         {
             let mut schedulers = self.schedulers.write().unwrap();
-            if !schedulers.contains_key(&upstream_type) {
-                schedulers.insert(upstream_type, create_scheduler(self.config.default_strategy));
+            if !schedulers.contains_key(&provider_id) {
+                schedulers.insert(provider_id, create_scheduler(self.config.default_strategy));
             }
         }
 
@@ -98,15 +98,15 @@ impl LoadBalancer {
     }
 
     /// 移除服务器
-    pub fn remove_server(&self, upstream_type: &UpstreamType, server_address: &str) -> Result<()> {
-        let server_key = format!("{:?}:{}", upstream_type, server_address);
+    pub fn remove_server(&self, provider_id: &ProviderId, server_address: &str) -> Result<()> {
+        let server_key = format!("{:?}:{}", provider_id, server_address);
 
         {
             let mut servers = self.servers.write().unwrap();
-            if let Some(server_list) = servers.get_mut(upstream_type) {
+            if let Some(server_list) = servers.get_mut(provider_id) {
                 server_list.retain(|s| s.address() != server_address);
                 if server_list.is_empty() {
-                    servers.remove(upstream_type);
+                    servers.remove(provider_id);
                 }
             }
         }
@@ -131,11 +131,11 @@ impl LoadBalancer {
     }
 
     /// 移除指定上游类型的所有服务器
-    pub fn remove_all_servers(&self, upstream_type: &UpstreamType) {
+    pub fn remove_all_servers(&self, provider_id: &ProviderId) {
         {
             let mut servers = self.servers.write().unwrap();
-            if let Some(server_list) = servers.remove(upstream_type) {
-                tracing::info!("Removed {} servers for upstream type: {:?}", server_list.len(), upstream_type);
+            if let Some(server_list) = servers.remove(provider_id) {
+                tracing::info!("Removed {} servers for upstream type: {:?}", server_list.len(), provider_id);
             }
         }
 
@@ -146,7 +146,7 @@ impl LoadBalancer {
             let mut failure_counts = self.failure_counts.write().unwrap();
 
             let keys_to_remove: Vec<String> = metrics.keys()
-                .filter(|key| key.starts_with(&format!("{:?}:", upstream_type)))
+                .filter(|key| key.starts_with(&format!("{:?}:", provider_id)))
                 .cloned()
                 .collect();
 
@@ -159,16 +159,16 @@ impl LoadBalancer {
     }
 
     /// 选择服务器
-    pub fn select_server(&self, upstream_type: &UpstreamType) -> Result<(UpstreamServer, SchedulingResult)> {
+    pub fn select_server(&self, provider_id: &ProviderId) -> Result<(UpstreamServer, SchedulingResult)> {
         let servers = {
             let servers_guard = self.servers.read().unwrap();
-            servers_guard.get(upstream_type)
-                .ok_or_else(|| ProxyError::upstream_not_found(format!("No servers for type: {:?}", upstream_type)))?
+            servers_guard.get(provider_id)
+                .ok_or_else(|| ProxyError::upstream_not_found(format!("No servers for type: {:?}", provider_id)))?
                 .clone()
         };
 
         if servers.is_empty() {
-            return Err(ProxyError::upstream_not_available(format!("No servers available for type: {:?}", upstream_type)));
+            return Err(ProxyError::upstream_not_available(format!("No servers available for type: {:?}", provider_id)));
         }
 
         // 获取服务器指标
@@ -176,7 +176,7 @@ impl LoadBalancer {
             let metrics_guard = self.metrics.read().unwrap();
             servers.iter()
                 .map(|server| {
-                    let key = self.server_key(upstream_type, server);
+                    let key = self.server_key(provider_id, server);
                     metrics_guard.get(&key).cloned().unwrap_or_default()
                 })
                 .collect()
@@ -185,8 +185,8 @@ impl LoadBalancer {
         // 获取调度器
         let result = {
             let schedulers_guard = self.schedulers.read().unwrap();
-            let scheduler = schedulers_guard.get(upstream_type)
-                .ok_or_else(|| ProxyError::upstream_not_found(format!("No scheduler for type: {:?}", upstream_type)))?;
+            let scheduler = schedulers_guard.get(provider_id)
+                .ok_or_else(|| ProxyError::upstream_not_found(format!("No scheduler for type: {:?}", provider_id)))?;
             
             scheduler.select_server(&servers, &metrics)?
         };
@@ -194,20 +194,20 @@ impl LoadBalancer {
         let selected_server = servers[result.server_index].clone();
         
         tracing::debug!("Selected server: {} for type: {:?}, reason: {}", 
-                       selected_server.address(), upstream_type, result.reason);
+                       selected_server.address(), provider_id, result.reason);
 
         Ok((selected_server, result))
     }
 
     /// 设置调度策略
-    pub fn set_strategy(&self, upstream_type: UpstreamType, strategy: SchedulingStrategy) {
+    pub fn set_strategy(&self, provider_id: ProviderId, strategy: SchedulingStrategy) {
         let mut schedulers = self.schedulers.write().unwrap();
-        schedulers.insert(upstream_type, create_scheduler(strategy));
+        schedulers.insert(provider_id, create_scheduler(strategy));
     }
 
     /// 记录请求成功
-    pub fn record_success(&self, upstream_type: &UpstreamType, server_address: &str, response_time: Duration) {
-        let server_key = format!("{:?}:{}", upstream_type, server_address);
+    pub fn record_success(&self, provider_id: &ProviderId, server_address: &str, response_time: Duration) {
+        let server_key = format!("{:?}:{}", provider_id, server_address);
         
         {
             let mut metrics = self.metrics.write().unwrap();
@@ -224,7 +224,7 @@ impl LoadBalancer {
 
             // 检查是否需要恢复健康状态
             if *count >= self.config.recovery_threshold {
-                self.mark_server_healthy(upstream_type, server_address, true);
+                self.mark_server_healthy(provider_id, server_address, true);
                 *count = 0; // 重置计数器
             }
         }
@@ -237,8 +237,8 @@ impl LoadBalancer {
     }
 
     /// 记录请求失败
-    pub fn record_failure(&self, upstream_type: &UpstreamType, server_address: &str) {
-        let server_key = format!("{:?}:{}", upstream_type, server_address);
+    pub fn record_failure(&self, provider_id: &ProviderId, server_address: &str) {
+        let server_key = format!("{:?}:{}", provider_id, server_address);
         
         {
             let mut metrics = self.metrics.write().unwrap();
@@ -254,7 +254,7 @@ impl LoadBalancer {
 
             // 检查是否需要标记为不健康
             if *count >= self.config.failure_threshold && self.config.auto_failover {
-                self.mark_server_healthy(upstream_type, server_address, false);
+                self.mark_server_healthy(provider_id, server_address, false);
                 tracing::warn!("Marked server {} as unhealthy after {} failures", server_address, count);
             }
         }
@@ -267,8 +267,8 @@ impl LoadBalancer {
     }
 
     /// 标记服务器健康状态
-    pub fn mark_server_healthy(&self, upstream_type: &UpstreamType, server_address: &str, is_healthy: bool) {
-        let server_key = format!("{:?}:{}", upstream_type, server_address);
+    pub fn mark_server_healthy(&self, provider_id: &ProviderId, server_address: &str, is_healthy: bool) {
+        let server_key = format!("{:?}:{}", provider_id, server_address);
         
         {
             let mut metrics = self.metrics.write().unwrap();
@@ -279,7 +279,7 @@ impl LoadBalancer {
 
         {
             let mut servers = self.servers.write().unwrap();
-            if let Some(server_list) = servers.get_mut(upstream_type) {
+            if let Some(server_list) = servers.get_mut(provider_id) {
                 for server in server_list {
                     if server.address() == server_address {
                         server.is_healthy = is_healthy;
@@ -293,44 +293,44 @@ impl LoadBalancer {
     }
 
     /// 获取服务器指标
-    pub fn get_server_metrics(&self, upstream_type: &UpstreamType, server_address: &str) -> Option<ServerMetrics> {
-        let server_key = format!("{:?}:{}", upstream_type, server_address);
+    pub fn get_server_metrics(&self, provider_id: &ProviderId, server_address: &str) -> Option<ServerMetrics> {
+        let server_key = format!("{:?}:{}", provider_id, server_address);
         let metrics = self.metrics.read().unwrap();
         metrics.get(&server_key).cloned()
     }
 
     /// 获取所有服务器状态
-    pub fn get_all_servers(&self) -> HashMap<UpstreamType, Vec<(UpstreamServer, ServerMetrics)>> {
+    pub fn get_all_servers(&self) -> HashMap<ProviderId, Vec<(UpstreamServer, ServerMetrics)>> {
         let servers_guard = self.servers.read().unwrap();
         let metrics_guard = self.metrics.read().unwrap();
         
         let mut result = HashMap::new();
         
-        for (upstream_type, servers) in servers_guard.iter() {
+        for (provider_id, servers) in servers_guard.iter() {
             let server_metrics: Vec<(UpstreamServer, ServerMetrics)> = servers
                 .iter()
                 .map(|server| {
-                    let key = self.server_key(upstream_type, server);
+                    let key = self.server_key(provider_id, server);
                     let metrics = metrics_guard.get(&key).cloned().unwrap_or_default();
                     (server.clone(), metrics)
                 })
                 .collect();
             
-            result.insert(upstream_type.clone(), server_metrics);
+            result.insert(provider_id.clone(), server_metrics);
         }
         
         result
     }
 
     /// 获取健康服务器数量
-    pub fn healthy_server_count(&self, upstream_type: &UpstreamType) -> usize {
+    pub fn healthy_server_count(&self, provider_id: &ProviderId) -> usize {
         let servers_guard = self.servers.read().unwrap();
         let metrics_guard = self.metrics.read().unwrap();
         
-        if let Some(servers) = servers_guard.get(upstream_type) {
+        if let Some(servers) = servers_guard.get(provider_id) {
             servers.iter()
                 .filter(|server| {
-                    let key = self.server_key(upstream_type, server);
+                    let key = self.server_key(provider_id, server);
                     metrics_guard.get(&key)
                         .map(|m| m.is_healthy)
                         .unwrap_or(false)
@@ -350,8 +350,8 @@ impl LoadBalancer {
     }
 
     /// 生成服务器键
-    fn server_key(&self, upstream_type: &UpstreamType, server: &UpstreamServer) -> String {
-        format!("{:?}:{}", upstream_type, server.address())
+    fn server_key(&self, provider_id: &ProviderId, server: &UpstreamServer) -> String {
+        format!("{:?}:{}", provider_id, server.address())
     }
 
     /// 清理过期指标
@@ -392,8 +392,8 @@ impl Clone for LoadBalancer {
         {
             let servers = new_balancer.servers.read().unwrap();
             let mut schedulers = new_balancer.schedulers.write().unwrap();
-            for upstream_type in servers.keys() {
-                schedulers.insert(upstream_type.clone(), crate::scheduler::algorithms::create_scheduler(config.default_strategy));
+            for provider_id in servers.keys() {
+                schedulers.insert(provider_id.clone(), crate::scheduler::algorithms::create_scheduler(config.default_strategy));
             }
         }
         
@@ -444,36 +444,36 @@ mod tests {
     fn test_add_and_remove_server() {
         let balancer = LoadBalancer::with_default_config();
         let server = create_test_server("example.com", 443, 100);
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
 
         // 添加服务器
-        balancer.add_server(upstream_type.clone(), server.clone()).unwrap();
+        balancer.add_server(provider_id.clone(), server.clone()).unwrap();
         
         let all_servers = balancer.get_all_servers();
         assert_eq!(all_servers.len(), 1);
-        assert!(all_servers.contains_key(&upstream_type));
+        assert!(all_servers.contains_key(&provider_id));
 
         // 移除服务器
-        balancer.remove_server(&upstream_type, &server.address()).unwrap();
+        balancer.remove_server(&provider_id, &server.address()).unwrap();
         
         let all_servers = balancer.get_all_servers();
-        assert!(all_servers.is_empty() || all_servers.get(&upstream_type).unwrap().is_empty());
+        assert!(all_servers.is_empty() || all_servers.get(&provider_id).unwrap().is_empty());
     }
 
     #[test]
     fn test_server_selection() {
         let balancer = LoadBalancer::with_default_config();
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
         
         // 添加多个服务器
         let server1 = create_test_server("server1.example.com", 443, 100);
         let server2 = create_test_server("server2.example.com", 443, 200);
         
-        balancer.add_server(upstream_type.clone(), server1).unwrap();
-        balancer.add_server(upstream_type.clone(), server2).unwrap();
+        balancer.add_server(provider_id.clone(), server1).unwrap();
+        balancer.add_server(provider_id.clone(), server2).unwrap();
 
         // 选择服务器
-        let (selected_server, result) = balancer.select_server(&upstream_type).unwrap();
+        let (selected_server, result) = balancer.select_server(&provider_id).unwrap();
         assert!(selected_server.host.contains("example.com"));
         assert_eq!(result.strategy, SchedulingStrategy::RoundRobin);
     }
@@ -481,68 +481,68 @@ mod tests {
     #[test]
     fn test_success_and_failure_recording() {
         let balancer = LoadBalancer::with_default_config();
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
         let server = create_test_server("example.com", 443, 100);
         let server_address = server.address();
         
-        balancer.add_server(upstream_type.clone(), server).unwrap();
+        balancer.add_server(provider_id.clone(), server).unwrap();
 
         // 记录成功
-        balancer.record_success(&upstream_type, &server_address, Duration::from_millis(100));
+        balancer.record_success(&provider_id, &server_address, Duration::from_millis(100));
         
-        let metrics = balancer.get_server_metrics(&upstream_type, &server_address).unwrap();
+        let metrics = balancer.get_server_metrics(&provider_id, &server_address).unwrap();
         assert_eq!(metrics.success_requests, 1);
         assert!(metrics.avg_response_time > 0.0);
 
         // 记录失败
-        balancer.record_failure(&upstream_type, &server_address);
+        balancer.record_failure(&provider_id, &server_address);
         
-        let metrics = balancer.get_server_metrics(&upstream_type, &server_address).unwrap();
+        let metrics = balancer.get_server_metrics(&provider_id, &server_address).unwrap();
         assert_eq!(metrics.failed_requests, 1);
     }
 
     #[test]
     fn test_health_status_management() {
         let balancer = LoadBalancer::with_default_config();
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
         let server = create_test_server("example.com", 443, 100);
         let server_address = server.address();
         
-        balancer.add_server(upstream_type.clone(), server).unwrap();
+        balancer.add_server(provider_id.clone(), server).unwrap();
 
         // 初始状态应该是健康的
-        assert_eq!(balancer.healthy_server_count(&upstream_type), 1);
+        assert_eq!(balancer.healthy_server_count(&provider_id), 1);
 
         // 标记为不健康
-        balancer.mark_server_healthy(&upstream_type, &server_address, false);
-        assert_eq!(balancer.healthy_server_count(&upstream_type), 0);
+        balancer.mark_server_healthy(&provider_id, &server_address, false);
+        assert_eq!(balancer.healthy_server_count(&provider_id), 0);
 
         // 恢复健康
-        balancer.mark_server_healthy(&upstream_type, &server_address, true);
-        assert_eq!(balancer.healthy_server_count(&upstream_type), 1);
+        balancer.mark_server_healthy(&provider_id, &server_address, true);
+        assert_eq!(balancer.healthy_server_count(&provider_id), 1);
     }
 
     #[test]
     fn test_strategy_switching() {
         let balancer = LoadBalancer::with_default_config();
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
         let server = create_test_server("example.com", 443, 100);
         
-        balancer.add_server(upstream_type.clone(), server).unwrap();
+        balancer.add_server(provider_id.clone(), server).unwrap();
 
         // 更换为权重调度策略
-        balancer.set_strategy(upstream_type.clone(), SchedulingStrategy::Weighted);
+        balancer.set_strategy(provider_id.clone(), SchedulingStrategy::Weighted);
         
-        let (_, result) = balancer.select_server(&upstream_type).unwrap();
+        let (_, result) = balancer.select_server(&provider_id).unwrap();
         assert_eq!(result.strategy, SchedulingStrategy::Weighted);
     }
 
     #[test]
     fn test_no_servers_error() {
         let balancer = LoadBalancer::with_default_config();
-        let upstream_type = UpstreamType::OpenAI;
+        let provider_id = ProviderId::from_database_id(1);
         
-        let result = balancer.select_server(&upstream_type);
+        let result = balancer.select_server(&provider_id);
         assert!(result.is_err());
     }
 }

@@ -1,6 +1,6 @@
 //! # 上游服务管理
 //!
-//! 管理 AI 服务提供商的上游连接
+//! 基于数据库驱动的 AI 服务提供商上游连接管理
 
 use crate::config::{AppConfig, ProviderConfigManager, ProviderConfig};
 use crate::error::{ProxyError, Result};
@@ -12,50 +12,39 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 上游服务类型
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum UpstreamType {
-    OpenAI,
-    Anthropic,
-    GoogleGemini,
-    Custom(String),
-}
+/// 提供商标识符 - 基于数据库主键的动态标识
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProviderId(pub i32);
 
-impl UpstreamType {
-    /// 从路径判断上游类型
-    pub fn from_path(path: &str) -> Option<Self> {
-        if path.starts_with("/v1/") {
-            // 标准 OpenAI API 路径
-            Some(UpstreamType::OpenAI)
-        } else if path.starts_with("/openai/") {
-            Some(UpstreamType::OpenAI)
-        } else if path.starts_with("/anthropic/") {
-            Some(UpstreamType::Anthropic)
-        } else if path.starts_with("/gemini/") || path.starts_with("/google/") {
-            Some(UpstreamType::GoogleGemini)
-        } else {
-            None
-        }
+impl ProviderId {
+    /// 从数据库ID创建提供商标识
+    pub fn from_database_id(id: i32) -> Self {
+        Self(id)
     }
-
-    /// 获取默认的上游地址
-    pub fn default_upstream(&self) -> &'static str {
-        match self {
-            UpstreamType::OpenAI => "api.openai.com:443",
-            UpstreamType::Anthropic => "api.anthropic.com:443",
-            UpstreamType::GoogleGemini => "generativelanguage.googleapis.com:443",
-            UpstreamType::Custom(_) => "localhost:8080",
-        }
+    
+    /// 获取数据库ID
+    pub fn id(&self) -> i32 {
+        self.0
     }
-
-    /// 判断是否使用 TLS
-    pub fn use_tls(&self) -> bool {
-        match self {
-            UpstreamType::OpenAI | UpstreamType::Anthropic | UpstreamType::GoogleGemini => true,
-            UpstreamType::Custom(_) => false,
-        }
+    
+    /// 转换为字符串形式（用于日志等）
+    pub fn as_string(&self) -> String {
+        format!("provider_{}", self.0)
     }
 }
+
+impl std::fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "provider_{}", self.0)
+    }
+}
+
+impl From<i32> for ProviderId {
+    fn from(id: i32) -> Self {
+        ProviderId(id)
+    }
+}
+
 
 /// 上游服务器信息
 #[derive(Debug, Clone)]
@@ -96,52 +85,18 @@ impl UpstreamServer {
     }
 }
 
-/// 上游管理器
+/// 上游管理器 - 完全数据库驱动
 pub struct UpstreamManager {
     config: Arc<AppConfig>,
     load_balancer: LoadBalancer,
-    provider_config_manager: Option<Arc<ProviderConfigManager>>,
+    provider_config_manager: Arc<ProviderConfigManager>,
 }
 
 impl UpstreamManager {
-    /// 创建新的上游管理器
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        let lb_config = LoadBalancerConfig {
-            default_strategy: SchedulingStrategy::RoundRobin,
-            health_check_interval: Duration::from_secs(30),
-            auto_failover: true,
-            ..Default::default()
-        };
-
-        let mut manager = Self {
-            config,
-            load_balancer: LoadBalancer::new(lb_config),
-            provider_config_manager: None,
-        };
-
-        manager.initialize_default_upstreams();
-        manager
-    }
-
-    /// 使用自定义负载均衡配置创建管理器
-    pub fn with_load_balancer_config(
-        config: Arc<AppConfig>,
-        lb_config: LoadBalancerConfig,
-    ) -> Self {
-        let mut manager = Self {
-            config,
-            load_balancer: LoadBalancer::new(lb_config),
-            provider_config_manager: None,
-        };
-
-        manager.initialize_default_upstreams();
-        manager
-    }
-
-    /// 使用动态服务商配置创建管理器（推荐）
-    pub fn with_provider_config(
-        config: Arc<AppConfig>,
-        provider_config_manager: Arc<ProviderConfigManager>,
+    /// 创建基于数据库驱动的上游管理器（推荐使用）
+    pub fn new_database_driven(
+        config: Arc<AppConfig>, 
+        provider_config_manager: Arc<ProviderConfigManager>
     ) -> Self {
         let lb_config = LoadBalancerConfig {
             default_strategy: SchedulingStrategy::RoundRobin,
@@ -150,110 +105,59 @@ impl UpstreamManager {
             ..Default::default()
         };
 
-        let mut manager = Self {
+        Self {
             config,
             load_balancer: LoadBalancer::new(lb_config),
-            provider_config_manager: Some(provider_config_manager),
-        };
-
-        // 使用异步初始化，这里先用默认配置，实际应该在异步环境中调用 initialize_dynamic_upstreams
-        manager.initialize_default_upstreams();
-        manager
-    }
-
-    /// 使用动态服务商配置和自定义负载均衡配置创建管理器
-    pub fn with_provider_and_lb_config(
-        config: Arc<AppConfig>,
-        provider_config_manager: Arc<ProviderConfigManager>,
-        lb_config: LoadBalancerConfig,
-    ) -> Self {
-        let mut manager = Self {
-            config,
-            load_balancer: LoadBalancer::new(lb_config),
-            provider_config_manager: Some(provider_config_manager),
-        };
-
-        // 使用异步初始化，这里先用默认配置，实际应该在异步环境中调用 initialize_dynamic_upstreams
-        manager.initialize_default_upstreams();
-        manager
-    }
-
-    /// 初始化默认上游服务器
-    fn initialize_default_upstreams(&mut self) {
-        // OpenAI 上游
-        let openai_server = UpstreamServer::new("api.openai.com".to_string(), 443, true);
-        self.load_balancer
-            .add_server(UpstreamType::OpenAI, openai_server)
-            .unwrap();
-
-        // Anthropic 上游
-        let anthropic_server = UpstreamServer::new("api.anthropic.com".to_string(), 443, true);
-        self.load_balancer
-            .add_server(UpstreamType::Anthropic, anthropic_server)
-            .unwrap();
-
-        // Google Gemini 上游
-        let gemini_server =
-            UpstreamServer::new("generativelanguage.googleapis.com".to_string(), 443, true);
-        self.load_balancer
-            .add_server(UpstreamType::GoogleGemini, gemini_server)
-            .unwrap();
-
-        tracing::info!("Initialized default upstream servers with load balancer");
-    }
-
-    /// 从数据库动态初始化上游服务器（替代硬编码）
-    pub async fn initialize_dynamic_upstreams(&mut self) -> Result<()> {
-        if let Some(ref provider_manager) = self.provider_config_manager {
-            match provider_manager.get_active_providers().await {
-                Ok(providers) => {
-                    tracing::info!("Loading {} active providers from database", providers.len());
-                    
-                    for provider in providers {
-                        let upstream_type = self.provider_config_to_upstream_type(&provider);
-                        let upstream_server = self.provider_config_to_upstream_server(&provider)?;
-                        
-                        // 清除旧的服务器配置（如果存在）
-                        self.load_balancer.remove_all_servers(&upstream_type);
-                        
-                        // 添加新的服务器配置
-                        if let Err(e) = self.load_balancer.add_server(upstream_type.clone(), upstream_server) {
-                            tracing::warn!("Failed to add upstream server for {}: {}", provider.name, e);
-                            continue;
-                        }
-                        
-                        tracing::debug!(
-                            "Added upstream server: {} -> {} ({})",
-                            provider.name,
-                            provider.upstream_address,
-                            if provider.base_url.contains("443") { "TLS" } else { "HTTP" }
-                        );
-                    }
-                    
-                    tracing::info!("Successfully initialized dynamic upstream servers");
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load providers from database: {}", e);
-                    tracing::warn!("Falling back to default hardcoded configuration");
-                    self.initialize_default_upstreams();
-                    Err(e)
-                }
-            }
-        } else {
-            tracing::warn!("No provider config manager available, using default configuration");
-            self.initialize_default_upstreams();
-            Ok(())
+            provider_config_manager,
         }
     }
 
-    /// 将ProviderConfig转换为UpstreamType
-    fn provider_config_to_upstream_type(&self, config: &ProviderConfig) -> UpstreamType {
-        match config.name.to_lowercase().as_str() {
-            "openai" => UpstreamType::OpenAI,
-            "anthropic" | "claude" => UpstreamType::Anthropic,
-            "gemini" | "google" => UpstreamType::GoogleGemini,
-            _ => UpstreamType::Custom(config.name.clone()),
+    /// 使用自定义负载均衡配置创建数据库驱动的管理器
+    pub fn with_load_balancer_config(
+        config: Arc<AppConfig>,
+        provider_config_manager: Arc<ProviderConfigManager>,
+        lb_config: LoadBalancerConfig,
+    ) -> Self {
+        Self {
+            config,
+            load_balancer: LoadBalancer::new(lb_config),
+            provider_config_manager,
+        }
+    }
+
+    /// 从数据库动态初始化上游服务器 - 完全数据库驱动
+    pub async fn initialize_dynamic_upstreams(&mut self) -> Result<()> {
+        match self.provider_config_manager.get_active_providers().await {
+            Ok(providers) => {
+                let providers_count = providers.len();
+                tracing::info!("Loading {} active providers from database", providers_count);
+                
+                for provider in providers {
+                    let provider_id = ProviderId::from_database_id(provider.id);
+                    let upstream_server = self.provider_config_to_upstream_server(&provider)?;
+                    
+                    // 添加服务器到负载均衡器
+                    if let Err(e) = self.load_balancer.add_server(provider_id.clone(), upstream_server) {
+                        tracing::warn!("Failed to add upstream server for provider {}: {}", provider_id, e);
+                        continue;
+                    }
+                    
+                    tracing::info!(
+                        "Added upstream server: {} (ID:{}) -> {} ({})",
+                        provider.name,
+                        provider_id,
+                        provider.upstream_address,
+                        if provider.base_url.contains("443") { "TLS" } else { "HTTP" }
+                    );
+                }
+                
+                tracing::info!("Successfully initialized {} database-driven upstream servers", providers_count);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to load providers from database: {}", e);
+                Err(e)
+            }
         }
     }
 
@@ -305,30 +209,18 @@ impl UpstreamManager {
 
     /// 刷新上游服务器配置（重新从数据库加载）
     pub async fn refresh_upstreams(&mut self) -> Result<()> {
-        if let Some(ref provider_manager) = self.provider_config_manager {
-            // 刷新提供商配置缓存
-            if let Err(e) = provider_manager.refresh_cache().await {
-                tracing::warn!("Failed to refresh provider config cache: {}", e);
-            }
-            
-            // 重新初始化上游服务器
-            self.initialize_dynamic_upstreams().await
-        } else {
-            tracing::warn!("Cannot refresh upstreams: no provider config manager");
-            Ok(())
+        // 刷新提供商配置缓存
+        if let Err(e) = self.provider_config_manager.refresh_cache().await {
+            tracing::warn!("Failed to refresh provider config cache: {}", e);
         }
-    }
-
-    /// 获取指定类型的上游服务器（已弃用，使用select_upstream代替）
-    #[deprecated(note = "Use select_upstream for load balancing")]
-    pub fn get_upstream(&self, upstream_type: &UpstreamType) -> Result<UpstreamServer> {
-        let (server, _) = self.load_balancer.select_server(upstream_type)?;
-        Ok(server)
+        
+        // 重新初始化上游服务器
+        self.initialize_dynamic_upstreams().await
     }
 
     /// 使用负载均衡选择上游服务器
-    pub fn select_upstream(&self, upstream_type: &UpstreamType) -> Result<UpstreamServer> {
-        let (server, result) = self.load_balancer.select_server(upstream_type)?;
+    pub fn select_upstream(&self, provider_id: &ProviderId) -> Result<UpstreamServer> {
+        let (server, result) = self.load_balancer.select_server(provider_id)?;
         tracing::debug!(
             "Selected upstream: {} using strategy: {:?}, reason: {}",
             server.address(),
@@ -338,85 +230,76 @@ impl UpstreamManager {
         Ok(server)
     }
 
-    /// 根据请求路径选择上游服务器
-    pub fn select_upstream_for_path(&self, path: &str) -> Result<UpstreamServer> {
-        let upstream_type = UpstreamType::from_path(path).ok_or_else(|| {
-            ProxyError::upstream_not_found(format!("Cannot determine upstream for path: {}", path))
-        })?;
-
-        self.select_upstream(&upstream_type)
+    /// 根据提供商ID选择上游服务器
+    pub fn select_upstream_by_id(&self, provider_id: i32) -> Result<UpstreamServer> {
+        let provider_id = ProviderId::from_database_id(provider_id);
+        self.select_upstream(&provider_id)
     }
 
-    /// 创建用于指定路径的 HttpPeer
-    pub fn create_peer_for_path(&self, path: &str) -> Result<HttpPeer> {
-        let upstream = self.select_upstream_for_path(path)?;
+    /// 创建用于指定提供商的 HttpPeer
+    pub fn create_peer_for_provider(&self, provider_id: i32) -> Result<HttpPeer> {
+        let upstream = self.select_upstream_by_id(provider_id)?;
         let sni = upstream.host.clone();
-
         Ok(upstream.create_peer(sni))
     }
 
-    /// 添加自定义上游服务器
-    pub fn add_upstream(&self, upstream_type: UpstreamType, server: UpstreamServer) -> Result<()> {
-        self.load_balancer.add_server(upstream_type, server)
+    /// 添加上游服务器
+    pub fn add_upstream(&self, provider_id: ProviderId, server: UpstreamServer) -> Result<()> {
+        self.load_balancer.add_server(provider_id, server)
     }
 
     /// 移除上游服务器
-    pub fn remove_upstream(
-        &self,
-        upstream_type: &UpstreamType,
-        server_address: &str,
-    ) -> Result<()> {
-        self.load_balancer
-            .remove_server(upstream_type, server_address)
+    pub fn remove_upstream(&self, provider_id: &ProviderId, server_address: &str) -> Result<()> {
+        self.load_balancer.remove_server(provider_id, server_address)
     }
 
     /// 更新服务器健康状态
     pub fn update_server_health(
         &self,
-        upstream_type: &UpstreamType,
+        provider_id: &ProviderId,
         server_address: &str,
         is_healthy: bool,
     ) {
         self.load_balancer
-            .mark_server_healthy(upstream_type, server_address, is_healthy);
+            .mark_server_healthy(provider_id, server_address, is_healthy);
     }
 
     /// 记录请求成功
     pub fn record_success(
         &self,
-        upstream_type: &UpstreamType,
+        provider_id: &ProviderId,
         server_address: &str,
         response_time: Duration,
     ) {
         self.load_balancer
-            .record_success(upstream_type, server_address, response_time);
+            .record_success(provider_id, server_address, response_time);
     }
 
     /// 记录请求失败
-    pub fn record_failure(&self, upstream_type: &UpstreamType, server_address: &str) {
+    pub fn record_failure(&self, provider_id: &ProviderId, server_address: &str) {
         self.load_balancer
-            .record_failure(upstream_type, server_address);
+            .record_failure(provider_id, server_address);
     }
 
     /// 设置负载均衡策略
     pub fn set_load_balancing_strategy(
         &self,
-        upstream_type: UpstreamType,
+        provider_id: ProviderId,
         strategy: SchedulingStrategy,
     ) {
-        self.load_balancer.set_strategy(upstream_type, strategy);
+        self.load_balancer.set_strategy(provider_id, strategy);
     }
 
     /// 获取所有上游服务器状态
     pub fn get_all_upstreams(
         &self,
-    ) -> HashMap<UpstreamType, Vec<(UpstreamServer, crate::scheduler::ServerMetrics)>> {
+    ) -> HashMap<ProviderId, Vec<(UpstreamServer, crate::scheduler::ServerMetrics)>> {
         self.load_balancer.get_all_servers()
     }
 
     /// 获取健康的上游服务器数量
-    pub fn healthy_server_count(&self, upstream_type: &UpstreamType) -> usize {
-        self.load_balancer.healthy_server_count(upstream_type)
+    pub fn healthy_server_count(&self, provider_id: &ProviderId) -> usize {
+        self.load_balancer.healthy_server_count(provider_id)
     }
 
     /// 获取负载均衡器引用
@@ -433,7 +316,7 @@ impl std::fmt::Debug for UpstreamManager {
         f.debug_struct("UpstreamManager")
             .field("config", &"AppConfig")
             .field("load_balancer", &self.load_balancer)
-            .field("server_types", &all_servers.keys().collect::<Vec<_>>())
+            .field("provider_count", &all_servers.keys().len())
             .field("total_servers", &total_servers)
             .finish()
     }

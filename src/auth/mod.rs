@@ -9,6 +9,7 @@ pub mod jwt;
 pub mod api_key;
 pub mod permissions;
 pub mod unified;
+pub mod header_parser;
 
 pub use types::*;
 pub use service::AuthService;
@@ -17,6 +18,7 @@ pub use jwt::JwtManager;
 pub use api_key::ApiKeyManager;
 pub use permissions::{Permission, Role};
 pub use unified::{UnifiedAuthManager, AuthRequest, CacheStats, create_unified_auth_manager};
+pub use header_parser::{AuthHeaderParser, AuthHeader, AuthParseError};
 
 
 /// 认证结果

@@ -4,8 +4,8 @@
 
 use crate::error::{ProxyError, Result};
 use crate::health::HealthCheckService;
-use crate::providers::{AdapterManager, AdapterRequest};
-use crate::proxy::upstream::{UpstreamManager, UpstreamServer, UpstreamType};
+use crate::providers::{DynamicAdapterManager, AdapterRequest};
+use crate::proxy::upstream::{UpstreamManager, UpstreamServer, ProviderId};
 use crate::scheduler::SchedulingStrategy;
 use pingora_http::{RequestHeader, ResponseHeader};
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ pub struct RequestForwarder {
     /// 健康检查服务
     health_service: Arc<HealthCheckService>,
     /// 适配器管理器
-    adapter_manager: Arc<AdapterManager>,
+    adapter_manager: Arc<DynamicAdapterManager>,
     /// 转发统计
     stats: Arc<RwLock<ForwardingStats>>,
     /// 配置
@@ -68,7 +68,7 @@ pub struct ForwardingContext {
     /// 开始时间
     pub start_time: Instant,
     /// 上游类型
-    pub upstream_type: UpstreamType,
+    pub upstream_type: ProviderId,
     /// 选中的服务器
     pub selected_server: Option<UpstreamServer>,
     /// 负载均衡决策
@@ -132,7 +132,7 @@ pub struct ForwardingStats {
     /// 平均响应时间
     pub avg_response_time: Duration,
     /// 按上游类型分组的统计
-    pub by_upstream_type: HashMap<String, UpstreamTypeStats>,
+    pub by_upstream_type: HashMap<String, ProviderIdStats>,
     /// 按状态码分组的统计
     pub by_status_code: HashMap<u16, u64>,
     /// 重试统计
@@ -144,7 +144,7 @@ pub struct ForwardingStats {
 
 /// 上游类型统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpstreamTypeStats {
+pub struct ProviderIdStats {
     /// 请求数
     pub request_count: u64,
     /// 成功数
@@ -175,7 +175,7 @@ impl RequestForwarder {
     pub fn new(
         upstream_manager: Arc<UpstreamManager>,
         health_service: Arc<HealthCheckService>,
-        adapter_manager: Arc<AdapterManager>,
+        adapter_manager: Arc<DynamicAdapterManager>,
         config: ForwardingConfig,
     ) -> Self {
         Self {
@@ -238,7 +238,7 @@ impl RequestForwarder {
     /// 选择上游服务器
     async fn select_upstream_server(
         &self,
-        upstream_type: &UpstreamType,
+        upstream_type: &ProviderId,
     ) -> Result<LoadBalancingDecision> {
         // 获取健康的服务器列表
         let healthy_servers = self.health_service.get_healthy_servers(upstream_type).await;
@@ -556,7 +556,7 @@ impl Default for CircuitBreakerConfig {
 
 impl ForwardingContext {
     /// 创建新的转发上下文
-    pub fn new(request_id: String, upstream_type: UpstreamType) -> Self {
+    pub fn new(request_id: String, upstream_type: ProviderId) -> Self {
         Self {
             request_id,
             start_time: Instant::now(),
@@ -623,7 +623,7 @@ impl ForwardingStats {
         let upstream_stats = self
             .by_upstream_type
             .entry(upstream_key)
-            .or_insert_with(UpstreamTypeStats::new);
+            .or_insert_with(ProviderIdStats::new);
         upstream_stats.update(result);
 
         // 更新状态码统计
@@ -649,7 +649,7 @@ impl ForwardingStats {
     }
 }
 
-impl UpstreamTypeStats {
+impl ProviderIdStats {
     /// 创建新的上游类型统计
     pub fn new() -> Self {
         Self {

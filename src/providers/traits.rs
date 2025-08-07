@@ -9,10 +9,7 @@ pub trait ProviderAdapter: Send + Sync {
     /// 获取适配器名称
     fn name(&self) -> &str;
 
-    /// 检查是否支持指定端点
-    fn supports_endpoint(&self, endpoint: &str) -> bool;
-
-    /// 检查是否支持流式响应
+    /// 检查是否支持流式响应（基于配置而非端点路径）
     fn supports_streaming(&self, endpoint: &str) -> bool;
 
     /// 转换请求格式
@@ -27,6 +24,10 @@ pub trait ProviderAdapter: Send + Sync {
     /// 验证请求格式
     fn validate_request(&self, request: &AdapterRequest) -> ProviderResult<()>;
 
-    /// 获取支持的端点列表
-    fn get_supported_endpoints(&self) -> Vec<String>;
+
+    /// 检查请求是否要求流式响应
+    fn is_streaming_request(&self, request: &AdapterRequest) -> bool;
+
+    /// 检查响应是否为流式响应
+    fn is_streaming_response(&self, response: &AdapterResponse) -> bool;
 }

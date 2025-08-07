@@ -706,7 +706,7 @@ fn parse_hour(hour_str: &str) -> Result<SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::upstream::UpstreamType;
+    use crate::proxy::upstream::ProviderId;
 
     #[tokio::test]
     async fn test_statistics_collector_creation() {
@@ -722,7 +722,7 @@ mod tests {
         let config = StatisticsConfig::default();
         let collector = StatisticsCollector::new(config);
         
-        let context = ForwardingContext::new("req_123".to_string(), UpstreamType::OpenAI);
+        let context = ForwardingContext::new("req_123".to_string(), ProviderId::from_database_id(1));
         let result = ForwardingResult {
             success: true,
             response_time: Duration::from_millis(100),

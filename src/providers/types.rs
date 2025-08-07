@@ -29,6 +29,15 @@ pub enum ProviderError {
     #[error("Serialization error: {0}")]
     SerializationError(String),
     
+    #[error("Configuration error: {0}")]
+    ConfigurationError(String),
+    
+    #[error("Response parse error: {0}")]
+    ResponseParseError(String),
+    
+    #[error("Stream parse error: {0}")]
+    StreamParseError(String),
+    
     #[error("Unsupported operation: {0}")]
     UnsupportedOperation(String),
 }
@@ -164,52 +173,40 @@ pub struct StreamingResponse {
 
 /// 流式响应块
 #[derive(Debug, Clone)]
-pub struct StreamChunk {
+pub enum StreamChunk {
     /// 数据块
-    pub data: Vec<u8>,
-    /// 是否为最后一个数据块
-    pub is_final: bool,
-    /// 错误信息（如果有）
-    pub error: Option<String>,
+    Data(Value),
+    /// 原始数据块
+    Raw(Vec<u8>),
+    /// 流结束标记
+    Done,
+    /// 错误信息
+    Error(String),
 }
 
 impl StreamChunk {
-    /// 创建数据块
-    pub fn data(data: Vec<u8>) -> Self {
-        Self {
-            data,
-            is_final: false,
-            error: None,
-        }
-    }
-
-    /// 创建最终块
-    pub fn final_chunk(data: Vec<u8>) -> Self {
-        Self {
-            data,
-            is_final: true,
-            error: None,
-        }
-    }
-
-    /// 创建错误块
-    pub fn error(error: String) -> Self {
-        Self {
-            data: Vec::new(),
-            is_final: true,
-            error: Some(error),
-        }
-    }
-
     /// 检查是否为空
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        match self {
+            StreamChunk::Data(_) => false,
+            StreamChunk::Raw(data) => data.is_empty(),
+            StreamChunk::Done => true,
+            StreamChunk::Error(_) => false,
+        }
     }
 
-    /// 转换为字符串
+    /// 转换为字符串（用于Raw类型）
     pub fn as_str(&self) -> Result<&str> {
-        std::str::from_utf8(&self.data)
-            .map_err(|e| ProxyError::internal(format!("Invalid UTF-8 in stream data: {}", e)))
+        match self {
+            StreamChunk::Raw(data) => std::str::from_utf8(data)
+                .map_err(|e| ProxyError::internal(format!("Invalid UTF-8 in stream data: {}", e))),
+            _ => Err(ProxyError::internal("Cannot convert non-Raw chunk to string".to_string())),
+        }
+    }
+    
+    /// 检查是否为最终块
+    pub fn is_final(&self) -> bool {
+        matches!(self, StreamChunk::Done | StreamChunk::Error(_))
     }
 }
 

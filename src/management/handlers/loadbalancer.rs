@@ -1,7 +1,6 @@
 //! # 负载均衡器管理处理器
 
 use crate::management::server::AppState;
-use crate::proxy::upstream::UpstreamType;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::Json;
@@ -132,7 +131,7 @@ pub async fn list_servers(
             "weight": 100, // 默认权重，可以从配置中获取
             "is_healthy": is_healthy,
             "is_active": api.is_active,
-            "response_time_ms": calculate_avg_response_time(&api),
+            "response_time_ms": calculate_avg_response_time_sync(&api),
             "requests_total": api.total_requests.unwrap_or(0),
             "requests_successful": api.successful_requests.unwrap_or(0),
             "requests_failed": api.total_requests.unwrap_or(0) - api.successful_requests.unwrap_or(0),
@@ -217,12 +216,16 @@ pub async fn add_server(
         }));
     }
 
-    // 解析上游类型
-    let _upstream_type = match request.upstream_type.as_str() {
-        "OpenAI" => UpstreamType::OpenAI,
-        "Anthropic" => UpstreamType::Anthropic,
-        "GoogleGemini" => UpstreamType::GoogleGemini,
-        custom => UpstreamType::Custom(custom.to_string()),
+    // 使用ProviderResolver解析提供商ID
+    let _provider_id = match state.provider_resolver.resolve_provider(&request.upstream_type).await {
+        Ok(provider_id) => provider_id,
+        Err(e) => {
+            return Ok(Json(AddServerResponse {
+                id: String::new(),
+                success: false,
+                message: format!("Failed to resolve provider '{}': {}", request.upstream_type, e),
+            }));
+        }
     };
 
     // 创建服务器ID
@@ -370,16 +373,21 @@ pub async fn change_strategy(
         }
     };
 
-    // 解析上游类型
-    let upstream_type = match request.upstream_type.to_lowercase().as_str() {
-        "openai" => UpstreamType::OpenAI,
-        "anthropic" | "claude" => UpstreamType::Anthropic,
-        "gemini" | "google" => UpstreamType::GoogleGemini,
-        custom => UpstreamType::Custom(custom.to_string()),
+    // 使用ProviderResolver解析提供商ID
+    let provider_id = match state.provider_resolver.resolve_provider(&request.upstream_type).await {
+        Ok(provider_id) => provider_id,
+        Err(e) => {
+            return Ok(Json(ChangeStrategyResponse {
+                success: false,
+                message: format!("Failed to resolve provider '{}': {}", request.upstream_type, e),
+                old_strategy: None,
+                new_strategy: format!("{:?}", strategy),
+            }));
+        }
     };
 
     // 应用策略变更到负载均衡管理器
-    match state.load_balancer_manager.change_strategy(upstream_type, strategy).await {
+    match state.load_balancer_manager.change_strategy(provider_id, strategy).await {
         Ok(old_strategy) => {
             info!(
                 "Successfully changed strategy for {} from {:?} to {:?}",
@@ -554,12 +562,63 @@ pub async fn get_lb_metrics(State(state): State<AppState>) -> Result<Json<Value>
 }
 
 /// 计算平均响应时间
-fn calculate_avg_response_time(api: &user_service_apis::Model) -> i32 {
-    // 基于一些启发式规则计算响应时间
+async fn calculate_avg_response_time(api: &user_service_apis::Model, state: &AppState) -> i32 {
+    // 基于实际统计数据或启发式规则计算响应时间
+    
+    // 目前模型中没有avg_response_time_ms字段，所以直接使用启发式计算
+
+    // 如果没有实际数据，基于提供商类型进行启发式估算
+    let base_time = if let Ok(provider_types) = entity::provider_types::Entity::find_by_id(api.provider_type_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        match provider_types {
+            Some(provider) => {
+                // 优先从配置中获取预期响应时间，否则根据超时时间动态计算
+                let config_response_time = provider.config_json.as_ref()
+                    .and_then(|config_str| serde_json::from_str::<serde_json::Value>(config_str).ok())
+                    .and_then(|config| config.get("expected_response_time_ms").and_then(|rt| rt.as_i64()).map(|rt| rt as i32));
+                    
+                config_response_time.unwrap_or_else(|| {
+                    // 如果没有配置，使用超时时间的25%作为预期响应时间
+                    let timeout_ms = provider.timeout_seconds.unwrap_or(30) * 1000;
+                    (timeout_ms as f32 * 0.25) as i32
+                })
+            }
+            None => 180, // 找不到提供商信息时的默认值
+        }
+    } else {
+        tracing::warn!("Failed to fetch provider type for API {}, using default response time", api.id);
+        180 // 数据库查询失败时的默认值
+    };
+
+    // 根据成功率调整响应时间
+    let total = api.total_requests.unwrap_or(0);
+    let successful = api.successful_requests.unwrap_or(0);
+    
+    if total > 0 {
+        let success_rate = successful as f32 / total as f32;
+        let penalty = if success_rate < 0.9 {
+            // 成功率低时增加响应时间惩罚
+            ((1.0 - success_rate) * 100.0) as i32
+        } else {
+            0
+        };
+        base_time + penalty
+    } else {
+        base_time
+    }
+}
+
+/// 同步版本的响应时间计算（用于不方便使用async的地方）
+fn calculate_avg_response_time_sync(api: &user_service_apis::Model) -> i32 {
+    // 目前模型中没有avg_response_time_ms字段，所以直接使用启发式计算
+
+    // 基于provider_type_id的简单映射（临时解决方案）
     let base_time = match api.provider_type_id {
-        1 => 120, // OpenAI 一般较快
-        2 => 150, // Google Gemini
-        3 => 200, // Anthropic Claude
+        1 => 120, // 假设ID=1是OpenAI
+        2 => 150, // 假设ID=2是Google
+        3 => 200, // 假设ID=3是Claude
         _ => 180, // 其他
     };
 

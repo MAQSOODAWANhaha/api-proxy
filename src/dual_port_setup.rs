@@ -4,7 +4,7 @@ use crate::{
     error::Result,
     auth::{service::AuthService, UnifiedAuthManager, create_unified_auth_manager},
     health::service::HealthCheckService,
-    providers::manager::AdapterManager,
+    providers::DynamicAdapterManager,
     scheduler::manager::LoadBalancerManager,
     statistics::service::StatisticsService,
     management::server::{ManagementServer, ManagementConfig},
@@ -21,10 +21,11 @@ pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
     pub unified_auth_manager: Arc<UnifiedAuthManager>,
     pub health_service: Arc<HealthCheckService>,
-    pub adapter_manager: Arc<AdapterManager>,
+    pub adapter_manager: Arc<DynamicAdapterManager>,
     pub load_balancer_manager: Arc<LoadBalancerManager>,
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
+    pub provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
     pub trace_system: Option<Arc<UnifiedTraceSystem>>,
 }
 
@@ -72,6 +73,7 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             shared_services.adapter_manager.clone(),
             shared_services.load_balancer_manager.clone(),
             shared_services.statistics_service.clone(),
+            shared_services.provider_resolver.clone(),
         ).map_err(|e| crate::error::ProxyError::server_init(format!("Failed to create management server: {}", e)))?;
 
         // 创建代理服务器，传递数据库连接和追踪系统（如果有）
@@ -212,16 +214,12 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     match provider_config_manager.get_active_providers().await {
         Ok(providers) => {
             for provider in providers {
-                let upstream_type = match provider.name.to_lowercase().as_str() {
-                    "openai" => crate::proxy::upstream::UpstreamType::OpenAI,
-                    "anthropic" | "claude" => crate::proxy::upstream::UpstreamType::Anthropic,
-                    "gemini" | "google" => crate::proxy::upstream::UpstreamType::GoogleGemini,
-                    _ => crate::proxy::upstream::UpstreamType::Custom(provider.name.clone()),
-                };
+                // 使用数据库中的提供商ID而不是硬编码映射
+                let provider_id = crate::proxy::upstream::ProviderId::from_database_id(provider.id);
                 
                 if let Err(e) = health_service.add_server(
                     provider.upstream_address.clone(),
-                    upstream_type,
+                    provider_id,
                     None
                 ).await {
                     warn!("Failed to add {} server ({}) to health check: {}", 
@@ -236,17 +234,17 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
             error!("❌ Failed to load provider configurations for health check: {}", e);
             warn!("🔄 Falling back to default hardcoded addresses for health check");
             
-            // Fallback to hardcoded addresses
+            // Fallback to hardcoded addresses with database IDs
             let fallback_servers = [
-                ("api.openai.com:443", crate::proxy::upstream::UpstreamType::OpenAI, "OpenAI"),
-                ("generativelanguage.googleapis.com:443", crate::proxy::upstream::UpstreamType::GoogleGemini, "Google Gemini"),
-                ("api.anthropic.com:443", crate::proxy::upstream::UpstreamType::Anthropic, "Anthropic Claude"),
+                ("api.openai.com:443", crate::proxy::upstream::ProviderId::from_database_id(1), "OpenAI"),
+                ("generativelanguage.googleapis.com:443", crate::proxy::upstream::ProviderId::from_database_id(2), "Google Gemini"),
+                ("api.anthropic.com:443", crate::proxy::upstream::ProviderId::from_database_id(3), "Anthropic Claude"),
             ];
             
-            for (address, upstream_type, name) in fallback_servers {
+            for (address, provider_id, name) in fallback_servers {
                 if let Err(e) = health_service.add_server(
                     address.to_string(),
-                    upstream_type,
+                    provider_id,
                     None
                 ).await {
                     warn!("Failed to add fallback {} server to health check: {}", name, e);
@@ -261,11 +259,17 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     }
     
     let adapter_manager = Arc::new(
-        AdapterManager::new()
+        DynamicAdapterManager::new(db.clone(), provider_config_manager.clone())
+    );
+    
+    // 创建提供商解析服务
+    info!("🔍 Initializing provider resolver...");
+    let provider_resolver = Arc::new(
+        crate::proxy::provider_resolver::ProviderResolver::new(db.clone())
     );
     
     let load_balancer_manager = Arc::new(
-        LoadBalancerManager::new(config_arc.clone())
+        LoadBalancerManager::new(config_arc.clone(), provider_resolver.clone())
             .map_err(|e| crate::error::ProxyError::server_init(format!("Load balancer init failed: {}", e)))?
     );
     
@@ -314,6 +318,7 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
         load_balancer_manager,
         statistics_service,
         provider_config_manager,
+        provider_resolver,
         trace_system,
     };
 

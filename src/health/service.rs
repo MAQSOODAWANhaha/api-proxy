@@ -1,7 +1,7 @@
 //! # 健康检查服务
 
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::UpstreamType;
+use crate::proxy::upstream::ProviderId;
 use super::types::{
     HealthCheckResult, HealthCheckConfig, ServerHealthStatus, HealthCheckTask, TaskStatus
 };
@@ -72,17 +72,17 @@ impl HealthCheckService {
     pub async fn add_server(
         &self,
         server_address: String,
-        upstream_type: UpstreamType,
+        provider_id: ProviderId,
         config: Option<HealthCheckConfig>,
     ) -> Result<()> {
         let check_config = config.unwrap_or_else(|| self.global_config.clone());
         
         // 创建健康状态记录
-        let health_status = ServerHealthStatus::new(server_address.clone(), upstream_type.clone());
+        let health_status = ServerHealthStatus::new(server_address.clone(), provider_id.clone());
         self.health_status.write().await.insert(server_address.clone(), health_status);
 
         // 创建检查任务
-        let task = HealthCheckTask::new(server_address.clone(), upstream_type, check_config);
+        let task = HealthCheckTask::new(server_address.clone(), provider_id, check_config);
         self.tasks.write().await.insert(task.id.clone(), task);
 
         tracing::info!("Added server {} to health monitoring", server_address);
@@ -120,23 +120,23 @@ impl HealthCheckService {
     }
 
     /// 获取健康的服务器列表
-    pub async fn get_healthy_servers(&self, upstream_type: &UpstreamType) -> Vec<String> {
+    pub async fn get_healthy_servers(&self, provider_id: &ProviderId) -> Vec<String> {
         self.health_status
             .read()
             .await
             .values()
-            .filter(|status| status.upstream_type == *upstream_type && status.is_healthy)
+            .filter(|status| status.provider_id == *provider_id && status.is_healthy)
             .map(|status| status.server_address.clone())
             .collect()
     }
 
     /// 获取不健康的服务器列表
-    pub async fn get_unhealthy_servers(&self, upstream_type: &UpstreamType) -> Vec<String> {
+    pub async fn get_unhealthy_servers(&self, provider_id: &ProviderId) -> Vec<String> {
         self.health_status
             .read()
             .await
             .values()
-            .filter(|status| status.upstream_type == *upstream_type && !status.is_healthy)
+            .filter(|status| status.provider_id == *provider_id && !status.is_healthy)
             .map(|status| status.server_address.clone())
             .collect()
     }
@@ -439,7 +439,8 @@ mod tests {
         let service = HealthCheckService::new(None);
         let server_addr = "127.0.0.1:8080".to_string();
         
-        assert!(service.add_server(server_addr.clone(), UpstreamType::OpenAI, None).await.is_ok());
+        let provider_id = ProviderId::from_database_id(1);
+        assert!(service.add_server(server_addr.clone(), provider_id, None).await.is_ok());
         assert!(service.get_server_health(&server_addr).await.is_some());
         
         assert!(service.remove_server(&server_addr).await.is_ok());
@@ -461,7 +462,8 @@ mod tests {
         let service = HealthCheckService::new(None);
         let server_addr = "127.0.0.1:8080".to_string();
         
-        service.add_server(server_addr.clone(), UpstreamType::OpenAI, None).await.unwrap();
+        let provider_id = ProviderId::from_database_id(1);
+        service.add_server(server_addr.clone(), provider_id, None).await.unwrap();
         
         // 测试手动标记为不健康
         assert!(service.mark_server_unhealthy(&server_addr, "Test".to_string()).await.is_ok());
@@ -478,14 +480,15 @@ mod tests {
     async fn test_get_healthy_unhealthy_servers() {
         let service = HealthCheckService::new(None);
         
-        service.add_server("server1:8080".to_string(), UpstreamType::OpenAI, None).await.unwrap();
-        service.add_server("server2:8080".to_string(), UpstreamType::OpenAI, None).await.unwrap();
+        let provider_id = ProviderId::from_database_id(1);
+        service.add_server("server1:8080".to_string(), provider_id.clone(), None).await.unwrap();
+        service.add_server("server2:8080".to_string(), provider_id.clone(), None).await.unwrap();
         
         // 标记一个为不健康
         service.mark_server_unhealthy("server1:8080", "Test".to_string()).await.unwrap();
         
-        let healthy = service.get_healthy_servers(&UpstreamType::OpenAI).await;
-        let unhealthy = service.get_unhealthy_servers(&UpstreamType::OpenAI).await;
+        let healthy = service.get_healthy_servers(&provider_id).await;
+        let unhealthy = service.get_unhealthy_servers(&provider_id).await;
         
         assert_eq!(healthy.len(), 1);
         assert_eq!(unhealthy.len(), 1);
