@@ -10,19 +10,18 @@ LABEL maintainer="AI Proxy Team"
 LABEL description="AI代理平台 - 前后端统一部署版本"
 
 # 设置工作目录
-WORKDIR /app/dashboard
+WORKDIR /app/web
 
 # 复制前端package配置文件
-COPY dashboard/package*.json ./
+COPY web/package*.json ./
 
 # 安装依赖
 RUN npm ci --only=production=false
 
 # 复制前端源代码
-COPY dashboard/ ./
+COPY web/ ./
 
-# 构建前端项目（生产环境使用相对路径）
-ENV NEXT_PUBLIC_API_BASE_URL=/api
+# 构建前端项目（生产环境构建）
 ENV NODE_ENV=production
 RUN npm run build
 
@@ -97,11 +96,7 @@ WORKDIR /app
 COPY --from=backend-builder /app/target/release/api-proxy /app/api-proxy
 
 # 从前端构建阶段复制静态文件
-COPY --from=frontend-builder /app/dashboard/out /app/static
-# 如果使用的是标准构建，使用 .next/static 和 .next/standalone
-# COPY --from=frontend-builder /app/dashboard/.next/standalone /app/
-# COPY --from=frontend-builder /app/dashboard/.next/static /app/.next/static
-# COPY --from=frontend-builder /app/dashboard/public /app/public
+COPY --from=frontend-builder /app/web/dist /app/static
 
 # 创建必要的目录
 RUN mkdir -p /app/data /app/certs /app/logs /app/config

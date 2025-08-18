@@ -5,11 +5,7 @@ services:
   # 统一代理服务 (前后端合并)
   # ================================
   proxy:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    # 如果使用镜像仓库
-    # image: api-proxy-proxy:latest
+    image: gghtrt520/api-proxy:latest
     container_name: api-proxy-service
     restart: unless-stopped
     ports:
