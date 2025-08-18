@@ -4,7 +4,7 @@
 # ================================
 # 前端构建阶段
 # ================================
-FROM node:18-alpine as frontend-builder
+FROM docker.m.daocloud.io/node:18-alpine as frontend-builder
 
 LABEL maintainer="AI Proxy Team"
 LABEL description="AI代理平台 - 前后端统一部署版本"
@@ -28,7 +28,21 @@ RUN npm run build
 # ================================
 # 后端构建阶段
 # ================================
-FROM rust:1.88.0-slim as backend-builder
+FROM docker.m.daocloud.io/rust:1.88.0-slim as backend-builder
+
+# 配置 Cargo 中国镜像源
+RUN mkdir -p $CARGO_HOME && \
+    echo '[source.crates-io]' > $CARGO_HOME/config.toml && \
+    echo 'replace-with = "ustc"' >> $CARGO_HOME/config.toml && \
+    echo '' >> $CARGO_HOME/config.toml && \
+    echo '[source.ustc]' >> $CARGO_HOME/config.toml && \
+    echo 'registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' >> $CARGO_HOME/config.toml && \
+    echo '' >> $CARGO_HOME/config.toml && \
+    echo '[net]' >> $CARGO_HOME/config.toml && \
+    echo 'git-fetch-with-cli = true' >> $CARGO_HOME/config.toml
+
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+ENV CARGO_REGISTRIES_CRATES_IO_INDEX=https://mirrors.ustc.edu.cn/crates.io-index/
 
 # 设置工作目录
 WORKDIR /app
@@ -58,7 +72,11 @@ RUN cargo build --release
 # ================================
 # 统一运行阶段
 # ================================
-FROM debian:bookworm-slim
+FROM docker.m.daocloud.io/debian:bookworm-slim
+
+# 配置中国镜像源
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources
 
 # 安装运行时依赖
 RUN apt-get update && apt-get install -y \
