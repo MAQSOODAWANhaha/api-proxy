@@ -1,21 +1,18 @@
 //! # Provider Keys管理处理器
 
-use crate::management::server::AppState;
+use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::Json;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sea_orm::{entity::*, query::*};
-use entity::{
-    user_provider_keys,
-    user_provider_keys::Entity as UserProviderKeys,
-    provider_types,
-    provider_types::Entity as ProviderTypes,
-    api_health_status,
-    api_health_status::Entity as ApiHealthStatus,
-};
+use axum::response::{IntoResponse, Json};
 use chrono::Utc;
+use entity::{
+    api_health_status, api_health_status::Entity as ApiHealthStatus, provider_types,
+    provider_types::Entity as ProviderTypes, user_provider_keys,
+    user_provider_keys::Entity as UserProviderKeys,
+};
+use sea_orm::{entity::*, query::*};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 /// Provider Key查询参数
 #[derive(Debug, Deserialize)]
@@ -182,29 +179,31 @@ pub struct PaginationInfo {
 pub async fn list_provider_keys(
     State(state): State<AppState>,
     Query(query): Query<ProviderKeyQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
     let offset = (page - 1) * limit;
-    
+
     // 构建查询条件
     let mut select = UserProviderKeys::find();
-    
+
     // 用户ID过滤
     if let Some(user_id) = query.user_id {
         select = select.filter(user_provider_keys::Column::UserId.eq(user_id));
     }
-    
+
     // 服务商类型过滤
     if let Some(provider_type) = &query.provider_type {
         // 先查找provider_type的ID
         if let Ok(Some(pt)) = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(provider_type))
-            .one(state.database.as_ref()).await {
+            .one(state.database.as_ref())
+            .await
+        {
             select = select.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
         }
     }
-    
+
     // 状态过滤
     if let Some(status) = &query.status {
         match status.as_str() {
@@ -213,7 +212,7 @@ pub async fn list_provider_keys(
             _ => {}
         }
     }
-    
+
     // 健康状态过滤
     // TODO: 当实现了真实的健康检查系统后，这里需要join health_checks表进行筛选
     // 目前所有密钥的health_status都是硬编码为"healthy"，所以healthy=false的查询将返回空结果
@@ -225,7 +224,7 @@ pub async fn list_provider_keys(
         }
         // 如果查询健康状态(healthy=true)，不需要额外筛选，因为所有密钥都是健康的
     }
-    
+
     // 分页查询
     let provider_keys_result = select
         .offset(offset as u64)
@@ -234,15 +233,19 @@ pub async fn list_provider_keys(
         .find_also_related(ProviderTypes)
         .all(state.database.as_ref())
         .await;
-        
+
     let provider_keys_data = match provider_keys_result {
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider keys: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider keys",
+            );
         }
     };
-    
+
     // 获取总数
     let mut count_select = UserProviderKeys::find();
     if let Some(user_id) = query.user_id {
@@ -252,14 +255,21 @@ pub async fn list_provider_keys(
         // 先查找provider_type的ID
         if let Ok(Some(pt)) = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(provider_type))
-            .one(state.database.as_ref()).await {
-            count_select = count_select.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
+            .one(state.database.as_ref())
+            .await
+        {
+            count_select =
+                count_select.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
         }
     }
     if let Some(status) = &query.status {
         match status.as_str() {
-            "active" => count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(true)),
-            "inactive" => count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(false)),
+            "active" => {
+                count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(true))
+            }
+            "inactive" => {
+                count_select = count_select.filter(user_provider_keys::Column::IsActive.eq(false))
+            }
             _ => {}
         }
     }
@@ -268,15 +278,19 @@ pub async fn list_provider_keys(
             count_select = count_select.filter(user_provider_keys::Column::Id.eq(-1));
         }
     }
-    
+
     let total = match count_select.count(state.database.as_ref()).await {
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count provider keys: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count provider keys",
+            );
         }
     };
-    
+
     // 转换为响应格式
     let mut provider_keys = Vec::new();
     for (provider_key, provider_type) in provider_keys_data {
@@ -297,7 +311,7 @@ pub async fn list_provider_keys(
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
         });
-        
+
         provider_keys.push(ProviderKeyResponse {
             id: provider_key.id,
             user_id: provider_key.user_id,
@@ -317,59 +331,65 @@ pub async fn list_provider_keys(
         });
     }
 
-    let response = json!({
-        "keys": provider_keys,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "pages": ((total as f64) / (limit as f64)).ceil() as u32
-        }
-    });
+    let pagination = response::Pagination {
+        page: page as u64,
+        limit: limit as u64,
+        total,
+        pages: ((total as f64) / (limit as f64)).ceil() as u64,
+    };
 
-    Ok(Json(response))
+    response::paginated(provider_keys, pagination)
 }
 
 /// 创建Provider Key
 pub async fn create_provider_key(
     State(state): State<AppState>,
     Json(request): Json<CreateProviderKeyRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     // 验证输入
     if request.name.is_empty() {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "Name cannot be empty"
-        })));
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Name cannot be empty",
+        );
     }
 
     if request.api_key.is_empty() {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "API key cannot be empty"
-        })));
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "API key cannot be empty",
+        );
     }
 
     // 通过provider_type名称查找对应的provider_type记录
     let provider_type = match ProviderTypes::find()
         .filter(provider_types::Column::Name.eq(&request.provider_type))
-        .one(state.database.as_ref()).await {
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(pt)) => pt,
         Ok(None) => {
-            return Ok(Json(json!({
-                "success": false,
-                "message": format!("Provider type '{}' not found", request.provider_type)
-            })));
-        },
+            return response::error::<ProviderKeyResponse>(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                &format!("Provider type '{}' not found", request.provider_type),
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider type existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error::<ProviderKeyResponse>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider type existence",
+            );
         }
     };
 
     let now = Utc::now().naive_utc();
     // TODO: 从认证上下文获取真实的user_id，这里暂时使用固定值
-    let user_id = 1; 
+    let user_id = 1;
 
     // 创建Provider Key记录
     let new_provider_key = user_provider_keys::ActiveModel {
@@ -388,8 +408,10 @@ pub async fn create_provider_key(
         ..Default::default()
     };
 
-    let insert_result = UserProviderKeys::insert(new_provider_key).exec(state.database.as_ref()).await;
-    
+    let insert_result = UserProviderKeys::insert(new_provider_key)
+        .exec(state.database.as_ref())
+        .await;
+
     match insert_result {
         Ok(result) => {
             // 获取创建的密钥以返回完整信息
@@ -419,29 +441,25 @@ pub async fn create_provider_key(
                         updated_at: key.updated_at.and_utc().to_rfc3339(),
                     };
 
-                    let response = json!({
-                        "success": true,
-                        "key": key_response,
-                        "message": "Provider key created successfully"
-                    });
-                    Ok(Json(response))
-                },
-                _ => {
-                    let response = json!({
-                        "success": true,
-                        "message": "Provider key created successfully"
-                    });
-                    Ok(Json(response))
+                    response::success_with_message(
+                        key_response,
+                        "Provider key created successfully",
+                    )
                 }
+                _ => response::error::<ProviderKeyResponse>(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DB_ERROR",
+                    "Failed to load created provider key",
+                ),
             }
         }
         Err(err) => {
             tracing::error!("Failed to create provider key: {}", err);
-            let response = json!({
-                "success": false,
-                "message": "Failed to create provider key"
-            });
-            Ok(Json(response))
+            response::error::<ProviderKeyResponse>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to create provider key",
+            )
         }
     }
 }
@@ -450,9 +468,13 @@ pub async fn create_provider_key(
 pub async fn get_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 从数据库获取Provider Key
@@ -463,10 +485,20 @@ pub async fn get_provider_key(
 
     let (provider_key, provider_type) = match provider_key_result {
         Ok(Some(data)) => data,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to fetch provider key {}: {}", key_id, err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider key",
+            );
         }
     };
 
@@ -506,7 +538,7 @@ pub async fn get_provider_key(
         updated_at: provider_key.updated_at.and_utc().to_rfc3339(),
     };
 
-    Ok(Json(serde_json::to_value(provider_key_response).unwrap()))
+    response::success(provider_key_response)
 }
 
 /// 更新Provider Key
@@ -514,25 +546,42 @@ pub async fn update_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Json(request): Json<UpdateProviderKeyRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
-    let existing_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+    let _existing_key = match UserProviderKeys::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
     // 更新Provider Key
     let now = Utc::now().naive_utc();
-    let mut provider_key: user_provider_keys::ActiveModel = existing_key.into();
-    
+    let mut provider_key: user_provider_keys::ActiveModel = _existing_key.into();
+
     if let Some(name) = request.name {
         provider_key.name = Set(name);
     }
@@ -551,20 +600,20 @@ pub async fn update_provider_key(
     if let Some(is_active) = request.is_active {
         provider_key.is_active = Set(is_active);
     }
-    
+
     provider_key.updated_at = Set(now);
 
     match provider_key.update(state.database.as_ref()).await {
         Ok(_) => {
-            let response = json!({
-                "success": true,
-                "message": format!("Provider key {} has been updated", key_id)
-            });
-            Ok(Json(response))
+            response::success_without_data(&format!("Provider key {} has been updated", key_id))
         }
         Err(err) => {
             tracing::error!("Failed to update provider key {}: {}", key_id, err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to update provider key",
+            )
         }
     }
 }
@@ -573,33 +622,54 @@ pub async fn update_provider_key(
 pub async fn delete_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
-    let existing_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+    // 仅用于存在性检查，不再使用；前缀下划线避免 unused 警告
+    let _existing_key = match UserProviderKeys::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
     // 硬删除：直接从数据库删除记录
-    match UserProviderKeys::delete_by_id(key_id).exec(state.database.as_ref()).await {
+    match UserProviderKeys::delete_by_id(key_id)
+        .exec(state.database.as_ref())
+        .await
+    {
         Ok(_) => {
-            let response = json!({
-                "success": true,
-                "message": format!("Provider key {} has been deleted", key_id)
-            });
-            Ok(Json(response))
+            response::success_without_data(&format!("Provider key {} has been deleted", key_id))
         }
         Err(err) => {
             tracing::error!("Failed to delete provider key {}: {}", key_id, err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to delete provider key",
+            )
         }
     }
 }
@@ -614,18 +684,35 @@ pub async fn toggle_provider_key_status(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Json(request): Json<ToggleStatusRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
-    let existing_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+    let existing_key = match UserProviderKeys::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
@@ -636,17 +723,21 @@ pub async fn toggle_provider_key_status(
     provider_key.updated_at = Set(now);
 
     match provider_key.update(state.database.as_ref()).await {
-        Ok(_) => {
-            let response = json!({
-                "success": true,
-                "message": format!("Provider key status updated to {}", 
-                    if request.is_active { "active" } else { "inactive" })
-            });
-            Ok(Json(response))
-        }
+        Ok(_) => response::success_without_data(&format!(
+            "Provider key status updated to {}",
+            if request.is_active {
+                "active"
+            } else {
+                "inactive"
+            }
+        )),
         Err(err) => {
             tracing::error!("Failed to toggle provider key status: {}", err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to toggle provider key status",
+            )
         }
     }
 }
@@ -655,62 +746,96 @@ pub async fn toggle_provider_key_status(
 pub async fn test_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
-    let provider_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+    let provider_key = match UserProviderKeys::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
     // TODO: 实现实际的API密钥测试逻辑
     // 这里应该向对应的服务商API发送测试请求
     let start_time = std::time::Instant::now();
-    
+
     // 模拟测试过程
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     let response_time = start_time.elapsed().as_millis() as u64;
     let success = provider_key.is_active; // 简单的模拟逻辑
 
-    let response = json!({
-        "success": success,
+    let response_data = json!({
         "response_time": response_time,
-        "status": if success { "healthy" } else { "unhealthy" },
-        "message": if success { 
-            "API key test successful" 
-        } else { 
-            "API key is inactive or invalid" 
-        }
+        "status": if success { "healthy" } else { "unhealthy" }
     });
 
-    Ok(Json(response))
+    let message = if success {
+        "API key test successful"
+    } else {
+        "API key is inactive or invalid"
+    };
+
+    response::success_with_message(response_data, message)
 }
 
 /// 获取Provider Key使用统计
 pub async fn get_provider_key_usage(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<Value>, StatusCode> {
+    Query(_params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
-    let _provider_key = match UserProviderKeys::find_by_id(key_id).one(state.database.as_ref()).await {
+    let _provider_key = match UserProviderKeys::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
@@ -738,13 +863,11 @@ pub async fn get_provider_key_usage(
         }
     });
 
-    Ok(Json(usage_data))
+    response::success(usage_data)
 }
 
 /// 获取支持的服务商类型
-pub async fn get_provider_types(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
+pub async fn get_provider_types(State(state): State<AppState>) -> impl IntoResponse {
     let provider_types_result = ProviderTypes::find()
         .filter(provider_types::Column::IsActive.eq(true))
         .all(state.database.as_ref())
@@ -754,71 +877,88 @@ pub async fn get_provider_types(
         Ok(types) => types,
         Err(err) => {
             tracing::error!("Failed to fetch provider types: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider types",
+            );
         }
     };
 
-    let provider_types_data: Vec<Value> = provider_types.into_iter().map(|pt| {
-        json!({
-            "id": pt.name,
-            "name": pt.name,
-            "display_name": pt.display_name,
-            "base_url": pt.base_url,
-            "default_model": pt.default_model,
-            "supported_features": [] // TODO: 从config_json解析
+    let provider_types_data: Vec<Value> = provider_types
+        .into_iter()
+        .map(|pt| {
+            json!({
+                "id": pt.name,
+                "name": pt.name,
+                "display_name": pt.display_name,
+                "base_url": pt.base_url,
+                "default_model": pt.default_model,
+                "supported_features": [] // TODO: 从config_json解析
+            })
         })
-    }).collect();
+        .collect();
 
-    Ok(Json(json!(provider_types_data)))
+    response::success(provider_types_data)
 }
 
 /// 获取Provider Keys健康状态
 pub async fn get_provider_keys_health_status(
     State(state): State<AppState>,
     Query(query): Query<HealthStatusQuery>,
-) -> Result<Json<HealthStatusListResponse>, StatusCode> {
-    use sea_orm::{QuerySelect, PaginatorTrait};
-    
+) -> impl IntoResponse {
+    use sea_orm::{PaginatorTrait, QuerySelect};
+
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
-    
+
     // 构建查询条件
     let mut provider_keys_query = UserProviderKeys::find();
-    
+
     // 用户ID过滤
     if let Some(user_id) = query.user_id {
-        provider_keys_query = provider_keys_query.filter(user_provider_keys::Column::UserId.eq(user_id));
+        provider_keys_query =
+            provider_keys_query.filter(user_provider_keys::Column::UserId.eq(user_id));
     }
-    
+
     // 关键词搜索（密钥名称）
     if let Some(keyword) = &query.keyword {
         if !keyword.trim().is_empty() {
-            provider_keys_query = provider_keys_query.filter(
-                user_provider_keys::Column::Name.contains(keyword.trim())
-            );
+            provider_keys_query = provider_keys_query
+                .filter(user_provider_keys::Column::Name.contains(keyword.trim()));
         }
     }
-    
+
     // 服务商类型过滤
     if let Some(provider_type) = &query.provider_type {
         // 先查找provider_type的ID
         if let Ok(Some(pt)) = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(provider_type))
-            .one(state.database.as_ref()).await {
-            provider_keys_query = provider_keys_query.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
+            .one(state.database.as_ref())
+            .await
+        {
+            provider_keys_query =
+                provider_keys_query.filter(user_provider_keys::Column::ProviderTypeId.eq(pt.id));
         }
     }
-    
+
     // 获取总数
-    let total_count = provider_keys_query
+    let total_count = match provider_keys_query
         .clone()
         .count(state.database.as_ref())
         .await
-        .map_err(|err| {
+    {
+        Ok(count) => count.max(1) as u32,
+        Err(err) => {
             tracing::error!("Failed to count provider keys: {}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })? as u32;
-    
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count provider keys",
+            );
+        }
+    };
+
     // 分页查询provider keys和相关数据
     let provider_keys_result = provider_keys_query
         .offset(((page - 1) * limit) as u64)
@@ -826,23 +966,27 @@ pub async fn get_provider_keys_health_status(
         .find_also_related(ProviderTypes)
         .all(state.database.as_ref())
         .await;
-        
+
     let provider_keys_data = match provider_keys_result {
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider keys with health status: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider keys with health status",
+            );
         }
     };
-    
+
     let mut health_statuses = Vec::new();
-    let mut total = 0;
+    let mut _total = 0; // total count after filtering
     let mut healthy_count = 0;
     let mut unhealthy_count = 0;
-    
+
     for (provider_key, provider_type) in provider_keys_data {
-        total += 1;
-        
+        _total += 1;
+
         let provider = provider_type.unwrap_or(provider_types::Model {
             id: 0,
             name: "unknown".to_string(),
@@ -860,7 +1004,7 @@ pub async fn get_provider_keys_health_status(
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
         });
-        
+
         // 获取最新的健康状态记录
         let latest_health = ApiHealthStatus::find()
             .filter(api_health_status::Column::UserProviderKeyId.eq(provider_key.id))
@@ -868,44 +1012,61 @@ pub async fn get_provider_keys_health_status(
             .one(state.database.as_ref())
             .await
             .unwrap_or(None);
-        
-        let (is_healthy, response_time, success_rate, last_check_time, error_message) = match latest_health {
-            Some(health) => {
-                let is_healthy = health.is_healthy;
-                if is_healthy { healthy_count += 1; } else { unhealthy_count += 1; }
-                
-                (
-                    is_healthy,
-                    health.response_time_ms.unwrap_or(0),
-                    health.success_rate.unwrap_or(0.0) * 100.0, // 转换为百分比
-                    health.updated_at.and_utc().to_rfc3339(),
-                    health.last_error_message.clone(),
-                )
-            },
-            None => {
-                // 如果没有健康状态记录，则根据provider key的active状态判断
-                let is_healthy = provider_key.is_active;
-                if is_healthy { healthy_count += 1; } else { unhealthy_count += 1; }
-                
-                (
-                    is_healthy,
-                    0,
-                    if is_healthy { 100.0 } else { 0.0 },
-                    provider_key.updated_at.and_utc().to_rfc3339(),
-                    if is_healthy { None } else { Some("No health check performed".to_string()) },
-                )
-            }
-        };
-        
+
+        let (is_healthy, response_time, success_rate, last_check_time, error_message) =
+            match latest_health {
+                Some(health) => {
+                    let is_healthy = health.is_healthy;
+                    if is_healthy {
+                        healthy_count += 1;
+                    } else {
+                        unhealthy_count += 1;
+                    }
+
+                    (
+                        is_healthy,
+                        health.response_time_ms.unwrap_or(0),
+                        health.success_rate.unwrap_or(0.0) * 100.0, // 转换为百分比
+                        health.updated_at.and_utc().to_rfc3339(),
+                        health.last_error_message.clone(),
+                    )
+                }
+                None => {
+                    // 如果没有健康状态记录，则根据provider key的active状态判断
+                    let is_healthy = provider_key.is_active;
+                    if is_healthy {
+                        healthy_count += 1;
+                    } else {
+                        unhealthy_count += 1;
+                    }
+
+                    (
+                        is_healthy,
+                        0,
+                        if is_healthy { 100.0 } else { 0.0 },
+                        provider_key.updated_at.and_utc().to_rfc3339(),
+                        if is_healthy {
+                            None
+                        } else {
+                            Some("No health check performed".to_string())
+                        },
+                    )
+                }
+            };
+
         // 应用健康状态过滤
         if let Some(healthy_filter) = query.healthy {
             if healthy_filter != is_healthy {
-                total -= 1; // 从总数中减去
-                if is_healthy { healthy_count -= 1; } else { unhealthy_count -= 1; }
+                _total -= 1; // 从总数中减去
+                if is_healthy {
+                    healthy_count -= 1;
+                } else {
+                    unhealthy_count -= 1;
+                }
                 continue;
             }
         }
-        
+
         health_statuses.push(ApiHealthStatusResponse {
             key_id: provider_key.id,
             key_name: provider_key.name,
@@ -917,9 +1078,9 @@ pub async fn get_provider_keys_health_status(
             error_message,
         });
     }
-    
+
     let total_pages = ((total_count as f64) / (limit as f64)).ceil() as u32;
-    
+
     let response = HealthStatusListResponse {
         statuses: health_statuses,
         summary: HealthSummary {
@@ -934,59 +1095,82 @@ pub async fn get_provider_keys_health_status(
             pages: total_pages,
         },
     };
-    
-    Ok(Json(response))
+
+    response::success(response)
 }
 
 /// 触发Provider Key健康检查
 pub async fn trigger_provider_key_health_check(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid provider key ID",
+        );
     }
 
     // 检查Provider Key是否存在
     let provider_key = match UserProviderKeys::find_by_id(key_id)
         .find_also_related(ProviderTypes)
-        .one(state.database.as_ref()).await {
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some((key, _))) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "PROVIDER_KEY_NOT_FOUND",
+                "Provider key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider key existence",
+            );
         }
     };
 
     // 执行健康检查
     let start_time = std::time::Instant::now();
-    
+
     // TODO: 这里应该实现真实的健康检查逻辑
     // 1. 根据provider_type获取API配置
     // 2. 发送测试请求到对应的服务商API
     // 3. 记录响应时间和结果
-    
+
     // 模拟健康检查过程
-    tokio::time::sleep(tokio::time::Duration::from_millis(100 + (key_id % 500) as u64)).await;
-    
+    tokio::time::sleep(tokio::time::Duration::from_millis(
+        100 + (key_id % 500) as u64,
+    ))
+    .await;
+
     let response_time = start_time.elapsed().as_millis() as i32;
     let is_healthy = provider_key.is_active && (key_id % 10 != 0); // 模拟10%的失败率
-    let success_rate = if is_healthy { 95.0 + (key_id % 5) as f32 } else { 0.0 };
-    let error_message = if is_healthy { 
-        None 
-    } else { 
-        Some("Connection timeout or API key invalid".to_string()) 
+    let success_rate = if is_healthy {
+        95.0 + (key_id % 5) as f32
+    } else {
+        0.0
     };
-    
+    let error_message = if is_healthy {
+        None
+    } else {
+        Some("Connection timeout or API key invalid".to_string())
+    };
+
     let now = Utc::now().naive_utc();
-    
+
     // 查找或创建健康状态记录
     let existing_health = ApiHealthStatus::find()
         .filter(api_health_status::Column::UserProviderKeyId.eq(key_id))
         .one(state.database.as_ref())
         .await;
-    
+
     match existing_health {
         Ok(Some(health_record)) => {
             // 更新现有记录
@@ -996,7 +1180,7 @@ pub async fn trigger_provider_key_health_check(
             health_active.success_rate = Set(Some(success_rate / 100.0)); // 存储为小数
             health_active.last_error_message = Set(error_message.clone());
             health_active.updated_at = Set(now);
-            
+
             if is_healthy {
                 health_active.last_success = Set(Some(now));
                 health_active.consecutive_failures = Set(Some(0));
@@ -1010,7 +1194,7 @@ pub async fn trigger_provider_key_health_check(
                 };
                 health_active.consecutive_failures = Set(Some(current_failures + 1));
             }
-            
+
             // 更新检查计数
             let current_total_checks = match &health_active.total_checks {
                 sea_orm::ActiveValue::Set(Some(val)) => *val,
@@ -1022,22 +1206,26 @@ pub async fn trigger_provider_key_health_check(
                 sea_orm::ActiveValue::Unchanged(Some(val)) => *val,
                 _ => 0,
             };
-            
+
             let total_checks = current_total_checks + 1;
             let successful_checks = if is_healthy {
                 current_successful_checks + 1
             } else {
                 current_successful_checks
             };
-            
+
             health_active.total_checks = Set(Some(total_checks));
             health_active.successful_checks = Set(Some(successful_checks));
-            
+
             if let Err(err) = health_active.update(state.database.as_ref()).await {
                 tracing::error!("Failed to update health status: {}", err);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return response::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DB_ERROR",
+                    "Failed to update health status",
+                );
             }
-        },
+        }
         Ok(None) => {
             // 创建新记录
             let new_health = api_health_status::ActiveModel {
@@ -1055,18 +1243,29 @@ pub async fn trigger_provider_key_health_check(
                 updated_at: Set(now),
                 ..Default::default()
             };
-            
-            if let Err(err) = ApiHealthStatus::insert(new_health).exec(state.database.as_ref()).await {
+
+            if let Err(err) = ApiHealthStatus::insert(new_health)
+                .exec(state.database.as_ref())
+                .await
+            {
                 tracing::error!("Failed to create health status: {}", err);
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return response::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DB_ERROR",
+                    "Failed to create health status",
+                );
             }
-        },
+        }
         Err(err) => {
             tracing::error!("Failed to query health status: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to query health status",
+            );
         }
     }
-    
+
     // 返回健康检查结果
     let result = ApiHealthStatusResponse {
         key_id,
@@ -1078,12 +1277,12 @@ pub async fn trigger_provider_key_health_check(
         last_check_time: now.and_utc().to_rfc3339(),
         error_message,
     };
-    
+
     let response = json!({
         "success": true,
         "result": result,
         "message": if is_healthy { "Health check passed" } else { "Health check failed" }
     });
-    
-    Ok(Json(response))
+
+    response::success(response)
 }

@@ -51,6 +51,8 @@ pub enum Relation {
         on_delete = "Restrict"
     )]
     ProviderType,
+    #[sea_orm(has_many = "super::user_service_api_providers::Entity")]
+    UserServiceApiProviders,
     #[sea_orm(has_many = "super::proxy_tracing::Entity")]
     ProxyTracing,
     #[sea_orm(has_many = "super::daily_statistics::Entity")]
@@ -69,6 +71,12 @@ impl Related<super::provider_types::Entity> for Entity {
     }
 }
 
+impl Related<super::user_service_api_providers::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::UserServiceApiProviders.def()
+    }
+}
+
 impl Related<super::proxy_tracing::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ProxyTracing.def()
@@ -78,6 +86,17 @@ impl Related<super::proxy_tracing::Entity> for Entity {
 impl Related<super::daily_statistics::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::DailyStatistics.def()
+    }
+}
+
+// 通过中间表与user_provider_keys建立多对多关系
+impl Related<super::user_provider_keys::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::user_service_api_providers::Relation::UserProviderKey.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::user_service_api_providers::Relation::UserServiceApi.def().rev())
     }
 }
 

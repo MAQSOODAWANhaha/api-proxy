@@ -393,7 +393,6 @@ impl ProxyHttp for ProxyService {
                         false,
                         None,
                         None,
-                        None,
                         Some(error_type.to_string()),
                         Some(converted_error.to_string()),
                     ).await;
@@ -423,7 +422,6 @@ impl ProxyHttp for ProxyService {
                     &ctx.request_id,
                     500,
                     false,
-                    None,
                     None,
                     None,
                     Some("proxy_error".to_string()),
@@ -503,13 +501,7 @@ impl ProxyHttp for ProxyService {
                     let tokens_prompt = ctx.token_usage.prompt_tokens;
                     let tokens_completion = ctx.token_usage.completion_tokens;
                     
-                    // 获取响应体大小（如果可用）
-                    let response_size = session.response_written()
-                        .and_then(|resp| {
-                            resp.headers.get("content-length")
-                                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-                                .and_then(|s| s.parse::<u64>().ok())
-                        });
+                    // Response size no longer stored in simplified trace schema
                     
                     // 完成响应体数据收集
                     ctx.response_details.finalize_body();
@@ -563,17 +555,18 @@ impl ProxyHttp for ProxyService {
                         }
                     };
                     
-                    match tracer.complete_trace_with_details(
+                    match tracer.complete_trace_with_stats(
                         &ctx.request_id,
                         status_code,
                         true, // 成功标志
-                        response_size,
                         tokens_prompt,
                         tokens_completion,
                         None, // 无错误类型
                         None, // 无错误消息
-                        request_json.clone(),  // 请求详情
-                        response_json.clone(), // 响应详情
+                        None, // cache_create_tokens
+                        None, // cache_read_tokens
+                        None, // cost
+                        None, // cost_currency
                     ).await {
                         Ok(_) => {
                             tracing::info!(

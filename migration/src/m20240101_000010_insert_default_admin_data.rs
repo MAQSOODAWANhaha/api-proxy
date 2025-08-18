@@ -51,6 +51,7 @@ impl MigrationTrait for Migration {
 
 // 表定义枚举
 #[derive(DeriveIden)]
+#[allow(dead_code)]
 enum Users {
     Table,
     Id,
@@ -63,6 +64,7 @@ enum Users {
 }
 
 #[derive(DeriveIden)]
+#[allow(dead_code)]
 enum UserServiceApis {
     Table,
     UserId,
@@ -77,6 +79,7 @@ enum UserServiceApis {
 }
 
 #[derive(DeriveIden)]
+#[allow(dead_code)]
 enum UserProviderKeys {
     Table,
     UserId,

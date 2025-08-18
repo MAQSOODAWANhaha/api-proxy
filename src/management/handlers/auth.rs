@@ -1,23 +1,20 @@
 //! # 认证管理处理器
 
-use crate::management::server::AppState;
+use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, HeaderMap};
-use axum::response::Json;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sea_orm::{entity::*, query::*};
-use entity::{
-    user_service_apis,
-    user_service_apis::Entity as UserServiceApis,
-    users::Entity as Users,
-    provider_types,
-    provider_types::Entity as ProviderTypes,
-};
-use chrono::{Utc, Duration};
-use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Json};
 use bcrypt;
+use chrono::{Duration, Utc};
+use entity::{
+    provider_types, provider_types::Entity as ProviderTypes, user_service_apis,
+    user_service_apis::Entity as UserServiceApis, users::Entity as Users,
+};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rand;
+use sea_orm::{entity::*, query::*};
+use serde::{Deserialize, Serialize};
+use serde_json::json; // remove unused Value
 
 /// 登录请求
 #[derive(Debug, Deserialize)]
@@ -69,28 +66,43 @@ pub struct Claims {
 pub async fn login(
     State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, StatusCode> {
+) -> impl IntoResponse {
     // 基本输入验证
     if request.username.is_empty() || request.password.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Username and password cannot be empty",
+        );
     }
 
     // 从数据库查找用户
-    use entity::users::{Entity as Users, Column as UserColumn};
+    use entity::users::{Column as UserColumn, Entity as Users};
     let user = match Users::find()
         .filter(UserColumn::Username.eq(&request.username))
         .filter(UserColumn::IsActive.eq(true))
         .one(state.database.as_ref())
-        .await 
+        .await
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            tracing::warn!("Login attempt with non-existent or inactive user: {}", request.username);
-            return Err(StatusCode::UNAUTHORIZED);
+            tracing::warn!(
+                "Login attempt with non-existent or inactive user: {}",
+                request.username
+            );
+            return response::error(
+                StatusCode::UNAUTHORIZED,
+                "INVALID_CREDENTIALS",
+                "Invalid username or password",
+            );
         }
         Err(err) => {
             tracing::error!("Database error during login: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Database error during login",
+            );
         }
     };
 
@@ -100,19 +112,30 @@ pub async fn login(
             tracing::info!("Successful login for user: {}", request.username);
         }
         Ok(false) => {
-            tracing::warn!("Failed login attempt - invalid password for user: {}", request.username);
-            return Err(StatusCode::UNAUTHORIZED);
+            tracing::warn!(
+                "Failed login attempt - invalid password for user: {}",
+                request.username
+            );
+            return response::error(
+                StatusCode::UNAUTHORIZED,
+                "INVALID_CREDENTIALS",
+                "Invalid username or password",
+            );
         }
         Err(err) => {
             tracing::error!("Password verification error: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "HASH_ERROR",
+                "Password verification error",
+            );
         }
     }
 
     // 创建JWT token
     let now = Utc::now();
     let exp = now + Duration::hours(24);
-    
+
     let claims = Claims {
         sub: user.id.to_string(),
         username: user.username.clone(),
@@ -124,7 +147,7 @@ pub async fn login(
     // 从环境变量或配置获取JWT密钥
     let jwt_secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-    
+
     let token = match encode(
         &Header::default(),
         &claims,
@@ -133,7 +156,11 @@ pub async fn login(
         Ok(token) => token,
         Err(err) => {
             tracing::error!("JWT encoding error: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "JWT_ERROR",
+                "JWT token generation failed",
+            );
         }
     };
 
@@ -149,7 +176,7 @@ pub async fn login(
         },
     };
 
-    Ok(Json(response))
+    response::success_with_message(response, "Login successful")
 }
 
 /// 验证token响应
@@ -163,28 +190,37 @@ pub struct ValidateTokenResponse {
 }
 
 /// 用户登出
-pub async fn logout(
-    State(_state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, StatusCode> {
+pub async fn logout(State(_state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     // 从Authorization头中提取token
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {
             Ok(header_str) => header_str,
             Err(err) => {
                 tracing::warn!("Invalid Authorization header format: {}", err);
-                return Err(StatusCode::BAD_REQUEST);
+                return response::error(
+                    StatusCode::BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Invalid Authorization header format",
+                );
             }
         },
         None => {
             tracing::warn!("No Authorization header found in logout request");
-            return Err(StatusCode::BAD_REQUEST);
-        },
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "No Authorization header found",
+            );
+        }
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid Authorization header format",
+        );
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀
@@ -192,7 +228,7 @@ pub async fn logout(
     // 从环境变量或配置获取JWT密钥
     let jwt_secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-    
+
     // 验证JWT token
     let validation = Validation::default();
     let token_data = match decode::<Claims>(
@@ -204,29 +240,26 @@ pub async fn logout(
         Err(err) => {
             tracing::debug!("Token validation failed during logout: {}", err);
             // 即使token无效，也返回成功，避免客户端异常
-            return Ok(Json(json!({
-                "success": true,
-                "message": "Logout successful"
-            })));
+            return response::success_without_data("Logout successful");
         }
     };
 
     // TODO: 在生产环境中，应该将token加入黑名单
     // 这里可以将token的jti添加到Redis黑名单中
-    
-    tracing::info!("User {} logged out successfully", token_data.claims.username);
 
-    Ok(Json(json!({
-        "success": true,
-        "message": "Logout successful"
-    })))
+    tracing::info!(
+        "User {} logged out successfully",
+        token_data.claims.username
+    );
+
+    response::success_without_data("Logout successful")
 }
 
 /// 验证JWT Token
 pub async fn validate_token(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ValidateTokenResponse>, StatusCode> {
+) -> impl IntoResponse {
     // 记录所有请求头用于调试
     tracing::info!("Validate token request headers:");
     for (name, value) in headers.iter() {
@@ -234,28 +267,40 @@ pub async fn validate_token(
             tracing::info!("  {}: {}", name, value_str);
         }
     }
-    
+
     // 从Authorization头中提取token
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {
             Ok(header_str) => {
                 tracing::info!("Found Authorization header: {}", header_str);
                 header_str
-            },
+            }
             Err(err) => {
                 tracing::warn!("Invalid Authorization header format: {}", err);
-                return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+                let response_data = ValidateTokenResponse {
+                    valid: false,
+                    user: None,
+                };
+                return response::success(response_data);
             }
         },
         None => {
             tracing::warn!("No Authorization header found in request");
-            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
-        },
+            let response_data = ValidateTokenResponse {
+                valid: false,
+                user: None,
+            };
+            return response::success(response_data);
+        }
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        let response_data = ValidateTokenResponse {
+            valid: false,
+            user: None,
+        };
+        return response::success(response_data);
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀
@@ -263,7 +308,7 @@ pub async fn validate_token(
     // 从环境变量或配置获取JWT密钥
     let jwt_secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-    
+
     // 验证JWT token
     let validation = Validation::default();
     let token_data = match decode::<Claims>(
@@ -274,27 +319,46 @@ pub async fn validate_token(
         Ok(data) => data,
         Err(err) => {
             tracing::debug!("Token validation failed: {}", err);
-            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+            let response_data = ValidateTokenResponse {
+                valid: false,
+                user: None,
+            };
+            return response::success(response_data);
         }
     };
 
     // 检查token是否过期
     let now = Utc::now().timestamp() as usize;
     if token_data.claims.exp < now {
-        return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+        let response_data = ValidateTokenResponse {
+            valid: false,
+            user: None,
+        };
+        return response::success(response_data);
     }
 
     // 从数据库获取用户信息
     let user_id: i32 = token_data.claims.sub.parse().unwrap_or(1);
-    let user = match Users::find_by_id(user_id).one(state.database.as_ref()).await {
+    let user = match Users::find_by_id(user_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(user)) => user,
         Ok(None) => {
             tracing::warn!("Token valid but user {} not found in database", user_id);
-            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+            let response_data = ValidateTokenResponse {
+                valid: false,
+                user: None,
+            };
+            return response::success(response_data);
         }
         Err(err) => {
             tracing::error!("Database error during token validation: {}", err);
-            return Ok(Json(ValidateTokenResponse { valid: false, user: None }));
+            let response_data = ValidateTokenResponse {
+                valid: false,
+                user: None,
+            };
+            return response::success(response_data);
         }
     };
 
@@ -306,10 +370,11 @@ pub async fn validate_token(
         is_admin: user.is_admin,
     };
 
-    Ok(Json(ValidateTokenResponse {
+    let response_data = ValidateTokenResponse {
         valid: true,
         user: Some(user_info),
-    }))
+    };
+    response::success(response_data)
 }
 
 /// API密钥查询参数
@@ -376,19 +441,20 @@ pub struct ApiKeyResponse {
 pub async fn list_api_keys(
     State(state): State<AppState>,
     Query(query): Query<ApiKeyQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
+    // changed from Box<dyn IntoResponse>
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
     let offset = (page - 1) * limit;
-    
+
     // 构建查询条件
     let mut select = UserServiceApis::find();
-    
+
     // 用户ID过滤
     if let Some(user_id) = query.user_id {
         select = select.filter(user_service_apis::Column::UserId.eq(user_id));
     }
-    
+
     // 状态过滤
     if let Some(status) = &query.status {
         match status.as_str() {
@@ -397,7 +463,7 @@ pub async fn list_api_keys(
             _ => {}
         }
     }
-    
+
     // 分页查询
     let api_keys_result = select
         .offset(offset as u64)
@@ -406,15 +472,19 @@ pub async fn list_api_keys(
         .find_also_related(ProviderTypes)
         .all(state.database.as_ref())
         .await;
-        
+
     let api_keys_data = match api_keys_result {
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch API keys: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch API keys",
+            );
         }
     };
-    
+
     // 获取总数
     let mut count_select = UserServiceApis::find();
     if let Some(user_id) = query.user_id {
@@ -422,20 +492,28 @@ pub async fn list_api_keys(
     }
     if let Some(status) = &query.status {
         match status.as_str() {
-            "active" => count_select = count_select.filter(user_service_apis::Column::IsActive.eq(true)),
-            "inactive" => count_select = count_select.filter(user_service_apis::Column::IsActive.eq(false)),
+            "active" => {
+                count_select = count_select.filter(user_service_apis::Column::IsActive.eq(true))
+            }
+            "inactive" => {
+                count_select = count_select.filter(user_service_apis::Column::IsActive.eq(false))
+            }
             _ => {}
         }
     }
-    
+
     let total = match count_select.count(state.database.as_ref()).await {
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count API keys: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count API keys",
+            );
         }
     };
-    
+
     // 转换为响应格式
     let mut api_keys = Vec::new();
     for (api_key, provider_type) in api_keys_data {
@@ -461,17 +539,23 @@ pub async fn list_api_keys(
         } else {
             "sk-***...".to_string()
         };
-        
+
         let scopes = get_api_key_scopes(&api_key).await; // 从数据库获取实际权限
-        
+
         api_keys.push(ApiKeyResponse {
             id: api_key.id,
-            name: api_key.name.unwrap_or_else(|| format!("{} API Key", provider.display_name)),
+            name: api_key
+                .name
+                .unwrap_or_else(|| format!("{} API Key", provider.display_name)),
             key: None, // 永远不在列表中显示完整密钥
             key_prefix,
             user_id: api_key.user_id,
             description: api_key.description,
-            status: if api_key.is_active { "active".to_string() } else { "inactive".to_string() },
+            status: if api_key.is_active {
+                "active".to_string()
+            } else {
+                "inactive".to_string()
+            },
             scopes,
             usage_count: api_key.total_requests.unwrap_or(0) as u64,
             created_at: api_key.created_at.and_utc(),
@@ -480,38 +564,38 @@ pub async fn list_api_keys(
         });
     }
 
-    let response = json!({
-        "api_keys": api_keys,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "pages": ((total as f64) / (limit as f64)).ceil() as u32
-        }
-    });
+    let pagination = response::Pagination {
+        page: page as u64,
+        limit: limit as u64,
+        total,
+        pages: ((total as f64) / (limit as f64)).ceil() as u64,
+    };
 
-    Ok(Json(response))
+    response::paginated(api_keys, pagination)
 }
 
 /// 获取服务提供商类型列表
-pub async fn list_provider_types(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, StatusCode> {
+pub async fn list_provider_types(State(state): State<AppState>) -> impl IntoResponse {
+    // changed
     // 获取所有活跃的服务提供商类型
     let provider_types_result = ProviderTypes::find()
         .filter(provider_types::Column::IsActive.eq(true))
         .order_by_asc(provider_types::Column::Id)
         .all(state.database.as_ref())
         .await;
-        
+
     let provider_types_data = match provider_types_result {
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider types: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider types",
+            );
         }
     };
-    
+
     // 转换为响应格式
     let provider_types: Vec<_> = provider_types_data
         .into_iter()
@@ -528,21 +612,17 @@ pub async fn list_provider_types(
         })
         .collect();
 
-    let response = json!({
-        "provider_types": provider_types
-    });
-
-    Ok(Json(response))
+    response::success(provider_types)
 }
 
 /// 从数据库获取API密钥的权限范围
 async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
     // 根据API密钥的配置解析权限范围
     let mut scopes = Vec::new();
-    
+
     // 基础权限：所有API密钥都有的基本权限
     scopes.push("api:access".to_string());
-    
+
     // 根据最大请求数判断权限等级
     if let Some(rate_limit) = api_key.rate_limit {
         if rate_limit >= 100 {
@@ -555,12 +635,12 @@ async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
     } else {
         scopes.push("api:unlimited_rate".to_string());
     }
-    
+
     // 根据最大令牌数判断权限范围
     if let Some(max_tokens) = api_key.max_tokens_per_day {
-        if max_tokens >= 100000 {
+        if max_tokens >= 100_000 {
             scopes.push("tokens:enterprise".to_string());
-        } else if max_tokens >= 10000 {
+        } else if max_tokens >= 10_000 {
             scopes.push("tokens:professional".to_string());
         } else {
             scopes.push("tokens:basic".to_string());
@@ -568,11 +648,11 @@ async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
     } else {
         scopes.push("tokens:unlimited".to_string());
     }
-    
+
     // AI服务权限
     scopes.push("ai:chat".to_string());
     scopes.push("ai:completion".to_string());
-    
+
     // 根据总请求数判断优先级权限
     if let Some(total_requests) = api_key.total_requests {
         if total_requests >= 1000 {
@@ -586,21 +666,21 @@ async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
     } else {
         scopes.push("priority:new".to_string());
     }
-    
+
     // 调度策略权限
     if api_key.scheduling_strategy.is_some() {
         scopes.push("scheduling:custom".to_string());
     } else {
         scopes.push("scheduling:default".to_string());
     }
-    
+
     // 如果API密钥是活跃的，添加活跃权限
     if api_key.is_active {
         scopes.push("status:active".to_string());
     } else {
         scopes.push("status:inactive".to_string());
     }
-    
+
     scopes
 }
 
@@ -608,45 +688,66 @@ async fn get_api_key_scopes(api_key: &user_service_apis::Model) -> Vec<String> {
 pub async fn create_api_key(
     State(state): State<AppState>,
     Json(request): Json<CreateApiKeyRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
+    // changed
     // 验证输入
     if request.name.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "API key name cannot be empty",
+        );
     }
 
     if request.user_id <= 0 || request.provider_type_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid user ID or provider type ID",
+        );
     }
 
     // 验证用户是否存在
-    let user_exists = match Users::find_by_id(request.user_id).one(state.database.as_ref()).await {
+    let user_exists = match Users::find_by_id(request.user_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(_)) => true,
         Ok(None) => false,
         Err(err) => {
             tracing::error!("Failed to check user existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check user existence",
+            );
         }
     };
 
     if !user_exists {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "User not found"
-        })));
+        return response::error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "User not found");
     }
 
     // 验证服务提供商类型是否存在
-    let provider_type = match ProviderTypes::find_by_id(request.provider_type_id).one(state.database.as_ref()).await {
+    let provider_type = match ProviderTypes::find_by_id(request.provider_type_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(provider)) => provider,
         Ok(None) => {
-            return Ok(Json(json!({
-                "success": false,
-                "message": "Invalid provider type"
-            })));
-        },
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "Invalid provider type",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check provider type existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check provider type existence",
+            );
         }
     };
 
@@ -660,22 +761,28 @@ pub async fn create_api_key(
         Ok(api) => api,
         Err(err) => {
             tracing::error!("Failed to check existing API key: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check existing API key",
+            );
         }
     };
 
     if existing_api.is_some() {
-        return Ok(Json(json!({
-            "success": false,
-            "message": format!("API key for {} already exists. Each user can only have one API key per provider type.", provider_type.display_name)
-        })));
+        return response::error(
+            StatusCode::CONFLICT,
+            "API_KEY_EXISTS",
+            &format!("API key for {} already exists. Each user can only have one API key per provider type.", provider_type.display_name),
+        );
     }
 
     // 生成新的API密钥
     let api_key = format!("sk-proj-{}", generate_random_key(32));
     let api_secret = generate_random_key(64);
-    
-    let expires_at = request.expires_in_days
+
+    let expires_at = request
+        .expires_in_days
         .map(|days| Utc::now().naive_utc() + Duration::days(days as i64));
 
     let now = Utc::now().naive_utc();
@@ -704,13 +811,19 @@ pub async fn create_api_key(
         ..Default::default()
     };
 
-    let insert_result = UserServiceApis::insert(new_api_key).exec(state.database.as_ref()).await;
-    
+    let insert_result = UserServiceApis::insert(new_api_key)
+        .exec(state.database.as_ref())
+        .await;
+
     let api_key_id = match insert_result {
         Ok(result) => result.last_insert_id,
         Err(err) => {
             tracing::error!("Failed to create API key: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to create API key",
+            );
         }
     };
 
@@ -722,29 +835,33 @@ pub async fn create_api_key(
         user_id: request.user_id,
         description: request.description,
         status: "active".to_string(),
-        scopes: request.scopes.unwrap_or_else(|| vec!["chat:read".to_string(), "chat:write".to_string()]),
+        scopes: request
+            .scopes
+            .unwrap_or_else(|| vec!["chat:read".to_string(), "chat:write".to_string()]),
         usage_count: 0,
         created_at: Utc::now(),
         expires_at: expires_at.map(|dt| dt.and_utc()),
         last_used_at: None,
     };
 
-    let response = json!({
-        "success": true,
-        "api_key": api_key_response,
-        "message": "API key created successfully. Please save it now as it won't be shown again."
-    });
-
-    Ok(Json(response))
+    response::success_with_message(
+        api_key_response,
+        "API key created successfully. Please save it now as it won't be shown again.",
+    )
 }
 
 /// 获取单个API密钥
 pub async fn get_api_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
+    // changed
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid API key ID",
+        );
     }
 
     // 从数据库获取API密钥
@@ -755,10 +872,20 @@ pub async fn get_api_key(
 
     let (api_key, provider_type) = match api_key_result {
         Ok(Some(data)) => data,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "API_KEY_NOT_FOUND",
+                "API key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to fetch API key {}: {}", key_id, err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch API key",
+            );
         }
     };
 
@@ -788,12 +915,18 @@ pub async fn get_api_key(
 
     let api_key_response = ApiKeyResponse {
         id: api_key.id,
-        name: api_key.name.unwrap_or_else(|| format!("{} API Key", provider.display_name)),
+        name: api_key
+            .name
+            .unwrap_or_else(|| format!("{} API Key", provider.display_name)),
         key: None, // 永远不返回完整密钥
         key_prefix,
         user_id: api_key.user_id,
         description: api_key.description,
-        status: if api_key.is_active { "active".to_string() } else { "inactive".to_string() },
+        status: if api_key.is_active {
+            "active".to_string()
+        } else {
+            "inactive".to_string()
+        },
         scopes: vec!["chat:read".to_string(), "chat:write".to_string()], // TODO: 从数据库获取实际权限
         usage_count: api_key.total_requests.unwrap_or(0) as u64,
         created_at: api_key.created_at.and_utc(),
@@ -801,7 +934,7 @@ pub async fn get_api_key(
         last_used_at: api_key.last_used.map(|dt| dt.and_utc()),
     };
 
-    Ok(Json(serde_json::to_value(api_key_response).unwrap()))
+    response::success(api_key_response)
 }
 
 /// 更新API密钥请求
@@ -820,52 +953,67 @@ pub async fn update_api_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Json(request): Json<UpdateApiKeyRequest>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid API key ID",
+        );
     }
 
     // 检查API密钥是否存在
-    let existing_key = match UserServiceApis::find_by_id(key_id).one(state.database.as_ref()).await {
+    let existing_key = match UserServiceApis::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "API_KEY_NOT_FOUND",
+                "API key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check API key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check API key existence",
+            );
         }
     };
 
     // 更新API密钥信息
     let now = Utc::now().naive_utc();
     let mut api_key: user_service_apis::ActiveModel = existing_key.into();
-    
+
     if let Some(name) = request.name {
         if !name.is_empty() {
             api_key.name = Set(Some(name));
         }
     }
-    
+
     if let Some(description) = request.description {
         api_key.description = Set(Some(description));
     }
-    
+
     if let Some(is_active) = request.is_active {
         api_key.is_active = Set(is_active);
     }
-    
+
     api_key.updated_at = Set(now);
 
     match api_key.update(state.database.as_ref()).await {
-        Ok(_) => {
-            let response = json!({
-                "success": true,
-                "message": format!("API key {} has been updated", key_id)
-            });
-            Ok(Json(response))
-        }
+        Ok(_) => response::success_without_data(&format!("API key {} has been updated", key_id)),
         Err(err) => {
             tracing::error!("Failed to update API key {}: {}", key_id, err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to update API key",
+            )
         }
     }
 }
@@ -874,18 +1022,36 @@ pub async fn update_api_key(
 pub async fn revoke_api_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-) -> Result<Json<Value>, StatusCode> {
+) -> impl IntoResponse {
+    // changed
     if key_id <= 0 {
-        return Err(StatusCode::BAD_REQUEST);
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid API key ID",
+        );
     }
 
     // 检查API密钥是否存在
-    let existing_key = match UserServiceApis::find_by_id(key_id).one(state.database.as_ref()).await {
+    let existing_key = match UserServiceApis::find_by_id(key_id)
+        .one(state.database.as_ref())
+        .await
+    {
         Ok(Some(key)) => key,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "API_KEY_NOT_FOUND",
+                "API key not found",
+            );
+        }
         Err(err) => {
             tracing::error!("Failed to check API key existence: {}", err);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to check API key existence",
+            );
         }
     };
 
@@ -897,16 +1063,21 @@ pub async fn revoke_api_key(
 
     match api_key.update(state.database.as_ref()).await {
         Ok(_) => {
-            let response = json!({
-                "success": true,
-                "message": format!("API key {} has been revoked", key_id),
+            let revoke_data = json!({
                 "revoked_at": now.and_utc()
             });
-            Ok(Json(response))
+            response::success_with_message(
+                revoke_data,
+                &format!("API key {} has been revoked", key_id),
+            )
         }
         Err(err) => {
             tracing::error!("Failed to revoke API key {}: {}", key_id, err);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to revoke API key",
+            )
         }
     }
 }
@@ -916,7 +1087,7 @@ fn generate_random_key(length: usize) -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
-    
+
     (0..length)
         .map(|_| {
             let idx = rng.gen_range(0..CHARSET.len());

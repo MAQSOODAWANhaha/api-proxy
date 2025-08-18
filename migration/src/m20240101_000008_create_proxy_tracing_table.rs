@@ -46,20 +46,6 @@ impl MigrationTrait for Migration {
                         ColumnDef::new(ProxyTracing::StatusCode)
                             .integer(),
                     )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ResponseTimeMs)
-                            .integer(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::RequestSize)
-                            .integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ResponseSize)
-                            .integer()
-                            .default(0),
-                    )
                     // === Token使用统计 ===
                     .col(
                         ColumnDef::new(ProxyTracing::TokensPrompt)
@@ -79,6 +65,32 @@ impl MigrationTrait for Migration {
                     .col(
                         ColumnDef::new(ProxyTracing::TokenEfficiencyRatio)
                             .double(),
+                    )
+                    // === 缓存Token统计 (新增) ===
+                    .col(
+                        ColumnDef::new(ProxyTracing::CacheCreateTokens)
+                            .integer()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(ProxyTracing::CacheReadTokens)
+                            .integer()
+                            .default(0),
+                    )
+                    // === 费用统计 (新增) ===
+                    .col(
+                        ColumnDef::new(ProxyTracing::Cost)
+                            .double(),
+                    )
+                    .col(
+                        ColumnDef::new(ProxyTracing::CostCurrency)
+                            .string_len(10)
+                            .default("USD"),
+                    )
+                    // === 用户ID (新增，用于直接查询) ===
+                    .col(
+                        ColumnDef::new(ProxyTracing::UserId)
+                            .integer(),
                     )
                     // === 业务信息 ===
                     .col(
@@ -106,34 +118,10 @@ impl MigrationTrait for Migration {
                             .integer()
                             .default(0),
                     )
-                    // === 追踪控制 ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::TraceLevel)
-                            .integer()
-                            .not_null()
-                            .default(0), // 0=基础, 1=详细, 2=完整
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::SamplingRate)
-                            .double()
-                            .default(1.0),
-                    )
-                    // === 提供商信息 ===
+                    // === 提供商信息（只保留必需的外键） ===
                     .col(
                         ColumnDef::new(ProxyTracing::ProviderTypeId)
                             .integer(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ProviderName)
-                            .string_len(255),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::BackendKeyId)
-                            .integer(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::UpstreamAddr)
-                            .string_len(255),
                     )
                     // === 详细时间追踪 ===
                     .col(
@@ -153,34 +141,6 @@ impl MigrationTrait for Migration {
                             .boolean()
                             .not_null()
                             .default(false),
-                    )
-                    // === 阶段追踪数据（JSON） ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::PhasesData)
-                            .text(), // JSON: 各阶段详细信息
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::PerformanceMetrics)
-                            .text(), // JSON: 性能指标
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::Labels)
-                            .text(), // JSON: 自定义标签
-                    )
-                    // === 健康状态评估 ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::HealthImpactScore)
-                            .double()
-                            .default(0.0),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::IsAnomaly)
-                            .boolean()
-                            .default(false),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::QualityMetrics)
-                            .text(), // JSON: 质量指标
                     )
                     // === 创建时间 ===
                     .col(
@@ -212,6 +172,14 @@ impl MigrationTrait for Migration {
                             .to(ProviderTypes::Table, ProviderTypes::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::SetNull),
+                    )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_proxy_tracing_user_id")
+                            .from(ProxyTracing::Table, ProxyTracing::UserId)
+                            .to(Users::Table, Users::Id)
+                            .on_update(ForeignKeyAction::Cascade)
+                            .on_delete(ForeignKeyAction::Cascade),
                     )
                     .to_owned(),
             )
@@ -272,12 +240,24 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // 新增用户ID和费用相关索引
         manager
             .create_index(
                 Index::create()
-                    .name("idx_proxy_tracing_trace_level")
+                    .name("idx_proxy_tracing_user_time")
                     .table(ProxyTracing::Table)
-                    .col(ProxyTracing::TraceLevel)
+                    .col(ProxyTracing::UserId)
+                    .col(ProxyTracing::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_proxy_tracing_cost_time")
+                    .table(ProxyTracing::Table)
+                    .col(ProxyTracing::Cost)
                     .col(ProxyTracing::CreatedAt)
                     .to_owned(),
             )
@@ -304,14 +284,19 @@ enum ProxyTracing {
     Method,
     Path,
     StatusCode,
-    ResponseTimeMs,
-    RequestSize,
-    ResponseSize,
     // Token统计
     TokensPrompt,
     TokensCompletion,
     TokensTotal,
     TokenEfficiencyRatio,
+    // 缓存Token统计
+    CacheCreateTokens,
+    CacheReadTokens,
+    // 费用统计
+    Cost,
+    CostCurrency,
+    // 用户ID
+    UserId,
     // 业务信息
     ModelUsed,
     ClientIp,
@@ -319,27 +304,13 @@ enum ProxyTracing {
     ErrorType,
     ErrorMessage,
     RetryCount,
-    // 追踪控制
-    TraceLevel,
-    SamplingRate,
-    // 提供商信息
+    // 提供商信息（只保留外键）
     ProviderTypeId,
-    ProviderName,
-    BackendKeyId,
-    UpstreamAddr,
     // 详细时间追踪
     StartTime,
     EndTime,
     DurationMs,
     IsSuccess,
-    // 阶段追踪数据
-    PhasesData,
-    PerformanceMetrics,
-    Labels,
-    // 健康状态评估
-    HealthImpactScore,
-    IsAnomaly,
-    QualityMetrics,
     // 时间戳
     CreatedAt,
 }
@@ -358,6 +329,12 @@ enum UserProviderKeys {
 
 #[derive(DeriveIden)]
 enum ProviderTypes {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+enum Users {
     Table,
     Id,
 }

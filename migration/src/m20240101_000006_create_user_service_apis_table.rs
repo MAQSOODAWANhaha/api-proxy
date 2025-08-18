@@ -133,18 +133,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 创建唯一约束：每个用户每种服务商只能有一个对外API
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_user_service_apis_unique_user_provider")
-                    .table(UserServiceApis::Table)
-                    .col(UserServiceApis::UserId)
-                    .col(UserServiceApis::ProviderTypeId)
-                    .unique()
-                    .to_owned(),
-            )
-            .await?;
 
         // 创建索引
         manager
@@ -160,9 +148,18 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("idx_user_service_apis_user_provider")
+                    .name("idx_user_service_apis_user_id")
                     .table(UserServiceApis::Table)
                     .col(UserServiceApis::UserId)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_service_apis_provider_type")
+                    .table(UserServiceApis::Table)
                     .col(UserServiceApis::ProviderTypeId)
                     .to_owned(),
             )

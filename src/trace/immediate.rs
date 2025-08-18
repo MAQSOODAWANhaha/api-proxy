@@ -7,35 +7,15 @@ use anyhow::Result;
 use chrono::Utc;
 use sea_orm::{DatabaseConnection, EntityTrait, Set, NotSet, ColumnTrait, QueryFilter, QuerySelect};
 use tracing::{debug, error, info};
-use entity::proxy_tracing::{self, TraceLevel};
+use entity::proxy_tracing;
 
-/// 即时写入追踪器配置
+/// 即时写入追踪器配置（已简化）
 #[derive(Debug, Clone)]
-pub struct ImmediateTracerConfig {
-    /// 全局开关
-    pub enabled: bool,
-    /// 基础统计采样率
-    pub basic_sampling_rate: f64,
-    /// 详细追踪采样率
-    pub detailed_sampling_rate: f64,
-    /// 完整追踪采样率
-    pub full_sampling_rate: f64,
-    /// 健康评分计算开关
-    pub health_scoring_enabled: bool,
-    /// 数据库连接池大小
-    pub db_pool_size: u32,
-}
+pub struct ImmediateTracerConfig {}
 
 impl Default for ImmediateTracerConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            basic_sampling_rate: 1.0,      // 100% 基础统计
-            detailed_sampling_rate: 0.1,   // 10% 详细追踪
-            full_sampling_rate: 0.01,      // 1% 完整追踪
-            health_scoring_enabled: true,
-            db_pool_size: 10,              // 数据库连接池大小
-        }
+        Self {}
     }
 }
 
@@ -53,14 +33,11 @@ pub struct ImmediateProxyTracer {
 
 impl ImmediateProxyTracer {
     /// 创建新的即时写入追踪器
-    pub fn new(db: Arc<DatabaseConnection>, config: ImmediateTracerConfig) -> Self {
-        info!(
-            "Initializing immediate proxy tracer with sampling rates - basic: {}, detailed: {}, full: {}",
-            config.basic_sampling_rate, config.detailed_sampling_rate, config.full_sampling_rate
-        );
+    pub fn new(db: Arc<DatabaseConnection>, _config: ImmediateTracerConfig) -> Self {
+        info!("Initializing immediate proxy tracer with all requests traced");
         
         Self {
-            config,
+            config: ImmediateTracerConfig::default(),
             db,
         }
     }
@@ -70,24 +47,13 @@ impl ImmediateProxyTracer {
         &self,
         request_id: String,
         user_service_api_id: i32,
+        user_id: Option<i32>,
         method: String,
         path: Option<String>,
         client_ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-        
-        // 确定追踪级别
-        let trace_level = self.determine_trace_level();
-        let sampling_rate = self.get_sampling_rate(trace_level);
-        
-        // 采样检查
-        if !self.should_sample(sampling_rate) {
-            debug!(request_id = %request_id, "Request excluded by sampling");
-            return Ok(());
-        }
+        // 强制追踪所有请求，移除配置开关
         
         let now = Utc::now().naive_utc();
         
@@ -96,41 +62,32 @@ impl ImmediateProxyTracer {
             id: NotSet,
             user_service_api_id: Set(user_service_api_id),
             user_provider_key_id: Set(None), // 稍后可更新
+            user_id: Set(user_id),
             request_id: Set(request_id.clone()),
             method: Set(method),
             path: Set(path),
             client_ip: Set(client_ip),
             user_agent: Set(user_agent),
             start_time: Set(Some(now)),
-            trace_level: Set(trace_level.into()),
-            sampling_rate: Set(Some(sampling_rate)),
             is_success: Set(false), // 默认失败，响应时更新
             created_at: Set(now),
             // 其他字段保持NotSet，待后续更新
             status_code: NotSet,
-            response_time_ms: NotSet,
-            request_size: NotSet,
-            response_size: NotSet,
             tokens_prompt: NotSet,
             tokens_completion: NotSet,
             tokens_total: NotSet,
             token_efficiency_ratio: NotSet,
+            cache_create_tokens: NotSet,
+            cache_read_tokens: NotSet,
+            cost: NotSet,
+            cost_currency: NotSet,
             model_used: NotSet,
             error_type: NotSet,
             error_message: NotSet,
             retry_count: Set(Some(0)),
             provider_type_id: NotSet,
-            provider_name: NotSet,
-            backend_key_id: NotSet,
-            upstream_addr: NotSet,
             end_time: NotSet,
             duration_ms: NotSet,
-            phases_data: NotSet,
-            performance_metrics: NotSet,
-            labels: NotSet,
-            health_impact_score: NotSet,
-            is_anomaly: NotSet,
-            quality_metrics: NotSet,
         };
         
         // 立即写入数据库
@@ -141,9 +98,8 @@ impl ImmediateProxyTracer {
         debug!(
             request_id = %request_id,
             trace_id = insert_result.last_insert_id,
-            trace_level = ?trace_level,
-            sampling_rate = sampling_rate,
-            "Started immediate proxy trace"
+            user_id = ?user_id,
+            "Started simplified proxy trace"
         );
         
         Ok(())
@@ -153,31 +109,17 @@ impl ImmediateProxyTracer {
     pub async fn update_trace_info(
         &self,
         request_id: &str,
-        provider_name: Option<String>,
         model_used: Option<String>,
-        upstream_addr: Option<String>,
-        request_size: Option<u64>,
     ) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
+        // 强制追踪所有请求，移除配置开关
         
         // 构建更新模型
         let mut update_model = proxy_tracing::ActiveModel {
             ..Default::default()
         };
         
-        if let Some(provider) = provider_name {
-            update_model.provider_name = Set(Some(provider));
-        }
         if let Some(model) = model_used {
             update_model.model_used = Set(Some(model));
-        }
-        if let Some(addr) = upstream_addr {
-            update_model.upstream_addr = Set(Some(addr));
-        }
-        if let Some(size) = request_size {
-            update_model.request_size = Set(Some(size as i32));
         }
         
         // 更新数据库记录
@@ -202,17 +144,11 @@ impl ImmediateProxyTracer {
     pub async fn update_extended_trace_info(
         &self,
         request_id: &str,
-        provider_name: Option<String>,
         provider_type_id: Option<i32>,
-        backend_key_id: Option<i32>,
         model_used: Option<String>,
-        upstream_addr: Option<String>,
-        request_size: Option<u64>,
         user_provider_key_id: Option<i32>,
     ) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
+        // 强制追踪所有请求，移除配置开关
         
         // 构建更新模型
         let mut update_model = proxy_tracing::ActiveModel {
@@ -221,29 +157,13 @@ impl ImmediateProxyTracer {
         
         let mut updated_fields = Vec::new();
         
-        if let Some(provider) = provider_name {
-            update_model.provider_name = Set(Some(provider.clone()));
-            updated_fields.push(format!("provider_name={}", provider));
-        }
         if let Some(provider_id) = provider_type_id {
             update_model.provider_type_id = Set(Some(provider_id));
             updated_fields.push(format!("provider_type_id={}", provider_id));
         }
-        if let Some(backend_id) = backend_key_id {
-            update_model.backend_key_id = Set(Some(backend_id));
-            updated_fields.push(format!("backend_key_id={}", backend_id));
-        }
         if let Some(model) = model_used {
             update_model.model_used = Set(Some(model.clone()));
             updated_fields.push(format!("model_used={}", model));
-        }
-        if let Some(addr) = upstream_addr {
-            update_model.upstream_addr = Set(Some(addr.clone()));
-            updated_fields.push(format!("upstream_addr={}", addr));
-        }
-        if let Some(size) = request_size {
-            update_model.request_size = Set(Some(size as i32));
-            updated_fields.push(format!("request_size={}", size));
         }
         if let Some(user_key_id) = user_provider_key_id {
             update_model.user_provider_key_id = Set(Some(user_key_id));
@@ -280,43 +200,42 @@ impl ImmediateProxyTracer {
         request_id: &str,
         status_code: u16,
         is_success: bool,
-        response_size: Option<u64>,
         tokens_prompt: Option<u32>,
         tokens_completion: Option<u32>,
         error_type: Option<String>,
         error_message: Option<String>,
     ) -> Result<()> {
-        self.complete_trace_with_details(
+        self.complete_trace_with_stats(
             request_id,
             status_code,
             is_success,
-            response_size,
             tokens_prompt,
             tokens_completion,
             error_type,
             error_message,
-            None, // request_details
-            None, // response_details
+            None, // cache_create_tokens
+            None, // cache_read_tokens
+            None, // cost
+            None, // cost_currency
         ).await
     }
 
-    /// 完成追踪 - 包含详细的请求响应信息
-    pub async fn complete_trace_with_details(
+    /// 完成追踪 - 使用TraceStats
+    pub async fn complete_trace_with_stats(
         &self,
         request_id: &str,
         status_code: u16,
         is_success: bool,
-        response_size: Option<u64>,
         tokens_prompt: Option<u32>,
         tokens_completion: Option<u32>,
         error_type: Option<String>,
         error_message: Option<String>,
-        request_details: Option<serde_json::Value>,
-        response_details: Option<serde_json::Value>,
+        cache_create_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        cost: Option<f64>,
+        cost_currency: Option<String>,
     ) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
+        // 强制追踪所有请求，移除配置开关
         
         let end_time = Utc::now().naive_utc();
         
@@ -331,49 +250,6 @@ impl ImmediateProxyTracer {
             _ => None,
         };
         
-        // 计算健康影响评分
-        let health_impact_score = if self.config.health_scoring_enabled {
-            self.calculate_health_impact(status_code, is_success, token_efficiency_ratio)
-        } else {
-            None
-        };
-        
-        // 异常检测
-        let is_anomaly = self.detect_anomaly(status_code, is_success, token_efficiency_ratio);
-        
-        // 构建详细性能指标JSON（包含请求响应详情）
-        let performance_metrics = if request_details.is_some() || response_details.is_some() {
-            let mut metrics = serde_json::Map::new();
-            let mut components = Vec::new();
-            
-            if let Some(req_details) = &request_details {
-                metrics.insert("request".to_string(), req_details.clone());
-                components.push("request");
-            }
-            if let Some(resp_details) = &response_details {
-                metrics.insert("response".to_string(), resp_details.clone());
-                components.push("response");
-            }
-            
-            match serde_json::Value::Object(metrics).to_string() {
-                json_str => {
-                    tracing::info!(
-                        request_id = %request_id,
-                        components = ?components,
-                        json_length = json_str.len(),
-                        "Constructed performance_metrics JSON for database storage"
-                    );
-                    Some(json_str)
-                }
-            }
-        } else {
-            tracing::debug!(
-                request_id = %request_id,
-                "No detailed request/response data available for performance_metrics"
-            );
-            None
-        };
-        
         // 获取起始时间并计算持续时间
         let start_time_result = proxy_tracing::Entity::find()
             .filter(proxy_tracing::Column::RequestId.eq(request_id))
@@ -383,12 +259,11 @@ impl ImmediateProxyTracer {
             .one(&*self.db)
             .await?;
             
-        let (duration_ms, response_time_ms) = if let Some(Some(start_time)) = start_time_result {
+        let duration_ms = if let Some(Some(start_time)) = start_time_result {
             let duration = end_time.signed_duration_since(start_time);
-            let duration_ms = duration.num_milliseconds();
-            (Some(duration_ms), Some(duration_ms as i32))
+            Some(duration.num_milliseconds())
         } else {
-            (None, None)
+            None
         };
 
         // 构建完成更新模型
@@ -397,17 +272,16 @@ impl ImmediateProxyTracer {
             is_success: Set(is_success),
             end_time: Set(Some(end_time)),
             duration_ms: Set(duration_ms),
-            response_time_ms: Set(response_time_ms),
-            response_size: Set(response_size.map(|s| s as i32)),
             tokens_prompt: Set(tokens_prompt.map(|t| t as i32)),
             tokens_completion: Set(tokens_completion.map(|t| t as i32)),
             tokens_total: Set(tokens_total.map(|t| t as i32)),
             token_efficiency_ratio: Set(token_efficiency_ratio),
+            cache_create_tokens: Set(cache_create_tokens.map(|t| t as i32)),
+            cache_read_tokens: Set(cache_read_tokens.map(|t| t as i32)),
+            cost: Set(cost),
+            cost_currency: Set(cost_currency),
             error_type: Set(error_type),
             error_message: Set(error_message),
-            health_impact_score: Set(health_impact_score),
-            is_anomaly: Set(Some(is_anomaly)),
-            performance_metrics: Set(performance_metrics.clone()),
             ..Default::default()
         };
         
@@ -424,13 +298,12 @@ impl ImmediateProxyTracer {
                 status_code = status_code,
                 is_success = is_success,
                 tokens_total = ?tokens_total,
-                health_score = ?health_impact_score,
+                cost = ?cost,
+                cache_create_tokens = ?cache_create_tokens,
+                cache_read_tokens = ?cache_read_tokens,
                 duration_ms = ?duration_ms,
-                response_time_ms = ?response_time_ms,
-                performance_metrics_stored = performance_metrics.is_some(),
-                performance_metrics_size = performance_metrics.as_ref().map(|m| m.len()),
                 rows_affected = update_result.rows_affected,
-                "Completed immediate proxy trace with detailed performance metrics"
+                "Completed trace with comprehensive stats"
             );
         } else {
             error!(
@@ -441,148 +314,61 @@ impl ImmediateProxyTracer {
         
         Ok(())
     }
-    
-    /// 添加阶段追踪信息（用于详细追踪）
-    pub async fn add_phase_info(
+
+    /// 使用TraceStats完成追踪
+    pub async fn complete_trace_with_trace_stats(
         &self,
         request_id: &str,
-        phase_name: &str,
-        duration_ms: u64,
-        success: bool,
-        details: Option<String>,
+        status_code: u16,
+        is_success: bool,
+        trace_stats: crate::providers::TraceStats,
     ) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-        
-        // 这里可以实现阶段信息的JSON更新逻辑
-        // 为简化实现，暂时只记录最后一个阶段信息
-        let phase_json = serde_json::json!({
-            "phase": phase_name,
-            "duration_ms": duration_ms,
-            "success": success,
-            "details": details,
-            "timestamp": Utc::now().to_rfc3339()
-        }).to_string();
-        
-        let phase_model = proxy_tracing::ActiveModel {
-            phases_data: Set(Some(phase_json)),
-            ..Default::default()
-        };
-        
-        proxy_tracing::Entity::update_many()
-            .filter(proxy_tracing::Column::RequestId.eq(request_id))
-            .set(phase_model)
-            .exec(&*self.db)
-            .await?;
-        
-        debug!(
-            request_id = %request_id,
-            phase = phase_name,
-            duration_ms = duration_ms,
-            success = success,
-            "Added phase info to trace"
-        );
-        
-        Ok(())
+        self.complete_trace_with_stats(
+            request_id,
+            status_code,
+            is_success,
+            trace_stats.input_tokens,
+            trace_stats.output_tokens,
+            trace_stats.error_type,
+            trace_stats.error_message,
+            trace_stats.cache_create_tokens,
+            trace_stats.cache_read_tokens,
+            trace_stats.cost,
+            trace_stats.cost_currency,
+        ).await
     }
-    
-    /// 确定追踪级别
-    fn determine_trace_level(&self) -> TraceLevel {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let sample: f64 = rng.gen();
-        
-        if sample < self.config.full_sampling_rate {
-            TraceLevel::Full
-        } else if sample < self.config.detailed_sampling_rate {
-            TraceLevel::Detailed
-        } else {
-            TraceLevel::Basic
-        }
-    }
-    
-    /// 获取采样率
-    fn get_sampling_rate(&self, level: TraceLevel) -> f64 {
-        match level {
-            TraceLevel::Basic => self.config.basic_sampling_rate,
-            TraceLevel::Detailed => self.config.detailed_sampling_rate,
-            TraceLevel::Full => self.config.full_sampling_rate,
-        }
-    }
-    
-    /// 检查是否应该采样
-    fn should_sample(&self, rate: f64) -> bool {
-        if rate >= 1.0 {
-            return true;
-        }
-        if rate <= 0.0 {
-            return false;
-        }
-        
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        rng.gen::<f64>() < rate
-    }
-    
-    /// 计算健康影响评分
-    fn calculate_health_impact(
+
+    /// 完成追踪 - 简化版本（已废弃，推荐使用complete_trace_with_stats）
+    #[deprecated(note = "Use complete_trace_with_stats instead")]
+    pub async fn complete_trace_with_details(
         &self,
+        request_id: &str,
         status_code: u16,
         is_success: bool,
-        token_efficiency_ratio: Option<f64>,
-    ) -> Option<f64> {
-        let mut score = 0.0;
-        
-        // 成功率影响（最重要）
-        if is_success {
-            score += 10.0;
-        } else {
-            score -= 20.0;
-        }
-        
-        // 状态码影响
-        match status_code {
-            200..=299 => score += 3.0,   // 成功
-            300..=399 => score += 0.0,   // 重定向
-            400..=499 => score -= 10.0,  // 客户端错误
-            500..=599 => score -= 20.0,  // 服务器错误
-            _ => score -= 5.0,
-        }
-        
-        // Token效率影响
-        if let Some(efficiency) = token_efficiency_ratio {
-            if efficiency > 0.1 && efficiency < 5.0 {
-                score += 2.0; // 正常效率范围
-            } else {
-                score -= 3.0; // 异常效率
-            }
-        }
-        
-        Some(score)
+        tokens_prompt: Option<u32>,
+        tokens_completion: Option<u32>,
+        error_type: Option<String>,
+        error_message: Option<String>,
+        _request_details: Option<serde_json::Value>,
+        _response_details: Option<serde_json::Value>,
+    ) -> Result<()> {
+        // 重定向到简化版本
+        self.complete_trace_with_stats(
+            request_id,
+            status_code,
+            is_success,
+            tokens_prompt,
+            tokens_completion,
+            error_type,
+            error_message,
+            None, // cache_create_tokens
+            None, // cache_read_tokens
+            None, // cost
+            None, // cost_currency
+        ).await
     }
     
-    /// 异常检测
-    fn detect_anomaly(
-        &self,
-        status_code: u16,
-        is_success: bool,
-        token_efficiency_ratio: Option<f64>,
-    ) -> bool {
-        // Token使用异常
-        if let Some(efficiency) = token_efficiency_ratio {
-            if efficiency > 10.0 || efficiency < 0.01 {
-                return true;
-            }
-        }
-        
-        // 错误状态
-        if !is_success || status_code >= 400 {
-            return true;
-        }
-        
-        false
-    }
+    
     
     /// 查询进行中的请求（未完成的追踪记录）
     pub async fn get_active_requests(&self, limit: u64) -> Result<Vec<proxy_tracing::Model>> {
@@ -642,6 +428,7 @@ mod tests {
         tracer.start_trace(
             request_id.clone(),
             1,
+            Some(1), // user_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),
@@ -651,10 +438,7 @@ mod tests {
         // 更新中间信息
         tracer.update_trace_info(
             &request_id,
-            Some("openai".to_string()),
             Some("gpt-4".to_string()),
-            Some("api.openai.com:443".to_string()),
-            Some(1024),
         ).await.expect("Failed to update trace info");
         
         // 完成追踪
@@ -662,7 +446,6 @@ mod tests {
             &request_id,
             200,
             true,
-            Some(2048),
             Some(100),
             Some(50),
             None,

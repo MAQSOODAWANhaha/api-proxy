@@ -4,8 +4,8 @@
 
 use crate::error::{ProxyError, Result};
 use crate::health::HealthCheckService;
-use crate::providers::{DynamicAdapterManager, AdapterRequest};
-use crate::proxy::upstream::{UpstreamManager, UpstreamServer, ProviderId};
+use crate::providers::{AdapterRequest, DynamicAdapterManager};
+use crate::proxy::upstream::{ProviderId, UpstreamManager, UpstreamServer};
 use crate::scheduler::SchedulingStrategy;
 use pingora_http::{RequestHeader, ResponseHeader};
 use serde::{Deserialize, Serialize};
@@ -280,15 +280,15 @@ impl RequestForwarder {
     ) -> Result<UpstreamServer> {
         // 从上游管理器获取服务器列表
         let all_servers = self.upstream_manager.get_all_upstreams();
-        
+
         // 查找对应的服务器
-        for (upstream_type, servers) in all_servers {
+        for (_upstream_type, servers) in all_servers {
             if decision.server_index < servers.len() {
                 let (server, _metrics) = &servers[decision.server_index];
                 return Ok(server.clone());
             }
         }
-        
+
         // 如果找不到，返回错误
         Err(ProxyError::upstream_not_found(format!(
             "Server not found for decision: server_index={}, reason={}",

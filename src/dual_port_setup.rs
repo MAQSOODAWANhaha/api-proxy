@@ -290,15 +290,8 @@ pub async fn initialize_shared_services(matches: &ArgMatches) -> Result<(Arc<App
     let trace_system = if config_arc.is_trace_enabled() {
         info!("🔍 Initializing unified trace system...");
         
-        let trace_config = config_arc.get_trace_config().unwrap();
-        let immediate_tracer_config = ImmediateTracerConfig {
-            enabled: trace_config.enabled,
-            basic_sampling_rate: if trace_config.default_trace_level >= 0 { 1.0 } else { 0.0 },
-            detailed_sampling_rate: if trace_config.default_trace_level >= 1 { trace_config.sampling_rate } else { 0.0 },
-            full_sampling_rate: if trace_config.default_trace_level >= 2 { trace_config.sampling_rate } else { 0.1 * trace_config.sampling_rate },
-            health_scoring_enabled: trace_config.enable_health_metrics,
-            db_pool_size: 10, // 使用默认数据库连接池大小
-        };
+        let _trace_config = config_arc.get_trace_config().unwrap();
+        let immediate_tracer_config = ImmediateTracerConfig::default(); // 使用简化的默认配置
         
         let trace_system = Arc::new(UnifiedTraceSystem::new_immediate(db.clone(), immediate_tracer_config));
         info!("✅ Unified trace system initialized");

@@ -57,3 +57,25 @@ impl Related<super::daily_statistics::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+impl Default for Model {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: "unknown".to_string(),
+            display_name: "Unknown Provider".to_string(),
+            base_url: "".to_string(),
+            api_format: "".to_string(),
+            default_model: None,
+            max_tokens: None,
+            rate_limit: None,
+            timeout_seconds: None,
+            health_check_path: None,
+            auth_header_format: None,
+            is_active: false,
+            config_json: None,
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+        }
+    }
+}

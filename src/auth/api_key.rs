@@ -64,6 +64,7 @@ pub struct ApiKeyManager {
     /// Database connection
     db: Arc<DatabaseConnection>,
     /// Authentication configuration
+    #[allow(dead_code)]
     config: Arc<AuthConfig>,
     /// In-memory cache (production should use Redis)
     cache: tokio::sync::RwLock<HashMap<String, CachedApiKey>>,

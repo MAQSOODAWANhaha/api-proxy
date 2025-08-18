@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
+use serde::Serialize;
+use serde_with::{serde_as, DurationMilliSeconds};
 
 /// 健康检查服务
 pub struct HealthCheckService {
@@ -403,12 +405,14 @@ impl HealthCheckService {
 }
 
 /// 健康检查统计信息
-#[derive(Debug, Clone)]
+#[serde_as]
+#[derive(Debug, Clone, Serialize)]
 pub struct HealthCheckStatistics {
     pub total_servers: usize,
     pub healthy_servers: usize,
     pub unhealthy_servers: usize,
     pub active_tasks: usize,
+    #[serde_as(as = "DurationMilliSeconds<u64>")]
     pub avg_response_time: Duration,
     pub is_running: bool,
 }

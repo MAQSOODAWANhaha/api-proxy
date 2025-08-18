@@ -4,7 +4,6 @@
 
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// 统一代理追踪实体
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -20,15 +19,23 @@ pub struct Model {
     pub method: String,
     pub path: Option<String>,
     pub status_code: Option<i32>,
-    pub response_time_ms: Option<i32>,
-    pub request_size: Option<i32>,
-    pub response_size: Option<i32>,
     
     // === Token使用统计 ===
     pub tokens_prompt: Option<i32>,
     pub tokens_completion: Option<i32>,
     pub tokens_total: Option<i32>,
     pub token_efficiency_ratio: Option<f64>,
+    
+    // === 缓存Token统计 ===
+    pub cache_create_tokens: Option<i32>,
+    pub cache_read_tokens: Option<i32>,
+    
+    // === 费用统计 ===
+    pub cost: Option<f64>,
+    pub cost_currency: Option<String>,
+    
+    // === 用户ID ===
+    pub user_id: Option<i32>,
     
     // === 业务信息 ===
     pub model_used: Option<String>,
@@ -38,15 +45,8 @@ pub struct Model {
     pub error_message: Option<String>,
     pub retry_count: Option<i32>,
     
-    // === 追踪控制 ===
-    pub trace_level: i32, // 0=基础, 1=详细, 2=完整
-    pub sampling_rate: Option<f64>,
-    
     // === 提供商信息 ===
     pub provider_type_id: Option<i32>,
-    pub provider_name: Option<String>,
-    pub backend_key_id: Option<i32>,
-    pub upstream_addr: Option<String>,
     
     // === 详细时间追踪 ===
     pub start_time: Option<DateTime>,
@@ -54,15 +54,6 @@ pub struct Model {
     pub duration_ms: Option<i64>,
     pub is_success: bool,
     
-    // === 阶段追踪数据（JSON） ===
-    pub phases_data: Option<String>, // JSON: 各阶段详细信息
-    pub performance_metrics: Option<String>, // JSON: 性能指标
-    pub labels: Option<String>, // JSON: 自定义标签
-    
-    // === 健康状态评估 ===
-    pub health_impact_score: Option<f64>,
-    pub is_anomaly: Option<bool>,
-    pub quality_metrics: Option<String>, // JSON: 质量指标
     
     // === 创建时间 ===
     pub created_at: DateTime,
@@ -180,57 +171,14 @@ pub struct QualityMetrics {
 }
 
 impl Model {
-    /// 获取追踪级别
-    pub fn get_trace_level(&self) -> TraceLevel {
-        TraceLevel::from(self.trace_level)
-    }
-    
-    /// 解析阶段数据
-    pub fn get_phases(&self) -> Result<Vec<PhaseInfo>, serde_json::Error> {
-        match &self.phases_data {
-            Some(data) => serde_json::from_str(data),
-            None => Ok(Vec::new()),
-        }
-    }
-    
-    /// 解析性能指标
-    pub fn get_performance_metrics(&self) -> Result<Option<PerformanceMetrics>, serde_json::Error> {
-        match &self.performance_metrics {
-            Some(data) => serde_json::from_str(data).map(Some),
-            None => Ok(None),
-        }
-    }
-    
-    /// 解析标签
-    pub fn get_labels(&self) -> Result<HashMap<String, String>, serde_json::Error> {
-        match &self.labels {
-            Some(data) => serde_json::from_str(data),
-            None => Ok(HashMap::new()),
-        }
-    }
-    
-    /// 解析质量指标
-    pub fn get_quality_metrics(&self) -> Result<Option<QualityMetrics>, serde_json::Error> {
-        match &self.quality_metrics {
-            Some(data) => serde_json::from_str(data).map(Some),
-            None => Ok(None),
-        }
-    }
-    
     /// 判断是否为成功请求
     pub fn is_successful(&self) -> bool {
         self.is_success && self.status_code.map_or(true, |code| code < 400)
     }
     
-    /// 计算实际响应时间（优先使用duration_ms）
+    /// 计算实际响应时间
     pub fn get_response_time(&self) -> Option<u64> {
-        if let Some(duration) = self.duration_ms {
-            Some(duration as u64)
-        } else if let Some(response_time) = self.response_time_ms {
-            Some(response_time as u64)
-        } else {
-            None
-        }
+        self.duration_ms.map(|duration| duration as u64)
     }
     
     /// 获取总token数
@@ -254,9 +202,4 @@ impl Model {
         }
     }
     
-    /// 判断是否为异常请求
-    pub fn is_anomalous(&self) -> bool {
-        self.is_anomaly.unwrap_or(false) || 
-        self.health_impact_score.map_or(false, |score| score < -10.0)
-    }
 }

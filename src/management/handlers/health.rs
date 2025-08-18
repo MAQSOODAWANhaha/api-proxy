@@ -1,9 +1,8 @@
 //! 健康检查相关处理器
 
-use crate::management::server::AppState;
+use crate::management::{response, server::AppState};
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::Json;
+use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
 /// 健康检查服务器信息
@@ -17,16 +16,8 @@ pub struct HealthServerInfo {
     pub error_message: Option<String>,
 }
 
-/// 健康检查服务器列表响应
-#[derive(Debug, Serialize, Deserialize)]
-pub struct HealthServersResponse {
-    pub servers: Vec<HealthServerInfo>,
-}
-
 /// 获取所有健康检查服务器状态
-pub async fn get_health_servers(
-    State(state): State<AppState>,
-) -> Result<Json<HealthServersResponse>, StatusCode> {
+pub async fn get_health_servers(State(state): State<AppState>) -> impl IntoResponse {
     // 从健康检查服务获取服务器状态
     let _health_service = &state.health_service;
     
@@ -58,5 +49,5 @@ pub async fn get_health_servers(
         },
     ];
 
-    Ok(Json(HealthServersResponse { servers }))
+    response::success(servers)
 }

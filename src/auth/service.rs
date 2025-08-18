@@ -54,6 +54,7 @@ pub struct AuthService {
     /// Database connection
     db: Arc<DatabaseConnection>,
     /// Authentication configuration
+    #[allow(dead_code)]
     config: Arc<AuthConfig>,
     /// Cache manager for token blacklist
     cache_manager: Option<Arc<UnifiedCacheManager>>,

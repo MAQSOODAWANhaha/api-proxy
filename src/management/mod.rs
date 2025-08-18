@@ -6,6 +6,7 @@ pub mod server;
 pub mod handlers;
 pub mod routes;
 pub mod middleware;
+pub mod response;
 
 pub use server::{ManagementServer, ManagementConfig};
 pub use handlers::*;

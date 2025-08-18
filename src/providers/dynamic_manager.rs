@@ -2,15 +2,15 @@
 //!
 //! 基于数据库配置的动态适配器管理系统
 
+use super::generic_adapter::{GenericAdapter, GenericAdapterConfig};
 use super::traits::ProviderAdapter;
 use super::types::{AdapterRequest, AdapterResponse, ProviderError, ProviderResult, StreamChunk};
-use super::generic_adapter::{GenericAdapter, GenericAdapterConfig};
-use crate::proxy::upstream::ProviderId;
 use crate::config::ProviderConfigManager;
+use crate::proxy::upstream::ProviderId;
+use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use sea_orm::DatabaseConnection;
 
 /// 动态适配器管理器
 pub struct DynamicAdapterManager {
@@ -51,33 +51,44 @@ impl DynamicAdapterManager {
     /// 初始化管理器，从数据库加载所有活跃的提供商
     pub async fn initialize(&self) -> ProviderResult<()> {
         tracing::info!("Initializing dynamic adapter manager...");
-        
+
         match self.provider_config_manager.get_active_providers().await {
             Ok(providers) => {
                 let mut loaded_count = 0;
                 for provider in providers {
                     let provider_id = ProviderId::from_database_id(provider.id);
-                    
+
                     match self.load_adapter_for_provider(provider_id, &provider).await {
                         Ok(_) => {
                             loaded_count += 1;
-                            tracing::debug!("Loaded adapter for provider: {} (ID: {})", 
-                                          provider.display_name, provider.id);
+                            tracing::debug!(
+                                "Loaded adapter for provider: {} (ID: {})",
+                                provider.display_name,
+                                provider.id
+                            );
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to load adapter for provider {} (ID: {}): {}", 
-                                         provider.display_name, provider.id, e);
+                            tracing::warn!(
+                                "Failed to load adapter for provider {} (ID: {}): {}",
+                                provider.display_name,
+                                provider.id,
+                                e
+                            );
                         }
                     }
                 }
-                
-                tracing::info!("Dynamic adapter manager initialized with {} adapters", loaded_count);
+
+                tracing::info!(
+                    "Dynamic adapter manager initialized with {} adapters",
+                    loaded_count
+                );
                 Ok(())
             }
             Err(e) => {
                 tracing::error!("Failed to load providers from database: {}", e);
                 Err(ProviderError::ConfigurationError(format!(
-                    "Failed to initialize dynamic adapter manager: {}", e
+                    "Failed to initialize dynamic adapter manager: {}",
+                    e
                 )))
             }
         }
@@ -94,16 +105,23 @@ impl DynamicAdapterManager {
             provider_name: provider.name.clone(),
             display_name: provider.display_name.clone(),
             api_format: provider.api_format.clone(),
-            request_transform_rules: provider.config_json.as_ref()
+            request_transform_rules: provider
+                .config_json
+                .as_ref()
                 .and_then(|c| c.get("request_transform").cloned()),
-            response_transform_rules: provider.config_json.as_ref()
+            response_transform_rules: provider
+                .config_json
+                .as_ref()
                 .and_then(|c| c.get("response_transform").cloned()),
-            streaming_config: provider.config_json.as_ref()
+            streaming_config: provider
+                .config_json
+                .as_ref()
                 .and_then(|c| c.get("streaming").cloned()),
+            field_extractor: None,  // TODO: 从config_json创建FieldExtractor
         };
 
-        let adapter = Box::new(GenericAdapter::new(config.clone())) 
-            as Box<dyn ProviderAdapter + Send + Sync>;
+        let adapter =
+            Box::new(GenericAdapter::new(config.clone())) as Box<dyn ProviderAdapter + Send + Sync>;
 
         // 将适配器添加到缓存
         {
@@ -127,11 +145,13 @@ impl DynamicAdapterManager {
         Ok(())
     }
 
-
     /// 获取指定提供商的适配器
-    pub async fn get_adapter(&self, provider_id: &ProviderId) -> Option<Box<dyn ProviderAdapter + Send + Sync>> {
-        let adapters = self.adapters.read().await;
-        
+    pub async fn get_adapter(
+        &self,
+        _provider_id: &ProviderId,
+    ) -> Option<Box<dyn ProviderAdapter + Send + Sync>> {
+        let _adapters = self.adapters.read().await;
+
         // 这里有一个问题：我们不能直接克隆Box<dyn ProviderAdapter>
         // 需要重新设计这个接口
         // 暂时返回None，实际实现需要不同的方法
@@ -151,7 +171,7 @@ impl DynamicAdapterManager {
         request: &AdapterRequest,
     ) -> ProviderResult<AdapterRequest> {
         let adapters = self.adapters.read().await;
-        
+
         let adapter = adapters.get(provider_id).ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
@@ -170,7 +190,7 @@ impl DynamicAdapterManager {
         original_request: &AdapterRequest,
     ) -> ProviderResult<AdapterResponse> {
         let adapters = self.adapters.read().await;
-        
+
         let adapter = adapters.get(provider_id).ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
@@ -189,7 +209,7 @@ impl DynamicAdapterManager {
         request: &AdapterRequest,
     ) -> ProviderResult<Option<StreamChunk>> {
         let adapters = self.adapters.read().await;
-        
+
         let adapter = adapters.get(provider_id).ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
@@ -207,7 +227,7 @@ impl DynamicAdapterManager {
         request: &AdapterRequest,
     ) -> ProviderResult<()> {
         let adapters = self.adapters.read().await;
-        
+
         let adapter = adapters.get(provider_id).ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
@@ -217,7 +237,6 @@ impl DynamicAdapterManager {
 
         adapter.validate_request(request)
     }
-
 
     /// 获取所有支持的提供商ID
     pub async fn supported_provider_ids(&self) -> Vec<ProviderId> {
@@ -240,7 +259,7 @@ impl DynamicAdapterManager {
     /// 重新加载所有适配器（热重载）
     pub async fn reload_adapters(&self) -> ProviderResult<()> {
         tracing::info!("Reloading all adapters...");
-        
+
         // 清空现有适配器
         {
             let mut adapters = self.adapters.write().await;
@@ -257,24 +276,35 @@ impl DynamicAdapterManager {
 
     /// 为新提供商动态加载适配器
     pub async fn load_provider_adapter(&self, provider_id: ProviderId) -> ProviderResult<()> {
-        match self.provider_config_manager.get_provider_by_id(provider_id.id()).await {
+        match self
+            .provider_config_manager
+            .get_provider_by_id(provider_id.id())
+            .await
+        {
             Ok(Some(provider)) => {
                 if provider.is_active {
-                    self.load_adapter_for_provider(provider_id, &provider).await?;
-                    tracing::info!("Dynamically loaded adapter for provider: {} (ID: {})", 
-                                 provider.display_name, provider.id);
+                    self.load_adapter_for_provider(provider_id, &provider)
+                        .await?;
+                    tracing::info!(
+                        "Dynamically loaded adapter for provider: {} (ID: {})",
+                        provider.display_name,
+                        provider.id
+                    );
                     Ok(())
                 } else {
                     Err(ProviderError::ConfigurationError(format!(
-                        "Provider {} (ID: {}) is not active", provider.display_name, provider.id
+                        "Provider {} (ID: {}) is not active",
+                        provider.display_name, provider.id
                     )))
                 }
             }
             Ok(None) => Err(ProviderError::ConfigurationError(format!(
-                "Provider with ID {} not found", provider_id.id()
+                "Provider with ID {} not found",
+                provider_id.id()
             ))),
             Err(e) => Err(ProviderError::ConfigurationError(format!(
-                "Failed to load provider config: {}", e
+                "Failed to load provider config: {}",
+                e
             ))),
         }
     }
@@ -289,7 +319,7 @@ impl DynamicAdapterManager {
         if removed {
             let mut stats = self.stats.write().await;
             stats.retain(|_, stat| stat.provider_id != format!("{:?}", provider_id));
-            
+
             tracing::info!("Removed adapter for provider ID: {:?}", provider_id);
             Ok(())
         } else {
@@ -319,8 +349,8 @@ impl std::fmt::Debug for DynamicAdapterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AppConfig, ProviderConfigManager};
     use crate::cache::abstract_cache::UnifiedCacheManager;
+    use crate::config::{AppConfig, ProviderConfigManager};
 
     async fn create_test_manager() -> DynamicAdapterManager {
         // 这里需要真实的数据库连接和配置管理器进行测试

@@ -9,6 +9,7 @@ pub mod proxy_tracing;
 pub mod user_audit_logs;
 pub mod user_provider_keys;
 pub mod user_service_apis;
+pub mod user_service_api_providers;
 pub mod user_sessions;
 pub mod users;
 
@@ -19,5 +20,6 @@ pub use proxy_tracing::Entity as ProxyTracing;
 pub use user_audit_logs::Entity as UserAuditLogs;
 pub use user_provider_keys::Entity as UserProviderKeys;
 pub use user_service_apis::Entity as UserServiceApis;
+pub use user_service_api_providers::Entity as UserServiceApiProviders;
 pub use user_sessions::Entity as UserSessions;
 pub use users::Entity as Users;

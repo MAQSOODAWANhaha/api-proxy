@@ -283,7 +283,7 @@ impl AIProxyHandler {
         let api_key = self.extract_api_key(session)?;
         let user_service_api = self.authenticate_api_key(&api_key).await?;
         ctx.user_service_api = Some(user_service_api.clone());
-        let auth_duration = auth_start.elapsed();
+        let _auth_duration = auth_start.elapsed();
 
         // 开始即时追踪（认证成功后，现在有了user_service_api_id）
         if let Some(tracer) = &self.tracer {
@@ -298,6 +298,7 @@ impl AIProxyHandler {
                     .start_trace(
                         ctx.request_id.clone(),
                         user_service_api.id,
+                        Some(user_service_api.user_id), // 添加user_id参数
                         method,
                         path,
                         Some(client_ip.clone()),
@@ -321,19 +322,7 @@ impl AIProxyHandler {
                     "Client information collected"
                 );
 
-                // 记录认证阶段追踪信息
-                let _ = tracer
-                    .add_phase_info(
-                        &ctx.request_id,
-                        "authentication",
-                        auth_duration.as_millis() as u64,
-                        true,
-                        Some(format!(
-                            "Authenticated user_service_api_id: {}",
-                            user_service_api.id
-                        )),
-                    )
-                    .await;
+                // 认证阶段追踪信息已简化移除
             }
         }
 
@@ -348,7 +337,7 @@ impl AIProxyHandler {
         // 步骤2: 速率验证 - 对这个用户创建的服务商的速率限制
         let rate_limit_start = std::time::Instant::now();
         let rate_limit_result = self.check_rate_limit(&user_service_api).await;
-        let rate_limit_duration = rate_limit_start.elapsed();
+        let _rate_limit_duration = rate_limit_start.elapsed();
 
         if let Err(e) = rate_limit_result {
             // 速率限制失败时立即记录到数据库
@@ -359,7 +348,6 @@ impl AIProxyHandler {
                             &ctx.request_id,
                             429, // Rate limit exceeded
                             false,
-                            None,
                             None,
                             None,
                             Some("rate_limit_exceeded".to_string()),
@@ -377,20 +365,7 @@ impl AIProxyHandler {
             "Rate limit check passed"
         );
 
-        // 记录速率限制阶段追踪信息
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .add_phase_info(
-                        &ctx.request_id,
-                        "rate_limit_check",
-                        rate_limit_duration.as_millis() as u64,
-                        true,
-                        Some(format!("Rate limit: {:?}", user_service_api.rate_limit)),
-                    )
-                    .await;
-            }
-        }
+        // 速率限制阶段追踪信息记录已简化移除
 
         // 步骤3: 获取提供商类型信息和配置
         let provider_type = match self
@@ -407,7 +382,6 @@ impl AIProxyHandler {
                                 &ctx.request_id,
                                 500, // Internal server error
                                 false,
-                                None,
                                 None,
                                 None,
                                 Some("provider_type_not_found".to_string()),
@@ -460,7 +434,7 @@ impl AIProxyHandler {
         );
 
         // 步骤4: 根据token查找数据库中配置的转发策略
-        let load_balancing_start = std::time::Instant::now();
+        let _load_balancing_start = std::time::Instant::now();
         let scheduler = match self.get_scheduler(&user_service_api.scheduling_strategy) {
             Ok(scheduler) => scheduler,
             Err(e) => {
@@ -472,7 +446,6 @@ impl AIProxyHandler {
                                 &ctx.request_id,
                                 500, // Internal server error
                                 false,
-                                None,
                                 None,
                                 None,
                                 Some("scheduler_not_found".to_string()),
@@ -498,7 +471,6 @@ impl AIProxyHandler {
                                 false,
                                 None,
                                 None,
-                                None,
                                 Some("backend_selection_failed".to_string()),
                                 Some(e.to_string()),
                             )
@@ -516,13 +488,9 @@ impl AIProxyHandler {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
-                        Some(provider_type.name.clone()),
-                        Some(provider_type.id),
-                        Some(selected_backend.id),
-                        None,                      // model_used将在响应处理时设置
-                        None,                      // upstream_addr将在peer选择时设置
-                        None,                      // request_size将在请求处理时设置
-                        Some(user_service_api.id), // user_provider_key_id
+                        Some(provider_type.id), // provider_type_id
+                        None,                    // model_used将在响应处理时设置
+                        Some(selected_backend.id), // user_provider_key_id
                     )
                     .await;
 
@@ -534,24 +502,7 @@ impl AIProxyHandler {
                     "Updated trace info with provider and backend details"
                 );
 
-                // 记录负载均衡阶段追踪信息
-                let load_balancing_duration = load_balancing_start.elapsed();
-                let _ = tracer
-                    .add_phase_info(
-                        &ctx.request_id,
-                        "load_balancing",
-                        load_balancing_duration.as_millis() as u64,
-                        true,
-                        Some(format!(
-                            "Selected backend_id: {}, strategy: {}",
-                            selected_backend.id,
-                            user_service_api
-                                .scheduling_strategy
-                                .as_deref()
-                                .unwrap_or("round_robin")
-                        )),
-                    )
-                    .await;
+                // 负载均衡阶段追踪信息记录已简化移除
             }
         }
 
@@ -763,7 +714,6 @@ impl AIProxyHandler {
                                 false,
                                 None,
                                 None,
-                                None,
                                 Some("upstream_peer_selection_failed".to_string()),
                                 Some(error.to_string()),
                             )
@@ -788,29 +738,12 @@ impl AIProxyHandler {
             "Selected upstream peer"
         );
 
-        // 更新追踪信息：记录upstream地址
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .update_extended_trace_info(
-                        &ctx.request_id,
-                        None,                        // provider_name 已在之前设置
-                        None,                        // provider_type_id 已在之前设置
-                        None,                        // backend_key_id 已在之前设置
-                        None,                        // model_used将在响应处理时设置
-                        Some(upstream_addr.clone()), // 记录upstream地址
-                        None,                        // request_size将在请求处理时设置
-                        None,                        // user_provider_key_id 已在之前设置
-                    )
-                    .await;
-
-                tracing::info!(
-                    request_id = %ctx.request_id,
-                    upstream_addr = %upstream_addr,
-                    "Updated trace info with upstream address"
-                );
-            }
-        }
+        // Upstream address no longer stored in simplified trace schema
+        tracing::info!(
+            request_id = %ctx.request_id,
+            upstream_addr = %upstream_addr,
+            "Selected upstream address (not stored in trace)"
+        );
 
         // 创建基础peer
         let mut peer = HttpPeer::new(upstream_addr, true, provider_type.base_url.clone());
@@ -880,28 +813,13 @@ impl AIProxyHandler {
         // 收集请求头信息
         self.collect_request_details(session, ctx);
 
-        // 更新追踪信息：记录请求大小
-        if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled && ctx.request_details.body_size.is_some() {
-                let _ = tracer
-                    .update_extended_trace_info(
-                        &ctx.request_id,
-                        None,                          // provider_name 已设置
-                        None,                          // provider_type_id 已设置
-                        None,                          // backend_key_id 已设置
-                        None,                          // model_used将在响应时设置
-                        None,                          // upstream_addr 已设置
-                        ctx.request_details.body_size, // 记录请求体大小
-                        None,                          // user_provider_key_id 已设置
-                    )
-                    .await;
-
-                tracing::info!(
-                    request_id = %ctx.request_id,
-                    request_size = ?ctx.request_details.body_size,
-                    "Updated trace info with request size"
-                );
-            }
+        // Request size no longer stored in simplified trace schema
+        if ctx.request_details.body_size.is_some() {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                request_size = ?ctx.request_details.body_size,
+                "Request size collected (not stored in trace)"
+            );
         }
 
         let selected_backend = match ctx.selected_backend.as_ref() {
@@ -916,7 +834,6 @@ impl AIProxyHandler {
                                 &ctx.request_id,
                                 500, // Internal server error
                                 false,
-                                None,
                                 None,
                                 None,
                                 Some("request_forwarding_failed".to_string()),
@@ -941,7 +858,6 @@ impl AIProxyHandler {
                                 &ctx.request_id,
                                 500, // Internal server error
                                 false,
-                                None,
                                 None,
                                 None,
                                 Some("request_forwarding_failed".to_string()),
@@ -978,7 +894,6 @@ impl AIProxyHandler {
                             &ctx.request_id,
                             500, // Internal server error
                             false,
-                            None,
                             None,
                             None,
                             Some("header_setting_failed".to_string()),
@@ -1020,7 +935,6 @@ impl AIProxyHandler {
                             false,
                             None,
                             None,
-                            None,
                             Some("header_setting_failed".to_string()),
                             Some(error.to_string()),
                         ).await;
@@ -1044,7 +958,6 @@ impl AIProxyHandler {
                                     &ctx.request_id,
                                     500, // Internal server error
                                     false,
-                                    None,
                                     None,
                                     None,
                                     Some("header_setting_failed".to_string()),
@@ -1083,7 +996,6 @@ impl AIProxyHandler {
                                     &ctx.request_id,
                                     500, // Internal server error
                                     false,
-                                    None,
                                     None,
                                     None,
                                     Some("header_setting_failed".to_string()),
@@ -1344,12 +1256,8 @@ impl AIProxyHandler {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
-                        None,                               // provider_name 已设置
                         None,                               // provider_type_id 已设置
-                        None,                               // backend_key_id 已设置
                         ctx.token_usage.model_used.clone(), // 更新model_used字段
-                        None,                               // upstream_addr 已设置
-                        None,                               // request_size 已设置
                         None,                               // user_provider_key_id 已设置
                     )
                     .await;
@@ -1632,7 +1540,6 @@ impl AIProxyHandler {
                                 false,
                                 None,
                                 None,
-                                None,
                                 Some("invalid_auth_format".to_string()),
                                 Some(error.to_string()),
                             )
@@ -1652,7 +1559,6 @@ impl AIProxyHandler {
                                 &ctx.request_id,
                                 500, // Internal server error
                                 false,
-                                None,
                                 None,
                                 None,
                                 Some("auth_parsing_failed".to_string()),
@@ -1687,7 +1593,6 @@ impl AIProxyHandler {
                             &ctx.request_id,
                             500, // Internal server error
                             false,
-                            None,
                             None,
                             None,
                             Some("header_setting_failed".to_string()),
