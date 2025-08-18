@@ -1,0 +1,64 @@
+# 简化的Caddy配置文件 - 直接端口转发
+
+# ================================
+# 全局选项
+# ================================
+{
+    auto_https disable_redirects
+    admin :2019
+    log {
+        level INFO
+    }
+}
+
+# ================================
+# 443端口 HTTPS -> 9090端口
+# ================================
+:443 {
+    tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key
+    
+    reverse_proxy proxy:9090 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/443.log
+    }
+}
+
+# ================================
+# 8443端口 HTTPS -> 8080端口
+# ================================
+:8443 {
+    tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key
+    
+    reverse_proxy proxy:8080 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/8443.log
+    }
+}
+
+# ================================
+# 80端口 HTTP -> 9090端口
+# ================================
+:80 {
+    reverse_proxy proxy:9090 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/80.log
+    }
+}

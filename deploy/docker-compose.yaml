@@ -1,21 +1,24 @@
-# AI代理平台 Docker Compose 配置
+# AI代理平台 Docker Compose 配置 - 统一部署版本
 
 services:
   # ================================
-  # 后端服务 (Rust + Pingora)
+  # 统一代理服务 (前后端合并)
   # ================================
-  backend:
-    image: registry.cn-hangzhou.aliyuncs.com/luciferzl/proxybackend:latest
-    pull_policy: always
-    container_name: api-proxy-backend
+  proxy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # 如果使用镜像仓库
+    # image: api-proxy-proxy:latest
+    container_name: api-proxy-service
     restart: unless-stopped
     ports:
-      - "8080:8080" # Pingora代理服务
-      - "9090:9090" # Axum管理API
+      - "9090:9090" # 统一服务端口（API + 静态文件）
+      - "8080:8080" # 重定向端口（可选）
     volumes:
       # 数据持久化
-      - backend_data:/app/data
-      - backend_logs:/app/logs
+      - proxy_data:/app/data
+      - proxy_logs:/app/logs
       # TLS证书（如果需要外部证书）
       - ./certs:/app/certs:ro
       # 配置文件（可选，用于动态配置）
@@ -25,6 +28,7 @@ services:
       - RUST_BACKTRACE=1
       - API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE:-config.prod.toml}
       - API_PROXY_DATA_DIR=/app/data
+      - API_PROXY_STATIC_DIR=/app/static
       - DATABASE_URL=sqlite:///app/data/api-proxy.db
     networks:
       - api-proxy-network
@@ -38,33 +42,45 @@ services:
       start_period: 40s
 
   # ================================
-  # 前端服务 (Vue.js + Nginx) - 运行时配置注入
+  # Caddy 反向代理和SSL终端
   # ================================
-  frontend:
-    image: registry.cn-hangzhou.aliyuncs.com/luciferzl/proxyfrontend:latest
-    pull_policy: always
-    container_name: api-proxy-frontend
+  caddy:
+    image: docker.m.daocloud.io/caddy:2.8-alpine
+    container_name: api-proxy-caddy
     restart: unless-stopped
     ports:
-      - "3000:80" # 前端Web界面
+      - "80:80" # HTTP
+      - "9443:443" # HTTPS (避免与k8s Traefik冲突)
+      - "8443:8443" # HTTPS (8443端口)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./logs/caddy:/var/log/caddy
     environment:
-      # 运行时环境变量注入
-      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
-      - VITE_WS_URL=${VITE_WS_URL}
-      - VITE_APP_VERSION=${VITE_APP_VERSION:-1.0.0}
-      - VITE_LOG_LEVEL=${VITE_LOG_LEVEL:-info}
-      - VITE_USE_MOCK=${VITE_USE_MOCK:-false}
-      - DEBUG=${DEBUG:-false}
+      - DOMAIN=${DOMAIN:-zhanglei.work}
+      - LOCAL_IP=${LOCAL_IP}
+      - PROXY_HOST=proxy
+      - PROXY_PORT_9090=9090
+      - PROXY_PORT_8080=8080
     networks:
       - api-proxy-network
     depends_on:
-      - backend
+      - proxy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:2019/config/",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
 
   # ================================
   # Redis缓存服务
@@ -86,41 +102,19 @@ services:
       timeout: 5s
       retries: 3
 
-  # ================================
-  # 反向代理 (Nginx) - 可选
-  # ================================
-  proxy:
-    image: docker.m.daocloud.io/nginx:alpine
-    container_name: api-proxy-gateway
-    restart: unless-stopped
-    ports:
-      - "80:80" # HTTP
-      - "443:443" # HTTPS (如果配置了SSL)
-    volumes:
-      - ./nginx-gateway.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro # SSL证书目录
-    networks:
-      - api-proxy-network
-    depends_on:
-      - frontend
-      - backend
-    profiles:
-      - production # 仅在生产环境启用
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
 # ================================
 # 数据卷定义
 # ================================
 volumes:
-  backend_data:
+  proxy_data:
     driver: local
-  backend_logs:
+  proxy_logs:
     driver: local
   redis_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
     driver: local
 
 # ================================

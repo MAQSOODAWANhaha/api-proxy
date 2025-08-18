@@ -1,13 +1,37 @@
-# AI代理平台后端 Dockerfile
-# 多阶段构建：构建阶段 + 运行阶段
+# AI代理平台 - 前后端统一部署 Dockerfile
+# 多阶段构建：前端构建 + 后端构建 + 统一运行
 
 # ================================
-# 构建阶段
+# 前端构建阶段
 # ================================
-FROM docker.m.daocloud.io/rust:1.88.0-slim as builder
+FROM docker.m.daocloud.io/node:18-alpine as frontend-builder
 
+LABEL maintainer="AI Proxy Team"
+LABEL description="AI代理平台 - 前后端统一部署版本"
 
-# 配置 Cargo 中国镜像源 (关键修复)
+# 设置工作目录
+WORKDIR /app/dashboard
+
+# 复制前端package配置文件
+COPY dashboard/package*.json ./
+
+# 安装依赖
+RUN npm ci --only=production=false
+
+# 复制前端源代码
+COPY dashboard/ ./
+
+# 构建前端项目（生产环境使用相对路径）
+ENV NEXT_PUBLIC_API_BASE_URL=/api
+ENV NODE_ENV=production
+RUN npm run build
+
+# ================================
+# 后端构建阶段
+# ================================
+FROM docker.m.daocloud.io/rust:1.88.0-slim as backend-builder
+
+# 配置 Cargo 中国镜像源
 RUN mkdir -p $CARGO_HOME && \
     echo '[source.crates-io]' > $CARGO_HOME/config.toml && \
     echo 'replace-with = "ustc"' >> $CARGO_HOME/config.toml && \
@@ -18,7 +42,6 @@ RUN mkdir -p $CARGO_HOME && \
     echo '[net]' >> $CARGO_HOME/config.toml && \
     echo 'git-fetch-with-cli = true' >> $CARGO_HOME/config.toml
 
-# 或者使用以下环境变量方式 (推荐)
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 ENV CARGO_REGISTRIES_CRATES_IO_INDEX=https://mirrors.ustc.edu.cn/crates.io-index/
 
@@ -34,21 +57,21 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制Cargo配置文件（从根目录开始）
+# 复制Cargo配置文件
 COPY Cargo.toml Cargo.lock ./
 COPY entity/Cargo.toml ./entity/
 COPY migration/Cargo.toml ./migration/
 
-# 复制源代码
+# 复制后端源代码
 COPY src ./src/
 COPY entity/src ./entity/src/
 COPY migration/src ./migration/src/
 
-# 构建项目（发布模式）
+# 构建后端项目（发布模式）
 RUN cargo build --release
 
 # ================================
-# 运行阶段
+# 统一运行阶段
 # ================================
 FROM docker.m.daocloud.io/debian:bookworm-slim
 
@@ -70,13 +93,20 @@ RUN useradd -r -s /bin/false -m -d /app apiproxy
 # 设置工作目录
 WORKDIR /app
 
-# 从构建阶段复制二进制文件
-COPY --from=builder /app/target/release/api-proxy /app/api-proxy
+# 从后端构建阶段复制二进制文件
+COPY --from=backend-builder /app/target/release/api-proxy /app/api-proxy
+
+# 从前端构建阶段复制静态文件
+COPY --from=frontend-builder /app/dashboard/out /app/static
+# 如果使用的是标准构建，使用 .next/static 和 .next/standalone
+# COPY --from=frontend-builder /app/dashboard/.next/standalone /app/
+# COPY --from=frontend-builder /app/dashboard/.next/static /app/.next/static
+# COPY --from=frontend-builder /app/dashboard/public /app/public
 
 # 创建必要的目录
 RUN mkdir -p /app/data /app/certs /app/logs /app/config
 
-# 复制配置文件（从根目录开始）
+# 复制配置文件
 COPY config/ ./config/
 COPY config.toml ./
 
@@ -88,9 +118,9 @@ RUN chmod +x /app/api-proxy
 USER apiproxy
 
 # 暴露端口
-# 8080: Pingora代理服务
-# 9090: Axum管理API
-EXPOSE 8080 9090
+# 9090: 统一服务端口（API + 静态文件）
+# 8080: 重定向端口（可选）
+EXPOSE 9090 8080
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -101,6 +131,7 @@ ENV RUST_LOG=info
 ENV RUST_BACKTRACE=1
 ENV API_PROXY_CONFIG_PATH=/app/config.toml
 ENV API_PROXY_DATA_DIR=/app/data
+ENV API_PROXY_STATIC_DIR=/app/static
 
 # 启动命令
 CMD ["./api-proxy"]

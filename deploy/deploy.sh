@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AI代理平台一键部署脚本
-# 支持开发和生产环境的容器化部署
+# 支持前后端统一部署和Caddy反向代理
 
 set -e
 
@@ -10,8 +10,16 @@ set -e
 # ================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-COMPOSE_FILE="$SCRIPT_DIR/docker compose.yaml"
-ENV_FILE="$SCRIPT_DIR/.env"
+COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yaml"
+ENV_FILE="$SCRIPT_DIR/.env.production"
+
+# TLS证书配置
+TLS_MODE="${TLS_MODE:-auto}"  # auto|selfsigned|manual
+DOMAIN_NAME="${DOMAIN:-zhanglei.work}"
+CERT_EMAIL="${CERT_EMAIL:-admin@${DOMAIN_NAME}}"
+
+# IP模式配置 (将在函数定义后初始化)
+LOCAL_IP="${LOCAL_IP:-}"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -75,11 +83,87 @@ check_docker() {
     log_success "Docker环境检查通过"
 }
 
-# 获取本地IP地址（仅开发环境使用）
+# 交互式选择TLS配置
+interactive_tls_setup() {
+    log_step "TLS证书配置选择"
+    
+    echo ""
+    echo -e "${BLUE}请选择TLS证书类型:${NC}"
+    echo "1) 自签名证书 (测试环境，基于IP地址)"
+    echo "2) 域名证书 (生产环境，需要有效域名)"
+    echo ""
+    
+    while true; do
+        read -p "请选择 (1 或 2): " cert_choice
+        case $cert_choice in
+            1)
+                TLS_MODE="selfsigned"
+                log_info "已选择：自签名证书模式"
+                
+                # 获取并确认IP地址
+                auto_ip=$(get_local_ip)
+                echo ""
+                echo -e "${BLUE}IP地址配置:${NC}"
+                if [[ -n "$auto_ip" ]]; then
+                    echo "检测到本机IP: $auto_ip"
+                    read -p "使用此IP？(y/n，默认y): " use_auto_ip
+                    if [[ "$use_auto_ip" != "n" && "$use_auto_ip" != "N" ]]; then
+                        LOCAL_IP="$auto_ip"
+                    fi
+                fi
+                
+                if [[ -z "$LOCAL_IP" ]]; then
+                    while true; do
+                        read -p "请输入IP地址: " manual_ip
+                        if [[ "$manual_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                            LOCAL_IP="$manual_ip"
+                            break
+                        else
+                            log_error "IP地址格式无效，请重新输入"
+                        fi
+                    done
+                fi
+                
+                log_success "将使用自签名证书，IP: $LOCAL_IP"
+                break
+                ;;
+            2)
+                TLS_MODE="auto"
+                echo ""
+                echo -e "${BLUE}域名配置:${NC}"
+                read -p "请输入域名 (默认: zhanglei.work): " user_domain
+                if [[ -n "$user_domain" ]]; then
+                    DOMAIN_NAME="$user_domain"
+                fi
+                
+                read -p "请输入证书申请邮箱 (默认: admin@$DOMAIN_NAME): " user_email
+                if [[ -n "$user_email" ]]; then
+                    CERT_EMAIL="$user_email"
+                else
+                    CERT_EMAIL="admin@$DOMAIN_NAME"
+                fi
+                
+                log_success "将使用域名证书，域名: $DOMAIN_NAME，邮箱: $CERT_EMAIL"
+                break
+                ;;
+            *)
+                log_error "无效选择，请输入 1 或 2"
+                ;;
+        esac
+    done
+}
+
+# 获取本地IP地址
 get_local_ip() {
     local local_ip=""
     
-    # 优先使用环境变量
+    # 优先使用环境变量 LOCAL_IP
+    if [[ -n "$LOCAL_IP" ]]; then
+        echo "$LOCAL_IP"
+        return
+    fi
+    
+    # 优先使用环境变量 DEPLOY_IP（向后兼容）
     if [[ -n "$DEPLOY_IP" ]]; then
         echo "$DEPLOY_IP"
         return
@@ -98,132 +182,734 @@ get_local_ip() {
         local_ip=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
     fi
     
-    # 返回检测到的IP或默认值
-    echo "${local_ip:-127.0.0.1}"
+    # 只返回检测到的IP，不使用默认值
+    echo "$local_ip"
+}
+
+# 验证并确保获取到有效的本机IP地址
+ensure_local_ip() {
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(get_local_ip)
+    fi
+    
+    # 如果自动检测失败或IP格式无效，强制要求用户输入
+    while [[ -z "$LOCAL_IP" || ! "$LOCAL_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; do
+        if [[ -n "$LOCAL_IP" ]]; then
+            log_error "检测到无效的IP地址格式: $LOCAL_IP"
+        else
+            log_warning "无法自动检测本机IP地址"
+        fi
+        
+        echo -e "${YELLOW}请手动输入本机IP地址（例如：192.168.1.100）${NC}"
+        read -p "本机IP地址: " manual_ip
+        
+        if [[ "$manual_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            LOCAL_IP="$manual_ip"
+            log_success "使用手动输入的IP地址: $LOCAL_IP"
+            break
+        else
+            log_error "输入的IP地址格式无效，请重新输入"
+        fi
+    done
+    
+    log_info "确认使用IP地址: $LOCAL_IP"
+}
+
+# ================================
+# TLS证书管理函数
+# ================================
+
+# 生成自签名证书
+generate_self_signed_cert() {
+    log_step "生成自签名TLS证书"
+    
+    local cert_dir="$SCRIPT_DIR/certs"
+    local domain="$1"
+    local cert_file="$cert_dir/${domain}.crt"
+    local key_file="$cert_dir/${domain}.key"
+    
+    # 检查是否已存在证书
+    if [[ -f "$cert_file" && -f "$key_file" ]]; then
+        log_info "证书已存在，检查有效期..."
+        if openssl x509 -in "$cert_file" -checkend 604800 -noout &>/dev/null; then
+            log_success "现有证书仍然有效（7天内不会过期）"
+            return 0
+        else
+            log_warning "证书即将过期，重新生成..."
+        fi
+    fi
+    
+    # 确保证书目录存在
+    mkdir -p "$cert_dir"
+    
+    # 创建证书配置文件
+    cat > "$cert_dir/cert.conf" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = CN
+ST = Beijing
+L = Beijing
+O = AI Proxy Platform
+OU = Development
+CN = ${domain}
+
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = ${domain}
+DNS.2 = *.${domain}
+DNS.3 = localhost
+IP.1 = 127.0.0.1
+IP.2 = $(get_local_ip)
+EOF
+    
+    # 生成私钥和证书
+    openssl genrsa -out "$key_file" 2048
+    openssl req -new -key "$key_file" -out "$cert_dir/${domain}.csr" -config "$cert_dir/cert.conf"
+    openssl x509 -req -in "$cert_dir/${domain}.csr" -signkey "$key_file" -out "$cert_file" \
+        -days 365 -extensions v3_req -extfile "$cert_dir/cert.conf"
+    
+    # 设置权限
+    chmod 600 "$key_file"
+    chmod 644 "$cert_file"
+    
+    # 清理临时文件
+    rm -f "$cert_dir/${domain}.csr" "$cert_dir/cert.conf"
+    
+    log_success "自签名证书生成完成: $cert_file"
+    log_info "证书有效期: 365天"
+}
+
+# 生成基于IP的自签名证书（简化版）
+generate_ip_self_signed_cert() {
+    log_step "生成基于IP的自签名TLS证书"
+    
+    local cert_dir="$SCRIPT_DIR/certs"
+    local cert_file="$cert_dir/server.crt"
+    local key_file="$cert_dir/server.key"
+    
+    log_info "使用IP地址: $LOCAL_IP"
+    
+    # 检查是否已存在有效证书
+    if [[ -f "$cert_file" && -f "$key_file" ]]; then
+        if openssl x509 -in "$cert_file" -checkend 604800 -noout &>/dev/null; then
+            log_success "现有证书仍然有效（7天内不会过期）"
+            return 0
+        fi
+    fi
+    
+    # 确保证书目录存在
+    mkdir -p "$cert_dir"
+    
+    # 简化的证书生成：直接使用openssl一步生成
+    log_info "生成自签名证书..."
+    
+    openssl req -x509 -newkey rsa:2048 -keyout "$key_file" -out "$cert_file" \
+        -days 365 -nodes -subj "/CN=$LOCAL_IP" \
+        -addext "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:$LOCAL_IP" \
+        -addext "keyUsage=digitalSignature,keyEncipherment" \
+        -addext "extendedKeyUsage=serverAuth"
+    
+    # 设置权限
+    chmod 600 "$key_file"
+    chmod 644 "$cert_file"
+    
+    log_success "基于IP的自签名证书生成完成: $cert_file"
+    log_info "证书主要IP: $LOCAL_IP"
+    log_info "证书有效期: 365天"
+    log_info "支持的访问方式:"
+    log_info "  - https://$LOCAL_IP:9443"
+    log_info "  - https://localhost:9443"
+    log_info "  - https://127.0.0.1:9443"
+}
+
+# 检查域名证书状态
+check_domain_cert_status() {
+    local domain="$1"
+    log_step "检查域名 $domain 的证书状态"
+    
+    # 检查域名解析
+    if ! nslookup "$domain" &>/dev/null; then
+        log_warning "域名 $domain 解析失败，可能影响证书申请"
+        return 1
+    fi
+    
+    # 检查80和443端口可达性（Let's Encrypt需要）
+    local local_ip
+    local_ip=$(get_local_ip)
+    
+    log_info "检查域名解析: $domain -> $(nslookup "$domain" | grep -A1 "Name:" | tail -n1 | awk '{print $2}' 2>/dev/null || echo "未解析")"
+    log_info "本机IP: $local_ip"
+    
+    return 0
+}
+
+# 配置Caddy证书模式
+setup_caddy_tls() {
+    log_step "配置Caddy TLS模式: $TLS_MODE"
+    
+    local caddyfile="$SCRIPT_DIR/Caddyfile"
+    local cert_dir="$SCRIPT_DIR/certs"
+    
+    case "$TLS_MODE" in
+        "selfsigned")
+            log_info "使用IP地址自签名证书模式"
+            generate_ip_self_signed_cert
+            
+            # 创建基于IP的自签名证书Caddyfile
+            # 初始化LOCAL_IP（如果还没有初始化）
+            if [[ -z "$LOCAL_IP" ]]; then
+                LOCAL_IP=$(get_local_ip)
+            fi
+            
+            cat > "$caddyfile" << EOF
+# 简化的Caddy配置文件 - 直接端口转发
+
+# ================================
+# 全局选项
+# ================================
+{
+    auto_https disable_redirects
+    admin :2019
+    log {
+        level INFO
+    }
+}
+
+# ================================
+# 443端口 HTTPS -> 9090端口
+# ================================
+:443 {
+    tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key
+    
+    reverse_proxy proxy:9090 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/443.log
+    }
+}
+
+# ================================
+# 8443端口 HTTPS -> 8080端口
+# ================================
+:8443 {
+    tls /etc/caddy/certs/server.crt /etc/caddy/certs/server.key
+    
+    reverse_proxy proxy:8080 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/8443.log
+    }
+}
+
+# ================================
+# 80端口 HTTP -> 9090端口
+# ================================
+:80 {
+    reverse_proxy proxy:9090 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+    
+    log {
+        output file /var/log/caddy/80.log
+    }
+}
+EOF
+            ;;
+            
+        "auto"|"")
+            log_info "使用自动域名证书模式（Let's Encrypt）"
+            check_domain_cert_status "$DOMAIN_NAME"
+            
+            # 创建自动证书Caddyfile
+            cat > "$caddyfile" << 'EOF'
+# AI代理平台 Caddy 配置文件 - 自动域名证书模式
+
+# ================================
+# 全局选项
+# ================================
+{
+    # 自动HTTPS
+    auto_https on
+    
+    # 证书申请邮箱
+    email {$CERT_EMAIL:-admin@zhanglei.work}
+    
+    # 管理端点
+    admin :2019
+    
+    # 日志级别
+    log {
+        level INFO
+    }
+    
+    # ACME服务器（生产环境使用Let's Encrypt）
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+# ================================
+# 主域名 HTTPS (443端口) - 自动证书
+# ================================
+{$DOMAIN:-zhanglei.work} {
+    # 健康检查端点
+    handle /health {
+        respond "OK - Auto TLS" 200
+    }
+    
+    # API 路由
+    handle /api/* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+    
+    # WebSocket 支持
+    handle /ws/* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            header_up Connection {>Connection}
+            header_up Upgrade {>Upgrade}
+        }
+    }
+    
+    # 静态文件和前端路由
+    handle /* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+    
+    # 访问日志
+    log {
+        output file /var/log/caddy/domain.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+}
+
+# ================================
+# 8443端口 HTTPS 转发 - 内部证书
+# ================================
+:8443 {
+    tls internal
+    
+    handle /health {
+        respond "OK - Port 8443" 200
+    }
+    
+    handle /* {
+        reverse_proxy proxy:8080 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+}
+
+# ================================
+# HTTP重定向到HTTPS
+# ================================
+http://{$DOMAIN:-zhanglei.work} {
+    redir https://{$DOMAIN:-zhanglei.work}{uri} permanent
+}
+EOF
+            ;;
+            
+        "manual")
+            log_info "使用手动证书模式"
+            if [[ ! -f "$cert_dir/$DOMAIN_NAME.crt" || ! -f "$cert_dir/$DOMAIN_NAME.key" ]]; then
+                log_error "手动模式需要提供证书文件: $cert_dir/$DOMAIN_NAME.crt 和 $cert_dir/$DOMAIN_NAME.key"
+                return 1
+            fi
+            
+            # 创建手动证书Caddyfile（类似自签名，但使用手动提供的证书）
+            cat > "$caddyfile" << 'EOF'
+# AI代理平台 Caddy 配置文件 - 手动证书模式
+
+# ================================
+# 全局选项
+# ================================
+{
+    # 禁用自动HTTPS
+    auto_https off
+    
+    # 管理端点
+    admin :2019
+    
+    # 日志级别
+    log {
+        level INFO
+    }
+}
+
+# ================================
+# 主域名 HTTPS (443端口) - 手动证书
+# ================================
+https://{$DOMAIN:-zhanglei.work} {
+    # 使用手动提供的证书
+    tls /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.crt /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.key
+    
+    # 健康检查端点
+    handle /health {
+        respond "OK - Manual TLS" 200
+    }
+    
+    # API 路由
+    handle /api/* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+    
+    # WebSocket 支持
+    handle /ws/* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+            header_up Connection {>Connection}
+            header_up Upgrade {>Upgrade}
+        }
+    }
+    
+    # 静态文件和前端路由
+    handle /* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+    
+    # 访问日志
+    log {
+        output file /var/log/caddy/manual.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+}
+
+# ================================
+# 8443端口 HTTPS 转发
+# ================================
+:8443 {
+    tls /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.crt /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.key
+    
+    handle /health {
+        respond "OK - Port 8443" 200
+    }
+    
+    handle /* {
+        reverse_proxy proxy:8080 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+}
+EOF
+            ;;
+            
+        *)
+            log_error "不支持的TLS模式: $TLS_MODE"
+            log_info "支持的模式: auto, selfsigned, manual"
+            return 1
+            ;;
+    esac
+    
+    log_success "Caddy TLS配置完成: $TLS_MODE 模式"
+}
+
+# 查看证书状态
+show_cert_status() {
+    log_step "TLS证书状态检查"
+    
+    local cert_dir="$SCRIPT_DIR/certs"
+    local cert_file="$cert_dir/$DOMAIN_NAME.crt"
+    
+    echo ""
+    log_info "当前配置:"
+    echo "  TLS模式: $TLS_MODE"
+    echo "  域名: $DOMAIN_NAME"
+    echo "  证书邮箱: $CERT_EMAIL"
+    
+    echo ""
+    if [[ -f "$cert_file" ]]; then
+        log_info "本地证书文件: $cert_file"
+        
+        # 检查证书有效期
+        local expiry_date
+        expiry_date=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+        if [[ -n "$expiry_date" ]]; then
+            echo "  有效期至: $expiry_date"
+            
+            # 检查是否即将过期
+            if openssl x509 -in "$cert_file" -checkend 604800 -noout &>/dev/null; then
+                log_success "证书有效（7天内不会过期）"
+            else
+                log_warning "证书即将在7天内过期！"
+            fi
+        fi
+        
+        # 显示证书详情
+        local subject
+        subject=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | cut -d= -f2-)
+        [[ -n "$subject" ]] && echo "  主体: $subject"
+        
+        # 显示SAN列表
+        local sans
+        sans=$(openssl x509 -in "$cert_file" -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1 | sed 's/.*DNS:/DNS:/g')
+        [[ -n "$sans" ]] && echo "  SAN: $sans"
+    else
+        log_warning "未找到本地证书文件"
+    fi
+    
+    echo ""
+    log_info "Caddy证书状态:"
+    if docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy &>/dev/null; then
+        local container_id
+        container_id=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy)
+        if [[ -n "$container_id" ]]; then
+            echo "  Caddy管理API: http://localhost:2019"
+            echo ""
+            log_info "Caddy证书信息:"
+            docker exec "$container_id" curl -s http://localhost:2019/config/apps/tls/certificates 2>/dev/null | \
+                python3 -m json.tool 2>/dev/null || echo "  无法获取证书信息"
+        fi
+    else
+        log_warning "Caddy服务未运行"
+    fi
+}
+
+# 强制更新证书
+renew_certificates() {
+    log_step "强制更新TLS证书"
+    
+    case "$TLS_MODE" in
+        "selfsigned")
+            log_info "重新生成自签名证书"
+            # 删除旧证书强制重新生成
+            rm -f "$SCRIPT_DIR/certs/$DOMAIN_NAME.crt" "$SCRIPT_DIR/certs/$DOMAIN_NAME.key"
+            generate_self_signed_cert "$DOMAIN_NAME"
+            ;;
+            
+        "auto"|"")
+            log_info "强制更新Let's Encrypt证书"
+            if docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy &>/dev/null; then
+                log_info "通过Caddy API触发证书更新"
+                local container_id
+                container_id=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy)
+                docker exec "$container_id" curl -X POST http://localhost:2019/load \
+                    -H "Content-Type: application/json" \
+                    -d '{"apps":{"tls":{"automation":{"policies":[{"management":{"module":"acme"},"subjects":["'$DOMAIN_NAME'"]}]}}}}'
+                log_success "证书更新请求已发送"
+            else
+                log_error "Caddy服务未运行，无法更新证书"
+                return 1
+            fi
+            ;;
+            
+        "manual")
+            log_warning "手动模式需要您自己更新证书文件"
+            log_info "请将新证书放在: $SCRIPT_DIR/certs/$DOMAIN_NAME.crt"
+            log_info "请将私钥放在: $SCRIPT_DIR/certs/$DOMAIN_NAME.key"
+            ;;
+    esac
+    
+    # 重启Caddy服务以加载新证书
+    log_info "重启Caddy服务以加载新证书"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart caddy
+    
+    log_success "证书更新完成"
+}
+
+# 切换TLS模式
+switch_tls_mode() {
+    local new_mode="$1"
+    
+    if [[ -z "$new_mode" ]]; then
+        log_error "请指定TLS模式: auto, selfsigned, manual"
+        return 1
+    fi
+    
+    case "$new_mode" in
+        "auto"|"selfsigned"|"manual")
+            log_step "切换TLS模式: $TLS_MODE -> $new_mode"
+            
+            # 更新环境变量
+            TLS_MODE="$new_mode"
+            
+            # 更新环境文件
+            if grep -q "^TLS_MODE=" "$ENV_FILE" 2>/dev/null; then
+                sed -i "s/^TLS_MODE=.*/TLS_MODE=$new_mode/" "$ENV_FILE"
+            else
+                echo "TLS_MODE=$new_mode" >> "$ENV_FILE"
+            fi
+            
+            # 重新配置Caddy
+            setup_caddy_tls
+            
+            # 重启服务
+            log_info "重启服务以应用新的TLS配置"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart caddy
+            
+            log_success "TLS模式已切换到: $new_mode"
+            ;;
+        *)
+            log_error "不支持的TLS模式: $new_mode"
+            log_info "支持的模式: auto, selfsigned, manual"
+            return 1
+            ;;
+    esac
 }
 
 # 创建必要的目录和文件
 prepare_environment() {
-    local profile="${1:-default}"
-    log_step "准备部署环境 (profile: $profile)"
+    log_step "准备部署环境"
     
     # 创建必要的目录
     mkdir -p "$SCRIPT_DIR/certs"
     mkdir -p "$SCRIPT_DIR/config"
-    mkdir -p "$SCRIPT_DIR/ssl" 
-    mkdir -p "$SCRIPT_DIR/logs"
+    mkdir -p "$SCRIPT_DIR/logs/caddy"
     
-    # 根据环境选择配置文件
-    if [ "$profile" = "production" ]; then
-        CONFIG_SOURCE="config.prod.toml"
-        log_info "使用生产环境配置: $CONFIG_SOURCE"
-    else
-        CONFIG_SOURCE="config.dev.toml"
-        log_info "使用开发环境配置: $CONFIG_SOURCE"
-    fi
+    # 设置配置文件
+    CONFIG_SOURCE="config.prod.toml"
+    log_info "使用生产环境配置: $CONFIG_SOURCE"
     
     # 检查配置文件是否存在
     if [ ! -f "$SCRIPT_DIR/config/$CONFIG_SOURCE" ]; then
         log_warning "配置文件 $CONFIG_SOURCE 不存在"
     fi
     
-    # 根据环境决定前端配置
-    local api_base_url=""
-    local ws_url=""
+    # 交互式选择TLS配置
+    interactive_tls_setup
     
-    if [ "$profile" = "production" ]; then
-        # 生产环境：使用相对路径，nginx网关自动处理
-        log_info "生产环境：使用相对路径配置，通过nginx网关访问"
-        api_base_url="/api"
-        ws_url="/ws"
-    else
-        # 开发环境：检测本地IP并直接访问后端
-        local local_ip=$(get_local_ip)
-        log_info "开发环境：检测到本地IP: $local_ip"
-        api_base_url="http://${local_ip}:9090/api"
-        ws_url="ws://${local_ip}:9090/ws"
-    fi
+    # 设置TLS证书模式
+    setup_caddy_tls
     
-    # 创建或更新.env文件
-    log_info "创建环境配置文件: $ENV_FILE"
-    cat > "$ENV_FILE" << EOF
+    # 确保环境变量文件存在
+    if [ ! -f "$ENV_FILE" ]; then
+        log_info "创建环境配置文件: $ENV_FILE"
+        cat > "$ENV_FILE" << EOF
 # AI代理平台环境配置
 
-# 应用配置
+# ================================
+# 基础配置
+# ================================
 COMPOSE_PROJECT_NAME=api-proxy
-COMPOSE_FILE=docker-compose.yaml
+CONFIG_FILE=config.prod.toml
 
-# 端口配置
-FRONTEND_PORT=3000
-BACKEND_API_PORT=9090
-BACKEND_PROXY_PORT=8080
-REDIS_PORT=6379
-GATEWAY_HTTP_PORT=80
-GATEWAY_HTTPS_PORT=443
+# ================================
+# TLS证书配置 (用户交互式选择)
+# ================================
+TLS_MODE=${TLS_MODE}
+EOF
 
-# 环境设置
+        # 根据TLS模式添加相应配置
+        if [[ "$TLS_MODE" == "selfsigned" ]]; then
+            cat >> "$ENV_FILE" << EOF
+LOCAL_IP=${LOCAL_IP}
+EOF
+        else
+            cat >> "$ENV_FILE" << EOF
+DOMAIN=${DOMAIN_NAME}
+CERT_EMAIL=${CERT_EMAIL}
+EOF
+        fi
+
+        cat >> "$ENV_FILE" << EOF
+
+# ================================
+# 日志配置
+# ================================
 RUST_LOG=info
 RUST_BACKTRACE=1
-NODE_ENV=production
 
+# ================================
 # 数据库配置
+# ================================
 DATABASE_URL=sqlite:///app/data/api-proxy.db
 
-# Redis配置
-REDIS_URL=redis://redis:6379
-
-# 安全配置（请修改默认值）
-JWT_SECRET=$(openssl rand -base64 32 2>/dev/null || echo "change-me-in-production")
-API_KEY_SECRET=$(openssl rand -base64 32 2>/dev/null || echo "change-me-in-production")
-
-# TLS配置
-TLS_ENABLED=false
-TLS_CERT_PATH=/app/certs/cert.pem
-TLS_KEY_PATH=/app/certs/key.pem
-
-# 监控配置
-ENABLE_METRICS=true
-METRICS_PORT=9091
-
-# 前端配置
-VITE_API_BASE_URL=$api_base_url
-VITE_WS_URL=$ws_url
-VITE_APP_VERSION=1.0.0
-VITE_LOG_LEVEL=info
-VITE_USE_MOCK=false
-
-# 后端配置文件
-CONFIG_FILE=$CONFIG_SOURCE
+# ================================
+# 版本标识
+# ================================
+VERSION=1.0.0
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
+    fi
     
-    log_success "环境配置完成: API_URL=${api_base_url}, WS_URL=${ws_url}"
+    log_success "环境配置完成"
 }
 
 # 构建镜像
 build_images() {
-    log_step "构建Docker镜像"
+    log_step "构建统一Docker镜像"
     
     cd "$SCRIPT_DIR"
     
-    # 使用.env文件 - 确保环境变量正确加载
+    # 使用.env文件
     if [ -f "$ENV_FILE" ]; then
         set -a  # 自动导出所有变量
         source "$ENV_FILE"
         set +a  # 关闭自动导出
-        log_info "已加载环境变量: VITE_API_BASE_URL=${VITE_API_BASE_URL}, CONFIG_FILE=${CONFIG_FILE}"
-        log_info "注意: 前端使用运行时配置注入，环境变量将在容器启动时注入到应用中"
+        
+        # 根据TLS模式显示不同信息
+        if [[ "$TLS_MODE" == "selfsigned" ]]; then
+            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=自签名证书, IP=${LOCAL_IP}"
+        else
+            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=域名证书, DOMAIN=${DOMAIN_NAME}"
+        fi
     fi
     
-    # 构建镜像 - 新版本支持通用构建（无需构建时环境变量）
-    # 环境变量将在运行时注入，因此构建阶段不再需要传递环境变量
-    docker compose build --no-cache
+    # 构建统一的前后端镜像
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --no-cache proxy
     
-    log_success "镜像构建完成"
+    log_success "统一镜像构建完成"
 }
 
-# 智能检测并启动服务
-detect_and_start_services() {
-    log_step "智能检测环境配置并启动服务"
+# 启动服务
+start_services() {
+    log_step "启动统一服务"
     
     cd "$SCRIPT_DIR"
     
@@ -232,75 +918,34 @@ detect_and_start_services() {
         set -a
         source "$ENV_FILE"
         set +a
-        
-        # 智能检测：相对路径 = 生产环境，绝对路径 = 开发环境
-        if [[ "$VITE_API_BASE_URL" == "/api"* ]]; then
-            log_info "检测到生产环境配置 (API URL: $VITE_API_BASE_URL)"
-            log_info "启动完整服务栈，包含nginx网关"
-            docker compose --env-file "$ENV_FILE" --profile production up -d
-        else
-            log_info "检测到开发环境配置 (API URL: $VITE_API_BASE_URL)"
-            log_info "启动开发服务栈，直接暴露端口"
-            docker compose --env-file "$ENV_FILE" up -d
-        fi
+        log_info "启动服务栈：统一代理服务 + Caddy反向代理"
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
     else
         log_error "未找到环境配置文件: $ENV_FILE"
-        log_info "请先运行 ./deploy.sh install 或 ./deploy.sh install-prod"
+        log_info "请先运行 ./deploy.sh install"
         exit 1
     fi
     
     log_success "服务启动完成"
 }
 
-# 启动服务
-start_services() {
-    local profile="${1:-auto}"
-    
-    # 如果没有明确指定profile或指定为auto，则智能检测
-    if [ "$profile" = "auto" ] || [ -z "$profile" ]; then
-        detect_and_start_services
-    else
-        log_step "启动服务 (profile: $profile)"
-        
-        cd "$SCRIPT_DIR"
-        
-        # 使用.env文件
-        if [ -f "$ENV_FILE" ]; then
-            set -a  # 自动导出所有变量
-            source "$ENV_FILE"
-            set +a  # 关闭自动导出
-        fi
-        
-        if [ "$profile" = "production" ]; then
-            # 生产环境包括网关
-            docker compose --env-file "$ENV_FILE" --profile production up -d
-        else
-            # 开发环境不包括网关
-            docker compose --env-file "$ENV_FILE" up -d
-        fi
-        
-        log_success "服务启动完成"
-    fi
-}
 
 # 停止服务
 stop_services() {
     log_step "停止服务"
     
     cd "$SCRIPT_DIR"
-    docker compose down
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down
     
     log_success "服务已停止"
 }
 
 # 重启服务
 restart_services() {
-    local profile="${1:-auto}"
-    
     log_step "重启服务"
     
     stop_services
-    start_services "$profile"
+    start_services
     
     log_success "服务重启完成"
 }
@@ -310,13 +955,13 @@ show_status() {
     log_step "服务状态"
     
     cd "$SCRIPT_DIR"
-    docker compose ps
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
     
     echo ""
     log_info "服务健康状态:"
-    docker compose exec backend curl -f http://localhost:9090/api/health 2>/dev/null && log_success "后端API服务正常" || log_warning "后端API服务异常"
-    docker compose exec frontend curl -f http://localhost/health 2>/dev/null && log_success "前端服务正常" || log_warning "前端服务异常"
-    docker compose exec redis redis-cli ping 2>/dev/null && log_success "Redis服务正常" || log_warning "Redis服务异常"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec proxy curl -f http://localhost:9090/api/health 2>/dev/null && log_success "统一代理服务正常" || log_warning "统一代理服务异常"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec caddy wget --quiet --tries=1 --spider http://localhost:2019/config/ 2>/dev/null && log_success "Caddy代理正常" || log_warning "Caddy代理异常"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec redis redis-cli ping 2>/dev/null && log_success "Redis服务正常" || log_warning "Redis服务异常"
 }
 
 # 查看日志
@@ -328,10 +973,10 @@ show_logs() {
     
     if [ -n "$service" ]; then
         log_step "查看 $service 服务日志 (最近 $lines 行)"
-        docker compose logs --tail="$lines" -f "$service"
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail="$lines" -f "$service"
     else
         log_step "查看所有服务日志 (最近 $lines 行)"
-        docker compose logs --tail="$lines" -f
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail="$lines" -f
     fi
 }
 
@@ -342,11 +987,11 @@ cleanup() {
     cd "$SCRIPT_DIR"
     
     # 停止并删除容器
-    docker compose down --volumes --remove-orphans
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans
     
     # 删除镜像（可选）
     if [ "$1" = "--images" ]; then
-        docker compose down --rmi all
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --rmi all
         log_info "已删除相关镜像"
     fi
     
@@ -365,7 +1010,8 @@ database_operation() {
             log_step "备份数据库"
             mkdir -p "$SCRIPT_DIR/backups"
             backup_file="$SCRIPT_DIR/backups/backup-$(date +%Y%m%d-%H%M%S).db"
-            docker compose exec backend cp /app/data/api-proxy.db "/app/backups/$(basename "$backup_file")"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec proxy cp /app/data/api-proxy.db "/tmp/$(basename "$backup_file")"
+            docker cp "$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q proxy):/tmp/$(basename "$backup_file")" "$backup_file"
             log_success "数据库已备份到: $backup_file"
             ;;
         "restore")
@@ -375,8 +1021,8 @@ database_operation() {
                 exit 1
             fi
             log_step "恢复数据库"
-            docker compose exec backend cp "/app/backups/$(basename "$backup_file")" /app/data/api-proxy.db
-            docker compose restart backend
+            docker cp "$backup_file" "$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q proxy):/app/data/api-proxy.db"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart proxy
             log_success "数据库已恢复"
             ;;
         *)
@@ -394,60 +1040,47 @@ show_access_info() {
     echo -e "${GREEN}==================== 🎉 部署成功 ====================${NC}"
     echo ""
     
-    # 检测当前运行的环境
-    local is_production=false
-    if docker compose ps | grep -q "api-proxy-gateway"; then
-        is_production=true
-    fi
-    
-    if [ "$is_production" = true ]; then
-        echo -e "${BLUE}🌍 生产环境 - 通过nginx网关访问:${NC}"
-        echo -e "  📱 前端界面: ${GREEN}http://您的服务器IP${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理API:  ${GREEN}http://您的服务器IP/api${NC}"
-        echo -e "  🤖 AI代理:   ${GREEN}http://您的服务器IP/v1${NC}"
+    if [[ "$TLS_MODE" == "selfsigned" ]]; then
+        echo -e "${BLUE}🌍 自签名证书模式 (测试环境):${NC}"
+        echo -e "  📱 主要入口:  ${GREEN}https://$LOCAL_IP:9443${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理面板:  ${GREEN}https://$LOCAL_IP:9443/dashboard${NC}"
+        echo -e "  🤖 API接口:   ${GREEN}https://$LOCAL_IP:9443/api${NC}"
+        echo -e "  🔐 备用端口:  ${GREEN}https://$LOCAL_IP:8443${NC}"
+        echo -e "  🏠 本地访问:  ${GREEN}https://localhost:9443${NC}"
         echo ""
-        echo -e "${YELLOW}📌 生产环境特点:${NC}"
-        echo "  • 所有请求通过80端口nginx网关统一入口"
-        echo "  • 前端使用相对路径，自动适配域名"
-        echo "  • 支持SSL/TLS加密（需配置证书）"
-        echo "  • 适合公网部署和生产使用"
-        echo ""
-        echo -e "${BLUE}🔧 直接访问后端（调试用）:${NC}"
-        echo "  • 管理API: http://您的服务器IP:9090/api"
-        echo "  • AI代理: http://您的服务器IP:8080/v1"
+        echo -e "${YELLOW}⚠️  注意事项:${NC}"
+        echo "  • 浏览器会提示证书不受信任，点击"高级"→"继续访问"即可"
+        echo "  • 自签名证书仅供测试使用，生产环境请使用域名证书"
     else
-        # 从.env获取IP地址用于显示
-        local dev_ip="localhost"
-        if [ -f "$ENV_FILE" ]; then
-            local api_url=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | cut -d'=' -f2)
-            if [[ "$api_url" == http://* ]]; then
-                dev_ip=$(echo "$api_url" | sed 's|http://||' | sed 's|:.*||')
-            fi
-        fi
-        
-        echo -e "${BLUE}🛠️ 开发环境 - 直接端口访问:${NC}"
-        echo -e "  📱 前端界面: ${GREEN}http://${dev_ip}:3000${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理API:  ${GREEN}http://${dev_ip}:9090/api${NC}"
-        echo -e "  🤖 AI代理:   ${GREEN}http://${dev_ip}:8080/v1${NC}"
-        echo -e "  📊 Redis:    ${GREEN}redis://${dev_ip}:6379${NC}"
+        echo -e "${BLUE}🌍 域名证书模式 (生产环境):${NC}"
+        echo -e "  📱 主域名:    ${GREEN}https://$DOMAIN_NAME${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理面板:  ${GREEN}https://$DOMAIN_NAME/dashboard${NC}"
+        echo -e "  🤖 API接口:   ${GREEN}https://$DOMAIN_NAME/api${NC}"
+        echo -e "  🔐 备用端口:  ${GREEN}https://$DOMAIN_NAME:8443${NC}"
         echo ""
-        echo -e "${YELLOW}📌 开发环境特点:${NC}"
-        echo "  • 各服务独立端口，便于调试"
-        echo "  • 无网关层，直接访问后端服务"
-        echo "  • 适合本地开发和测试"
+        echo -e "${YELLOW}📌 证书信息:${NC}"
+        echo "  • 域名: $DOMAIN_NAME"
+        echo "  • 邮箱: $CERT_EMAIL"
+        echo "  • 自动续期: Let's Encrypt"
     fi
     
+    echo ""
+    echo -e "${YELLOW}📌 服务架构特点:${NC}"
+    echo "  • 统一后端服务：9090端口（前端静态文件 + API）"
+    echo "  • 8080端口重定向到根路径"
+    echo "  • Caddy自动HTTPS和SSL证书管理"
+    echo "  • 避免Kubernetes端口冲突：使用9443端口"
+    echo ""
+    echo -e "${BLUE}🔧 直接访问（调试用）:${NC}"
+    echo "  • 统一服务: http://localhost:9090"
+    echo "  • API健康检查: http://localhost:9090/api/health"
+    echo "  • Redis: redis://localhost:6379"
     echo ""
     echo -e "${BLUE}⚙️ 管理命令:${NC}"
     echo -e "  📊 查看状态: ${GREEN}./deploy.sh status${NC}"
-    echo -e "  📋 查看日志: ${GREEN}./deploy.sh logs [service]${NC}"
+    echo -e "  📋 查看日志: ${GREEN}./deploy.sh logs [proxy|caddy|redis]${NC}"
     echo -e "  ⏹️  停止服务: ${GREEN}./deploy.sh stop${NC}"
     echo -e "  🔄 重启服务: ${GREEN}./deploy.sh restart${NC}"
-    echo ""
-    echo -e "${BLUE}🚀 部署提示:${NC}"
-    echo "  • 生产环境：零配置，nginx自动处理域名和路径"
-    echo "  • 开发环境：如需外部访问，设置 DEPLOY_IP=你的IP"
-    echo "  • 环境切换：重新运行对应的 install 命令即可"
     echo ""
     echo -e "${GREEN}==================================================${NC}"
 }
@@ -455,48 +1088,73 @@ show_access_info() {
 # 显示帮助信息
 show_help() {
     cat << EOF
-AI代理平台一键部署脚本
+AI代理平台统一部署脚本
 
 用法: $0 <命令> [选项]
 
 核心命令:
-  install              开发环境 - 直接端口访问，需要IP配置
-  install-prod         生产环境 - nginx网关，零IP配置
-  start                智能启动 - 自动检测环境配置
+  install              安装和启动统一代理服务
+  start                启动所有服务
   stop                 停止所有服务
-  restart              重启服务（保持当前环境配置）
+  restart              重启服务
 
 管理命令:
   status               查看服务运行状态
-  logs [service]       查看服务日志
+  logs [service]       查看服务日志 (proxy|caddy|redis)
   build                重新构建Docker镜像
   cleanup [--images]   清理Docker资源
   backup               备份数据库
   restore <file>       恢复数据库
   help                 显示此帮助信息
 
-环境说明:
-  开发环境 (install)：
-    • 各服务独立端口：前端:3000, 后端:9090, Redis:6379
-    • 需要检测本地IP地址，支持外部访问
-    • 无nginx网关，直接访问各服务
-    • 适合：本地开发、调试、测试
+TLS证书管理:
+  cert-status          查看当前证书状态
+  cert-renew           手动更新证书
+  cert-selfsign        生成自签名证书（开发用）
+  cert-mode <mode>     切换证书模式 (auto|selfsigned|manual)
 
-  生产环境 (install-prod)：
-    • 统一nginx网关入口，仅使用80/443端口
-    • 前端使用相对路径，自动适配域名
-    • 零IP配置，部署即用
-    • 适合：公网部署、生产使用
+服务架构:
+  统一代理服务：
+    • 前后端合并部署，9090端口提供完整服务
+    • 包含前端静态文件和后端API
+    • 8080端口重定向到根路径
+    • 支持健康检查和监控
+
+  Caddy反向代理：
+    • 自动HTTPS和SSL证书管理
+    • 域名 zhanglei.work 路由到统一服务
+    • 443端口：主域名访问
+    • 8443端口：备用访问端口
+
+  Redis缓存：
+    • 6379端口，用于缓存和会话管理
 
 环境变量:
-  DEPLOY_IP=<IP>       指定开发环境使用的IP地址
+  DOMAIN=<domain>      指定主域名（默认：zhanglei.work）
+  LOCAL_IP=<ip>        指定本机IP地址（自动检测或手动设置，默认：自动检测）
+  TLS_MODE=<mode>      TLS证书模式（auto|selfsigned|manual，默认：auto）
+  CERT_EMAIL=<email>   Let's Encrypt证书申请邮箱
 
 使用示例:
-  ./deploy.sh install-prod         # 生产环境，零配置部署
-  ./deploy.sh install              # 开发环境，自动检测IP
-  DEPLOY_IP=192.168.1.100 ./deploy.sh install  # 指定IP的开发环境
-  ./deploy.sh logs backend         # 查看后端日志
-  ./deploy.sh restart              # 重启（保持环境）
+  ./deploy.sh install              # 完整安装部署
+  ./deploy.sh logs proxy           # 查看统一服务日志
+  ./deploy.sh logs caddy           # 查看Caddy代理日志
+  ./deploy.sh restart              # 重启所有服务
+  ./deploy.sh backup               # 备份数据库
+
+TLS证书管理示例:
+  ./deploy.sh cert-status          # 查看证书状态
+  ./deploy.sh cert-mode selfsigned # 切换到自签名证书（开发环境）
+  ./deploy.sh cert-mode auto       # 切换到自动证书（生产环境）
+  ./deploy.sh cert-renew           # 手动更新证书
+  TLS_MODE=selfsigned ./deploy.sh install  # 使用自签名证书安装
+
+访问地址:
+  • https://[本机IP]               # IP地址访问（自签名证书模式，需要设置LOCAL_IP环境变量）
+  • https://localhost              # 本地访问
+  • https://localhost:8443         # 备用端口
+  • http://[本机IP]                # HTTP访问（开发模式）
+  • 域名模式: https://zhanglei.work # 域名访问（auto/manual证书模式）
 
 EOF
 }
@@ -510,28 +1168,21 @@ main() {
     case "$command" in
         "install")
             check_docker
-            prepare_environment "default"
+            prepare_environment
             build_images
-            start_services "default"
-            show_access_info
-            ;;
-        "install-prod")
-            check_docker
-            prepare_environment "production"
-            build_images
-            start_services "production"
+            start_services
             show_access_info
             ;;
         "start")
             check_docker
-            detect_and_start_services
+            start_services
             ;;
         "stop")
             stop_services
             ;;
         "restart")
             check_docker
-            restart_services "${2:-auto}"
+            restart_services
             ;;
         "status")
             show_status
@@ -553,12 +1204,20 @@ main() {
             database_operation "restore" "$2"
             ;;
         "info")
-            # 如果用户指定了IP地址，使用指定的IP；否则从.env文件读取
-            local info_ip="$2"
-            if [ -z "$info_ip" ] && [ -f "$ENV_FILE" ]; then
-                info_ip=$(grep "^VITE_API_BASE_URL=" "$ENV_FILE" | sed 's|.*://||' | sed 's|/.*||' | sed 's|:.*||')
-            fi
-            show_access_info "production" "$info_ip"
+            show_access_info
+            ;;
+        "cert-status")
+            show_cert_status
+            ;;
+        "cert-renew")
+            renew_certificates
+            ;;
+        "cert-selfsign")
+            TLS_MODE="selfsigned"
+            generate_self_signed_cert "$DOMAIN_NAME"
+            ;;
+        "cert-mode")
+            switch_tls_mode "$2"
             ;;
         "help"|"--help"|"-h"|"")
             show_help
