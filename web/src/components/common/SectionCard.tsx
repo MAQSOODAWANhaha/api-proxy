@@ -1,10 +1,12 @@
 /**
  * SectionCard.tsx
- * 统一的内容承载卡片容器：圆角 + 边框 + 阴影，并提供一致的内边距。
+ * 统一的内容承载卡片容器：基于 shadcn/ui Card 组件，提供一致的内边距。
  * 外部用于包裹表格、图表或表单，确保全站视觉风格一致。
  */
 
 import React from 'react'
+import { Card, CardContent } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 
 /**
  * SectionCardProps
@@ -23,13 +25,15 @@ export interface SectionCardProps {
 
 /**
  * SectionCard
- * 标准卡片容器
+ * 基于 shadcn/ui Card 组件的标准卡片容器
  */
 const SectionCard: React.FC<SectionCardProps> = ({ children, className, bodyClassName }) => {
   return (
-    <section className={['rounded-xl border bg-card shadow-sm', className || ''].join(' ')}>
-      <div className={['p-4 md:p-6', bodyClassName || ''].join(' ')}>{children}</div>
-    </section>
+    <Card className={cn('shadow-sm', className)}>
+      <CardContent className={cn('p-4 md:p-6', bodyClassName)}>
+        {children}
+      </CardContent>
+    </Card>
   )
 }
 

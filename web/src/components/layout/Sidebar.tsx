@@ -1,10 +1,11 @@
 /**
  * Sidebar.tsx
- * 左侧导航栏（桌面侧栏 + 移动抽屉），白色背景、紫色点缀，支持折叠与移动端抽屉。
+ * 左侧导航栏（桌面侧栏 + 移动抽屉），基于 shadcn/ui Sheet 组件优化。
  * 说明：
  * - 使用 lucide-react 图标与 TailwindCSS 进行视觉设计。
  * - 使用 zustand 的 ui store 管理折叠与移动端抽屉的可见性。
  * - 使用 react-router 的 useLocation/useNavigate 进行路由跳转。
+ * - 移动端使用 shadcn/ui Sheet 组件提供更好的用户体验。
  */
 
 import React, { useMemo } from 'react'
@@ -16,9 +17,10 @@ import {
   FileText,
   Users as UsersIcon,
   Settings as SettingsIcon,
-  User,
-  X,
 } from 'lucide-react'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 // 说明：为避免构建器未配置别名导致报错，这里使用相对路径替代 "@/store/ui"
 import { useUiStore } from '../../store/ui'
 
@@ -47,7 +49,7 @@ function isActive(pathname: string, target: string): boolean {
 }
 
 /**
- * 单个导航按钮（深紫色填充选中效果）
+ * 单个导航按钮（使用 shadcn/ui Button 组件，深紫色填充选中效果）
  */
 const NavButton: React.FC<{
   active: boolean
@@ -57,22 +59,10 @@ const NavButton: React.FC<{
   onClick: () => void
   title?: string
 }> = ({ active, collapsed, icon, label, onClick, title }) => {
-  // 样式说明：
-  // - 未激活：透明底，文本 neutral-700，图标容器 neutral-100；悬停出现 neutral-100。
-  // - 激活：violet-600 深色背景 + 白色文字 + 微妙阴影，完全填充的选中效果。
-  const base =
-    'relative flex items-center gap-3 rounded-none min-h-10 text-sm font-medium transition-all duration-200 select-none'
-  const layout = collapsed ? 'justify-center px-0' : 'justify-start pl-6 pr-3'
-  const state = active
-    ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/25 ring-1 ring-violet-500'
-    : 'text-neutral-700 hover:bg-neutral-100 hover:shadow-sm hover:scale-[1.02]'
-  const focus =
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 focus-visible:ring-offset-0'
-
-  const iconBox = [
+  const iconBox = cn(
     'flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200',
-    active ? 'bg-white/20 text-white' : 'bg-neutral-100 text-neutral-600 group-hover:bg-neutral-200',
-  ].join(' ')
+    active ? 'bg-white/20 text-white' : 'bg-neutral-100 text-neutral-600 group-hover:bg-neutral-200'
+  )
 
   return (
     <div className="relative">
@@ -82,16 +72,22 @@ const NavButton: React.FC<{
           className="absolute left-0 top-1 bottom-1 w-[4px] rounded-r-full bg-white/90 shadow-sm"
         />
       )}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         onClick={onClick}
-        className={[base, layout, state, focus, 'group w-full'].join(' ')}
+        className={cn(
+          'relative flex items-center gap-3 rounded-none min-h-10 text-sm font-medium transition-all duration-200 select-none group w-full',
+          collapsed ? 'justify-center px-0' : 'justify-start pl-6 pr-3',
+          active
+            ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/25 ring-1 ring-violet-500 hover:bg-violet-600'
+            : 'text-neutral-700 hover:bg-neutral-100 hover:shadow-sm hover:scale-[1.02]'
+        )}
         title={title ?? label}
         aria-current={active ? 'page' : undefined}
       >
         <span className={iconBox}>{icon}</span>
         {!collapsed && <span className="truncate">{label}</span>}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -151,11 +147,7 @@ const Sidebar: React.FC = () => {
     []
   )
 
-  /** 底部固定项（个人中心） */
-  const bottomItem: NavItem = useMemo(
-    () => ({ key: 'profile', label: '个人中心', path: '/profile', icon: <User size={18} /> }),
-    []
-  )
+  // 个人中心已迁移到右上角头像菜单中
 
   /**
    * 点击导航：前往并在移动端关闭抽屉
@@ -200,57 +192,27 @@ const Sidebar: React.FC = () => {
           )
         })}
 
-        {/* 底部分隔与个人中心 */}
-        <div className="mt-auto pt-2">
-          <div className={`${sidebarCollapsed ? 'mx-3' : 'mx-6'} mb-2 h-px bg-neutral-200`} />
-          <NavButton
-            active={isActive(location.pathname, bottomItem.path)}
-            collapsed={sidebarCollapsed}
-            icon={bottomItem.icon}
-            label={bottomItem.label}
-            onClick={() => handleNav(bottomItem.path)}
-            title={bottomItem.label}
-          />
-        </div>
+        {/* 底部空间保留 */}
+        <div className="mt-auto" />
       </nav>
     </aside>
   )
 
   /**
-   * 移动端抽屉侧栏（白色风格）
+   * 移动端抽屉侧栏（使用 shadcn/ui Sheet 组件）
    */
-  const MobileDrawer = mobileSidebarOpen ? (
-    <div className="fixed inset-0 z-50 md:hidden" aria-modal="true" role="dialog">
-      {/* 遮罩 */}
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={closeMobileSidebar}
-        aria-label="关闭侧边栏"
-      />
-      {/* 抽屉面板 */}
-      <div
-        className={[
-          'absolute left-0 top-0 h-full w-[82vw] max-w-xs',
+  const MobileDrawer = (
+    <Sheet open={mobileSidebarOpen} onOpenChange={(open) => !open && closeMobileSidebar()}>
+      <SheetContent 
+        side="left" 
+        className={cn(
+          'w-[82vw] max-w-xs p-0',
           'bg-white text-neutral-800',
-          'border-r border-neutral-200',
-          'shadow-2xl',
-          'animate-in slide-in-from-left duration-200',
-          'flex flex-col',
-        ].join(' ')}
+          'flex flex-col'
+        )}
       >
-        {/* 顶部栏（包含关闭按钮与品牌） */}
-        <div className="relative">
-          <Brand collapsed={false} />
-          <button
-            type="button"
-            onClick={closeMobileSidebar}
-            className="absolute right-3 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-100"
-            aria-label="关闭侧边栏"
-            title="关闭"
-          >
-            <X size={18} />
-          </button>
-        </div>
+        {/* 品牌区 */}
+        <Brand collapsed={false} />
 
         {/* 菜单 */}
         <nav className="flex flex-1 flex-col gap-1 py-2">
@@ -268,21 +230,12 @@ const Sidebar: React.FC = () => {
               />
             )
           })}
-          <div className="mt-auto pt-2">
-            <div className="mx-6 mb-2 h-px bg-neutral-200" />
-            <NavButton
-              active={isActive(location.pathname, bottomItem.path)}
-              collapsed={false}
-              icon={bottomItem.icon}
-              label={bottomItem.label}
-              onClick={() => handleNav(bottomItem.path)}
-              title={bottomItem.label}
-            />
-          </div>
+          {/* 底部空间保留 */}
+          <div className="mt-auto" />
         </nav>
-      </div>
-    </div>
-  ) : null
+      </SheetContent>
+    </Sheet>
+  )
 
   return (
     <>
