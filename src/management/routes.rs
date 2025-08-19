@@ -109,17 +109,12 @@ fn adapter_routes() -> Router<AppState> {
 /// 统计查询路由
 fn statistics_routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/overview",
-            get(crate::management::handlers::statistics::get_overview),
-        )
-        .route(
-            "/requests",
-            get(crate::management::handlers::statistics::get_request_stats),
-        )
-        // Dashboard相关接口
-        .nest("/dashboard", dashboard_routes())
-        // 其他核心统计接口
+        // 新的功能分组API结构（基于docs/new.md要求）
+        .nest("/today", today_stats_routes())
+        .nest("/models", models_stats_routes())
+        .nest("/tokens", tokens_stats_routes())
+        .nest("/user-service-api-keys", user_api_keys_stats_routes())
+        // 保留现有的核心功能接口（向后兼容）
         .route(
             "/logs",
             get(crate::management::handlers::statistics::get_request_logs),
@@ -133,11 +128,6 @@ fn statistics_routes() -> Router<AppState> {
             get(crate::management::handlers::statistics::get_realtime_stats),
         )
         .route(
-            "/tokens",
-            get(crate::management::handlers::statistics::get_token_stats),
-        )
-        // 新增的高级统计接口
-        .route(
             "/response-time",
             get(crate::management::handlers::statistics::get_response_time_analysis),
         )
@@ -147,20 +137,47 @@ fn statistics_routes() -> Router<AppState> {
         )
 }
 
-/// Dashboard统计路由
-fn dashboard_routes() -> Router<AppState> {
+/// 今日统计路由
+fn today_stats_routes() -> Router<AppState> {
     Router::new()
         .route(
             "/cards",
-            get(crate::management::handlers::statistics::get_dashboard_cards),
+            get(crate::management::handlers::statistics::get_today_dashboard_cards),
         )
+}
+
+/// 模型统计路由
+fn models_stats_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/rate",
+            get(crate::management::handlers::statistics::get_models_usage_rate),
+        )
+        .route(
+            "/statistics",
+            get(crate::management::handlers::statistics::get_models_statistics),
+        )
+}
+
+/// Token统计路由
+fn tokens_stats_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/trend",
-            get(crate::management::handlers::statistics::get_dashboard_trend),
+            get(crate::management::handlers::statistics::get_tokens_trend),
+        )
+}
+
+/// 用户API Keys统计路由
+fn user_api_keys_stats_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/request",
+            get(crate::management::handlers::statistics::get_user_api_keys_request_trend),
         )
         .route(
-            "/provider-distribution",
-            get(crate::management::handlers::statistics::get_provider_distribution),
+            "/token",
+            get(crate::management::handlers::statistics::get_user_api_keys_token_trend),
         )
 }
 

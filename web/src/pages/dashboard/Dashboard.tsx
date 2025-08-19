@@ -4,7 +4,13 @@
  */
 
 import React, { useState, useMemo } from 'react'
-import { Activity, Timer, Coins, CheckCircle2, Calendar, ChevronDown, TrendingUp, BarChart } from 'lucide-react'
+import { Activity, Timer, Coins, CheckCircle2, Calendar, ChevronDown, TrendingUp, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { useDashboardCards } from '../../hooks/useDashboardCards'
+import { useModelsRate } from '../../hooks/useModelsRate'
+import { useModelsStatistics } from '../../hooks/useModelsStatistics'
+import { useTokensTrend } from '../../hooks/useTokensTrend'
+import { useUserApiKeysTrend } from '../../hooks/useUserApiKeysTrend'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
 
 /** 指标项接口 */
 interface StatItem {
@@ -78,7 +84,15 @@ const TrendChart: React.FC<{
   title: string
   color: string
 }> = ({ data, viewMode, onViewModeChange, title, color }) => {
-  const maxValue = Math.max(...data.map(d => viewMode === 'requests' ? d.requests : d.tokens))
+  // 安全地处理数据，过滤无效值
+  const validData = data.map(d => ({
+    ...d,
+    requests: Number.isFinite(d.requests) ? d.requests : 0,
+    tokens: Number.isFinite(d.tokens) ? d.tokens : 0
+  }))
+  const maxValue = validData.length > 0 ? Math.max(...validData.map(d => viewMode === 'requests' ? d.requests : d.tokens)) : 0
+  // 确保maxValue不为0（避免除零错误），如果所有值都是0，设置默认值
+  const safeMaxValue = maxValue > 0 ? maxValue : 1
   
   // 生成SVG路径
   const generatePath = (points: number[]) => {
@@ -89,7 +103,7 @@ const TrendChart: React.FC<{
     const padding = 40
     
     const xStep = (width - padding * 2) / (points.length - 1)
-    const yScale = (height - padding * 2) / maxValue
+    const yScale = (height - padding * 2) / safeMaxValue
     
     let path = `M ${padding} ${height - padding - points[0] * yScale}`
     
@@ -102,7 +116,7 @@ const TrendChart: React.FC<{
     return path
   }
   
-  const currentData = data.map(d => viewMode === 'requests' ? d.requests : d.tokens)
+  const currentData = validData.map(d => viewMode === 'requests' ? d.requests : d.tokens)
   const pathData = generatePath(currentData)
   
   return (
@@ -164,7 +178,7 @@ const TrendChart: React.FC<{
             const height = 200
             const padding = 40
             const xStep = (width - padding * 2) / (currentData.length - 1)
-            const yScale = (height - padding * 2) / maxValue
+            const yScale = (height - padding * 2) / safeMaxValue
             const x = padding + index * xStep
             const y = height - padding - value * yScale
             
@@ -176,7 +190,7 @@ const TrendChart: React.FC<{
                 r="4"
                 fill={color}
                 className="hover:r-6 transition-all cursor-pointer"
-                title={`${data[index].date}: ${value.toLocaleString()}`}
+                title={`${validData[index].date}: ${value.toLocaleString()}`}
               />
             )
           })}
@@ -184,7 +198,7 @@ const TrendChart: React.FC<{
         
         {/* X轴标签 */}
         <div className="flex justify-between mt-2 px-10 text-xs text-neutral-500">
-          {data.map((item, index) => (
+          {validData.map((item, index) => (
             <span key={index} className="text-center">
               {new Date(item.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
             </span>
@@ -217,36 +231,32 @@ const TrendChart: React.FC<{
   )
 }
 
-/** 简化的Token趋势图组件 */
+/** 简化的Token趋势图组件 - 使用Recharts */
 const SimpleTokenChart: React.FC<{
   data: { date: string; value: number }[]
 }> = ({ data }) => {
-  const values = data.map(d => d.value)
-  const maxValue = Math.max(...values)
+  // 安全地处理数据，过滤无效值
+  const chartData = useMemo(() => {
+    return data.map(d => ({
+      date: d.date,
+      value: Number.isFinite(d.value) ? d.value : 0,
+      displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+    }))
+  }, [data])
   
-  // 生成SVG路径
-  const generatePath = (points: number[]) => {
-    if (points.length === 0) return ''
-    
-    const width = 600
-    const height = 200
-    const padding = 40
-    
-    const xStep = (width - padding * 2) / (points.length - 1)
-    const yScale = (height - padding * 2) / maxValue
-    
-    let path = `M ${padding} ${height - padding - points[0] * yScale}`
-    
-    for (let i = 1; i < points.length; i++) {
-      const x = padding + i * xStep
-      const y = height - padding - points[i] * yScale
-      path += ` L ${x} ${y}`
-    }
-    
-    return path
+  const values = chartData.map(d => d.value)
+  
+  // 如果没有数据，显示空状态
+  if (chartData.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+        <div className="text-center">
+          <div className="text-4xl mb-2">📈</div>
+          <div className="text-sm">暂无Token趋势数据</div>
+        </div>
+      </div>
+    )
   }
-  
-  const pathData = generatePath(values)
   
   // 格式化Token数值
   const formatTokenValue = (value: number) => {
@@ -255,78 +265,60 @@ const SimpleTokenChart: React.FC<{
     return value.toString()
   }
 
+  // 自定义Tooltip
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1.5 shadow-xl">
+          <div className="font-semibold text-blue-600 text-xs leading-tight">
+            {formatTokenValue(payload[0].value)}
+          </div>
+          <div className="text-neutral-500 text-xs leading-tight mt-0.5">
+            {payload[0].payload.displayDate}
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
+
   return (
     <div className="space-y-4">
       {/* 图表 */}
-      <div className="relative">
-        <svg width="600" height="200" className="w-full">
-          {/* 网格线 */}
-          <defs>
-            <pattern id="tokenGrid" width="60" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 60 0 L 0 0 0 40" fill="none" stroke="#f3f4f6" strokeWidth="1"/>
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#tokenGrid)" />
-          
-          {/* 渐变填充 */}
-          <defs>
-            <linearGradient id="tokenGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.3"/>
-              <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0"/>
-            </linearGradient>
-          </defs>
-          
-          {/* 填充区域 */}
-          <path
-            d={`${pathData} L ${40 + (values.length - 1) * ((600 - 80) / (values.length - 1))} 160 L 40 160 Z`}
-            fill="url(#tokenGradient)"
-          />
-          
-          {/* 趋势线 */}
-          <path
-            d={pathData}
-            fill="none"
-            stroke="#0ea5e9"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="drop-shadow-sm"
-          />
-          
-          {/* 数据点 */}
-          {values.map((value, index) => {
-            const width = 600
-            const height = 200
-            const padding = 40
-            const xStep = (width - padding * 2) / (values.length - 1)
-            const yScale = (height - padding * 2) / maxValue
-            const x = padding + index * xStep
-            const y = height - padding - value * yScale
-            
-            return (
-              <circle
-                key={index}
-                cx={x}
-                cy={y}
-                r="4"
-                fill="#0ea5e9"
-                stroke="white"
-                strokeWidth="2"
-                className="hover:r-6 transition-all cursor-pointer"
-                title={`${data[index].date}: ${value.toLocaleString()}`}
-              />
-            )
-          })}
-        </svg>
-        
-        {/* X轴标签 */}
-        <div className="flex justify-between mt-2 px-10 text-xs text-neutral-500">
-          {data.map((item, index) => (
-            <span key={index} className="text-center">
-              {new Date(item.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-            </span>
-          ))}
-        </div>
+      <div className="h-52">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+            <defs>
+              <linearGradient id="tokenAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3}/>
+                <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+            <XAxis 
+              dataKey="displayDate" 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+            />
+            <YAxis 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+              tickFormatter={formatTokenValue}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke="#0ea5e9"
+              strokeWidth={3}
+              fill="url(#tokenAreaGradient)"
+              dot={{ fill: '#0ea5e9', strokeWidth: 2, stroke: 'white', r: 4 }}
+              activeDot={{ r: 6, fill: '#0ea5e9', strokeWidth: 2, stroke: 'white' }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
       
       {/* 统计信息 */}
@@ -354,114 +346,103 @@ const SimpleTokenChart: React.FC<{
   )
 }
 
-/** 无控制按钮的趋势图组件 */
+/** 无控制按钮的趋势图组件 - 使用Recharts */
 const TrendChartWithoutControls: React.FC<{
   data: TrendDataPoint[]
   viewMode: TrendViewMode
   color: string
 }> = ({ data, viewMode, color }) => {
-  const currentData = data.map(d => viewMode === 'requests' ? d.requests : d.tokens)
-  const maxValue = Math.max(...currentData)
+  // 安全地处理数据，过滤无效值
+  const chartData = useMemo(() => {
+    return data.map(d => {
+      const value = viewMode === 'requests' ? d.requests : d.tokens
+      return {
+        date: d.date,
+        value: Number.isFinite(value) ? value : 0,
+        displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+      }
+    })
+  }, [data, viewMode])
   
-  // 生成SVG路径
-  const generatePath = (points: number[]) => {
-    if (points.length === 0) return ''
-    
-    const width = 600
-    const height = 200
-    const padding = 40
-    
-    const xStep = (width - padding * 2) / (points.length - 1)
-    const yScale = (height - padding * 2) / maxValue
-    
-    let path = `M ${padding} ${height - padding - points[0] * yScale}`
-    
-    for (let i = 1; i < points.length; i++) {
-      const x = padding + i * xStep
-      const y = height - padding - points[i] * yScale
-      path += ` L ${x} ${y}`
-    }
-    
-    return path
+  const values = chartData.map(d => d.value)
+  
+  // 如果没有数据，显示空状态
+  if (chartData.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+        <div className="text-center">
+          <div className="text-4xl mb-2">📊</div>
+          <div className="text-sm">暂无趋势数据</div>
+        </div>
+      </div>
+    )
   }
-  
-  const pathData = generatePath(currentData)
+
+  // 自定义Tooltip
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1.5 shadow-xl">
+          <div className="font-semibold text-purple-600 text-xs leading-tight">
+            {payload[0].value.toLocaleString()}
+          </div>
+          <div className="text-neutral-500 text-xs leading-tight mt-0.5">
+            {payload[0].payload.displayDate}
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
 
   return (
     <div className="space-y-4">
       {/* 图表 */}
-      <div className="relative">
-        <svg width="600" height="200" className="w-full">
-          {/* 网格线 */}
-          <defs>
-            <pattern id="userApiGrid" width="60" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 60 0 L 0 0 0 40" fill="none" stroke="#f3f4f6" strokeWidth="1"/>
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#userApiGrid)" />
-          
-          {/* 趋势线 */}
-          <path
-            d={pathData}
-            fill="none"
-            stroke={color}
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="drop-shadow-sm"
-          />
-          
-          {/* 数据点 */}
-          {currentData.map((value, index) => {
-            const width = 600
-            const height = 200
-            const padding = 40
-            const xStep = (width - padding * 2) / (currentData.length - 1)
-            const yScale = (height - padding * 2) / maxValue
-            const x = padding + index * xStep
-            const y = height - padding - value * yScale
-            
-            return (
-              <circle
-                key={index}
-                cx={x}
-                cy={y}
-                r="4"
-                fill={color}
-                className="hover:r-6 transition-all cursor-pointer"
-                title={`${data[index].date}: ${value.toLocaleString()}`}
-              />
-            )
-          })}
-        </svg>
-        
-        {/* X轴标签 */}
-        <div className="flex justify-between mt-2 px-10 text-xs text-neutral-500">
-          {data.map((item, index) => (
-            <span key={index} className="text-center">
-              {new Date(item.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-            </span>
-          ))}
-        </div>
+      <div className="h-52">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+            <XAxis 
+              dataKey="displayDate" 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+            />
+            <YAxis 
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={color}
+              strokeWidth={3}
+              dot={{ fill: color, strokeWidth: 2, stroke: 'white', r: 4 }}
+              activeDot={{ r: 6, fill: color, strokeWidth: 2, stroke: 'white' }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
       
       {/* 统计信息 */}
       <div className="grid grid-cols-3 gap-4 pt-3 border-t border-neutral-100">
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {currentData[currentData.length - 1]?.toLocaleString() || 0}
+            {values[values.length - 1]?.toLocaleString() || 0}
           </div>
           <div className="text-xs text-neutral-500">最新值</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {Math.round(currentData.reduce((sum, val) => sum + val, 0) / currentData.length).toLocaleString()}
+            {Math.round(values.reduce((sum, val) => sum + val, 0) / values.length).toLocaleString()}
           </div>
           <div className="text-xs text-neutral-500">平均值</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {Math.max(...currentData).toLocaleString()}
+            {Math.max(...values).toLocaleString()}
           </div>
           <div className="text-xs text-neutral-500">峰值</div>
         </div>
@@ -797,44 +778,43 @@ const PieChartWithTimeFilter: React.FC = () => {
     endDate: new Date().toISOString().split('T')[0]
   })
 
-  // 根据时间范围生成模拟数据
-  const generateModelData = useMemo(() => {
-    const baseData = [
-      { name: 'GPT-4', color: '#7c3aed', baseCount: 5420, baseCost: 125.50 },
-      { name: 'GPT-3.5 Turbo', color: '#0ea5e9', baseCount: 3210, baseCost: 45.20 },
-      { name: 'Claude-3', color: '#10b981', baseCount: 2150, baseCost: 89.30 },
-      { name: 'Gemini Pro', color: '#f59e0b', baseCount: 1890, baseCost: 67.80 },
-      { name: 'PaLM-2', color: '#ef4444', baseCount: 980, baseCost: 32.40 },
-      { name: 'GPT-4 Turbo', color: '#8b5cf6', baseCount: 780, baseCost: 28.90 },
-      { name: 'Claude-2', color: '#06b6d4', baseCount: 650, baseCost: 23.10 },
-      { name: 'Llama-2', color: '#84cc16', baseCount: 420, baseCost: 15.60 },
-      { name: 'Code Llama', color: '#f97316', baseCount: 320, baseCost: 12.30 },
-      { name: 'Mistral-7B', color: '#ec4899', baseCount: 180, baseCost: 8.50 },
-      { name: 'Vicuna-13B', color: '#14b8a6', baseCount: 150, baseCost: 6.80 },
-      { name: 'Alpaca-7B', color: '#a855f7', baseCount: 120, baseCost: 4.20 },
-      { name: 'ChatGLM-6B', color: '#f43f5e', baseCount: 95, baseCost: 3.50 },
-      { name: 'Falcon-7B', color: '#22c55e', baseCount: 80, baseCost: 2.80 },
-      { name: 'StableLM-7B', color: '#3b82f6', baseCount: 60, baseCost: 2.10 },
+  // 根据时间范围计算API参数
+  const apiParams = useMemo(() => {
+    let range = selectedTimeRange
+    let start: string | undefined
+    let end: string | undefined
+
+    if (selectedTimeRange === 'custom') {
+      range = 'custom'
+      start = customDateRange.startDate
+      end = customDateRange.endDate
+    }
+
+    return { range, start, end }
+  }, [selectedTimeRange, customDateRange])
+
+  // 使用真实的后端数据
+  const { modelsRate, isLoading, error } = useModelsRate(apiParams.range, apiParams.start, apiParams.end)
+
+  // 转换后端数据为组件需要的格式
+  const modelData = useMemo(() => {
+    if (!modelsRate?.model_usage) return []
+
+    // 为每个模型分配颜色
+    const colors = [
+      '#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444',
+      '#8b5cf6', '#06b6d4', '#84cc16', '#f97316', '#ec4899',
+      '#14b8a6', '#a855f7', '#f43f5e', '#22c55e', '#3b82f6'
     ]
 
-    // 根据时间范围调整数据
-    const multiplier = selectedTimeRange === 'today' ? 0.3 : 
-                     selectedTimeRange === '7days' ? 1 : 
-                     selectedTimeRange === '30days' ? 4.2 : 1
-
-    const adjustedData = baseData.map(item => ({
-      ...item,
-      count: Math.round(item.baseCount * multiplier),
-      cost: item.baseCost * multiplier
+    return modelsRate.model_usage.map((item, index) => ({
+      name: item.model,
+      count: item.usage,
+      percentage: (item.usage / modelsRate.model_usage.reduce((sum, m) => sum + m.usage, 0)) * 100,
+      cost: 0, // 后端暂不提供成本数据
+      color: colors[index % colors.length]
     }))
-
-    const total = adjustedData.reduce((sum, item) => sum + item.count, 0)
-
-    return adjustedData.map(item => ({
-      ...item,
-      percentage: (item.count / total) * 100
-    }))
-  }, [selectedTimeRange])
+  }, [modelsRate])
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-6">
@@ -847,7 +827,29 @@ const PieChartWithTimeFilter: React.FC = () => {
           onCustomRangeChange={setCustomDateRange}
         />
       </div>
-      <PieChart data={generateModelData} />
+      
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-80">
+          <div className="flex items-center gap-2 text-neutral-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">加载模型使用数据...</span>
+          </div>
+        </div>
+      )}
+
+      {/* 错误状态 */}
+      {error && !isLoading && (
+        <div className="flex items-center justify-center h-80 text-neutral-400">
+          <div className="text-center">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* 数据显示 */}
+      {!isLoading && !error && <PieChart data={modelData} />}
     </div>
   )
 }
@@ -860,44 +862,43 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
     endDate: new Date().toISOString().split('T')[0]
   })
 
-  // 根据时间范围生成模拟数据 (复用相同逻辑)
-  const generateModelData = useMemo(() => {
-    const baseData = [
-      { name: 'GPT-4', color: '#7c3aed', baseCount: 5420, baseCost: 125.50 },
-      { name: 'GPT-3.5 Turbo', color: '#0ea5e9', baseCount: 3210, baseCost: 45.20 },
-      { name: 'Claude-3', color: '#10b981', baseCount: 2150, baseCost: 89.30 },
-      { name: 'Gemini Pro', color: '#f59e0b', baseCount: 1890, baseCost: 67.80 },
-      { name: 'PaLM-2', color: '#ef4444', baseCount: 980, baseCost: 32.40 },
-      { name: 'GPT-4 Turbo', color: '#8b5cf6', baseCount: 780, baseCost: 28.90 },
-      { name: 'Claude-2', color: '#06b6d4', baseCount: 650, baseCost: 23.10 },
-      { name: 'Llama-2', color: '#84cc16', baseCount: 420, baseCost: 15.60 },
-      { name: 'Code Llama', color: '#f97316', baseCount: 320, baseCost: 12.30 },
-      { name: 'Mistral-7B', color: '#ec4899', baseCount: 180, baseCost: 8.50 },
-      { name: 'Vicuna-13B', color: '#14b8a6', baseCount: 150, baseCost: 6.80 },
-      { name: 'Alpaca-7B', color: '#a855f7', baseCount: 120, baseCost: 4.20 },
-      { name: 'ChatGLM-6B', color: '#f43f5e', baseCount: 95, baseCost: 3.50 },
-      { name: 'Falcon-7B', color: '#22c55e', baseCount: 80, baseCost: 2.80 },
-      { name: 'StableLM-7B', color: '#3b82f6', baseCount: 60, baseCost: 2.10 },
+  // 根据时间范围计算API参数
+  const apiParams = useMemo(() => {
+    let range = selectedTimeRange
+    let start: string | undefined
+    let end: string | undefined
+
+    if (selectedTimeRange === 'custom') {
+      range = 'custom'
+      start = customDateRange.startDate
+      end = customDateRange.endDate
+    }
+
+    return { range, start, end }
+  }, [selectedTimeRange, customDateRange])
+
+  // 使用真实的后端数据
+  const { modelsStatistics, isLoading, error } = useModelsStatistics(apiParams.range, apiParams.start, apiParams.end)
+
+  // 转换后端数据为组件需要的格式
+  const modelData = useMemo(() => {
+    if (!modelsStatistics?.model_usage) return []
+
+    // 为每个模型分配颜色
+    const colors = [
+      '#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444',
+      '#8b5cf6', '#06b6d4', '#84cc16', '#f97316', '#ec4899',
+      '#14b8a6', '#a855f7', '#f43f5e', '#22c55e', '#3b82f6'
     ]
 
-    // 根据时间范围调整数据
-    const multiplier = selectedTimeRange === 'today' ? 0.3 : 
-                     selectedTimeRange === '7days' ? 1 : 
-                     selectedTimeRange === '30days' ? 4.2 : 1
-
-    const adjustedData = baseData.map(item => ({
-      ...item,
-      count: Math.round(item.baseCount * multiplier),
-      cost: item.baseCost * multiplier
+    return modelsStatistics.model_usage.map((item, index) => ({
+      name: item.model,
+      count: item.usage,
+      percentage: item.percentage,
+      cost: parseFloat(item.cost) || 0,
+      color: colors[index % colors.length]
     }))
-
-    const total = adjustedData.reduce((sum, item) => sum + item.count, 0)
-
-    return adjustedData.map(item => ({
-      ...item,
-      percentage: (item.count / total) * 100
-    }))
-  }, [selectedTimeRange])
+  }, [modelsStatistics])
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-6">
@@ -910,36 +911,58 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
           onCustomRangeChange={setCustomDateRange}
         />
       </div>
-      <ModelStatsList data={generateModelData} />
+      
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-80">
+          <div className="flex items-center gap-2 text-neutral-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">加载模型统计数据...</span>
+          </div>
+        </div>
+      )}
+
+      {/* 错误状态 */}
+      {error && !isLoading && (
+        <div className="flex items-center justify-center h-80 text-neutral-400">
+          <div className="text-center">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* 数据显示 */}
+      {!isLoading && !error && (
+        modelData.length > 0 ? (
+          <ModelStatsList data={modelData} />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+            <div className="text-center">
+              <div className="text-4xl mb-2">📋</div>
+              <div className="text-sm">暂无模型统计数据</div>
+            </div>
+          </div>
+        )
+      )}
     </div>
   )
 }
 
 /** Token使用趋势图组件 */
 const TokenTrendChart: React.FC = () => {
-  // 生成最近30天的Token消耗数据
-  const generateTokenData = useMemo(() => {
-    const days = 30
-    const data: { date: string; value: number }[] = []
-    const baseTokens = 125000
+  // 使用真实的后端数据
+  const { tokensTrend, isLoading, error } = useTokensTrend()
 
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date()
-      date.setDate(date.getDate() - i)
-      
-      // 添加一些随机波动和趋势
-      const trendFactor = 1 + (days - i) * 0.015 // 轻微上升趋势
-      const weekdayFactor = [0, 6].includes(date.getDay()) ? 0.7 : 1.0 // 周末较少
-      const randomFactor = 0.8 + Math.random() * 0.4 // 随机波动
-      
-      data.push({
-        date: date.toISOString(),
-        value: Math.round(baseTokens * trendFactor * weekdayFactor * randomFactor)
-      })
-    }
+  // 转换后端数据为组件需要的格式
+  const chartData = useMemo(() => {
+    if (!tokensTrend?.token_usage) return []
 
-    return data
-  }, [])
+    return tokensTrend.token_usage.map(item => ({
+      date: item.timestamp,
+      value: item.tokens_prompt + item.tokens_completion + item.cache_create_tokens + item.cache_read_tokens
+    }))
+  }, [tokensTrend])
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-6">
@@ -947,7 +970,40 @@ const TokenTrendChart: React.FC = () => {
         <h3 className="text-sm font-medium text-neutral-900">Token使用趋势</h3>
         <p className="text-xs text-neutral-500 mt-1">最近30天Token消耗数量</p>
       </div>
-      <SimpleTokenChart data={generateTokenData} />
+      
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-80">
+          <div className="flex items-center gap-2 text-neutral-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">加载Token趋势数据...</span>
+          </div>
+        </div>
+      )}
+
+      {/* 错误状态 */}
+      {error && !isLoading && (
+        <div className="flex items-center justify-center h-80 text-neutral-400">
+          <div className="text-center">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* 数据显示 */}
+      {!isLoading && !error && (
+        chartData.length > 0 ? (
+          <SimpleTokenChart data={chartData} />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+            <div className="text-center">
+              <div className="text-4xl mb-2">📈</div>
+              <div className="text-sm">暂无Token趋势数据</div>
+            </div>
+          </div>
+        )
+      )}
     </div>
   )
 }
@@ -956,31 +1012,37 @@ const TokenTrendChart: React.FC = () => {
 const UserApiKeysTrendChart: React.FC = () => {
   const [viewMode, setViewMode] = useState<TrendViewMode>('requests')
 
-  // 生成最近30天的趋势数据
-  const generateTrendData = useMemo(() => {
-    const days = 30
-    const data: TrendDataPoint[] = []
-    const baseRequests = 12400
-    const baseTokens = 186000
+  // 使用真实的后端数据，根据模式切换接口类型
+  const { trendData, isLoading, error, currentType, switchTrendType } = useUserApiKeysTrend(
+    viewMode === 'requests' ? 'request' : 'token'
+  )
 
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date()
-      date.setDate(date.getDate() - i)
-      
-      // 不同的趋势模式 - 用户API Keys可能有不同的使用模式
-      const weekdayFactor = [0, 6].includes(date.getDay()) ? 0.6 : 1.1 // 周末较少
-      const trendFactor = 1 + (days - i) * 0.015 // 温和上升趋势
-      const randomFactor = 0.7 + Math.random() * 0.6 // 更大的随机波动
-      
-      data.push({
-        date: date.toISOString(),
-        requests: Math.round(baseRequests * trendFactor * weekdayFactor * randomFactor),
-        tokens: Math.round(baseTokens * trendFactor * weekdayFactor * randomFactor)
-      })
+  // 当视图模式变化时，切换API接口类型
+  const handleViewModeChange = (mode: TrendViewMode) => {
+    setViewMode(mode)
+    switchTrendType(mode === 'requests' ? 'request' : 'token')
+  }
+
+  // 转换后端数据为组件需要的格式
+  const chartData = useMemo(() => {
+    if (!trendData) return []
+
+    if (currentType === 'request' && 'request_usage' in trendData) {
+      return trendData.request_usage.map(item => ({
+        date: item.timestamp,
+        requests: item.request,
+        tokens: 0 // 在请求模式下，tokens设为0
+      }))
+    } else if (currentType === 'token' && 'token_usage' in trendData) {
+      return trendData.token_usage.map(item => ({
+        date: item.timestamp,
+        requests: 0, // 在token模式下，requests设为0
+        tokens: item.total_token
+      }))
     }
 
-    return data
-  }, [])
+    return []
+  }, [trendData, currentType])
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-6">
@@ -993,7 +1055,7 @@ const UserApiKeysTrendChart: React.FC = () => {
         {/* 切换按钮移动到右上方 */}
         <div className="flex rounded-lg border border-neutral-200 bg-white">
           <button
-            onClick={() => setViewMode('requests')}
+            onClick={() => handleViewModeChange('requests')}
             className={`flex items-center gap-1 px-3 py-1 text-xs rounded-l-lg transition-colors ${
               viewMode === 'requests' 
                 ? 'bg-violet-100 text-violet-700' 
@@ -1004,7 +1066,7 @@ const UserApiKeysTrendChart: React.FC = () => {
             请求次数
           </button>
           <button
-            onClick={() => setViewMode('tokens')}
+            onClick={() => handleViewModeChange('tokens')}
             className={`flex items-center gap-1 px-3 py-1 text-xs rounded-r-lg transition-colors ${
               viewMode === 'tokens' 
                 ? 'bg-violet-100 text-violet-700' 
@@ -1016,50 +1078,71 @@ const UserApiKeysTrendChart: React.FC = () => {
           </button>
         </div>
       </div>
-      <TrendChartWithoutControls
-        data={generateTrendData}
-        viewMode={viewMode}
-        color="#7c3aed"
-      />
+      
+      {/* 加载状态 */}
+      {isLoading && (
+        <div className="flex items-center justify-center h-80">
+          <div className="flex items-center gap-2 text-neutral-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span className="text-sm">加载用户API Keys趋势数据...</span>
+          </div>
+        </div>
+      )}
+
+      {/* 错误状态 */}
+      {error && !isLoading && (
+        <div className="flex items-center justify-center h-80 text-neutral-400">
+          <div className="text-center">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-400" />
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* 数据显示 */}
+      {!isLoading && !error && (
+        chartData.length > 0 ? (
+          <TrendChartWithoutControls
+            data={chartData}
+            viewMode={viewMode}
+            color="#7c3aed"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+            <div className="text-center">
+              <div className="text-4xl mb-2">📊</div>
+              <div className="text-sm">暂无用户API Keys趋势数据</div>
+            </div>
+          </div>
+        )
+      )}
     </div>
   )
 }
 
 const DashboardPage: React.FC = () => {
-  const stats: StatItem[] = [
-    {
-      key: 'requests',
-      label: '今日请求数',
-      value: '12,432',
-      delta: '+6.4%',
-      icon: <Activity size={18} />,
-      color: '#7c3aed',
-    },
-    {
-      key: 'tokens',
-      label: '今日 Token 消耗',
-      value: '184,230',
-      delta: '+4.1%',
-      icon: <Coins size={18} />,
-      color: '#0ea5e9',
-    },
-    {
-      key: 'latency',
-      label: '平均响应时间',
-      value: '482 ms',
-      delta: '-3.2%',
-      icon: <Timer size={18} />,
-      color: '#f59e0b',
-    },
-    {
-      key: 'success',
-      label: '成功率',
-      value: '98.7%',
-      delta: '+0.5%',
-      icon: <CheckCircle2 size={18} />,
-      color: '#10b981',
-    },
-  ]
+  // 使用自定义hook获取仪表板数据
+  const { cards, isLoading, error, refresh, lastUpdated } = useDashboardCards()
+
+  // 图标映射
+  const iconMap: Record<string, React.ReactNode> = {
+    requests: <Activity size={18} />,
+    tokens: <Coins size={18} />,
+    latency: <Timer size={18} />,
+    success: <CheckCircle2 size={18} />
+  }
+
+  // 将API数据转换为StatItem格式（保持UI组件不变）
+  const stats: StatItem[] = useMemo(() => {
+    return cards.map(card => ({
+      key: card.key,
+      label: card.label,
+      value: card.value,
+      delta: card.delta,
+      icon: iconMap[card.key] || <Activity size={18} />,
+      color: card.color
+    }))
+  }, [cards])
 
   return (
     <div className="w-full">
@@ -1073,7 +1156,52 @@ const DashboardPage: React.FC = () => {
 
       {/* 指标卡片 */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((s) => (
+        {/* 加载状态 */}
+        {isLoading && (
+          <>
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-neutral-100 animate-pulse"></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="h-4 w-16 bg-neutral-100 rounded animate-pulse mb-2"></div>
+                    <div className="h-6 w-20 bg-neutral-100 rounded animate-pulse"></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* 错误状态 */}
+        {error && !isLoading && (
+          <div className="lg:col-span-4 sm:col-span-2 col-span-1">
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-sm font-medium text-red-800">加载仪表板数据失败</h3>
+                  <p className="text-sm text-red-600 mt-1">{error}</p>
+                </div>
+                <button
+                  onClick={refresh}
+                  className="flex items-center gap-2 px-3 py-1 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-100 transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  重试
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 正常数据显示 */}
+        {!isLoading && !error && stats.map((s) => (
+          <StatCard key={s.key} item={s} />
+        ))}
+
+        {/* 有错误但仍显示默认数据 */}
+        {error && !isLoading && stats.length > 0 && stats.map((s) => (
           <StatCard key={s.key} item={s} />
         ))}
       </section>

@@ -6,11 +6,11 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import { useAuthStore } from '../store/auth'
-import { Eye, EyeOff, User, Lock } from 'lucide-react'
+import { Eye, EyeOff, User, Lock, AlertCircle, Loader2 } from 'lucide-react'
 
 /** 页面主组件 */
 const LoginPage: React.FC = () => {
-  const login = useAuthStore((s) => s.login)
+  const { login, isLoading, error, clearError } = useAuthStore()
   const navigate = useNavigate()
   const location = useLocation() as any
   const fromPath: string | undefined = location?.state?.from
@@ -19,11 +19,29 @@ const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
 
-  /** 提交登录：本地设定为登录态并跳转回来源或仪表板 */
-  function handleSubmit(e: React.FormEvent) {
+  /** 提交登录：调用真实API进行认证 */
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    login()
-    navigate(fromPath || '/dashboard', { replace: true })
+    
+    // 清除之前的错误
+    clearError()
+    
+    // 基本验证
+    if (!username.trim() || !password.trim()) {
+      return
+    }
+    
+    // 调用登录API
+    const success = await login({
+      username: username.trim(),
+      password: password.trim(),
+    })
+    
+    if (success) {
+      // 登录成功，跳转到目标页面
+      navigate(fromPath || '/dashboard', { replace: true })
+    }
+    // 登录失败的错误信息已经在store中处理
   }
 
   return (
@@ -49,6 +67,13 @@ const LoginPage: React.FC = () => {
 
           {/* 登录表单 */}
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* 错误提示 */}
+            {error && (
+              <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
             {/* 用户名输入 */}
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-2">
@@ -120,9 +145,17 @@ const LoginPage: React.FC = () => {
             {/* 登录按钮 */}
             <button
               type="submit"
-              className="w-full bg-violet-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+              disabled={isLoading || !username.trim() || !password.trim()}
+              className="w-full bg-violet-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
             >
-              登录
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  登录中...
+                </>
+              ) : (
+                '登录'
+              )}
             </button>
 
           </form>
@@ -130,7 +163,7 @@ const LoginPage: React.FC = () => {
       </div>
 
       {/* CSS动画 */}
-      <style jsx>{`
+      <style>{`
         @keyframes blob {
           0% {
             transform: translate(0px, 0px) scale(1);

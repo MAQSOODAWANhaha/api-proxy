@@ -5,6 +5,7 @@
 
 import React from 'react'
 import { useLocation, useNavigate } from 'react-router'
+import { useAuthStore } from '../../store/auth'
 import { Menu, PanelsTopLeft, Bell, User, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
@@ -60,8 +61,15 @@ function usePageTitle(): string {
 const Topbar: React.FC = () => {
   const title = usePageTitle()
   const navigate = useNavigate()
+  const { logout } = useAuthStore()
   const toggleSidebar = useUiStore((s) => s.toggleSidebar)
   const openMobileSidebar = useUiStore((s) => s.openMobileSidebar)
+
+  /** 处理退出登录 */
+  const handleLogout = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <header
@@ -136,7 +144,7 @@ const Topbar: React.FC = () => {
               个人信息
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
               退出登录
             </DropdownMenuItem>
