@@ -3,7 +3,7 @@
  * 用户 API Keys 管理页：完整的增删改查和统计功能
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search,
   Plus,
@@ -28,91 +28,54 @@ import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
 import MultiSelect from '../../components/common/MultiSelect'
+import { api, UserServiceApiKey } from '../../lib/api'
 
-/** API Key 数据结构 */
-interface ApiKey {
-  id: string
-  keyName: string
-  keyValue: string
-  description: string
-  providerType: string
-  schedulingStrategy: 'round_robin' | 'priority' | 'weighted' | 'random'
-  providerKeys: string[]
-  retryCount: number
-  timeoutSeconds: number
-  rateLimitPerMinute: number
-  tokenLimitPerDay: number
-  status: 'active' | 'disabled'
-  usage: number
-  limit: number
-  createdAt: string
-  lastUsed: string
+// 使用API中定义的类型，并添加额外需要的字段
+interface ApiKey extends UserServiceApiKey {
+  scheduling_strategy?: string
+  user_provider_keys_ids?: number[]
+  retry_count?: number
+  timeout_seconds?: number
+  max_request_per_min?: number
+  max_requests_per_day?: number
+  max_tokens_per_day?: number
+  max_cost_per_day?: number
 }
 
-/** 模拟数据 */
-const initialData: ApiKey[] = [
-  {
-    id: '1',
-    keyName: 'Production Key',
-    keyValue: 'sk-1234567890abcdef1234567890abcdef',
-    description: '生产环境主要API密钥，用于客户端调用',
-    providerType: 'OpenAI',
-    schedulingStrategy: 'round_robin',
-    providerKeys: ['openai-primary', 'openai-backup'],
-    retryCount: 3,
-    timeoutSeconds: 30,
-    rateLimitPerMinute: 60,
-    tokenLimitPerDay: 100000,
-    status: 'active',
-    usage: 1520,
-    limit: 10000,
-    createdAt: '2024-01-15',
-    lastUsed: '2024-01-16 14:32',
-  },
-  {
-    id: '2',
-    keyName: 'Development Key',
-    keyValue: 'sk-abcdef1234567890abcdef1234567890',
-    description: '开发测试专用密钥',
-    providerType: 'Anthropic',
-    schedulingStrategy: 'priority',
-    providerKeys: ['claude-dev'],
-    retryCount: 2,
-    timeoutSeconds: 15,
-    rateLimitPerMinute: 30,
-    tokenLimitPerDay: 10000,
-    status: 'disabled',
-    usage: 245,
-    limit: 1000,
-    createdAt: '2024-01-10',
-    lastUsed: '2024-01-12 09:15',
-  },
-  {
-    id: '3',
-    keyName: 'Testing Key',
-    keyValue: 'sk-9876543210fedcba9876543210fedcba',
-    description: '自动化测试专用',
-    providerType: 'Google',
-    schedulingStrategy: 'weighted',
-    providerKeys: ['gemini-test'],
-    retryCount: 1,
-    timeoutSeconds: 60,
-    rateLimitPerMinute: 20,
-    tokenLimitPerDay: 5000,
-    status: 'active',
-    usage: 89,
-    limit: 5000,
-    createdAt: '2024-01-12',
-    lastUsed: '2024-01-16 11:20',
-  },
-]
+/** 服务商类型 */
+interface ProviderType {
+  id: number
+  name: string
+  display_name: string
+  description: string
+  is_active: boolean
+  supported_models: string[]
+  created_at: string
+}
+
+/** 调度策略 */
+interface SchedulingStrategy {
+  value: string
+  label: string
+  description: string
+  is_default: boolean
+}
+
+/** 用户提供商密钥 */
+interface UserProviderKey {
+  id: number
+  name: string
+  display_name: string
+}
 
 /** 弹窗类型 */
 type DialogType = 'add' | 'edit' | 'delete' | 'stats' | null
 
 /** 页面主组件 */
 const ApiUserKeysPage: React.FC = () => {
-  const [data, setData] = useState<ApiKey[]>(initialData)
+  const [data, setData] = useState<ApiKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled'>('all')
   const [selectedItem, setSelectedItem] = useState<ApiKey | null>(null)
@@ -122,15 +85,50 @@ const ApiUserKeysPage: React.FC = () => {
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [totalItems, setTotalItems] = useState(0)
+
+  // 初始化数据
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  // 获取API Keys列表
+  const fetchData = async () => {
+    setLoading(true)
+    setError(null)
+    
+    try {
+      const response = await api.userService.getKeys({
+        page: currentPage,
+        limit: pageSize,
+        name: searchTerm || undefined,
+        is_active: statusFilter === 'all' ? undefined : statusFilter === 'active'
+      })
+      
+      if (response.success && response.data) {
+        setData(response.data.service_api_keys || [])
+        setTotalItems(response.data.pagination?.total || 0)
+      } else {
+        setError(response.message || '获取API Keys失败')
+      }
+    } catch (err) {
+      setError('获取API Keys时发生错误')
+      console.error('获取API Keys失败:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // 过滤数据
   const filteredData = useMemo(() => {
     return data.filter((item) => {
       const matchesSearch = 
-        item.keyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.providerType.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter === 'all' || item.status === statusFilter
+        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        item.provider.toLowerCase().includes(searchTerm.toLowerCase())
+      const matchesStatus = statusFilter === 'all' || 
+        (statusFilter === 'active' && item.is_active) || 
+        (statusFilter === 'disabled' && !item.is_active)
       return matchesSearch && matchesStatus
     })
   }, [data, searchTerm, statusFilter])
@@ -141,10 +139,10 @@ const ApiUserKeysPage: React.FC = () => {
     return filteredData.slice(startIndex, startIndex + pageSize)
   }, [filteredData, currentPage, pageSize])
 
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  const totalPages = Math.ceil(totalItems / pageSize)
   
   // 重置页码当过滤条件改变时
-  React.useEffect(() => {
+  useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, statusFilter])
 
@@ -154,37 +152,125 @@ const ApiUserKeysPage: React.FC = () => {
   }
 
   // 添加新API Key
-  const handleAdd = (newKey: Omit<ApiKey, 'id' | 'usage' | 'createdAt' | 'lastUsed' | 'keyValue'>) => {
-    const apiKey: ApiKey = {
-      ...newKey,
-      id: Date.now().toString(),
-      usage: 0,
-      createdAt: new Date().toISOString().split('T')[0],
-      lastUsed: '从未使用',
-      keyValue: generateApiKey(),
+  const handleAdd = async (newKey: Omit<ApiKey, 'id' | 'usage' | 'created_at' | 'last_used_at' | 'api_key'>) => {
+    try {
+      const response = await api.userService.createKey({
+        name: newKey.name,
+        description: newKey.description,
+        provider_type_id: newKey.provider_type_id,
+        user_provider_keys_ids: newKey.user_provider_keys_ids || [],
+        scheduling_strategy: newKey.scheduling_strategy,
+        retry_count: newKey.retry_count,
+        timeout_seconds: newKey.timeout_seconds,
+        max_request_per_min: newKey.max_request_per_min,
+        max_requests_per_day: newKey.max_requests_per_day,
+        max_tokens_per_day: newKey.max_tokens_per_day,
+        max_cost_per_day: newKey.max_cost_per_day,
+        expires_at: newKey.expires_at || undefined,
+        is_active: newKey.is_active,
+      })
+      
+      if (response.success) {
+        // 重新加载数据
+        fetchData()
+        setDialogType(null)
+      } else {
+        setError(response.message || '创建API Key失败')
+      }
+    } catch (err) {
+      setError('创建API Key时发生错误')
+      console.error('创建API Key失败:', err)
     }
-    setData([...data, apiKey])
-    setDialogType(null)
   }
 
   // 编辑API Key
-  const handleEdit = (updatedKey: ApiKey) => {
-    setData(data.map(item => item.id === updatedKey.id ? updatedKey : item))
-    setDialogType(null)
-    setSelectedItem(null)
+  const handleEdit = async (updatedKey: ApiKey) => {
+    try {
+      const response = await api.userService.updateKey(updatedKey.id, {
+        name: updatedKey.name,
+        description: updatedKey.description,
+        user_provider_keys_ids: updatedKey.user_provider_keys_ids,
+        scheduling_strategy: updatedKey.scheduling_strategy,
+        retry_count: updatedKey.retry_count,
+        timeout_seconds: updatedKey.timeout_seconds,
+        max_request_per_min: updatedKey.max_request_per_min,
+        max_requests_per_day: updatedKey.max_requests_per_day,
+        max_tokens_per_day: updatedKey.max_tokens_per_day,
+        max_cost_per_day: updatedKey.max_cost_per_day,
+        expires_at: updatedKey.expires_at || undefined,
+      })
+      
+      if (response.success) {
+        // 重新加载数据
+        fetchData()
+        setDialogType(null)
+        setSelectedItem(null)
+      } else {
+        setError(response.message || '更新API Key失败')
+      }
+    } catch (err) {
+      setError('更新API Key时发生错误')
+      console.error('更新API Key失败:', err)
+    }
   }
 
   // 删除API Key
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedItem) {
-      setData(data.filter(item => item.id !== selectedItem.id))
-      setDialogType(null)
-      setSelectedItem(null)
+      try {
+        const response = await api.userService.deleteKey(selectedItem.id)
+        
+        if (response.success) {
+          // 重新加载数据
+          fetchData()
+          setDialogType(null)
+          setSelectedItem(null)
+        } else {
+          setError(response.message || '删除API Key失败')
+        }
+      } catch (err) {
+        setError('删除API Key时发生错误')
+        console.error('删除API Key失败:', err)
+      }
+    }
+  }
+
+  // 重新生成API Key
+  const handleRegenerate = async (id: number) => {
+    try {
+      const response = await api.userService.regenerateKey(id)
+      
+      if (response.success) {
+        // 重新加载数据
+        fetchData()
+      } else {
+        setError(response.message || '重新生成API Key失败')
+      }
+    } catch (err) {
+      setError('重新生成API Key时发生错误')
+      console.error('重新生成API Key失败:', err)
+    }
+  }
+
+  // 更新API Key状态
+  const handleUpdateStatus = async (id: number, isActive: boolean) => {
+    try {
+      const response = await api.userService.updateKeyStatus(id, isActive)
+      
+      if (response.success) {
+        // 重新加载数据
+        fetchData()
+      } else {
+        setError(response.message || '更新API Key状态失败')
+      }
+    } catch (err) {
+      setError('更新API Key状态时发生错误')
+      console.error('更新API Key状态失败:', err)
     }
   }
 
   // 切换API Key可见性
-  const toggleKeyVisibility = (id: string) => {
+  const toggleKeyVisibility = (id: number) => {
     setShowKeyValues(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
@@ -194,7 +280,7 @@ const ApiUserKeysPage: React.FC = () => {
   }
 
   // 渲染遮罩的API Key
-  const renderMaskedKey = (key: string, id: string) => {
+  const renderMaskedKey = (key: string, id: number) => {
     const isVisible = showKeyValues[id]
     return (
       <div className="flex items-center gap-2">
@@ -219,6 +305,21 @@ const ApiUserKeysPage: React.FC = () => {
     )
   }
 
+  // 获取服务商显示名称 (这里暂时返回默认值，实际显示会在表格中处理)
+  const getProviderDisplayName = (providerTypeId: number) => {
+    return `服务商 ${providerTypeId}`
+  }
+
+  // 获取调度策略显示名称 (这里暂时返回原值，实际显示会在表格中处理)
+  const getSchedulingStrategyLabel = (strategy: string) => {
+    return strategy
+  }
+
+  // 获取提供商密钥显示名称 (这里暂时返回ID列表，实际显示会在表格中处理)
+  const getProviderKeyDisplayNames = (keyIds: number[]) => {
+    return keyIds.join(', ')
+  }
+
   return (
     <div className="w-full">
       {/* 页面头部 */}
@@ -229,11 +330,12 @@ const ApiUserKeysPage: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setData([...initialData])}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             刷新
           </button>
           <button
@@ -246,23 +348,30 @@ const ApiUserKeysPage: React.FC = () => {
         </div>
       </div>
 
+      {/* 错误提示 */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
       {/* 统计信息 */}
       <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
           icon={<Key size={18} />}
-          value={data.length.toString()}
+          value={totalItems.toString()}
           label="总密钥数"
           color="#7c3aed"
         />
         <StatCard
           icon={<Activity size={18} />}
-          value={data.filter(item => item.status === 'active').length.toString()}
+          value={data.filter(item => item.is_active).length.toString()}
           label="活跃密钥"
           color="#10b981"
         />
         <StatCard
           icon={<Users size={18} />}
-          value={data.reduce((sum, item) => sum + item.usage, 0).toLocaleString()}
+          value={data.reduce((sum, item) => sum + (item.usage?.success || 0), 0).toLocaleString()}
           label="总使用次数"
           color="#0ea5e9"
         />
@@ -294,183 +403,210 @@ const ApiUserKeysPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">密钥名称</th>
-                <th className="px-4 py-3 text-left font-medium">描述</th>
-                <th className="px-4 py-3 text-left font-medium">服务商</th>
-                <th className="px-4 py-3 text-left font-medium">API Key</th>
-                <th className="px-4 py-3 text-left font-medium">使用情况</th>
-                <th className="px-4 py-3 text-left font-medium">状态</th>
-                <th className="px-4 py-3 text-left font-medium">最后使用</th>
-                <th className="px-4 py-3 text-left font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200">
-              {paginatedData.map((item) => (
-                <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
-                  <td className="px-4 py-3">
-                    <div>
-                      <div className="font-medium">{item.keyName}</div>
-                      <div className="text-xs text-neutral-500">创建于 {item.createdAt}</div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="max-w-xs truncate" title={item.description}>
-                      {item.description || '无描述'}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
-                      {item.providerType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">{renderMaskedKey(item.keyValue, item.id)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">{item.usage.toLocaleString()} / {item.limit.toLocaleString()}</span>
-                      <button
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setDialogType('stats')
-                        }}
-                        className="text-violet-600 hover:text-violet-700"
-                        title="查看统计"
-                      >
-                        <BarChart3 size={14} />
-                      </button>
-                    </div>
-                    <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
-                      <div
-                        className="bg-violet-600 h-1.5 rounded-full"
-                        style={{ width: `${Math.min((item.usage / item.limit) * 100, 100)}%` }}
-                      />
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                        item.status === 'active'
-                          ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                          : 'bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300'
-                      }`}
-                    >
-                      {item.status === 'active' ? '启用' : '停用'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-neutral-600">{item.lastUsed}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setDialogType('edit')
-                        }}
-                        className="p-1 text-neutral-500 hover:text-violet-600"
-                        title="编辑"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setDialogType('delete')
-                        }}
-                        className="p-1 text-neutral-500 hover:text-red-600"
-                        title="删除"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* 加载指示器 */}
+      {loading && (
+        <div className="flex justify-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
         </div>
-        
-        {/* 分页组件 */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-200">
-            <div className="text-sm text-neutral-600">
-              显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filteredData.length)} 条，共 {filteredData.length} 条记录
-            </div>
-            <div className="flex items-center gap-4">
-              {/* 每页数量选择 */}
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-neutral-600">每页</span>
-                <ModernSelect
-                  value={pageSize.toString()}
-                  onValueChange={(value) => {
-                    const newSize = Number(value)
-                    setPageSize(newSize)
-                    setCurrentPage(1) // 重置到第一页
-                  }}
-                  options={[
-                    { value: '10', label: '10' },
-                    { value: '20', label: '20' },
-                    { value: '50', label: '50' },
-                    { value: '100', label: '100' }
-                  ]}
-                  triggerClassName="h-8 w-16"
-                />
-                <span className="text-sm text-neutral-600">条</span>
+      )}
+
+      {/* 数据表格 */}
+      {!loading && (
+        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-50 text-neutral-600">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">密钥名称</th>
+                  <th className="px-4 py-3 text-left font-medium">描述</th>
+                  <th className="px-4 py-3 text-left font-medium">服务商</th>
+                  <th className="px-4 py-3 text-left font-medium">API Key</th>
+                  <th className="px-4 py-3 text-left font-medium">使用情况</th>
+                  <th className="px-4 py-3 text-left font-medium">状态</th>
+                  <th className="px-4 py-3 text-left font-medium">最后使用</th>
+                  <th className="px-4 py-3 text-left font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                {paginatedData.map((item) => (
+                  <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
+                    <td className="px-4 py-3">
+                      <div>
+                        <div className="font-medium">{item.name}</div>
+                        <div className="text-xs text-neutral-500">
+                          创建于 {new Date(item.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="max-w-xs truncate" title={item.description || ''}>
+                        {item.description || '无描述'}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
+                        {getProviderDisplayName(item.provider_type_id)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">{renderMaskedKey(item.api_key, item.id)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">
+                          {(item.usage?.success || 0).toLocaleString()} / {(item.usage?.failure || 0).toLocaleString()}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setDialogType('stats')
+                          }}
+                          className="text-violet-600 hover:text-violet-700"
+                          title="查看统计"
+                        >
+                          <BarChart3 size={14} />
+                        </button>
+                      </div>
+                      <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
+                        <div
+                          className="bg-violet-600 h-1.5 rounded-full"
+                          style={{ 
+                            width: `${Math.min(
+                              ((item.usage?.success || 0) / Math.max(1, (item.usage?.success || 0) + (item.usage?.failure || 0))) * 100, 
+                              100
+                            )}%` 
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          item.is_active
+                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                            : 'bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300'
+                        }`}
+                      >
+                        {item.is_active ? '启用' : '停用'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-neutral-600">
+                      {item.last_used_at 
+                        ? new Date(item.last_used_at).toLocaleString() 
+                        : '从未使用'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setDialogType('edit')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-violet-600"
+                          title="编辑"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setDialogType('delete')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-red-600"
+                          title="删除"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* 分页组件 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-200">
+              <div className="text-sm text-neutral-600">
+                显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, totalItems)} 条，
+                共 {totalItems} 条记录
               </div>
-              
-              <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border ${
-                  currentPage === 1
-                    ? 'bg-neutral-50 text-neutral-400 border-neutral-200 cursor-not-allowed'
-                    : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
-                }`}
-              >
-                <ChevronLeft size={16} />
-                上一页
-              </button>
-              
-              <div className="flex items-center gap-1">
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+              <div className="flex items-center gap-4">
+                {/* 每页数量选择 */}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-neutral-600">每页</span>
+                  <ModernSelect
+                    value={pageSize.toString()}
+                    onValueChange={(value) => {
+                      const newSize = Number(value)
+                      setPageSize(newSize)
+                      setCurrentPage(1) // 重置到第一页
+                    }}
+                    options={[
+                      { value: '10', label: '10' },
+                      { value: '20', label: '20' },
+                      { value: '50', label: '50' },
+                      { value: '100', label: '100' }
+                    ]}
+                    triggerClassName="h-8 w-16"
+                  />
+                  <span className="text-sm text-neutral-600">条</span>
+                </div>
+                
+                <div className="flex items-center gap-2">
                   <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`px-3 py-1.5 text-sm rounded-lg ${
-                      page === currentPage
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-50'
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border ${
+                      currentPage === 1
+                        ? 'bg-neutral-50 text-neutral-400 border-neutral-200 cursor-not-allowed'
+                        : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
                     }`}
                   >
-                    {page}
+                    <ChevronLeft size={16} />
+                    上一页
                   </button>
-                ))}
-              </div>
-              
-              <button
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages}
-                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border ${
-                  currentPage === totalPages
-                    ? 'bg-neutral-50 text-neutral-400 border-neutral-200 cursor-not-allowed'
-                    : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
-                }`}
-              >
-                下一页
-                <ChevronRight size={16} />
-              </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      // 显示当前页附近5个页码
+                      const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4))
+                      const page = start + i
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`px-3 py-1.5 text-sm rounded-lg ${
+                            page === currentPage
+                              ? 'bg-violet-600 text-white'
+                              : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-50'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border ${
+                      currentPage === totalPages
+                        ? 'bg-neutral-50 text-neutral-400 border-neutral-200 cursor-not-allowed'
+                        : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
+                    }`}
+                  >
+                    下一页
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-
-      {/* 对话框组件将在下一步实现 */}
+      {/* 对话框组件 */}
       {dialogType && (
         <DialogPortal
           type={dialogType}
@@ -482,6 +618,8 @@ const ApiUserKeysPage: React.FC = () => {
           onAdd={handleAdd}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onRegenerate={handleRegenerate}
+          onUpdateStatus={handleUpdateStatus}
         />
       )}
     </div>
@@ -493,18 +631,42 @@ const DialogPortal: React.FC<{
   type: DialogType
   selectedItem: ApiKey | null
   onClose: () => void
-  onAdd: (item: Omit<ApiKey, 'id' | 'usage' | 'createdAt' | 'lastUsed'>) => void
+  onAdd: (item: Omit<ApiKey, 'id' | 'usage' | 'created_at' | 'last_used_at' | 'api_key'>) => void
   onEdit: (item: ApiKey) => void
   onDelete: () => void
-}> = ({ type, selectedItem, onClose, onAdd, onEdit, onDelete }) => {
+  onRegenerate: (id: number) => void
+  onUpdateStatus: (id: number, isActive: boolean) => void
+}> = ({ type, selectedItem, onClose, onAdd, onEdit, onDelete, onRegenerate, onUpdateStatus }) => {
   if (!type) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      {type === 'add' && <AddDialog onClose={onClose} onSubmit={onAdd} />}
-      {type === 'edit' && selectedItem && <EditDialog item={selectedItem} onClose={onClose} onSubmit={onEdit} />}
-      {type === 'delete' && selectedItem && <DeleteDialog item={selectedItem} onClose={onClose} onConfirm={onDelete} />}
-      {type === 'stats' && selectedItem && <StatsDialog item={selectedItem} onClose={onClose} />}
+      {type === 'add' && (
+        <AddDialog
+          onClose={onClose}
+          onSubmit={onAdd}
+        />
+      )}
+      {type === 'edit' && selectedItem && (
+        <EditDialog
+          item={selectedItem}
+          onClose={onClose}
+          onSubmit={onEdit}
+        />
+      )}
+      {type === 'delete' && selectedItem && (
+        <DeleteDialog
+          item={selectedItem}
+          onClose={onClose}
+          onConfirm={onDelete}
+        />
+      )}
+      {type === 'stats' && selectedItem && (
+        <StatsDialog
+          item={selectedItem}
+          onClose={onClose}
+        />
+      )}
     </div>
   )
 }
@@ -512,44 +674,107 @@ const DialogPortal: React.FC<{
 /** 添加对话框 */
 const AddDialog: React.FC<{
   onClose: () => void
-  onSubmit: (item: Omit<ApiKey, 'id' | 'usage' | 'createdAt' | 'lastUsed' | 'keyValue'>) => void
+  onSubmit: (item: Omit<ApiKey, 'id' | 'usage' | 'created_at' | 'last_used_at' | 'api_key'>) => void
 }> = ({ onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
-    keyName: '',
+    name: '',
     description: '',
-    providerType: 'OpenAI',
-    schedulingStrategy: 'round_robin' as 'round_robin' | 'priority' | 'weighted' | 'random',
-    providerKeys: [] as string[],
-    retryCount: 3,
-    timeoutSeconds: 30,
-    rateLimitPerMinute: 60,
-    tokenLimitPerDay: 10000,
-    status: 'active' as 'active' | 'disabled',
-    limit: 10000,
+    provider: '', // 添加provider字段
+    provider_type_id: 0, // 初始为0，表示未选择
+    scheduling_strategy: '' as string,
+    user_provider_keys_ids: [] as number[],
+    retry_count: 3,
+    timeout_seconds: 30,
+    max_request_per_min: 60,
+    max_requests_per_day: 50000,
+    max_tokens_per_day: 10000,
+    max_cost_per_day: 100.00,
+    expires_at: '' as string | null,
+    is_active: true,
   })
 
-  // 可用的服务商类型
-  const providerTypes = ['OpenAI', 'Anthropic', 'Google', 'Azure', 'Claude']
-  
-  // 调度策略选项
-  const schedulingOptions = [
-    { value: 'round_robin', label: '轮询调度' },
-    { value: 'priority', label: '优先级调度' },
-    { value: 'weighted', label: '权重调度' },
-    { value: 'random', label: '随机调度' },
-  ]
+  // 弹窗独有的状态管理
+  const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
+  const [schedulingStrategies, setSchedulingStrategies] = useState<SchedulingStrategy[]>([])
+  const [userProviderKeys, setUserProviderKeys] = useState<UserProviderKey[]>([])
+  const [loadingProviderTypes, setLoadingProviderTypes] = useState(false)
+  const [loadingSchedulingStrategies, setLoadingSchedulingStrategies] = useState(false)
+  const [loadingKeys, setLoadingKeys] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  // 模拟的账号API Keys
-  const availableProviderKeys = [
-    'openai-primary', 'openai-backup', 'openai-test',
-    'claude-primary', 'claude-dev',
-    'gemini-primary', 'gemini-test',
-    'azure-primary', 'azure-backup'
-  ]
+  // 获取服务商类型列表
+  const fetchProviderTypesLocal = async () => {
+    setLoadingProviderTypes(true)
+    try {
+      const response = await api.auth.getProviderTypes({ is_active: true })
+      
+      if (response.success && response.data) {
+        setProviderTypes(response.data.provider_types || [])
+        // 如果有可用的服务商类型，设置默认选择第一个
+        if (response.data.provider_types && response.data.provider_types.length > 0) {
+          const firstProvider = response.data.provider_types[0]
+          setFormData(prev => ({ 
+            ...prev, 
+            provider_type_id: firstProvider.id,
+            provider: firstProvider.name 
+          }))
+        }
+      } else {
+        console.error('[AddDialog] 获取服务商类型失败:', response.message)
+      }
+    } catch (err) {
+      console.error('[AddDialog] 获取服务商类型异常:', err)
+    } finally {
+      setLoadingProviderTypes(false)
+    }
+  }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    onSubmit(formData)
+  // 获取调度策略列表
+  const fetchSchedulingStrategiesLocal = async () => {
+    setLoadingSchedulingStrategies(true)
+    try {
+      const response = await api.auth.getSchedulingStrategies()
+      if (response.success && response.data) {
+        setSchedulingStrategies(response.data.scheduling_strategies || [])
+        // 设置默认调度策略
+        const defaultStrategy = response.data.scheduling_strategies.find(s => s.is_default)
+        if (defaultStrategy) {
+          setFormData(prev => ({ ...prev, scheduling_strategy: defaultStrategy.value }))
+        } else if (response.data.scheduling_strategies.length > 0) {
+          setFormData(prev => ({ ...prev, scheduling_strategy: response.data!.scheduling_strategies[0].value }))
+        }
+      }
+    } catch (err) {
+      console.error('获取调度策略失败:', err)
+    } finally {
+      setLoadingSchedulingStrategies(false)
+    }
+  }
+
+  // 获取用户提供商密钥列表的本地函数
+  const fetchUserProviderKeysLocal = async (providerTypeId: number) => {
+    if (!providerTypeId) {
+      setUserProviderKeys([])
+      return
+    }
+    
+    setLoadingKeys(true)
+    try {
+      const response = await api.auth.getUserProviderKeys({ 
+        is_active: true,
+        provider_type_id: providerTypeId
+      })
+      if (response.success && response.data) {
+        setUserProviderKeys(response.data.user_provider_keys || [])
+      } else {
+        setUserProviderKeys([])
+      }
+    } catch (err) {
+      console.error('获取用户提供商密钥失败:', err)
+      setUserProviderKeys([])
+    } finally {
+      setLoadingKeys(false)
+    }
   }
 
   // 处理数字输入框的增减
@@ -560,18 +785,52 @@ const AddDialog: React.FC<{
     }))
   }
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    
+    setSubmitting(true)
+    try {
+      await onSubmit(formData)
+    } catch (err) {
+      console.error('提交失败:', err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // 初始化：获取服务商类型和调度策略
+  useEffect(() => {
+    const initializeDialog = async () => {
+      await Promise.all([
+        fetchProviderTypesLocal(),
+        fetchSchedulingStrategiesLocal()
+      ])
+    }
+    initializeDialog()
+  }, [])
+
+  // 当服务商类型更改时，重新获取对应的用户提供商密钥
+  useEffect(() => {
+    if (formData.provider_type_id > 0) {
+      fetchUserProviderKeysLocal(formData.provider_type_id)
+      // 清空之前选择的密钥
+      setFormData(prev => ({ ...prev, user_provider_keys_ids: [] }))
+    }
+  }, [formData.provider_type_id])
+
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">新增 API Key</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">服务名称</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">服务名称 *</label>
           <input
             type="text"
             required
-            value={formData.keyName}
-            onChange={(e) => setFormData({ ...formData, keyName: e.target.value })}
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             placeholder="请输入服务名称"
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           />
@@ -591,46 +850,81 @@ const AddDialog: React.FC<{
 
         {/* 服务商类型 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">服务商类型</label>
-          <ModernSelect
-            value={formData.providerType}
-            onValueChange={(value) => setFormData({ ...formData, providerType: value })}
-            options={providerTypes.map(type => ({
-              value: type,
-              label: type
-            }))}
-            placeholder="请选择服务商类型"
-          />
+          <label className="block text-sm font-medium text-neutral-700 mb-1">服务商类型 *</label>
+          
+          {loadingProviderTypes ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载服务商类型...</span>
+            </div>
+          ) : (
+            <ModernSelect
+              value={formData.provider_type_id > 0 ? formData.provider_type_id.toString() : ''}
+              onValueChange={(value) => {
+                const selectedProvider = providerTypes.find(type => type.id.toString() === value)
+                setFormData({ 
+                  ...formData, 
+                  provider_type_id: parseInt(value),
+                  provider: selectedProvider ? selectedProvider.name : ''
+                })
+              }}
+              options={providerTypes.map(type => ({
+                value: type.id.toString(),
+                label: type.display_name
+              }))}
+              placeholder="请选择服务商类型"
+            />
+          )}
         </div>
 
         {/* 调度策略 */}
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">调度策略</label>
-          <ModernSelect
-            value={formData.schedulingStrategy}
-            onValueChange={(value) => setFormData({ ...formData, schedulingStrategy: value as any })}
-            options={schedulingOptions.map(option => ({
-              value: option.value,
-              label: option.label
-            }))}
-            placeholder="请选择调度策略"
-          />
+          {loadingSchedulingStrategies ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载调度策略...</span>
+            </div>
+          ) : (
+            <ModernSelect
+              value={formData.scheduling_strategy}
+              onValueChange={(value) => setFormData({ ...formData, scheduling_strategy: value })}
+              options={schedulingStrategies.map(option => ({
+                value: option.value,
+                label: option.label
+              }))}
+              placeholder="请选择调度策略"
+            />
+          )}
         </div>
 
         {/* 账号API Keys（多选） */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-2">账号API Keys</label>
-          <MultiSelect
-            value={formData.providerKeys}
-            onValueChange={(value) => setFormData(prev => ({ ...prev, providerKeys: value }))}
-            options={availableProviderKeys.map(key => ({
-              value: key,
-              label: key
-            }))}
-            placeholder="请选择账号API Keys"
-            searchPlaceholder="搜索API Keys..."
-            maxDisplay={3}
-          />
+          <label className="block text-sm font-medium text-neutral-700 mb-2">账号API Keys *</label>
+          {loadingKeys ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载密钥列表...</span>
+            </div>
+          ) : (
+            <MultiSelect
+              value={formData.user_provider_keys_ids.map(id => id.toString())}
+              onValueChange={(value) => setFormData(prev => ({ 
+                ...prev, 
+                user_provider_keys_ids: value.map(v => parseInt(v)) 
+              }))}
+              options={userProviderKeys.map(key => ({
+                value: key.id.toString(),
+                label: key.display_name || key.name
+              }))}
+              placeholder="请选择账号API Keys"
+              searchPlaceholder="搜索API Keys..."
+              maxDisplay={3}
+            />
+          )}
+          {!loadingKeys && userProviderKeys.length === 0 && (
+            <p className="text-xs text-yellow-600 mt-1">当前服务商类型下没有可用的账号API Keys</p>
+          )}
         </div>
 
         {/* 数字配置选项 */}
@@ -641,7 +935,7 @@ const AddDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('retryCount', -1)}
+                onClick={() => handleNumberChange('retry_count', -1)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -649,13 +943,13 @@ const AddDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.retryCount}
-                onChange={(e) => setFormData({ ...formData, retryCount: parseInt(e.target.value) || 0 })}
+                value={formData.retry_count}
+                onChange={(e) => setFormData({ ...formData, retry_count: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('retryCount', 1)}
+                onClick={() => handleNumberChange('retry_count', 1)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -669,7 +963,7 @@ const AddDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('timeoutSeconds', -5)}
+                onClick={() => handleNumberChange('timeout_seconds', -5)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -677,13 +971,13 @@ const AddDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.timeoutSeconds}
-                onChange={(e) => setFormData({ ...formData, timeoutSeconds: parseInt(e.target.value) || 0 })}
+                value={formData.timeout_seconds}
+                onChange={(e) => setFormData({ ...formData, timeout_seconds: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('timeoutSeconds', 5)}
+                onClick={() => handleNumberChange('timeout_seconds', 5)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -697,7 +991,7 @@ const AddDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('rateLimitPerMinute', -10)}
+                onClick={() => handleNumberChange('max_request_per_min', -10)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -705,13 +999,13 @@ const AddDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.rateLimitPerMinute}
-                onChange={(e) => setFormData({ ...formData, rateLimitPerMinute: parseInt(e.target.value) || 0 })}
+                value={formData.max_request_per_min}
+                onChange={(e) => setFormData({ ...formData, max_request_per_min: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('rateLimitPerMinute', 10)}
+                onClick={() => handleNumberChange('max_request_per_min', 10)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -725,7 +1019,7 @@ const AddDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('tokenLimitPerDay', -1000)}
+                onClick={() => handleNumberChange('max_tokens_per_day', -1000)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -733,13 +1027,13 @@ const AddDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.tokenLimitPerDay}
-                onChange={(e) => setFormData({ ...formData, tokenLimitPerDay: parseInt(e.target.value) || 0 })}
+                value={formData.max_tokens_per_day}
+                onChange={(e) => setFormData({ ...formData, max_tokens_per_day: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('tokenLimitPerDay', 1000)}
+                onClick={() => handleNumberChange('max_tokens_per_day', 1000)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -748,15 +1042,26 @@ const AddDialog: React.FC<{
           </div>
         </div>
 
-        {/* 使用限制 */}
+        {/* 费用限制 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">使用限制</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">费用限制/天 (USD)</label>
           <input
             type="number"
-            required
-            min="1"
-            value={formData.limit}
-            onChange={(e) => setFormData({ ...formData, limit: parseInt(e.target.value) || 1 })}
+            step="0.01"
+            min="0"
+            value={formData.max_cost_per_day}
+            onChange={(e) => setFormData({ ...formData, max_cost_per_day: parseFloat(e.target.value) || 0 })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+          />
+        </div>
+
+        {/* 过期时间 */}
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">过期时间</label>
+          <input
+            type="datetime-local"
+            value={formData.expires_at || ''}
+            onChange={(e) => setFormData({ ...formData, expires_at: e.target.value || null })}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           />
         </div>
@@ -766,19 +1071,19 @@ const AddDialog: React.FC<{
           <label className="text-sm font-medium text-neutral-700">启用状态</label>
           <button
             type="button"
-            onClick={() => setFormData({ ...formData, status: formData.status === 'active' ? 'disabled' : 'active' })}
+            onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              formData.status === 'active' ? 'bg-violet-600' : 'bg-neutral-200'
+              formData.is_active ? 'bg-violet-600' : 'bg-neutral-200'
             }`}
           >
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                formData.status === 'active' ? 'translate-x-6' : 'translate-x-1'
+                formData.is_active ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>
           <span className="text-sm text-neutral-600">
-            {formData.status === 'active' ? '启用' : '停用'}
+            {formData.is_active ? '启用' : '停用'}
           </span>
         </div>
 
@@ -786,15 +1091,20 @@ const AddDialog: React.FC<{
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 px-4 py-2 text-sm text-neutral-600 border border-neutral-200 rounded-lg hover:bg-neutral-50"
+            disabled={submitting}
+            className="flex-1 px-4 py-2 text-sm text-neutral-600 border border-neutral-200 rounded-lg hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             取消
           </button>
           <button
             type="submit"
-            className="flex-1 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700"
+            disabled={submitting || loadingKeys}
+            className="flex-1 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            创建
+            {submitting && (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            )}
+            {submitting ? '创建中...' : '创建'}
           </button>
         </div>
       </form>
@@ -809,30 +1119,73 @@ const EditDialog: React.FC<{
   onSubmit: (item: ApiKey) => void
 }> = ({ item, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({ ...item })
-
-  // 可用的服务商类型
-  const providerTypes = ['OpenAI', 'Anthropic', 'Google', 'Azure', 'Claude']
   
-  // 调度策略选项
-  const schedulingOptions = [
-    { value: 'round_robin', label: '轮询调度' },
-    { value: 'priority', label: '优先级调度' },
-    { value: 'weighted', label: '权重调度' },
-    { value: 'random', label: '随机调度' },
-  ]
+  // 编辑弹窗独有的状态管理
+  const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
+  const [schedulingStrategies, setSchedulingStrategies] = useState<SchedulingStrategy[]>([])
+  const [userProviderKeys, setUserProviderKeys] = useState<UserProviderKey[]>([])
+  const [loadingProviderTypes, setLoadingProviderTypes] = useState(false)
+  const [loadingSchedulingStrategies, setLoadingSchedulingStrategies] = useState(false)
+  const [loadingKeys, setLoadingKeys] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  // 模拟的账号API Keys
-  const availableProviderKeys = [
-    'openai-primary', 'openai-backup', 'openai-test',
-    'claude-primary', 'claude-dev',
-    'gemini-primary', 'gemini-test',
-    'azure-primary', 'azure-backup'
-  ]
+  // 获取服务商类型列表
+  const fetchProviderTypesLocal = async () => {
+    setLoadingProviderTypes(true)
+    try {
+      const response = await api.auth.getProviderTypes({ is_active: true })
+      
+      if (response.success && response.data) {
+        setProviderTypes(response.data.provider_types || [])
+      } else {
+        console.error('[EditDialog] 获取服务商类型失败:', response.message)
+      }
+    } catch (err) {
+      console.error('[EditDialog] 获取服务商类型异常:', err)
+    } finally {
+      setLoadingProviderTypes(false)
+    }
+  }
 
+  // 获取调度策略列表
+  const fetchSchedulingStrategiesLocal = async () => {
+    setLoadingSchedulingStrategies(true)
+    try {
+      const response = await api.auth.getSchedulingStrategies()
+      if (response.success && response.data) {
+        setSchedulingStrategies(response.data.scheduling_strategies || [])
+      }
+    } catch (err) {
+      console.error('获取调度策略失败:', err)
+    } finally {
+      setLoadingSchedulingStrategies(false)
+    }
+  }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    onSubmit(formData)
+  // 获取用户提供商密钥列表的本地函数
+  const fetchUserProviderKeysLocal = async (providerTypeId: number) => {
+    if (!providerTypeId) {
+      setUserProviderKeys([])
+      return
+    }
+    
+    setLoadingKeys(true)
+    try {
+      const response = await api.auth.getUserProviderKeys({ 
+        is_active: true,
+        provider_type_id: providerTypeId
+      })
+      if (response.success && response.data) {
+        setUserProviderKeys(response.data.user_provider_keys || [])
+      } else {
+        setUserProviderKeys([])
+      }
+    } catch (err) {
+      console.error('获取用户提供商密钥失败:', err)
+      setUserProviderKeys([])
+    } finally {
+      setLoadingKeys(false)
+    }
   }
 
   // 处理数字输入框的增减
@@ -843,6 +1196,39 @@ const EditDialog: React.FC<{
     }))
   }
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    
+    setSubmitting(true)
+    try {
+      await onSubmit(formData)
+    } catch (err) {
+      console.error('提交失败:', err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // 当服务商类型更改时，重新获取对应的用户提供商密钥
+  useEffect(() => {
+    if (formData.provider_type_id) {
+      fetchUserProviderKeysLocal(formData.provider_type_id)
+    }
+  }, [formData.provider_type_id])
+
+  // 初始化：获取服务商类型、调度策略和当前服务商类型的密钥
+  useEffect(() => {
+    const initializeEditDialog = async () => {
+      await Promise.all([
+        fetchProviderTypesLocal(),
+        fetchSchedulingStrategiesLocal()
+      ])
+      // 在获取服务商类型后，再获取当前服务商的密钥
+      fetchUserProviderKeysLocal(formData.provider_type_id)
+    }
+    initializeEditDialog()
+  }, [])
 
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
@@ -850,12 +1236,12 @@ const EditDialog: React.FC<{
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">服务名称</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">服务名称 *</label>
           <input
             type="text"
             required
-            value={formData.keyName}
-            onChange={(e) => setFormData({ ...formData, keyName: e.target.value })}
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           />
         </div>
@@ -873,13 +1259,20 @@ const EditDialog: React.FC<{
 
         {/* 服务商类型 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">服务商类型</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">服务商类型 *</label>
           <ModernSelect
-            value={formData.providerType}
-            onValueChange={(value) => setFormData({ ...formData, providerType: value })}
+            value={formData.provider_type_id.toString()}
+            onValueChange={(value) => {
+              const selectedProvider = providerTypes.find(type => type.id.toString() === value)
+              setFormData({ 
+                ...formData, 
+                provider_type_id: parseInt(value),
+                provider: selectedProvider ? selectedProvider.name : formData.provider
+              })
+            }}
             options={providerTypes.map(type => ({
-              value: type,
-              label: type
+              value: type.id.toString(),
+              label: type.display_name
             }))}
             placeholder="请选择服务商类型"
           />
@@ -889,9 +1282,9 @@ const EditDialog: React.FC<{
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">调度策略</label>
           <ModernSelect
-            value={formData.schedulingStrategy}
-            onValueChange={(value) => setFormData({ ...formData, schedulingStrategy: value as any })}
-            options={schedulingOptions.map(option => ({
+            value={formData.scheduling_strategy || ''}
+            onValueChange={(value) => setFormData({ ...formData, scheduling_strategy: value })}
+            options={schedulingStrategies.map(option => ({
               value: option.value,
               label: option.label
             }))}
@@ -901,18 +1294,31 @@ const EditDialog: React.FC<{
 
         {/* 账号API Keys（多选） */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-2">账号API Keys</label>
-          <MultiSelect
-            value={formData.providerKeys}
-            onValueChange={(value) => setFormData(prev => ({ ...prev, providerKeys: value }))}
-            options={availableProviderKeys.map(key => ({
-              value: key,
-              label: key
-            }))}
-            placeholder="请选择账号API Keys"
-            searchPlaceholder="搜索API Keys..."
-            maxDisplay={3}
-          />
+          <label className="block text-sm font-medium text-neutral-700 mb-2">账号API Keys *</label>
+          {loadingKeys ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载密钥列表...</span>
+            </div>
+          ) : (
+            <MultiSelect
+              value={(formData.user_provider_keys_ids || []).map(id => id.toString())}
+              onValueChange={(value) => setFormData(prev => ({ 
+                ...prev, 
+                user_provider_keys_ids: value.map(v => parseInt(v)) 
+              }))}
+              options={userProviderKeys.map(key => ({
+                value: key.id.toString(),
+                label: key.display_name || key.name
+              }))}
+              placeholder="请选择账号API Keys"
+              searchPlaceholder="搜索API Keys..."
+              maxDisplay={3}
+            />
+          )}
+          {!loadingKeys && userProviderKeys.length === 0 && (
+            <p className="text-xs text-yellow-600 mt-1">当前服务商类型下没有可用的账号API Keys</p>
+          )}
         </div>
 
         {/* 数字配置选项 */}
@@ -923,7 +1329,7 @@ const EditDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('retryCount', -1)}
+                onClick={() => handleNumberChange('retry_count', -1)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -931,13 +1337,13 @@ const EditDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.retryCount}
-                onChange={(e) => setFormData({ ...formData, retryCount: parseInt(e.target.value) || 0 })}
+                value={formData.retry_count}
+                onChange={(e) => setFormData({ ...formData, retry_count: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('retryCount', 1)}
+                onClick={() => handleNumberChange('retry_count', 1)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -951,7 +1357,7 @@ const EditDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('timeoutSeconds', -5)}
+                onClick={() => handleNumberChange('timeout_seconds', -5)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -959,13 +1365,13 @@ const EditDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.timeoutSeconds}
-                onChange={(e) => setFormData({ ...formData, timeoutSeconds: parseInt(e.target.value) || 0 })}
+                value={formData.timeout_seconds}
+                onChange={(e) => setFormData({ ...formData, timeout_seconds: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('timeoutSeconds', 5)}
+                onClick={() => handleNumberChange('timeout_seconds', 5)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -979,7 +1385,7 @@ const EditDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('rateLimitPerMinute', -10)}
+                onClick={() => handleNumberChange('max_request_per_min', -10)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -987,13 +1393,13 @@ const EditDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.rateLimitPerMinute}
-                onChange={(e) => setFormData({ ...formData, rateLimitPerMinute: parseInt(e.target.value) || 0 })}
+                value={formData.max_request_per_min}
+                onChange={(e) => setFormData({ ...formData, max_request_per_min: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('rateLimitPerMinute', 10)}
+                onClick={() => handleNumberChange('max_request_per_min', 10)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -1007,7 +1413,7 @@ const EditDialog: React.FC<{
             <div className="flex items-center">
               <button
                 type="button"
-                onClick={() => handleNumberChange('tokenLimitPerDay', -1000)}
+                onClick={() => handleNumberChange('max_tokens_per_day', -1000)}
                 className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
               >
                 −
@@ -1015,13 +1421,13 @@ const EditDialog: React.FC<{
               <input
                 type="number"
                 min="0"
-                value={formData.tokenLimitPerDay}
-                onChange={(e) => setFormData({ ...formData, tokenLimitPerDay: parseInt(e.target.value) || 0 })}
+                value={formData.max_tokens_per_day}
+                onChange={(e) => setFormData({ ...formData, max_tokens_per_day: parseInt(e.target.value) || 0 })}
                 className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
               />
               <button
                 type="button"
-                onClick={() => handleNumberChange('tokenLimitPerDay', 1000)}
+                onClick={() => handleNumberChange('max_tokens_per_day', 1000)}
                 className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
               >
                 +
@@ -1030,15 +1436,26 @@ const EditDialog: React.FC<{
           </div>
         </div>
 
-        {/* 使用限制 */}
+        {/* 费用限制 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">使用限制</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">费用限制/天 (USD)</label>
           <input
             type="number"
-            required
-            min="1"
-            value={formData.limit}
-            onChange={(e) => setFormData({ ...formData, limit: parseInt(e.target.value) || 1 })}
+            step="0.01"
+            min="0"
+            value={formData.max_cost_per_day}
+            onChange={(e) => setFormData({ ...formData, max_cost_per_day: parseFloat(e.target.value) || 0 })}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+          />
+        </div>
+
+        {/* 过期时间 */}
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">过期时间</label>
+          <input
+            type="datetime-local"
+            value={formData.expires_at || ''}
+            onChange={(e) => setFormData({ ...formData, expires_at: e.target.value || null })}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           />
         </div>
@@ -1048,19 +1465,19 @@ const EditDialog: React.FC<{
           <label className="text-sm font-medium text-neutral-700">启用状态</label>
           <button
             type="button"
-            onClick={() => setFormData({ ...formData, status: formData.status === 'active' ? 'disabled' : 'active' })}
+            onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              formData.status === 'active' ? 'bg-violet-600' : 'bg-neutral-200'
+              formData.is_active ? 'bg-violet-600' : 'bg-neutral-200'
             }`}
           >
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                formData.status === 'active' ? 'translate-x-6' : 'translate-x-1'
+                formData.is_active ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>
           <span className="text-sm text-neutral-600">
-            {formData.status === 'active' ? '启用' : '停用'}
+            {formData.is_active ? '启用' : '停用'}
           </span>
         </div>
 
@@ -1068,15 +1485,20 @@ const EditDialog: React.FC<{
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 px-4 py-2 text-sm text-neutral-600 border border-neutral-200 rounded-lg hover:bg-neutral-50"
+            disabled={submitting}
+            className="flex-1 px-4 py-2 text-sm text-neutral-600 border border-neutral-200 rounded-lg hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             取消
           </button>
           <button
             type="submit"
-            className="flex-1 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700"
+            disabled={submitting || loadingKeys}
+            className="flex-1 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            保存
+            {submitting && (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+            )}
+            {submitting ? '保存中...' : '保存'}
           </button>
         </div>
       </form>
@@ -1094,7 +1516,7 @@ const DeleteDialog: React.FC<{
     <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
       <h3 className="text-lg font-medium text-neutral-900 mb-2">确认删除</h3>
       <p className="text-sm text-neutral-600 mb-4">
-        确定要删除密钥 <strong>{item.keyName}</strong> 吗？此操作无法撤销。
+        确定要删除密钥 <strong>{item.name}</strong> 吗？此操作无法撤销。
       </p>
       <div className="flex gap-3">
         <button
@@ -1147,11 +1569,11 @@ const StatsDialog: React.FC<{
         <div className="grid grid-cols-2 gap-4">
           <div className="p-4 bg-neutral-50 rounded-xl">
             <div className="text-sm text-neutral-600">密钥名称</div>
-            <div className="font-medium">{item.keyName}</div>
+            <div className="font-medium">{item.name}</div>
           </div>
           <div className="p-4 bg-neutral-50 rounded-xl">
             <div className="text-sm text-neutral-600">服务商类型</div>
-            <div className="font-medium">{item.providerType}</div>
+            <div className="font-medium">{item.provider}</div>
           </div>
         </div>
 
@@ -1159,7 +1581,9 @@ const StatsDialog: React.FC<{
         <div className="grid grid-cols-3 gap-4">
           <div className="p-4 bg-violet-50 rounded-xl">
             <div className="text-sm text-violet-600">使用次数</div>
-            <div className="text-2xl font-bold text-violet-900">{item.usage.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-violet-900">
+              {(item.usage?.success || 0).toLocaleString()}
+            </div>
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>

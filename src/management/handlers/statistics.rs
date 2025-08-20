@@ -1,7 +1,7 @@
 //! # 统一统计信息处理器
 //!
 //! 基于proxy_tracing表的统一统计查询API
-
+use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::{Query, State};
@@ -16,89 +16,6 @@ use std::collections::HashMap;
 
 // 导入JWT Claims结构体
 use crate::management::handlers::auth::Claims;
-
-/// 从请求头中提取用户ID
-/// 解析JWT token并返回当前认证用户的ID
-fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::response::Response> {
-    // 提取Authorization头
-    let auth_header = match headers.get("Authorization") {
-        Some(header) => match header.to_str() {
-            Ok(header_str) => header_str,
-            Err(_) => {
-                tracing::warn!("Invalid Authorization header format in statistics request");
-                return Err(response::error::<()>(
-                    StatusCode::UNAUTHORIZED,
-                    "AUTH_ERROR",
-                    "Invalid Authorization header format",
-                )
-                .into_response());
-            }
-        },
-        None => {
-            tracing::warn!("Missing Authorization header in statistics request");
-            return Err(response::error::<()>(
-                StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Authorization header required",
-            )
-            .into_response());
-        }
-    };
-
-    // 检查Bearer前缀
-    if !auth_header.starts_with("Bearer ") {
-        return Err(response::error::<()>(
-            StatusCode::UNAUTHORIZED,
-            "AUTH_ERROR",
-            "Invalid Authorization header format",
-        )
-        .into_response());
-    }
-
-    let token = &auth_header[7..]; // 移除"Bearer "前缀
-
-    // 从环境变量获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    // 验证并解码JWT token
-    let validation = Validation::default();
-    let token_data = match decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_ref()),
-        &validation,
-    ) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::warn!("JWT token validation failed in statistics request: {}", err);
-            return Err(response::error::<()>(
-                StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Invalid or expired token",
-            )
-            .into_response());
-        }
-    };
-
-    // 解析用户ID
-    let user_id: i32 = match token_data.claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            tracing::error!(
-                "Failed to parse user ID from JWT token: {}",
-                token_data.claims.sub
-            );
-            return Err(response::error::<()>(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "AUTH_ERROR",
-                "Invalid user ID in token",
-            )
-            .into_response());
-        }
-    };
-
-    Ok(user_id)
-}
 
 /// 统计查询参数（向后兼容）
 #[derive(Debug, Deserialize)]

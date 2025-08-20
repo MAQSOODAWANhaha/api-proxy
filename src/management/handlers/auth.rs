@@ -6,9 +6,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use bcrypt;
 use chrono::{Duration, Utc};
-use entity::{
-    provider_types, provider_types::Entity as ProviderTypes, users::Entity as Users,
-};
+use entity::{provider_types, provider_types::Entity as ProviderTypes, users::Entity as Users};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
@@ -373,45 +371,4 @@ pub async fn validate_token(
         user: Some(user_info),
     };
     response::success(response_data)
-}
-
-/// 获取服务提供商类型列表
-pub async fn list_provider_types(State(state): State<AppState>) -> impl IntoResponse {
-    // changed
-    // 获取所有活跃的服务提供商类型
-    let provider_types_result = ProviderTypes::find()
-        .filter(provider_types::Column::IsActive.eq(true))
-        .order_by_asc(provider_types::Column::Id)
-        .all(state.database.as_ref())
-        .await;
-
-    let provider_types_data = match provider_types_result {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::error!("Failed to fetch provider types: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider types",
-            );
-        }
-    };
-
-    // 转换为响应格式
-    let provider_types: Vec<_> = provider_types_data
-        .into_iter()
-        .map(|provider| {
-            json!({
-                "id": provider.id,
-                "name": provider.name,
-                "display_name": provider.display_name,
-                "base_url": provider.base_url,
-                "api_format": provider.api_format,
-                "default_model": provider.default_model,
-                "is_active": provider.is_active
-            })
-        })
-        .collect();
-
-    response::success(provider_types)
 }

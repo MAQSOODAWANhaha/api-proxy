@@ -1,0 +1,92 @@
+//! # 认证工具模块
+//!
+//! 提供统一的认证相关工具函数
+
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use jsonwebtoken::{DecodingKey, Validation, decode};
+use serde::{Deserialize, Serialize};
+/// JWT Claims 结构体
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    /// 用户ID
+    pub sub: String,
+    /// 用户名
+    pub username: String,
+    /// 是否为管理员
+    pub is_admin: bool,
+    /// 过期时间
+    pub exp: usize,
+    /// 签发时间
+    pub iat: usize,
+}
+
+/// 从请求头中提取用户ID
+/// 解析JWT token并返回当前认证用户的ID
+pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::response::Response> {
+    // 提取Authorization头
+    let auth_header = match headers.get("Authorization") {
+        Some(header) => match header.to_str() {
+            Ok(header_str) => header_str,
+            Err(_) => {
+                tracing::warn!("Invalid Authorization header format");
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid Authorization header format",
+                )
+                    .into_response());
+            }
+        },
+        None => {
+            tracing::warn!("Missing Authorization header");
+            return Err((StatusCode::UNAUTHORIZED, "Authorization header required").into_response());
+        }
+    };
+
+    // 检查Bearer前缀
+    if !auth_header.starts_with("Bearer ") {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Invalid Authorization header format",
+        )
+            .into_response());
+    }
+
+    let token = &auth_header[7..]; // 移除"Bearer "前缀
+
+    // 从环境变量获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+
+    // 验证并解码JWT token
+    let validation = Validation::default();
+    let token_data = match decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::warn!("JWT token validation failed: {}", err);
+            return Err((StatusCode::UNAUTHORIZED, "Invalid or expired token").into_response());
+        }
+    };
+
+    // 解析用户ID
+    let user_id: i32 = match token_data.claims.sub.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            tracing::error!(
+                "Failed to parse user ID from JWT token: {}",
+                token_data.claims.sub
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid user ID in token",
+            )
+                .into_response());
+        }
+    };
+
+    Ok(user_id)
+}

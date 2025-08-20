@@ -86,4 +86,138 @@ mod tests {
         let source = config_err.source().unwrap();
         assert!(source.to_string().contains("文件不存在"));
     }
+
+    #[test]
+    fn test_new_error_types() {
+        let err = ProxyError::load_balancer("负载均衡失败");
+        assert!(matches!(err, ProxyError::LoadBalancer { .. }));
+        assert_eq!(err.to_string(), "负载均衡错误: 负载均衡失败");
+
+        let err = ProxyError::health_check("健康检查失败");
+        assert!(matches!(err, ProxyError::HealthCheck { .. }));
+        assert_eq!(err.to_string(), "健康检查错误: 健康检查失败");
+
+        let err = ProxyError::statistics("统计收集失败");
+        assert!(matches!(err, ProxyError::Statistics { .. }));
+        assert_eq!(err.to_string(), "统计收集错误: 统计收集失败");
+
+        let err = ProxyError::tracing("跟踪系统失败");
+        assert!(matches!(err, ProxyError::Tracing { .. }));
+        assert_eq!(err.to_string(), "跟踪系统错误: 跟踪系统失败");
+    }
+
+    #[test]
+    fn test_timeout_errors() {
+        let err = ProxyError::connection_timeout("连接超时", 30);
+        assert!(matches!(err, ProxyError::ConnectionTimeout { timeout_seconds: 30, .. }));
+        assert!(err.to_string().contains("连接超时: 连接超时"));
+
+        let err = ProxyError::read_timeout("读取超时", 30);
+        assert!(matches!(err, ProxyError::ReadTimeout { timeout_seconds: 30, .. }));
+        assert!(err.to_string().contains("读取超时: 读取超时"));
+
+        let err = ProxyError::write_timeout("写入超时", 30);
+        assert!(matches!(err, ProxyError::WriteTimeout { timeout_seconds: 30, .. }));
+        assert!(err.to_string().contains("写入超时: 写入超时"));
+    }
+
+    #[test]
+    fn test_error_macros() {
+        let err = crate::config_error!("配置错误");
+        assert!(matches!(err, ProxyError::Config { .. }));
+
+        let err = crate::database_error!("数据库错误");
+        assert!(matches!(err, ProxyError::Database { .. }));
+
+        let err = crate::network_error!("网络错误");
+        assert!(matches!(err, ProxyError::Network { .. }));
+
+        let err = crate::auth_error!("认证错误");
+        assert!(matches!(err, ProxyError::Auth { .. }));
+
+        let err = crate::cache_error!("缓存错误");
+        assert!(matches!(err, ProxyError::Cache { .. }));
+
+        let err = crate::server_init_error!("服务器初始化错误");
+        assert!(matches!(err, ProxyError::ServerInit { .. }));
+
+        let err = crate::server_start_error!("服务器启动错误");
+        assert!(matches!(err, ProxyError::ServerStart { .. }));
+
+        let err = crate::authentication_error!("认证错误");
+        assert!(matches!(err, ProxyError::Authentication { .. }));
+
+        let err = crate::rate_limit_error!("速率限制错误");
+        assert!(matches!(err, ProxyError::RateLimit { .. }));
+
+        let err = crate::bad_gateway_error!("网关错误");
+        assert!(matches!(err, ProxyError::BadGateway { .. }));
+
+        let err = crate::upstream_not_found_error!("上游服务器未找到");
+        assert!(matches!(err, ProxyError::UpstreamNotFound { .. }));
+
+        let err = crate::upstream_not_available_error!("上游服务器不可用");
+        assert!(matches!(err, ProxyError::UpstreamNotAvailable { .. }));
+
+        let err = crate::load_balancer_error!("负载均衡错误");
+        assert!(matches!(err, ProxyError::LoadBalancer { .. }));
+
+        let err = crate::health_check_error!("健康检查错误");
+        assert!(matches!(err, ProxyError::HealthCheck { .. }));
+
+        let err = crate::statistics_error!("统计收集错误");
+        assert!(matches!(err, ProxyError::Statistics { .. }));
+
+        let err = crate::tracing_error!("跟踪系统错误");
+        assert!(matches!(err, ProxyError::Tracing { .. }));
+    }
+
+    #[test]
+    fn test_ensure_macros() -> Result<(), ProxyError> {
+        crate::ensure_config!(true, "这不应该触发");
+        crate::ensure_business!(true, "这不应该触发");
+        crate::ensure_database!(true, "这不应该触发");
+        crate::ensure_network!(true, "这不应该触发");
+        crate::ensure_auth!(true, "这不应该触发");
+        crate::ensure_cache!(true, "这不应该触发");
+
+        // 测试确保宏会正确返回错误
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_config!(false, "配置错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Config { .. }));
+
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_business!(false, "业务错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Business { .. }));
+
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_database!(false, "数据库错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Database { .. }));
+
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_network!(false, "网络错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Network { .. }));
+
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_auth!(false, "认证错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Auth { .. }));
+
+        let result = (|| -> Result<(), ProxyError> {
+            crate::ensure_cache!(false, "缓存错误");
+            Ok(())
+        })();
+        assert!(matches!(result.unwrap_err(), ProxyError::Cache { .. }));
+
+        Ok(())
+    }
 }

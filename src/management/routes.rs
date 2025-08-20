@@ -163,8 +163,10 @@ fn user_routes() -> Router<AppState> {
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
 fn provider_api_keys_routes() -> Router<AppState> {
-    
-    Router::new()
+    Router::new().route(
+        "/keys",
+        get(crate::management::handlers::provider_keys::get_user_provider_keys),
+    )
 }
 
 /// 用户服务API路由（对外API服务管理）
@@ -220,8 +222,13 @@ fn user_service_routes() -> Router<AppState> {
 
 /// Provider类型管理路由
 fn provider_type_routes() -> Router<AppState> {
-    Router::new().route(
-        "/",
-        get(crate::management::handlers::auth::list_provider_types),
-    )
+    Router::new()
+        .route(
+            "/providers",
+            get(crate::management::handlers::provider_types::list_provider_types),
+        )
+        .route(
+            "/scheduling-strategies",
+            get(crate::management::handlers::provider_types::get_scheduling_strategies),
+        )
 }

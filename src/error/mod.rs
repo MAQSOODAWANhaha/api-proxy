@@ -29,6 +29,16 @@ pub trait ErrorContext<T> {
     fn with_network_context<F>(self, f: F) -> Result<T>
     where
         F: FnOnce() -> String;
+
+    /// 添加认证错误上下文
+    fn with_auth_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String;
+
+    /// 添加缓存错误上下文
+    fn with_cache_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String;
 }
 
 impl<T, E> ErrorContext<T> for std::result::Result<T, E>
@@ -55,6 +65,20 @@ where
     {
         self.map_err(|e| ProxyError::network_with_source(f(), e.into()))
     }
+
+    fn with_auth_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        self.map_err(|e| ProxyError::authentication_with_source(f(), e.into()))
+    }
+
+    fn with_cache_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        self.map_err(|e| ProxyError::cache_with_source(f(), e.into()))
+    }
 }
 
 impl<T> ErrorContext<T> for Option<T> {
@@ -77,5 +101,19 @@ impl<T> ErrorContext<T> for Option<T> {
         F: FnOnce() -> String,
     {
         self.ok_or_else(|| ProxyError::network(f()))
+    }
+
+    fn with_auth_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        self.ok_or_else(|| ProxyError::auth(f()))
+    }
+
+    fn with_cache_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        self.ok_or_else(|| ProxyError::cache(f()))
     }
 }

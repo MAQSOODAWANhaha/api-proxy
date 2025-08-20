@@ -2,98 +2,18 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
+use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json};
+use axum::response::IntoResponse;
+use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
 use sea_orm::QueryOrder; // for order_by()
 use sea_orm::prelude::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
-use jsonwebtoken::{DecodingKey, Validation, decode};
-
-// 导入JWT Claims结构体
-use crate::management::handlers::auth::Claims;
-
-/// 从请求头中提取用户ID
-/// 解析JWT token并返回当前认证用户的ID
-fn extract_user_id_from_headers<T: serde::Serialize>(headers: &HeaderMap) -> Result<i32, response::ApiResponse<T>> {
-    // 提取Authorization头
-    let auth_header = match headers.get("Authorization") {
-        Some(header) => match header.to_str() {
-            Ok(header_str) => header_str,
-            Err(_) => {
-                tracing::warn!("Invalid Authorization header format in user service request");
-                return Err(response::error(
-                    StatusCode::UNAUTHORIZED,
-                    "AUTH_ERROR",
-                    "Invalid Authorization header format",
-                ));
-            }
-        },
-        None => {
-            tracing::warn!("Missing Authorization header in user service request");
-            return Err(response::error(
-                StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Authorization header required",
-            ));
-        }
-    };
-
-    // 检查Bearer前缀
-    if !auth_header.starts_with("Bearer ") {
-        return Err(response::error(
-            StatusCode::UNAUTHORIZED,
-            "AUTH_ERROR",
-            "Invalid Authorization header format",
-        ));
-    }
-
-    let token = &auth_header[7..]; // 移除"Bearer "前缀
-
-    // 从环境变量获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    // 验证并解码JWT token
-    let validation = Validation::default();
-    let token_data = match decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_ref()),
-        &validation,
-    ) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::warn!("JWT token validation failed in user service request: {}", err);
-            return Err(response::error(
-                StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Invalid or expired token",
-            ));
-        }
-    };
-
-    // 解析用户ID
-    let user_id: i32 = match token_data.claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            tracing::error!(
-                "Failed to parse user ID from JWT token: {}",
-                token_data.claims.sub
-            );
-            return Err(response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "AUTH_ERROR",
-                "Invalid user ID in token",
-            ));
-        }
-    };
-
-    Ok(user_id)
-}
 
 /// 用户服务API查询参数
 #[derive(Debug, Deserialize)]
@@ -274,14 +194,14 @@ pub async fn get_user_service_cards(
 ) -> impl IntoResponse {
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, PaginatorTrait};
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
     let db = state.database.as_ref();
-    
+
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 获取总API Key数量
@@ -297,7 +217,8 @@ pub async fn get_user_service_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count user service APIs",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -315,7 +236,8 @@ pub async fn get_user_service_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count active user service APIs",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -332,7 +254,8 @@ pub async fn get_user_service_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count user requests",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -343,6 +266,7 @@ pub async fn get_user_service_cards(
     };
 
     response::success(response)
+        .into_response().into_response()
 }
 
 /// 2. 用户API Keys列表
@@ -354,18 +278,16 @@ pub async fn list_user_service_keys(
     use entity::provider_types::Entity as ProviderType;
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{
-        ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait,
-    };
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait};
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(10);
     let db = state.database.as_ref();
-    
+
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 构建基础查询
@@ -398,7 +320,8 @@ pub async fn list_user_service_keys(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count user service APIs",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -430,7 +353,8 @@ pub async fn list_user_service_keys(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch user service APIs",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -519,6 +443,7 @@ pub async fn list_user_service_keys(
     });
 
     response::success(data)
+        .into_response().into_response()
 }
 
 /// 3. 新增API Key
@@ -534,19 +459,20 @@ pub async fn create_user_service_key(
 
     // 验证输入
     if request.user_provider_keys_ids.is_empty() {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "至少需要选择一个提供商API密钥",
-        );
+        )
+        .into_response();
     }
 
     let db = state.database.as_ref();
-    
+
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证provider_type_id是否存在
@@ -556,19 +482,21 @@ pub async fn create_user_service_key(
     {
         Ok(Some(pt)) => pt,
         Ok(None) => {
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::BAD_REQUEST,
                 "VALIDATION_ERROR",
                 "无效的服务商类型",
-            );
+            )
+            .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to query provider type: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to query provider type",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -583,23 +511,24 @@ pub async fn create_user_service_key(
         Ok(keys) => keys,
         Err(err) => {
             tracing::error!("Failed to query provider keys: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to query provider keys",
-            );
+            )
+            .into_response();
         }
     };
 
     if valid_provider_keys.len() != request.user_provider_keys_ids.len() {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             &format!(
                 "部分提供商API密钥不存在、不属于该用户或不属于{}类型",
                 provider_type.display_name
             ),
-        );
+        ).into_response();
     }
 
     // 生成唯一的API密钥
@@ -610,11 +539,12 @@ pub async fn create_user_service_key(
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
             Err(_) => {
-                return response::error(
+                return response::error::<serde_json::Value>(
                     StatusCode::BAD_REQUEST,
                     "VALIDATION_ERROR",
                     "过期时间格式错误，请使用ISO 8601格式",
-                );
+                )
+                .into_response();
             }
         }
     } else {
@@ -653,11 +583,12 @@ pub async fn create_user_service_key(
         Ok(data) => data,
         Err(e) => {
             tracing::error!("Failed to insert user service API: {}", e);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to create API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -672,7 +603,9 @@ pub async fn create_user_service_key(
         "created_at": DateTime::<Utc>::from_naive_utc_and_offset(inserted_api.created_at, Utc).to_rfc3339()
     });
 
-    response::success_with_message(data, "API Key创建成功")}
+    response::success_with_message(data, "API Key创建成功")
+        .into_response()
+}
 
 /// 4. 获取API Key详情
 pub async fn get_user_service_key(
@@ -685,19 +618,20 @@ pub async fn get_user_service_key(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        )
+        .into_response();
     }
 
     let db = state.database.as_ref();
-    
+
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 查询API Key（确保属于当前用户）
@@ -708,15 +642,17 @@ pub async fn get_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -724,19 +660,21 @@ pub async fn get_user_service_key(
     let provider_type = match ProviderType::find_by_id(api.provider_type_id).one(db).await {
         Ok(Some(pt)) => pt,
         Ok(None) => {
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PROVIDER_NOT_FOUND",
                 "Provider type not found",
-            );
+            )
+            .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider type: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider type",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -779,7 +717,9 @@ pub async fn get_user_service_key(
         updated_at: DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc).to_rfc3339(),
     };
 
-    response::success(response)}
+    response::success(response)
+        .into_response()
+}
 
 /// 5. 编辑API Key
 pub async fn update_user_service_key(
@@ -792,19 +732,20 @@ pub async fn update_user_service_key(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        )
+        .into_response();
     }
 
     let db = state.database.as_ref();
-    
+
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证API Key存在且属于当前用户
@@ -815,15 +756,17 @@ pub async fn update_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -832,11 +775,12 @@ pub async fn update_user_service_key(
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
             Err(_) => {
-                return response::error(
+                return response::error::<serde_json::Value>(
                     StatusCode::BAD_REQUEST,
                     "VALIDATION_ERROR",
                     "过期时间格式错误，请使用ISO 8601格式",
-                );
+                )
+                .into_response();
             }
         }
     } else {
@@ -899,11 +843,12 @@ pub async fn update_user_service_key(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to update user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -914,7 +859,9 @@ pub async fn update_user_service_key(
         "updated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
     });
 
-    response::success_with_message(data, "API Key更新成功")}
+    response::success_with_message(data, "API Key更新成功")
+        .into_response()
+}
 
 /// 6. 删除API Key
 pub async fn delete_user_service_key(
@@ -926,18 +873,19 @@ pub async fn delete_user_service_key(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        )
+        .into_response();
     }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证API Key存在且属于当前用户
@@ -948,15 +896,17 @@ pub async fn delete_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -965,23 +915,27 @@ pub async fn delete_user_service_key(
         Ok(result) => result,
         Err(err) => {
             tracing::error!("Failed to delete user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to delete API Key",
-            );
+            )
+            .into_response();
         }
     };
 
     if delete_result.rows_affected == 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DELETE_FAILED",
             "Failed to delete API Key",
-        );
+        )
+        .into_response();
     }
 
-    response::success_with_message(serde_json::Value::Null, "API Key删除成功")}
+    response::success_with_message(serde_json::Value::Null, "API Key删除成功")
+        .into_response()
+}
 
 /// 7. API Key使用统计
 pub async fn get_user_service_key_usage(
@@ -995,18 +949,19 @@ pub async fn get_user_service_key_usage(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        )
+        .into_response();
     }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证API Key存在且属于当前用户
@@ -1017,15 +972,17 @@ pub async fn get_user_service_key_usage(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1090,11 +1047,12 @@ pub async fn get_user_service_key_usage(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch proxy tracings: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch usage statistics",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1164,7 +1122,9 @@ pub async fn get_user_service_key_usage(
         "usage_trend": [] // TODO: 实现按日期分组的趋势数据
     });
 
-    response::success(data)}
+    response::success(data)
+        .into_response()
+}
 
 /// 8. 重新生成API Key
 pub async fn regenerate_user_service_key(
@@ -1176,18 +1136,18 @@ pub async fn regenerate_user_service_key(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        ).into_response();
     }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证API Key存在且属于当前用户
@@ -1198,15 +1158,17 @@ pub async fn regenerate_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1225,11 +1187,12 @@ pub async fn regenerate_user_service_key(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to regenerate API key: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to regenerate API key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1239,7 +1202,9 @@ pub async fn regenerate_user_service_key(
         "regenerated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
     });
 
-    response::success_with_message(data, "API Key重新生成成功")}
+    response::success_with_message(data, "API Key重新生成成功")
+        .into_response()
+}
 
 /// 9. 启用/禁用API Key
 pub async fn update_user_service_key_status(
@@ -1252,18 +1217,18 @@ pub async fn update_user_service_key_status(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return response::error(
+        return response::error::<serde_json::Value>(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        );
+        ).into_response();
     }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
-        Err(error_response) => return error_response,
+        Err(error_response) => return error_response.into_response(),
     };
 
     // 验证API Key存在且属于当前用户
@@ -1274,15 +1239,17 @@ pub async fn update_user_service_key_status(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+            return response::error::<serde_json::Value>(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found")
+                .into_response();
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1298,11 +1265,12 @@ pub async fn update_user_service_key_status(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to update API key status: {}", err);
-            return response::error(
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update API key status",
-            );
+            )
+            .into_response();
         }
     };
 
@@ -1312,4 +1280,5 @@ pub async fn update_user_service_key_status(
         "updated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
     });
 
-    response::success_with_message(data, "API Key状态更新成功")}
+    response::success_with_message(data, "API Key状态更新成功").into_response()
+}

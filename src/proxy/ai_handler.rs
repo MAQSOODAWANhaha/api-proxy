@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use pingora_core::protocols::tls::ALPN;
 use pingora_core::upstreams::peer::{HttpPeer, Peer};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};

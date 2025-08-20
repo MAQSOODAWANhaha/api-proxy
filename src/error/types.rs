@@ -165,6 +165,47 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
+
+    /// 写入超时错误
+    #[error("写入超时: {message}")]
+    WriteTimeout {
+        message: String,
+        timeout_seconds: u64,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 负载均衡错误
+    #[error("负载均衡错误: {message}")]
+    LoadBalancer {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 健康检查错误
+    #[error("健康检查错误: {message}")]
+    HealthCheck {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 统计收集错误
+    #[error("统计收集错误: {message}")]
+    Statistics {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 跟踪系统错误
+    #[error("跟踪系统错误: {message}")]
+    Tracing {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
 }
 
 impl ProxyError {
@@ -295,11 +336,33 @@ impl ProxyError {
         }
     }
 
+    /// 创建带来源的服务器初始化错误
+    pub fn server_init_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ServerInit {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
     /// 创建服务器启动错误
     pub fn server_start<T: Into<String>>(message: T) -> Self {
         Self::ServerStart {
             message: message.into(),
             source: None,
+        }
+    }
+
+    /// 创建带来源的服务器启动错误
+    pub fn server_start_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ServerStart {
+            message: message.into(),
+            source: Some(source.into()),
         }
     }
 
@@ -311,11 +374,33 @@ impl ProxyError {
         }
     }
 
+    /// 创建带来源的认证错误
+    pub fn authentication_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::Authentication {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
     /// 创建速率限制错误
     pub fn rate_limit<T: Into<String>>(message: T) -> Self {
         Self::RateLimit {
             message: message.into(),
             source: None,
+        }
+    }
+
+    /// 创建带来源的速率限制错误
+    pub fn rate_limit_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::RateLimit {
+            message: message.into(),
+            source: Some(source.into()),
         }
     }
 
@@ -327,6 +412,17 @@ impl ProxyError {
         }
     }
 
+    /// 创建带来源的网关错误
+    pub fn bad_gateway_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::BadGateway {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
     /// 创建上游服务器未找到错误
     pub fn upstream_not_found<T: Into<String>>(message: T) -> Self {
         Self::UpstreamNotFound {
@@ -335,11 +431,33 @@ impl ProxyError {
         }
     }
 
+    /// 创建带来源的上游服务器未找到错误
+    pub fn upstream_not_found_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::UpstreamNotFound {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
     /// 创建上游服务器不可用错误
     pub fn upstream_not_available<T: Into<String>>(message: T) -> Self {
         Self::UpstreamNotAvailable {
             message: message.into(),
             source: None,
+        }
+    }
+
+    /// 创建带来源的上游服务器不可用错误
+    pub fn upstream_not_available_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::UpstreamNotAvailable {
+            message: message.into(),
+            source: Some(source.into()),
         }
     }
 
@@ -383,6 +501,104 @@ impl ProxyError {
         Self::ReadTimeout {
             message: message.into(),
             timeout_seconds,
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建写入超时错误
+    pub fn write_timeout<T: Into<String>>(message: T, timeout_seconds: u64) -> Self {
+        Self::WriteTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: None,
+        }
+    }
+
+    /// 创建带来源的写入超时错误
+    pub fn write_timeout_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        timeout_seconds: u64,
+        source: E,
+    ) -> Self {
+        Self::WriteTimeout {
+            message: message.into(),
+            timeout_seconds,
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建负载均衡错误
+    pub fn load_balancer<T: Into<String>>(message: T) -> Self {
+        Self::LoadBalancer {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的负载均衡错误
+    pub fn load_balancer_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::LoadBalancer {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建健康检查错误
+    pub fn health_check<T: Into<String>>(message: T) -> Self {
+        Self::HealthCheck {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的健康检查错误
+    pub fn health_check_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::HealthCheck {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建统计收集错误
+    pub fn statistics<T: Into<String>>(message: T) -> Self {
+        Self::Statistics {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的统计收集错误
+    pub fn statistics_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::Statistics {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建跟踪系统错误
+    pub fn tracing<T: Into<String>>(message: T) -> Self {
+        Self::Tracing {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的跟踪系统错误
+    pub fn tracing_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::Tracing {
+            message: message.into(),
             source: Some(source.into()),
         }
     }
@@ -453,5 +669,40 @@ impl From<crate::auth::service::AuthServiceError> for ProxyError {
             message: err.to_string(),
             source: Some(anyhow::Error::new(err)),
         }
+    }
+}
+
+// Redis错误转换
+impl From<redis::RedisError> for ProxyError {
+    fn from(err: redis::RedisError) -> Self {
+        Self::cache_with_source("Redis操作失败", err)
+    }
+}
+
+// Reqwest错误转换
+impl From<reqwest::Error> for ProxyError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::network_with_source("HTTP请求失败", err)
+    }
+}
+
+// Bcrypt错误转换
+impl From<bcrypt::BcryptError> for ProxyError {
+    fn from(err: bcrypt::BcryptError) -> Self {
+        Self::authentication_with_source("密码处理失败", err)
+    }
+}
+
+// JWT错误转换
+impl From<jsonwebtoken::errors::Error> for ProxyError {
+    fn from(err: jsonwebtoken::errors::Error) -> Self {
+        Self::authentication_with_source("JWT处理失败", err)
+    }
+}
+
+// Pingora错误转换
+impl From<pingora_core::Error> for ProxyError {
+    fn from(err: pingora_core::Error) -> Self {
+        Self::network_with_source("Pingora操作失败", err)
     }
 }

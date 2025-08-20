@@ -1,5 +1,6 @@
 /// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
 use crate::{
+    ProxyError,
     auth::{UnifiedAuthManager, create_unified_auth_manager, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
@@ -32,9 +33,8 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
     info!("🚀 Starting dual-port architecture servers...");
 
     // 创建Tokio运行时
-    let rt = tokio::runtime::Runtime::new().map_err(|e| {
-        crate::error::ProxyError::server_init(format!("Failed to create Tokio runtime: {}", e))
-    })?;
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| ProxyError::server_init(format!("Failed to create Tokio runtime: {}", e)))?;
 
     rt.block_on(async {
         // 初始化共享资源
@@ -85,10 +85,7 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             shared_services.provider_resolver.clone(),
         )
         .map_err(|e| {
-            crate::error::ProxyError::server_init(format!(
-                "Failed to create management server: {}",
-                e
-            ))
+            ProxyError::server_init(format!("Failed to create management server: {}", e))
         })?;
 
         // 创建代理服务器，传递数据库连接
@@ -101,7 +98,7 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             // 启动 Axum 管理服务器
             result = management_server.serve() => {
                 error!("Management server exited unexpectedly: {:?}", result);
-                Err(crate::error::ProxyError::server_start("Management server failed"))
+                                        Err(ProxyError::server_start("Management server failed"))
             }
             // 启动 Pingora 代理服务器
             result = tokio::task::spawn(async move {
@@ -114,12 +111,12 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
                             Err(e)
                         } else {
                             error!("Proxy server exited unexpectedly");
-                            Err(crate::error::ProxyError::server_start("Proxy server failed"))
+                            Err(ProxyError::server_start("Proxy server failed"))
                         }
                     }
                     Err(e) => {
                         error!("Failed to spawn proxy server task: {:?}", e);
-                        Err(crate::error::ProxyError::server_start("Failed to spawn proxy server"))
+                        Err(ProxyError::server_start("Failed to spawn proxy server"))
                     }
                 }
             }
@@ -195,9 +192,8 @@ pub async fn initialize_shared_services(
     // 初始化认证系统组件
     let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
     let jwt_manager = Arc::new(
-        crate::auth::jwt::JwtManager::new(auth_config.clone()).map_err(|e| {
-            crate::error::ProxyError::server_init(format!("JWT manager init failed: {}", e))
-        })?,
+        crate::auth::jwt::JwtManager::new(auth_config.clone())
+            .map_err(|e| ProxyError::server_init(format!("JWT manager init failed: {}", e)))?,
     );
     let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
         db.clone(),
@@ -216,9 +212,7 @@ pub async fn initialize_shared_services(
             &config_arc.cache,
             &config_arc.redis.url,
         )
-        .map_err(|e| {
-            crate::error::ProxyError::server_init(format!("Cache manager init failed: {}", e))
-        })?,
+        .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
     );
 
     // 初始化服务商配置管理器
@@ -240,7 +234,7 @@ pub async fn initialize_shared_services(
                 "❌ Failed to load provider configurations for health check: {}",
                 e
             );
-            crate::error::ProxyError::server_init("Failed to load provider configurations")
+            ProxyError::server_init("Failed to load provider configurations")
         })?;
 
     for provider in providers {
@@ -280,9 +274,8 @@ pub async fn initialize_shared_services(
     ));
 
     let load_balancer_manager = Arc::new(
-        LoadBalancerManager::new(config_arc.clone(), provider_resolver.clone()).map_err(|e| {
-            crate::error::ProxyError::server_init(format!("Load balancer init failed: {}", e))
-        })?,
+        LoadBalancerManager::new(config_arc.clone(), provider_resolver.clone())
+            .map_err(|e| ProxyError::server_init(format!("Load balancer init failed: {}", e)))?,
     );
 
     // 创建统一认证管理器

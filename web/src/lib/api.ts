@@ -153,9 +153,9 @@ export interface UserServiceApiKey {
     failure: number
   }
   is_active: boolean
-  last_used_at: string
+  last_used_at: string | null
   created_at: string
-  expires_at?: string
+  expires_at?: string | null
 }
 
 export interface UserServiceApiKeysResponse {
@@ -859,6 +859,75 @@ export const api = {
           error: {
             code: 'USER_SERVICE_UPDATE_KEY_STATUS_ERROR',
             message: '更新API Key状态失败'
+          }
+        }
+      }
+    }
+  },
+
+  // 认证相关接口
+  auth: {
+    /**
+     * 获取服务商类型列表
+     */
+    async getProviderTypes(params?: {
+      is_active?: boolean
+    }): Promise<ApiResponse<{ provider_types: Array<{ id: number; name: string; display_name: string; description: string; is_active: boolean; supported_models: string[]; created_at: string }> }>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
+
+        return await apiClient.get('/provider-types/providers', queryParams)
+      } catch (error) {
+        console.error('[Auth] Failed to fetch provider types:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_TYPES_ERROR',
+            message: '获取服务商类型失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取调度策略列表
+     */
+    async getSchedulingStrategies(): Promise<ApiResponse<{ scheduling_strategies: Array<{ value: string; label: string; description: string; is_default: boolean }> }>> {
+      try {
+        return await apiClient.get('/provider-types/scheduling-strategies')
+      } catch (error) {
+        console.error('[Auth] Failed to fetch scheduling strategies:', error)
+        return {
+          success: false,
+          error: {
+            code: 'SCHEDULING_STRATEGIES_ERROR',
+            message: '获取调度策略失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取用户提供商密钥列表（用于下拉选择）
+     */
+    async getUserProviderKeys(params?: {
+      provider_type_id?: number
+      is_active?: boolean
+    }): Promise<ApiResponse<{ user_provider_keys: Array<{ id: number; name: string; display_name: string }> }>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
+        if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
+
+        return await apiClient.get('/provider-keys/keys', queryParams)
+      } catch (error) {
+        console.error('[Auth] Failed to fetch user provider keys:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_PROVIDER_KEYS_ERROR',
+            message: '获取用户提供商密钥失败'
           }
         }
       }
