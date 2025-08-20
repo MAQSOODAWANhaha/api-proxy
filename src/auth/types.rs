@@ -44,10 +44,10 @@ pub struct ApiKeyInfo {
     pub weight: Option<i32>,
     /// 每分钟最大请求数
     pub max_requests_per_minute: Option<i32>,
-    /// 每日最大 Token 数
-    pub max_tokens_per_day: Option<i32>,
-    /// 今日已使用 Token 数
-    pub used_tokens_today: Option<i32>,
+    /// 每分钟最大 Token 提示数
+    pub max_tokens_prompt_per_minute: Option<i32>,
+    /// 每日最大请求数
+    pub max_requests_per_day: Option<i32>,
     /// 是否激活
     pub is_active: bool,
     /// 创建时间

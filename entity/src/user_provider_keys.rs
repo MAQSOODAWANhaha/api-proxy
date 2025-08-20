@@ -17,10 +17,10 @@ pub struct Model {
     pub name: String,
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
-    pub max_tokens_per_day: Option<i32>,
-    pub used_tokens_today: Option<i32>,
-    pub last_used: Option<DateTime>,
+    pub max_tokens_prompt_per_minute: Option<i32>,
+    pub max_requests_per_day: Option<i32>,
     pub is_active: bool,
+    pub health_status: String,
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

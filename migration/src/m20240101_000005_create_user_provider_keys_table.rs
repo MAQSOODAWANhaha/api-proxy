@@ -49,24 +49,26 @@ impl MigrationTrait for Migration {
                             .default(100),
                     )
                     .col(
-                        ColumnDef::new(UserProviderKeys::MaxTokensPerDay)
+                        ColumnDef::new(UserProviderKeys::MaxTokensPromptPerMinute)
                             .integer()
-                            .default(1000000),
+                            .default(1000),
                     )
                     .col(
-                        ColumnDef::new(UserProviderKeys::UsedTokensToday)
+                        ColumnDef::new(UserProviderKeys::MaxRequestsPerDay)
                             .integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(UserProviderKeys::LastUsed)
-                            .timestamp(),
+                            .default(10000),
                     )
                     .col(
                         ColumnDef::new(UserProviderKeys::IsActive)
                             .boolean()
                             .not_null()
                             .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(UserProviderKeys::HealthStatus)
+                            .string_len(20)
+                            .not_null()
+                            .default("healthy"),
                     )
                     .col(
                         ColumnDef::new(UserProviderKeys::CreatedAt)
@@ -157,10 +159,10 @@ enum UserProviderKeys {
     Name,
     Weight,
     MaxRequestsPerMinute,
-    MaxTokensPerDay,
-    UsedTokensToday,
-    LastUsed,
+    MaxTokensPromptPerMinute,
+    MaxRequestsPerDay,
     IsActive,
+    HealthStatus,
     CreatedAt,
     UpdatedAt,
 }

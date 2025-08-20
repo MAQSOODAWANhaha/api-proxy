@@ -138,7 +138,7 @@ impl RateLimitTracker {
     }
 
     /// Update token usage and check if allowed
-    fn check_and_update_tokens(&mut self, tokens: i32, max_tokens_per_day: Option<i32>) -> bool {
+    fn check_and_update_tokens(&mut self, tokens: i32, max_requests_per_day: Option<i32>) -> bool {
         let now = Utc::now();
         let current_day = now.format("%Y-%m-%d").to_string();
 
@@ -149,7 +149,7 @@ impl RateLimitTracker {
         }
 
         // Check token limit
-        if let Some(max_tokens) = max_tokens_per_day {
+        if let Some(max_tokens) = max_requests_per_day {
             if self.tokens_used_today + tokens > max_tokens {
                 return false;
             }
@@ -166,8 +166,8 @@ impl RateLimitTracker {
     }
 
     /// Get remaining tokens for today
-    fn remaining_tokens(&self, max_tokens_per_day: Option<i32>) -> Option<i32> {
-        max_tokens_per_day.map(|max| (max - self.tokens_used_today).max(0))
+    fn remaining_tokens(&self, max_requests_per_day: Option<i32>) -> Option<i32> {
+        max_requests_per_day.map(|max| (max - self.tokens_used_today).max(0))
     }
 }
 
@@ -239,8 +239,8 @@ impl ApiKeyManager {
             api_key: self.sanitize_api_key(&api_key_model.api_key),
             weight: api_key_model.weight,
             max_requests_per_minute: api_key_model.max_requests_per_minute,
-            max_tokens_per_day: api_key_model.max_tokens_per_day,
-            used_tokens_today: api_key_model.used_tokens_today,
+            max_tokens_prompt_per_minute: api_key_model.max_tokens_prompt_per_minute,
+            max_requests_per_day: api_key_model.max_requests_per_day,
             is_active: api_key_model.is_active,
             created_at: api_key_model.created_at.and_utc(),
             updated_at: api_key_model.updated_at.and_utc(),
@@ -447,7 +447,7 @@ impl ApiKeyManager {
         let request_allowed = tracker.check_and_update_request(api_key_model.max_requests_per_minute);
         
         // Check token rate limit
-        let token_allowed = tracker.check_and_update_tokens(request_cost, api_key_model.max_tokens_per_day);
+        let token_allowed = tracker.check_and_update_tokens(request_cost, api_key_model.max_requests_per_day);
 
         let allowed = request_allowed && token_allowed;
 
@@ -464,7 +464,7 @@ impl ApiKeyManager {
         Ok(RateLimitStatus {
             allowed,
             remaining_requests: tracker.remaining_requests(api_key_model.max_requests_per_minute),
-            remaining_tokens: tracker.remaining_tokens(api_key_model.max_tokens_per_day),
+            remaining_tokens: tracker.remaining_tokens(api_key_model.max_requests_per_day),
             reset_time,
         })
     }
@@ -481,12 +481,8 @@ impl ApiKeyManager {
 
         let mut active_model: user_provider_keys::ActiveModel = api_key_model.into();
         
-        // Update today's token usage
-        let current_used = active_model.used_tokens_today.clone().unwrap().unwrap_or(0);
-        active_model.used_tokens_today = Set(Some(current_used + tokens_used));
-
-        // Update last used timestamp
-        active_model.last_used = Set(Some(Utc::now().naive_utc()));
+        // Update timestamp
+        active_model.updated_at = Set(Utc::now().naive_utc());
 
         active_model.update(self.db.as_ref())
             .await
@@ -513,11 +509,11 @@ impl ApiKeyManager {
         
         if let Some(tracker) = rate_limits.get(api_key) {
             let remaining_requests = tracker.remaining_requests(api_key_info.max_requests_per_minute);
-            let remaining_tokens = tracker.remaining_tokens(api_key_info.max_tokens_per_day);
+            let remaining_tokens = tracker.remaining_tokens(api_key_info.max_requests_per_day);
             (remaining_requests, remaining_tokens)
         } else {
             // No rate limit data yet, return maximum values
-            (api_key_info.max_requests_per_minute, api_key_info.max_tokens_per_day)
+            (api_key_info.max_requests_per_minute, api_key_info.max_requests_per_day)
         }
     }
 
@@ -614,8 +610,8 @@ mod tests {
                 api_key: "sk-test***test".to_string(),
                 weight: Some(1),
                 max_requests_per_minute: Some(100),
-                max_tokens_per_day: Some(10000),
-                used_tokens_today: Some(0),
+                max_tokens_prompt_per_minute: Some(1000),
+                max_requests_per_day: Some(10000),
                 is_active: true,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),

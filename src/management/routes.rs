@@ -163,10 +163,43 @@ fn user_routes() -> Router<AppState> {
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
 fn provider_api_keys_routes() -> Router<AppState> {
-    Router::new().route(
-        "/keys",
-        get(crate::management::handlers::provider_keys::get_user_provider_keys),
-    )
+    use axum::routing::{delete, post, put};
+    Router::new()
+        // 获取提供商密钥列表（完整版，支持分页搜索过滤）
+        .route(
+            "/keys",
+            get(crate::management::handlers::provider_keys::get_provider_keys_list),
+        )
+        // 创建提供商密钥
+        .route(
+            "/keys",
+            post(crate::management::handlers::provider_keys::create_provider_key),
+        )
+        // 获取提供商密钥详情
+        .route(
+            "/keys/{id}",
+            get(crate::management::handlers::provider_keys::get_provider_key_detail),
+        )
+        // 更新提供商密钥
+        .route(
+            "/keys/{id}",
+            put(crate::management::handlers::provider_keys::update_provider_key),
+        )
+        // 删除提供商密钥
+        .route(
+            "/keys/{id}",
+            delete(crate::management::handlers::provider_keys::delete_provider_key),
+        )
+        // 获取密钥统计信息
+        .route(
+            "/keys/{id}/stats",
+            get(crate::management::handlers::provider_keys::get_provider_key_stats),
+        )
+        // 执行健康检查
+        .route(
+            "/keys/{id}/health-check",
+            post(crate::management::handlers::provider_keys::health_check_provider_key),
+        )
 }
 
 /// 用户服务API路由（对外API服务管理）

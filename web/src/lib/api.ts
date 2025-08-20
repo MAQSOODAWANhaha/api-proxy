@@ -6,7 +6,7 @@
 // API基础配置
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
   ? '/api'  // 生产环境使用相对路径，由 Caddy 转发
-  : 'http://192.168.153.140:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
+  : 'http://172.28.190.69:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
 
 // 请求配置接口
 export interface RequestConfig {

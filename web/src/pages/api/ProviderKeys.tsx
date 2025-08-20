@@ -24,6 +24,7 @@ import {
 import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
+import { api } from '../../lib/api'
 
 /** 账号 API Key 数据结构 */
 interface ProviderKey {
@@ -33,13 +34,24 @@ interface ProviderKey {
   keyValue: string
   weight: number
   requestLimitPerMinute: number
-  tokenLimitPerDay: number
+  tokenLimitPromptPerMinute: number
+  requestLimitPerDay: number
   status: 'active' | 'disabled' | 'error'
   usage: number
   cost: number
   createdAt: string
-  lastUsed: string
   healthCheck: 'healthy' | 'warning' | 'error'
+}
+
+/** 服务商类型 */
+interface ProviderType {
+  id: number
+  name: string
+  display_name: string
+  description: string
+  is_active: boolean
+  supported_models: string[]
+  created_at: string
 }
 
 /** 模拟数据 */
@@ -51,12 +63,12 @@ const initialData: ProviderKey[] = [
     keyValue: 'sk-1234567890abcdef1234567890abcdef',
     weight: 1,
     requestLimitPerMinute: 60,
-    tokenLimitPerDay: 100000,
+    tokenLimitPromptPerMinute: 1000,
+    requestLimitPerDay: 10000,
     status: 'active',
     usage: 8520,
     cost: 125.50,
     createdAt: '2024-01-10',
-    lastUsed: '2024-01-16 15:20',
     healthCheck: 'healthy',
   },
   {
@@ -66,12 +78,12 @@ const initialData: ProviderKey[] = [
     keyValue: 'sk-ant-abcdef1234567890abcdef1234567890',
     weight: 2,
     requestLimitPerMinute: 30,
-    tokenLimitPerDay: 50000,
+    tokenLimitPromptPerMinute: 800,
+    requestLimitPerDay: 5000,
     status: 'active',
     usage: 3420,
     cost: 89.30,
     createdAt: '2024-01-12',
-    lastUsed: '2024-01-16 14:15',
     healthCheck: 'healthy',
   },
   {
@@ -81,12 +93,12 @@ const initialData: ProviderKey[] = [
     keyValue: 'AIzaSyDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     weight: 3,
     requestLimitPerMinute: 20,
-    tokenLimitPerDay: 25000,
+    tokenLimitPromptPerMinute: 500,
+    requestLimitPerDay: 2500,
     status: 'disabled',
     usage: 145,
     cost: 12.80,
     createdAt: '2024-01-08',
-    lastUsed: '2024-01-15 10:30',
     healthCheck: 'error',
   },
 ]
@@ -152,14 +164,13 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 添加新API Key
-  const handleAdd = (newKey: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'lastUsed' | 'healthCheck' | 'keyValue'>) => {
+  const handleAdd = (newKey: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck' | 'keyValue'>) => {
     const providerKey: ProviderKey = {
       ...newKey,
       id: Date.now().toString(),
       usage: 0,
       cost: 0,
       createdAt: new Date().toISOString().split('T')[0],
-      lastUsed: '从未使用',
       keyValue: generateApiKey(newKey.provider),
       healthCheck: 'healthy',
     }
@@ -391,7 +402,10 @@ const ProviderKeysPage: React.FC = () => {
                       请求限制: {item.requestLimitPerMinute}/分钟
                     </div>
                     <div className="text-xs text-neutral-500">
-                      Token限制: {item.tokenLimitPerDay.toLocaleString()}/天
+                      Token限制: {item.tokenLimitPromptPerMinute.toLocaleString()}/分钟
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      请求限制: {item.requestLimitPerDay.toLocaleString()}/天
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -563,18 +577,52 @@ const DialogPortal: React.FC<{
 /** 添加对话框 */
 const AddDialog: React.FC<{
   onClose: () => void
-  onSubmit: (item: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'lastUsed' | 'healthCheck' | 'keyValue'>) => void
+  onSubmit: (item: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck' | 'keyValue'>) => void
 }> = ({ onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
-    provider: 'OpenAI',
+    provider: '',
     keyName: '',
     weight: 1,
     requestLimitPerMinute: 0,
-    tokenLimitPerDay: 0,
+    tokenLimitPromptPerMinute: 0,
+    requestLimitPerDay: 0,
     status: 'active' as 'active' | 'disabled',
   })
 
-  const providerTypes = ['OpenAI', 'Anthropic', 'Google', 'Azure']
+  // 服务商类型状态管理
+  const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
+  const [loadingProviderTypes, setLoadingProviderTypes] = useState(true)
+
+  // 获取服务商类型列表
+  const fetchProviderTypes = async () => {
+    setLoadingProviderTypes(true)
+    try {
+      const response = await api.auth.getProviderTypes({ is_active: true })
+      
+      if (response.success && response.data) {
+        setProviderTypes(response.data.provider_types || [])
+        // 如果有可用的服务商类型，设置默认选择第一个
+        if (response.data.provider_types && response.data.provider_types.length > 0) {
+          const firstProvider = response.data.provider_types[0]
+          setFormData(prev => ({ 
+            ...prev, 
+            provider: firstProvider.display_name
+          }))
+        }
+      } else {
+        console.error('[AddDialog] 获取服务商类型失败:', response.message)
+      }
+    } catch (err) {
+      console.error('[AddDialog] 获取服务商类型异常:', err)
+    } finally {
+      setLoadingProviderTypes(false)
+    }
+  }
+
+  // 初始化：获取服务商类型
+  React.useEffect(() => {
+    fetchProviderTypes()
+  }, [])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -608,21 +656,34 @@ const AddDialog: React.FC<{
           />
         </div>
 
-        {/* 账号类型 */}
+        {/* 服务商类型 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">账号类型</label>
-          <ModernSelect
-            value={formData.provider}
-            onValueChange={(value) => setFormData({ ...formData, provider: value })}
-            options={[
-              { value: '', label: '请选择账号' },
-              ...providerTypes.map(provider => ({
-                value: provider,
-                label: provider
-              }))
-            ]}
-            placeholder="请选择账号"
-          />
+          <label className="block text-sm font-medium text-neutral-700 mb-1">
+            <span className="text-red-500">*</span> 服务商类型
+          </label>
+          
+          {loadingProviderTypes ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载服务商类型...</span>
+            </div>
+          ) : (
+            <ModernSelect
+              value={formData.provider}
+              onValueChange={(value) => {
+                const selectedProvider = providerTypes.find(type => type.display_name === value)
+                setFormData({ 
+                  ...formData, 
+                  provider: selectedProvider ? selectedProvider.display_name : value
+                })
+              }}
+              options={providerTypes.map(type => ({
+                value: type.display_name,
+                label: type.display_name
+              }))}
+              placeholder="请选择服务商类型"
+            />
+          )}
         </div>
 
         {/* API密钥 */}
@@ -693,13 +754,13 @@ const AddDialog: React.FC<{
           </div>
         </div>
 
-        {/* Token限制/天 */}
+        {/* Token限制/分钟 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">Token限制/天</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">Token限制/分钟</label>
           <div className="flex items-center">
             <button
               type="button"
-              onClick={() => handleNumberChange('tokenLimitPerDay', -1)}
+              onClick={() => handleNumberChange('tokenLimitPromptPerMinute', -10)}
               className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
             >
               −
@@ -707,13 +768,41 @@ const AddDialog: React.FC<{
             <input
               type="number"
               min="0"
-              value={formData.tokenLimitPerDay}
-              onChange={(e) => setFormData({ ...formData, tokenLimitPerDay: parseInt(e.target.value) || 0 })}
+              value={formData.tokenLimitPromptPerMinute}
+              onChange={(e) => setFormData({ ...formData, tokenLimitPromptPerMinute: parseInt(e.target.value) || 0 })}
               className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
             />
             <button
               type="button"
-              onClick={() => handleNumberChange('tokenLimitPerDay', 1)}
+              onClick={() => handleNumberChange('tokenLimitPromptPerMinute', 10)}
+              className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* 请求限制/天 */}
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">请求限制/天</label>
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => handleNumberChange('requestLimitPerDay', -100)}
+              className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
+            >
+              −
+            </button>
+            <input
+              type="number"
+              min="0"
+              value={formData.requestLimitPerDay}
+              onChange={(e) => setFormData({ ...formData, requestLimitPerDay: parseInt(e.target.value) || 0 })}
+              className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            />
+            <button
+              type="button"
+              onClick={() => handleNumberChange('requestLimitPerDay', 100)}
               className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
             >
               +
@@ -770,7 +859,32 @@ const EditDialog: React.FC<{
 }> = ({ item, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({ ...item })
 
-  const providerTypes = ['OpenAI', 'Anthropic', 'Google', 'Azure']
+  // 服务商类型状态管理
+  const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
+  const [loadingProviderTypes, setLoadingProviderTypes] = useState(true)
+
+  // 获取服务商类型列表
+  const fetchProviderTypes = async () => {
+    setLoadingProviderTypes(true)
+    try {
+      const response = await api.auth.getProviderTypes({ is_active: true })
+      
+      if (response.success && response.data) {
+        setProviderTypes(response.data.provider_types || [])
+      } else {
+        console.error('[EditDialog] 获取服务商类型失败:', response.message)
+      }
+    } catch (err) {
+      console.error('[EditDialog] 获取服务商类型异常:', err)
+    } finally {
+      setLoadingProviderTypes(false)
+    }
+  }
+
+  // 初始化：获取服务商类型
+  React.useEffect(() => {
+    fetchProviderTypes()
+  }, [])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -803,18 +917,34 @@ const EditDialog: React.FC<{
           />
         </div>
 
-        {/* 账号类型 */}
+        {/* 服务商类型 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">账号类型</label>
-          <select
-            value={formData.provider}
-            onChange={(e) => setFormData({ ...formData, provider: e.target.value })}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-          >
-            {providerTypes.map(provider => (
-              <option key={provider} value={provider}>{provider}</option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">
+            <span className="text-red-500">*</span> 服务商类型
+          </label>
+          
+          {loadingProviderTypes ? (
+            <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <span className="text-sm text-neutral-600">加载服务商类型...</span>
+            </div>
+          ) : (
+            <ModernSelect
+              value={formData.provider}
+              onValueChange={(value) => {
+                const selectedProvider = providerTypes.find(type => type.display_name === value)
+                setFormData({ 
+                  ...formData, 
+                  provider: selectedProvider ? selectedProvider.display_name : value
+                })
+              }}
+              options={providerTypes.map(type => ({
+                value: type.display_name,
+                label: type.display_name
+              }))}
+              placeholder="请选择服务商类型"
+            />
+          )}
         </div>
 
         {/* API密钥 */}

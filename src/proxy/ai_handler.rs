@@ -1962,14 +1962,11 @@ impl LoadBalancer for HealthBestScheduler {
             return Err(ProxyError::bad_gateway("No available API keys"));
         }
 
-        // 简化实现：选择最近使用时间最早的（假设使用频率低的更健康）
+        // 简化实现：选择权重最高的密钥（假设权重高的更健康）
         let best_key = available_keys
             .into_iter()
-            .min_by_key(|key| {
-                key.last_used.unwrap_or_else(|| {
-                    // 如果没有使用过，使用创建时间
-                    key.created_at
-                })
+            .max_by_key(|key| {
+                key.weight.unwrap_or(1)
             })
             .unwrap();
 
@@ -1977,7 +1974,7 @@ impl LoadBalancer for HealthBestScheduler {
             user_id = user_service_api.user_id,
             provider_type_id = user_service_api.provider_type_id,
             selected_key_id = best_key.id,
-            last_used = ?best_key.last_used,
+            weight = best_key.weight,
             "Health best selection completed"
         );
 
