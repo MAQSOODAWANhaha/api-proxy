@@ -35,13 +35,16 @@ pub struct UserApiConfig {
     pub user_id: i32,
     pub provider_type_id: i32,
     pub api_key: String,
-    pub api_secret: String,
+    pub user_provider_keys_ids: Vec<i32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub scheduling_strategy: Option<String>,
-    pub rate_limit: Option<i32>,
+    pub retry_count: Option<i32>,
+    pub timeout_seconds: Option<i32>,
+    pub max_request_per_min: Option<i32>,
+    pub max_requests_per_day: Option<i32>,
     pub max_tokens_per_day: Option<i32>,
-    pub total_requests: Option<i32>,
+    pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
 }
 
 /// 高级缓存管理器
@@ -249,11 +252,12 @@ impl CacheManager {
         debug!("开始预热用户API配置...");
         
         // 查询最近活跃的用户API配置（最近30天有使用记录的）
-        let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
+        let _thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
         
         let user_apis = UserServiceApis::find()
             .filter(user_service_apis::Column::IsActive.eq(true))
-            .filter(user_service_apis::Column::LastUsed.gte(thirty_days_ago.naive_utc()))
+            // 注意：由于删除了last_used字段，这里改为查询所有活跃的API
+            // TODO: 可以考虑从proxy_tracing表查询最近使用的API ID列表
             .all(db)
             .await
             .map_err(|e| crate::error::ProxyError::database(format!("查询用户API配置失败: {}", e)))?;
@@ -265,18 +269,22 @@ impl CacheManager {
             let config_key = super::keys::CacheKeyBuilder::user_api_config(user_api.user_id, user_api.id);
             
             // 构建用户API配置数据
+            let user_provider_keys_ids: Vec<i32> = serde_json::from_value(user_api.user_provider_keys_ids.clone()).unwrap_or_default();
             let api_config = UserApiConfig {
                 id: user_api.id,
                 user_id: user_api.user_id,
                 provider_type_id: user_api.provider_type_id,
                 api_key: user_api.api_key,
-                api_secret: user_api.api_secret,
+                user_provider_keys_ids,
                 name: user_api.name,
                 description: user_api.description,
                 scheduling_strategy: user_api.scheduling_strategy,
-                rate_limit: user_api.rate_limit,
+                retry_count: user_api.retry_count,
+                timeout_seconds: user_api.timeout_seconds,
+                max_request_per_min: user_api.max_request_per_min,
+                max_requests_per_day: user_api.max_requests_per_day,
                 max_tokens_per_day: user_api.max_tokens_per_day,
-                total_requests: user_api.total_requests,
+                max_cost_per_day: user_api.max_cost_per_day,
             };
             
             // 缓存用户API配置

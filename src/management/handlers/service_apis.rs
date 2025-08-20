@@ -1,127 +1,262 @@
-//! # Service APIs管理处理器
+//! # 用户服务API管理处理器
 //!
-//! 处理用户对外API服务的管理功能
+//! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
+use sea_orm::QueryOrder; // for order_by()
+use sea_orm::prelude::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::json; // Value unused removed
+use serde_json::json;
 use uuid::Uuid;
+use jsonwebtoken::{DecodingKey, Validation, decode};
 
-/// Service API查询参数
+// 导入JWT Claims结构体
+use crate::management::handlers::auth::Claims;
+
+/// 从请求头中提取用户ID
+/// 解析JWT token并返回当前认证用户的ID
+fn extract_user_id_from_headers<T: serde::Serialize>(headers: &HeaderMap) -> Result<i32, response::ApiResponse<T>> {
+    // 提取Authorization头
+    let auth_header = match headers.get("Authorization") {
+        Some(header) => match header.to_str() {
+            Ok(header_str) => header_str,
+            Err(_) => {
+                tracing::warn!("Invalid Authorization header format in user service request");
+                return Err(response::error(
+                    StatusCode::UNAUTHORIZED,
+                    "AUTH_ERROR",
+                    "Invalid Authorization header format",
+                ));
+            }
+        },
+        None => {
+            tracing::warn!("Missing Authorization header in user service request");
+            return Err(response::error(
+                StatusCode::UNAUTHORIZED,
+                "AUTH_ERROR",
+                "Authorization header required",
+            ));
+        }
+    };
+
+    // 检查Bearer前缀
+    if !auth_header.starts_with("Bearer ") {
+        return Err(response::error(
+            StatusCode::UNAUTHORIZED,
+            "AUTH_ERROR",
+            "Invalid Authorization header format",
+        ));
+    }
+
+    let token = &auth_header[7..]; // 移除"Bearer "前缀
+
+    // 从环境变量获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+
+    // 验证并解码JWT token
+    let validation = Validation::default();
+    let token_data = match decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::warn!("JWT token validation failed in user service request: {}", err);
+            return Err(response::error(
+                StatusCode::UNAUTHORIZED,
+                "AUTH_ERROR",
+                "Invalid or expired token",
+            ));
+        }
+    };
+
+    // 解析用户ID
+    let user_id: i32 = match token_data.claims.sub.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            tracing::error!(
+                "Failed to parse user ID from JWT token: {}",
+                token_data.claims.sub
+            );
+            return Err(response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "AUTH_ERROR",
+                "Invalid user ID in token",
+            ));
+        }
+    };
+
+    Ok(user_id)
+}
+
+/// 用户服务API查询参数
 #[derive(Debug, Deserialize)]
-pub struct ServiceApiQuery {
+pub struct UserServiceKeyQuery {
     /// 页码
     pub page: Option<u32>,
     /// 每页大小
     pub limit: Option<u32>,
-    /// 用户ID过滤
-    pub user_id: Option<i32>,
-    /// 调度策略过滤
-    pub scheduling_strategy: Option<String>,
-    /// 状态过滤
+    /// 密钥名称筛选
+    pub name: Option<String>,
+    /// 描述筛选
+    pub description: Option<String>,
+    /// 服务类型筛选
+    pub provider_type_id: Option<i32>,
+    /// 状态筛选
     pub is_active: Option<bool>,
 }
 
-/// 关联的提供商密钥配置
+/// 创建用户服务API请求
 #[derive(Debug, Deserialize)]
-pub struct ProviderKeyConfig {
-    /// 提供商密钥ID
-    pub provider_key_id: i32,
-    /// 权重
-    pub weight: Option<i32>,
-    /// 是否启用
-    pub is_active: Option<bool>,
-}
-
-/// 创建Service API请求
-#[derive(Debug, Deserialize)]
-pub struct CreateServiceApiRequest {
+pub struct CreateUserServiceKeyRequest {
+    /// API Key名称
+    pub name: String,
+    /// 描述信息
+    pub description: Option<String>,
     /// 服务商类型ID
     pub provider_type_id: i32,
-    /// 服务名称
-    pub name: Option<String>,
-    /// 服务描述
-    pub description: Option<String>,
+    /// 关联的提供商密钥ID列表
+    pub user_provider_keys_ids: Vec<i32>,
     /// 调度策略
     pub scheduling_strategy: Option<String>,
     /// 重试次数
     pub retry_count: Option<i32>,
     /// 超时时间(秒)
     pub timeout_seconds: Option<i32>,
-    /// 速率限制
-    pub rate_limit: Option<i32>,
-    /// 每日Token限制
+    /// 每分钟最大请求数
+    pub max_request_per_min: Option<i32>,
+    /// 每日最大请求数
+    pub max_requests_per_day: Option<i32>,
+    /// 每日最大Token数
     pub max_tokens_per_day: Option<i32>,
-    /// 过期天数
-    pub expires_in_days: Option<i32>,
+    /// 每日最大费用
+    pub max_cost_per_day: Option<Decimal>,
+    /// 过期时间(ISO 8601格式)
+    pub expires_at: Option<String>,
     /// 是否启用
     pub is_active: Option<bool>,
-    /// 关联的提供商密钥列表（必须都是同类型）
-    pub provider_keys: Vec<ProviderKeyConfig>,
 }
 
-/// 更新Service API请求
+/// 更新用户服务API请求
 #[derive(Debug, Deserialize)]
-pub struct UpdateServiceApiRequest {
-    /// 服务名称
+pub struct UpdateUserServiceKeyRequest {
+    /// API Key名称
     pub name: Option<String>,
-    /// 服务描述
+    /// 描述信息
     pub description: Option<String>,
+    /// 关联的提供商密钥ID列表
+    pub user_provider_keys_ids: Option<Vec<i32>>,
     /// 调度策略
     pub scheduling_strategy: Option<String>,
     /// 重试次数
     pub retry_count: Option<i32>,
     /// 超时时间(秒)
     pub timeout_seconds: Option<i32>,
-    /// 速率限制
-    pub rate_limit: Option<i32>,
-    /// 每日Token限制
+    /// 每分钟最大请求数
+    pub max_request_per_min: Option<i32>,
+    /// 每日最大请求数
+    pub max_requests_per_day: Option<i32>,
+    /// 每日最大Token数
     pub max_tokens_per_day: Option<i32>,
-    /// 是否启用
-    pub is_active: Option<bool>,
+    /// 每日最大费用
+    pub max_cost_per_day: Option<Decimal>,
+    /// 过期时间(ISO 8601格式)
+    pub expires_at: Option<String>,
 }
 
-/// Service API响应
-#[derive(Debug, Serialize, Clone)]
-pub struct ServiceApiResponse {
-    /// API服务ID
-    pub id: i32,
-    /// 用户ID
-    pub user_id: i32,
-    /// 服务商类型
-    pub provider_type: String,
-    /// 服务商显示名称
-    pub provider_name: String,
-    /// 对外API密钥
-    pub api_key: String,
-    /// API密钥签名
-    pub api_secret: String,
-    /// 服务名称
-    pub name: Option<String>,
-    /// 服务描述
-    pub description: Option<String>,
-    /// 调度策略
-    pub scheduling_strategy: String,
-    /// 重试次数
-    pub retry_count: i32,
-    /// 超时时间(秒)
-    pub timeout_seconds: i32,
-    /// 速率限制
-    pub rate_limit: i32,
-    /// 每日Token限制
-    pub max_tokens_per_day: i32,
-    /// 今日已用Token数
-    pub used_tokens_today: i32,
+/// 使用统计查询参数
+#[derive(Debug, Deserialize)]
+pub struct UsageStatsQuery {
+    /// 时间范围
+    pub time_range: Option<String>,
+    /// 自定义开始日期
+    pub start_date: Option<String>,
+    /// 自定义结束日期
+    pub end_date: Option<String>,
+}
+
+/// 状态更新请求
+#[derive(Debug, Deserialize)]
+pub struct UpdateStatusRequest {
+    /// 启用状态
+    pub is_active: bool,
+}
+
+/// 用户API Keys卡片响应
+#[derive(Debug, Serialize)]
+pub struct UserServiceCardsResponse {
+    /// 总API Key数量
+    pub total_api_keys: i32,
+    /// 活跃API Key数量
+    pub active_api_keys: i32,
     /// 总请求数
-    pub total_requests: i32,
-    /// 成功请求数
-    pub successful_requests: i32,
+    pub requests: i64,
+}
+
+/// 用户服务API响应
+#[derive(Debug, Serialize)]
+pub struct UserServiceKeyResponse {
+    /// API Key ID
+    pub id: i32,
+    /// API Key名称
+    pub name: String,
+    /// 描述
+    pub description: Option<String>,
+    /// 服务商
+    pub provider: String,
+    /// 服务商类型ID
+    pub provider_type_id: i32,
+    /// API密钥(脱敏)
+    pub api_key: String,
+    /// 使用统计
+    pub usage: Option<serde_json::Value>,
+    /// 是否启用
+    pub is_active: bool,
     /// 最后使用时间
-    pub last_used: Option<String>,
+    pub last_used_at: Option<String>,
+    /// 创建时间
+    pub created_at: String,
+    /// 过期时间
+    pub expires_at: Option<String>,
+}
+
+/// 详细的API Key响应
+#[derive(Debug, Serialize)]
+pub struct UserServiceKeyDetailResponse {
+    /// API Key ID
+    pub id: i32,
+    /// API Key名称
+    pub name: String,
+    /// 描述
+    pub description: Option<String>,
+    /// 服务商类型ID
+    pub provider_type_id: i32,
+    /// 服务商
+    pub provider: String,
+    /// API密钥(脱敏)
+    pub api_key: String,
+    /// 关联的提供商密钥ID列表
+    pub user_provider_keys_ids: Vec<i32>,
+    /// 调度策略
+    pub scheduling_strategy: Option<String>,
+    /// 重试次数
+    pub retry_count: Option<i32>,
+    /// 超时时间(秒)
+    pub timeout_seconds: Option<i32>,
+    /// 每分钟最大请求数
+    pub max_request_per_min: Option<i32>,
+    /// 每日最大请求数
+    pub max_requests_per_day: Option<i32>,
+    /// 每日最大Token数
+    pub max_tokens_per_day: Option<i32>,
+    /// 每日最大费用
+    pub max_cost_per_day: Option<Decimal>,
     /// 过期时间
     pub expires_at: Option<String>,
     /// 是否启用
@@ -132,33 +267,122 @@ pub struct ServiceApiResponse {
     pub updated_at: String,
 }
 
-/// 列出Service APIs
-pub async fn list_service_apis(
+/// 1. 用户API Keys卡片展示
+pub async fn get_user_service_cards(
     State(state): State<AppState>,
-    Query(query): Query<ServiceApiQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    use entity::proxy_tracing::{self, Entity as ProxyTracing};
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, PaginatorTrait};
+
+    let db = state.database.as_ref();
+    
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
+
+    // 获取总API Key数量
+    let total_api_keys = match UserServiceApi::find()
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .count(db)
+        .await
+    {
+        Ok(count) => count as i32,
+        Err(err) => {
+            tracing::error!("Failed to count user service APIs: {}", err);
+            return response::error::<UserServiceCardsResponse>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count user service APIs",
+            );
+        }
+    };
+
+    // 获取活跃API Key数量
+    let active_api_keys = match UserServiceApi::find()
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .filter(user_service_apis::Column::IsActive.eq(true))
+        .count(db)
+        .await
+    {
+        Ok(count) => count as i32,
+        Err(err) => {
+            tracing::error!("Failed to count active user service APIs: {}", err);
+            return response::error::<UserServiceCardsResponse>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count active user service APIs",
+            );
+        }
+    };
+
+    // 获取总请求数
+    let total_requests = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .count(db)
+        .await
+    {
+        Ok(count) => count as i64,
+        Err(err) => {
+            tracing::error!("Failed to count user requests: {}", err);
+            return response::error::<UserServiceCardsResponse>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count user requests",
+            );
+        }
+    };
+
+    let response = UserServiceCardsResponse {
+        total_api_keys,
+        active_api_keys,
+        requests: total_requests,
+    };
+
+    response::success(response)
+}
+
+/// 2. 用户API Keys列表
+pub async fn list_user_service_keys(
+    State(state): State<AppState>,
+    Query(query): Query<UserServiceKeyQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     use entity::provider_types::Entity as ProviderType;
-    use entity::user_provider_keys::Entity as UserProviderKey;
-    use entity::user_service_api_providers::{self, Entity as UserServiceApiProvider};
+    use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect};
+    use sea_orm::{
+        ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait,
+    };
 
     let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(20);
-
-    // 获取数据库连接
+    let limit = query.limit.unwrap_or(10);
     let db = state.database.as_ref();
+    
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
     // 构建基础查询
-    let mut select = UserServiceApi::find();
+    let mut select = UserServiceApi::find().filter(user_service_apis::Column::UserId.eq(user_id));
 
     // 应用筛选条件
-    if let Some(user_id) = query.user_id {
-        select = select.filter(user_service_apis::Column::UserId.eq(user_id));
+    if let Some(name) = &query.name {
+        select = select.filter(user_service_apis::Column::Name.like(format!("%{}%", name)));
     }
 
-    if let Some(strategy) = &query.scheduling_strategy {
-        select = select.filter(user_service_apis::Column::SchedulingStrategy.eq(strategy));
+    if let Some(description) = &query.description {
+        select = select
+            .filter(user_service_apis::Column::Description.like(format!("%{}%", description)));
+    }
+
+    if let Some(provider_type_id) = query.provider_type_id {
+        select = select.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id));
     }
 
     if let Some(is_active) = query.is_active {
@@ -167,19 +391,33 @@ pub async fn list_service_apis(
 
     // 获取总数
     let total = match select.clone().count(db).await {
-        Ok(count) => count as u32,
+        Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count service APIs: {}", err);
-            return response::error(
+            tracing::error!("Failed to count user service APIs: {}", err);
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to count service APIs",
+                "Failed to count user service APIs",
             );
         }
     };
 
-    // 分页查询Service APIs
-    let apis = match select
+    // 分页查询，使用手动JOIN避免重复
+    let apis = match UserServiceApi::find()
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .apply_if(query.name, |query, name| {
+            query.filter(user_service_apis::Column::Name.like(format!("%{}%", name)))
+        })
+        .apply_if(query.description, |query, description| {
+            query.filter(user_service_apis::Column::Description.like(format!("%{}%", description)))
+        })
+        .apply_if(query.provider_type_id, |query, provider_type_id| {
+            query.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id))
+        })
+        .apply_if(query.is_active, |query, is_active| {
+            query.filter(user_service_apis::Column::IsActive.eq(is_active))
+        })
+        .find_also_related(ProviderType)
         .offset(((page - 1) * limit) as u64)
         .limit(limit as u64)
         .all(db)
@@ -187,97 +425,85 @@ pub async fn list_service_apis(
     {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch service APIs: {}", err);
-            return response::error(
+            tracing::error!("Failed to fetch user service APIs: {}", err);
+            return response::error::<serde_json::Value>(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to fetch service APIs",
+                "Failed to fetch user service APIs",
             );
         }
     };
 
-    // 获取每个API关联的provider keys信息
-    let mut response_apis = Vec::new();
+    // 构建响应数据
+    let mut service_api_keys = Vec::new();
 
-    for api in apis {
-        // 查询关联的provider keys
-        let provider_associations = match UserServiceApiProvider::find()
-            .filter(user_service_api_providers::Column::UserServiceApiId.eq(api.id))
-            .find_also_related(UserProviderKey)
+    for (api, provider_type) in apis {
+        // 获取使用统计
+        let (success_count, failure_count) = match ProxyTracing::find()
+            .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
             .all(db)
             .await
         {
-            Ok(data) => data,
-            Err(err) => {
-                tracing::error!(
-                    "Failed to fetch provider associations for API {}: {}",
-                    api.id,
-                    err
-                );
-                continue;
+            Ok(tracings) => {
+                let success = tracings.iter().filter(|t| t.is_success).count();
+                let failure = tracings.len() - success;
+                (success as i32, failure as i32)
             }
+            Err(_) => (0, 0),
         };
 
-        // 构建provider信息
-        let provider_count = provider_associations.len();
-        let provider_info = if provider_count == 0 {
-            ("none".to_string(), "无关联提供商".to_string())
-        } else if provider_count == 1 {
-            // 单个提供商，获取具体信息
-            if let Some((_, Some(provider_key))) = provider_associations.first() {
-                // 获取provider type信息
-                match ProviderType::find_by_id(provider_key.provider_type_id)
-                    .one(db)
-                    .await
-                {
-                    Ok(Some(provider_type)) => (
-                        provider_type.name.clone(),
-                        provider_type.display_name.clone(),
-                    ),
-                    _ => ("unknown".to_string(), "未知提供商".to_string()),
-                }
-            } else {
-                ("unknown".to_string(), "未知提供商".to_string())
-            }
-        } else {
-            // 多个提供商
-            (
-                "multi".to_string(),
-                format!("多提供商({} 个)", provider_count),
+        // 获取最后使用时间
+        let last_used_at = match ProxyTracing::find()
+            .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
+            .order_by(proxy_tracing::Column::CreatedAt, sea_orm::Order::Desc)
+            .one(db)
+            .await
+        {
+            Ok(Some(tracing)) => Some(
+                DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc).to_rfc3339(),
+            ),
+            _ => None,
+        };
+
+        let usage = json!({
+            "success": success_count,
+            "failure": failure_count
+        });
+
+        let provider_name = provider_type
+            .as_ref()
+            .map(|pt| pt.display_name.clone())
+            .unwrap_or("Unknown".to_string());
+
+        // API Key脱敏处理
+        let masked_api_key = if api.api_key.len() > 8 {
+            format!(
+                "{}****{}",
+                &api.api_key[..4],
+                &api.api_key[api.api_key.len() - 4..]
             )
+        } else {
+            "****".to_string()
         };
 
-        let response_api = ServiceApiResponse {
+        let response_api = UserServiceKeyResponse {
             id: api.id,
-            user_id: api.user_id,
-            provider_type: provider_info.0,
-            provider_name: provider_info.1,
-            api_key: api.api_key,
-            api_secret: api.api_secret,
-            name: api.name,
+            name: api.name.unwrap_or("".to_string()),
             description: api.description,
-            scheduling_strategy: api.scheduling_strategy.unwrap_or("round_robin".to_string()),
-            retry_count: api.retry_count.unwrap_or(3),
-            timeout_seconds: api.timeout_seconds.unwrap_or(30),
-            rate_limit: api.rate_limit.unwrap_or(0),
-            max_tokens_per_day: api.max_tokens_per_day.unwrap_or(0),
-            used_tokens_today: api.used_tokens_today.unwrap_or(0),
-            total_requests: api.total_requests.unwrap_or(0),
-            successful_requests: api.successful_requests.unwrap_or(0),
-            last_used: api
-                .last_used
-                .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+            provider: provider_name,
+            provider_type_id: api.provider_type_id,
+            api_key: masked_api_key,
+            usage: Some(usage),
+            is_active: api.is_active,
+            last_used_at,
+            created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc)
+                .to_rfc3339(),
             expires_at: api
                 .expires_at
-                .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-            is_active: api.is_active,
-            created_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc)
-                .to_rfc3339(),
-            updated_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc)
-                .to_rfc3339(),
+                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
         };
 
-        response_apis.push(response_api);
+        service_api_keys.push(response_api);
     }
 
     let pagination = response::Pagination {
@@ -287,127 +513,27 @@ pub async fn list_service_apis(
         pages: ((total as f64) / (limit as f64)).ceil() as u64,
     };
 
-    response::paginated(response_apis, pagination)
-}
-
-/// 获取单个Service API
-pub async fn get_service_api(
-    State(state): State<AppState>,
-    Path(api_id): Path<i32>,
-) -> impl IntoResponse {
-    use entity::provider_types::{self, Entity as ProviderType};
-    use entity::user_service_apis::Entity as UserServiceApi;
-    use sea_orm::{EntityTrait, JoinType, QuerySelect, RelationTrait};
-
-    if api_id <= 0 {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "VALIDATION_ERROR",
-            "Invalid API ID",
-        );
-    }
-
-    // 获取数据库连接
-    let db = state.database.as_ref();
-
-    // 查询Service API及其关联的Provider Type
-    let api_with_provider = match UserServiceApi::find_by_id(api_id)
-        .join(
-            JoinType::InnerJoin,
-            entity::user_service_apis::Relation::ProviderType.def(),
-        )
-        .find_also_related(ProviderType)
-        .one(db)
-        .await
-    {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::error!("Failed to fetch service API: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch service API",
-            );
-        }
-    };
-
-    let (api, provider_type) = match api_with_provider {
-        Some((api, provider)) => (api, provider),
-        None => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "Service API not found",
-            );
-        }
-    };
-
-    let provider = provider_type.unwrap_or_else(|| provider_types::Model {
-        id: api.provider_type_id,
-        name: "unknown".to_string(),
-        display_name: "Unknown".to_string(),
-        base_url: "".to_string(),
-        api_format: "openai".to_string(),
-        default_model: None,
-        max_tokens: None,
-        rate_limit: None,
-        timeout_seconds: None,
-        health_check_path: None,
-        auth_header_format: None,
-        is_active: true,
-        config_json: None,
-        created_at: chrono::Utc::now().naive_utc(),
-        updated_at: chrono::Utc::now().naive_utc(),
+    let data = json!({
+        "service_api_keys": service_api_keys,
+        "pagination": pagination
     });
 
-    // 构建响应
-    let response_api = ServiceApiResponse {
-        id: api.id,
-        user_id: api.user_id,
-        provider_type: provider.id.to_string(),
-        provider_name: provider.display_name,
-        api_key: api.api_key,
-        api_secret: api.api_secret,
-        name: api.name,
-        description: api.description,
-        scheduling_strategy: api.scheduling_strategy.unwrap_or("round_robin".to_string()),
-        retry_count: api.retry_count.unwrap_or(3),
-        timeout_seconds: api.timeout_seconds.unwrap_or(30),
-        rate_limit: api.rate_limit.unwrap_or(0),
-        max_tokens_per_day: api.max_tokens_per_day.unwrap_or(0),
-        used_tokens_today: api.used_tokens_today.unwrap_or(0),
-        total_requests: api.total_requests.unwrap_or(0),
-        successful_requests: api.successful_requests.unwrap_or(0),
-        last_used: api
-            .last_used
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        expires_at: api
-            .expires_at
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        is_active: api.is_active,
-        created_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc)
-            .to_rfc3339(),
-        updated_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc)
-            .to_rfc3339(),
-    };
-
-    response::success(response_api)
+    response::success(data)
 }
 
-/// 创建Service API
-pub async fn create_service_api(
+/// 3. 新增API Key
+pub async fn create_user_service_key(
     State(state): State<AppState>,
-    Json(request): Json<CreateServiceApiRequest>,
+    headers: HeaderMap,
+    Json(request): Json<CreateUserServiceKeyRequest>,
 ) -> impl IntoResponse {
     use entity::provider_types::Entity as ProviderType;
-    // 需要同时引入模块自身以便访问 Column 枚举
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
-    use entity::user_service_api_providers::{self};
     use entity::user_service_apis::{self};
-    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     // 验证输入
-    if request.provider_keys.is_empty() {
+    if request.user_provider_keys_ids.is_empty() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
@@ -415,9 +541,13 @@ pub async fn create_service_api(
         );
     }
 
-    // 获取数据库连接
     let db = state.database.as_ref();
-    let user_id = 1; // TODO: 从认证上下文获取实际用户ID
+    
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
     // 验证provider_type_id是否存在
     let provider_type = match ProviderType::find_by_id(request.provider_type_id)
@@ -442,19 +572,11 @@ pub async fn create_service_api(
         }
     };
 
-    // 用户可以为同一provider type创建多个service API，不需要检查重复
-
     // 验证所有提供商密钥是否存在且属于用户和指定的provider type
-    let provider_key_ids: Vec<i32> = request
-        .provider_keys
-        .iter()
-        .map(|pk| pk.provider_key_id)
-        .collect();
-
     let valid_provider_keys = match UserProviderKey::find()
         .filter(user_provider_keys::Column::UserId.eq(user_id))
         .filter(user_provider_keys::Column::ProviderTypeId.eq(request.provider_type_id))
-        .filter(user_provider_keys::Column::Id.is_in(provider_key_ids.clone()))
+        .filter(user_provider_keys::Column::Id.is_in(request.user_provider_keys_ids.clone()))
         .all(db)
         .await
     {
@@ -469,7 +591,7 @@ pub async fn create_service_api(
         }
     };
 
-    if valid_provider_keys.len() != provider_key_ids.len() {
+    if valid_provider_keys.len() != request.user_provider_keys_ids.len() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
@@ -480,160 +602,87 @@ pub async fn create_service_api(
         );
     }
 
-    // 生成唯一的API密钥和密钥签名
-    let api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
-    let api_secret = format!("secret_{}", Uuid::new_v4().to_string().replace("-", ""));
+    // 生成唯一的API密钥
+    let api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace("-", ""));
 
-    // 开始事务
-    let txn = match db.begin().await {
-        Ok(txn) => txn,
-        Err(err) => {
-            tracing::error!("Failed to start transaction: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to start transaction",
-            );
+    // 解析过期时间
+    let expires_at = if let Some(expires_str) = &request.expires_at {
+        match chrono::DateTime::parse_from_rfc3339(expires_str) {
+            Ok(dt) => Some(dt.naive_utc()),
+            Err(_) => {
+                return response::error(
+                    StatusCode::BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "过期时间格式错误，请使用ISO 8601格式",
+                );
+            }
         }
+    } else {
+        None
     };
 
-    // 创建新的Service API记录
+    // 创建新的用户服务API记录
     let new_service_api = user_service_apis::ActiveModel {
         user_id: Set(user_id),
         provider_type_id: Set(request.provider_type_id),
         api_key: Set(api_key.clone()),
-        api_secret: Set(api_secret.clone()),
-        name: Set(request.name.clone()),
+        name: Set(Some(request.name.clone())),
         description: Set(request.description.clone()),
-        scheduling_strategy: Set(Some(
-            request
-                .scheduling_strategy
-                .unwrap_or("round_robin".to_string()),
-        )),
-        retry_count: Set(Some(request.retry_count.unwrap_or(3))),
-        timeout_seconds: Set(Some(request.timeout_seconds.unwrap_or(30))),
-        rate_limit: Set(request.rate_limit),
+        user_provider_keys_ids: Set(serde_json::to_value(&request.user_provider_keys_ids)
+            .map_err(|e| {
+                tracing::error!("Failed to serialize user_provider_keys_ids: {}", e);
+                e
+            })
+            .unwrap_or(serde_json::Value::Array(vec![]))),
+        scheduling_strategy: Set(request.scheduling_strategy.clone()),
+        retry_count: Set(request.retry_count),
+        timeout_seconds: Set(request.timeout_seconds),
+        max_request_per_min: Set(request.max_request_per_min),
+        max_requests_per_day: Set(request.max_requests_per_day),
         max_tokens_per_day: Set(request.max_tokens_per_day),
-        used_tokens_today: Set(Some(0)),
-        total_requests: Set(Some(0)),
-        successful_requests: Set(Some(0)),
-        last_used: Set(None),
-        expires_at: Set(request
-            .expires_in_days
-            .map(|days| (Utc::now() + chrono::Duration::days(days as i64)).naive_utc())),
+        max_cost_per_day: Set(request.max_cost_per_day),
+        expires_at: Set(expires_at),
         is_active: Set(request.is_active.unwrap_or(true)),
         created_at: Set(Utc::now().naive_utc()),
         updated_at: Set(Utc::now().naive_utc()),
         ..Default::default()
     };
 
-    // 插入Service API记录
-    let inserted_api = match new_service_api.insert(&txn).await {
+    // 插入记录
+    let inserted_api = match new_service_api.insert(db).await {
         Ok(data) => data,
         Err(e) => {
-            tracing::error!("Failed to insert Service API: {}", e);
-            let _ = txn.rollback().await;
+            tracing::error!("Failed to insert user service API: {}", e);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to create Service API",
+                "Failed to create API Key",
             );
         }
     };
-
-    // 创建Service API与Provider Key的关联记录
-    for provider_key_config in &request.provider_keys {
-        let association = user_service_api_providers::ActiveModel {
-            user_service_api_id: Set(inserted_api.id),
-            user_provider_key_id: Set(provider_key_config.provider_key_id),
-            weight: Set(provider_key_config.weight),
-            is_active: Set(provider_key_config.is_active.unwrap_or(true)),
-            created_at: Set(Utc::now().naive_utc()),
-            updated_at: Set(Utc::now().naive_utc()),
-            ..Default::default()
-        };
-
-        if let Err(e) = association.insert(&txn).await {
-            tracing::error!("Failed to create API-Provider association: {}", e);
-            let _ = txn.rollback().await;
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to create API-Provider association",
-            );
-        }
-    }
-
-    // 提交事务
-    if let Err(e) = txn.commit().await {
-        tracing::error!("Failed to commit transaction: {}", e);
-        return response::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB_ERROR",
-            "Failed to commit transaction",
-        );
-    }
 
     // 构建响应
-    let response_api = ServiceApiResponse {
-        id: inserted_api.id,
-        user_id: inserted_api.user_id,
-        provider_type: provider_type.name.clone(),
-        provider_name: format!(
-            "{}({} 个API)",
-            provider_type.display_name,
-            request.provider_keys.len()
-        ),
-        api_key: inserted_api.api_key,
-        api_secret: inserted_api.api_secret,
-        name: inserted_api.name,
-        description: inserted_api.description,
-        scheduling_strategy: inserted_api
-            .scheduling_strategy
-            .unwrap_or("round_robin".to_string()),
-        retry_count: inserted_api.retry_count.unwrap_or(3),
-        timeout_seconds: inserted_api.timeout_seconds.unwrap_or(30),
-        rate_limit: inserted_api.rate_limit.unwrap_or(0),
-        max_tokens_per_day: inserted_api.max_tokens_per_day.unwrap_or(0),
-        used_tokens_today: inserted_api.used_tokens_today.unwrap_or(0),
-        total_requests: inserted_api.total_requests.unwrap_or(0),
-        successful_requests: inserted_api.successful_requests.unwrap_or(0),
-        last_used: inserted_api
-            .last_used
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        expires_at: inserted_api
-            .expires_at
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        is_active: inserted_api.is_active,
-        created_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(
-            inserted_api.created_at,
-            Utc,
-        )
-        .to_rfc3339(),
-        updated_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(
-            inserted_api.updated_at,
-            Utc,
-        )
-        .to_rfc3339(),
-    };
+    let data = json!({
+        "id": inserted_api.id,
+        "api_key": inserted_api.api_key,
+        "name": inserted_api.name,
+        "description": inserted_api.description,
+        "provider_type_id": inserted_api.provider_type_id,
+        "is_active": inserted_api.is_active,
+        "created_at": DateTime::<Utc>::from_naive_utc_and_offset(inserted_api.created_at, Utc).to_rfc3339()
+    });
 
-    let message = format!(
-        "{}服务API创建成功，关联了 {} 个同类型提供商密钥",
-        provider_type.display_name,
-        request.provider_keys.len()
-    );
-    response::success_with_message(response_api, &message)
-}
+    response::success_with_message(data, "API Key创建成功")}
 
-/// 更新Service API
-pub async fn update_service_api(
+/// 4. 获取API Key详情
+pub async fn get_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    Json(request): Json<UpdateServiceApiRequest>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    use entity::provider_types::{self, Entity as ProviderType};
+    use entity::provider_types::Entity as ProviderType;
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
         return response::error(
@@ -643,36 +692,160 @@ pub async fn update_service_api(
         );
     }
 
-    // 获取数据库连接
     let db = state.database.as_ref();
+    
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
-    // 查找现有的Service API记录
-    let existing_api = match UserServiceApi::find_by_id(api_id).one(db).await {
-        Ok(data) => data,
+    // 查询API Key（确保属于当前用户）
+    let api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
         Err(err) => {
-            tracing::error!("Failed to fetch Service API: {}", err);
+            tracing::error!("Failed to fetch user service API: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to fetch Service API",
+                "Failed to fetch API Key",
             );
         }
     };
 
-    let _existing_record = match existing_api {
-        Some(api) => api,
-        None => {
+    // 获取provider type信息
+    let provider_type = match ProviderType::find_by_id(api.provider_type_id).one(db).await {
+        Ok(Some(pt)) => pt,
+        Ok(None) => {
             return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "Service API not found",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "PROVIDER_NOT_FOUND",
+                "Provider type not found",
             );
         }
+        Err(err) => {
+            tracing::error!("Failed to fetch provider type: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider type",
+            );
+        }
+    };
+
+    // API Key脱敏处理
+    let masked_api_key = if api.api_key.len() > 8 {
+        format!(
+            "{}****{}",
+            &api.api_key[..4],
+            &api.api_key[api.api_key.len() - 4..]
+        )
+    } else {
+        "****".to_string()
+    };
+
+    let response = UserServiceKeyDetailResponse {
+        id: api.id,
+        name: api.name.unwrap_or("".to_string()),
+        description: api.description,
+        provider_type_id: api.provider_type_id,
+        provider: provider_type.display_name,
+        api_key: masked_api_key,
+        user_provider_keys_ids: match serde_json::from_value::<Vec<i32>>(
+            api.user_provider_keys_ids.clone(),
+        ) {
+            Ok(ids) => ids,
+            Err(_) => vec![],
+        },
+        scheduling_strategy: api.scheduling_strategy,
+        retry_count: api.retry_count,
+        timeout_seconds: api.timeout_seconds,
+        max_request_per_min: api.max_request_per_min,
+        max_requests_per_day: api.max_requests_per_day,
+        max_tokens_per_day: api.max_tokens_per_day,
+        max_cost_per_day: api.max_cost_per_day,
+        expires_at: api
+            .expires_at
+            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+        is_active: api.is_active,
+        created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc).to_rfc3339(),
+        updated_at: DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc).to_rfc3339(),
+    };
+
+    response::success(response)}
+
+/// 5. 编辑API Key
+pub async fn update_user_service_key(
+    State(state): State<AppState>,
+    Path(api_id): Path<i32>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateUserServiceKeyRequest>,
+) -> impl IntoResponse {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
+    if api_id <= 0 {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid API ID",
+        );
+    }
+
+    let db = state.database.as_ref();
+    
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
+
+    // 验证API Key存在且属于当前用户
+    let _existing_api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user service API: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch API Key",
+            );
+        }
+    };
+
+    // 解析过期时间
+    let expires_at = if let Some(expires_str) = &request.expires_at {
+        match chrono::DateTime::parse_from_rfc3339(expires_str) {
+            Ok(dt) => Some(dt.naive_utc()),
+            Err(_) => {
+                return response::error(
+                    StatusCode::BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "过期时间格式错误，请使用ISO 8601格式",
+                );
+            }
+        }
+    } else {
+        _existing_api.expires_at
     };
 
     // 创建更新模型
     let mut update_model = user_service_apis::ActiveModel {
-        id: Set(api_id), // 指定要更新的记录ID
+        id: Set(api_id),
         updated_at: Set(Utc::now().naive_utc()),
         ..Default::default()
     };
@@ -686,139 +859,71 @@ pub async fn update_service_api(
         update_model.description = Set(Some(description));
     }
 
-    if let Some(strategy) = request.scheduling_strategy {
-        update_model.scheduling_strategy = Set(Some(strategy));
+    if let Some(user_provider_keys_ids) = request.user_provider_keys_ids {
+        update_model.user_provider_keys_ids = Set(serde_json::to_value(&user_provider_keys_ids)
+            .unwrap_or(serde_json::Value::Array(vec![])));
+    }
+
+    if let Some(scheduling_strategy) = request.scheduling_strategy {
+        update_model.scheduling_strategy = Set(Some(scheduling_strategy));
     }
 
     if let Some(retry_count) = request.retry_count {
         update_model.retry_count = Set(Some(retry_count));
     }
 
-    if let Some(timeout) = request.timeout_seconds {
-        update_model.timeout_seconds = Set(Some(timeout));
+    if let Some(timeout_seconds) = request.timeout_seconds {
+        update_model.timeout_seconds = Set(Some(timeout_seconds));
     }
 
-    if let Some(rate_limit) = request.rate_limit {
-        update_model.rate_limit = Set(Some(rate_limit));
+    if let Some(max_request_per_min) = request.max_request_per_min {
+        update_model.max_request_per_min = Set(Some(max_request_per_min));
     }
 
-    if let Some(max_tokens) = request.max_tokens_per_day {
-        update_model.max_tokens_per_day = Set(Some(max_tokens));
+    if let Some(max_requests_per_day) = request.max_requests_per_day {
+        update_model.max_requests_per_day = Set(Some(max_requests_per_day));
     }
 
-    if let Some(is_active) = request.is_active {
-        update_model.is_active = Set(is_active);
+    if let Some(max_tokens_per_day) = request.max_tokens_per_day {
+        update_model.max_tokens_per_day = Set(Some(max_tokens_per_day));
     }
+
+    if let Some(max_cost_per_day) = request.max_cost_per_day {
+        update_model.max_cost_per_day = Set(Some(max_cost_per_day));
+    }
+
+    update_model.expires_at = Set(expires_at);
 
     // 执行更新
     let updated_api = match update_model.update(db).await {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to update Service API: {}", err);
+            tracing::error!("Failed to update user service API: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to update Service API",
+                "Failed to update API Key",
             );
         }
     };
 
-    // 获取provider类型信息
-    let provider_type = match ProviderType::find_by_id(updated_api.provider_type_id)
-        .one(db)
-        .await
-    {
-        Ok(data) => data.unwrap_or_else(|| provider_types::Model {
-            id: updated_api.provider_type_id,
-            name: "unknown".to_string(),
-            display_name: "Unknown".to_string(),
-            base_url: "".to_string(),
-            api_format: "openai".to_string(),
-            default_model: None,
-            max_tokens: None,
-            rate_limit: None,
-            timeout_seconds: None,
-            health_check_path: None,
-            auth_header_format: None,
-            is_active: true,
-            config_json: None,
-            created_at: chrono::Utc::now().naive_utc(),
-            updated_at: chrono::Utc::now().naive_utc(),
-        }),
-        Err(err) => {
-            tracing::error!("Failed to fetch provider type: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider type",
-            );
-        }
-    };
+    let data = json!({
+        "id": updated_api.id,
+        "name": updated_api.name,
+        "description": updated_api.description,
+        "updated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
+    });
 
-    // 构建响应
-    let response_api = ServiceApiResponse {
-        id: updated_api.id,
-        user_id: updated_api.user_id,
-        provider_type: provider_type.id.to_string(),
-        provider_name: provider_type.display_name,
-        api_key: updated_api.api_key,
-        api_secret: updated_api.api_secret,
-        name: updated_api.name,
-        description: updated_api.description,
-        scheduling_strategy: updated_api
-            .scheduling_strategy
-            .unwrap_or("round_robin".to_string()),
-        retry_count: updated_api.retry_count.unwrap_or(3),
-        timeout_seconds: updated_api.timeout_seconds.unwrap_or(30),
-        rate_limit: updated_api.rate_limit.unwrap_or(0),
-        max_tokens_per_day: updated_api.max_tokens_per_day.unwrap_or(0),
-        used_tokens_today: updated_api.used_tokens_today.unwrap_or(0),
-        total_requests: updated_api.total_requests.unwrap_or(0),
-        successful_requests: updated_api.successful_requests.unwrap_or(0),
-        last_used: updated_api
-            .last_used
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        expires_at: updated_api
-            .expires_at
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-        is_active: updated_api.is_active,
-        created_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(updated_api.created_at, Utc)
-            .to_rfc3339(),
-        updated_at: chrono::DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc)
-            .to_rfc3339(),
-    };
+    response::success_with_message(data, "API Key更新成功")}
 
-    response::success_with_message(
-        response_api,
-        &format!("Service API {} updated successfully", api_id),
-    )
-}
-
-/// 删除响应结构
-#[derive(Serialize)]
-struct DeleteResponse {
-    api_id: i32,
-}
-
-/// 重新生成响应结构
-#[derive(Serialize)]
-struct RegenerateResponse {
-    api_key: String,
-}
-
-/// 撤销响应结构
-#[derive(Serialize)]
-struct RevokeResponse {
-    revoked_at: String,
-}
-
-/// 删除Service API
-pub async fn delete_service_api(
+/// 6. 删除API Key
+pub async fn delete_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    use entity::user_service_apis::Entity as UserServiceApi;
-    use sea_orm::EntityTrait;
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
         return response::error(
@@ -828,39 +933,42 @@ pub async fn delete_service_api(
         );
     }
 
-    // 获取数据库连接
     let db = state.database.as_ref();
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
-    // 检查记录是否存在
-    let existing_api = match UserServiceApi::find_by_id(api_id).one(db).await {
-        Ok(data) => data,
+    // 验证API Key存在且属于当前用户
+    let _existing_api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
         Err(err) => {
-            tracing::error!("Failed to check Service API: {}", err);
+            tracing::error!("Failed to fetch user service API: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to check Service API",
+                "Failed to fetch API Key",
             );
         }
     };
 
-    if existing_api.is_none() {
-        return response::error(
-            StatusCode::NOT_FOUND,
-            "API_NOT_FOUND",
-            "Service API not found",
-        );
-    }
-
-    // 执行硬删除（也可以实现软删除通过设置is_active=false）
+    // 执行硬删除
     let delete_result = match UserServiceApi::delete_by_id(api_id).exec(db).await {
         Ok(result) => result,
         Err(err) => {
-            tracing::error!("Failed to delete Service API: {}", err);
+            tracing::error!("Failed to delete user service API: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to delete Service API",
+                "Failed to delete API Key",
             );
         }
     };
@@ -869,23 +977,22 @@ pub async fn delete_service_api(
         return response::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DELETE_FAILED",
-            "Failed to delete Service API",
+            "Failed to delete API Key",
         );
     }
 
-    response::success_with_message(
-        DeleteResponse { api_id },
-        &format!("Service API {} deleted successfully", api_id),
-    )
-}
+    response::success_with_message(serde_json::Value::Null, "API Key删除成功")}
 
-/// 重新生成Service API密钥
-pub async fn regenerate_service_api_key(
+/// 7. API Key使用统计
+pub async fn get_user_service_key_usage(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
+    Query(query): Query<UsageStatsQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
         return response::error(
@@ -895,51 +1002,229 @@ pub async fn regenerate_service_api_key(
         );
     }
 
-    // 获取数据库连接
     let db = state.database.as_ref();
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
-    // 查找现有的Service API记录
-    let existing_api = match UserServiceApi::find_by_id(api_id).one(db).await {
-        Ok(data) => data,
+    // 验证API Key存在且属于当前用户
+    let _existing_api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
         Err(err) => {
-            tracing::error!("Failed to fetch Service API: {}", err);
+            tracing::error!("Failed to fetch user service API: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to fetch Service API",
+                "Failed to fetch API Key",
             );
         }
     };
 
-    let _existing_record = match existing_api {
-        Some(api) => api,
+    // 确定时间范围
+    let (start_time, end_time) = match &query.time_range {
+        Some(range) => match range.as_str() {
+            "today" => {
+                let today = Utc::now().date_naive();
+                (
+                    today.and_hms_opt(0, 0, 0).unwrap(),
+                    today.and_hms_opt(23, 59, 59).unwrap(),
+                )
+            }
+            "7days" => {
+                let end = Utc::now().naive_utc();
+                let start = end - chrono::Duration::days(7);
+                (start, end)
+            }
+            "30days" => {
+                let end = Utc::now().naive_utc();
+                let start = end - chrono::Duration::days(30);
+                (start, end)
+            }
+            _ => {
+                let end = Utc::now().naive_utc();
+                let start = end - chrono::Duration::days(30);
+                (start, end)
+            }
+        },
         None => {
+            // 使用自定义日期范围
+            if let (Some(start_str), Some(end_str)) = (&query.start_date, &query.end_date) {
+                match (
+                    NaiveDate::parse_from_str(start_str, "%Y-%m-%d"),
+                    NaiveDate::parse_from_str(end_str, "%Y-%m-%d"),
+                ) {
+                    (Ok(start_date), Ok(end_date)) => (
+                        start_date.and_hms_opt(0, 0, 0).unwrap(),
+                        end_date.and_hms_opt(23, 59, 59).unwrap(),
+                    ),
+                    _ => {
+                        let end = Utc::now().naive_utc();
+                        let start = end - chrono::Duration::days(30);
+                        (start, end)
+                    }
+                }
+            } else {
+                let end = Utc::now().naive_utc();
+                let start = end - chrono::Duration::days(30);
+                (start, end)
+            }
+        }
+    };
+
+    // 查询统计数据
+    let tracings = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::UserServiceApiId.eq(api_id))
+        .filter(proxy_tracing::Column::CreatedAt.between(start_time, end_time))
+        .all(db)
+        .await
+    {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Failed to fetch proxy tracings: {}", err);
             return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "Service API not found",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch usage statistics",
             );
         }
     };
 
-    // 生成新的API密钥和密钥签名
-    let new_api_key = format!("sk-api-{}", Uuid::new_v4().to_string().replace("-", ""));
-    let new_api_secret = format!("secret_{}", Uuid::new_v4().to_string().replace("-", ""));
+    // 计算统计数据
+    let total_requests = tracings.len() as i64;
+    let successful_requests = tracings.iter().filter(|t| t.is_success).count() as i64;
+    let failed_requests = total_requests - successful_requests;
+    let success_rate = if total_requests > 0 {
+        (successful_requests as f64 / total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
 
-    // 创建更新模型，只更新密钥相关字段
+    let total_tokens = tracings
+        .iter()
+        .map(|t| t.tokens_total.unwrap_or(0))
+        .sum::<i32>();
+    let tokens_prompt = tracings
+        .iter()
+        .map(|t| t.tokens_prompt.unwrap_or(0))
+        .sum::<i32>();
+    let tokens_completion = tracings
+        .iter()
+        .map(|t| t.tokens_completion.unwrap_or(0))
+        .sum::<i32>();
+    let cache_create_tokens = tracings
+        .iter()
+        .map(|t| t.cache_create_tokens.unwrap_or(0))
+        .sum::<i32>();
+    let cache_read_tokens = tracings
+        .iter()
+        .map(|t| t.cache_read_tokens.unwrap_or(0))
+        .sum::<i32>();
+
+    let total_cost = tracings.iter().map(|t| t.cost.unwrap_or(0.0)).sum::<f64>();
+
+    let avg_response_time = if !tracings.is_empty() {
+        tracings
+            .iter()
+            .map(|t| t.duration_ms.unwrap_or(0))
+            .sum::<i64>()
+            / tracings.len() as i64
+    } else {
+        0
+    };
+
+    let last_used = tracings
+        .iter()
+        .max_by_key(|t| t.created_at)
+        .map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).to_rfc3339());
+
+    // 构建响应
+    let data = json!({
+        "total_requests": total_requests,
+        "successful_requests": successful_requests,
+        "failed_requests": failed_requests,
+        "success_rate": success_rate,
+        "total_tokens": total_tokens,
+        "tokens_prompt": tokens_prompt,
+        "tokens_completion": tokens_completion,
+        "cache_create_tokens": cache_create_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "total_cost": total_cost,
+        "cost_currency": "USD",
+        "avg_response_time": avg_response_time,
+        "last_used": last_used,
+        "usage_trend": [] // TODO: 实现按日期分组的趋势数据
+    });
+
+    response::success(data)}
+
+/// 8. 重新生成API Key
+pub async fn regenerate_user_service_key(
+    State(state): State<AppState>,
+    Path(api_id): Path<i32>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
+    if api_id <= 0 {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "Invalid API ID",
+        );
+    }
+
+    let db = state.database.as_ref();
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
+
+    // 验证API Key存在且属于当前用户
+    let _existing_api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user service API: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch API Key",
+            );
+        }
+    };
+
+    // 生成新的API Key
+    let new_api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace("-", ""));
+
+    // 更新API Key
     let update_model = user_service_apis::ActiveModel {
         id: Set(api_id),
         api_key: Set(new_api_key.clone()),
-        api_secret: Set(new_api_secret.clone()),
         updated_at: Set(Utc::now().naive_utc()),
         ..Default::default()
     };
 
-    // 执行更新
     let updated_api = match update_model.update(db).await {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to update Service API key: {}", err);
+            tracing::error!("Failed to regenerate API key: {}", err);
             return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
@@ -948,19 +1233,24 @@ pub async fn regenerate_service_api_key(
         }
     };
 
-    response::success_with_message(
-        RegenerateResponse {
-            api_key: updated_api.api_key,
-        },
-        "API key regenerated successfully",
-    )
-}
+    let data = json!({
+        "id": updated_api.id,
+        "api_key": updated_api.api_key,
+        "regenerated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
+    });
 
-/// 撤销Service API
-pub async fn revoke_service_api(
-    State(_state): State<AppState>,
+    response::success_with_message(data, "API Key重新生成成功")}
+
+/// 9. 启用/禁用API Key
+pub async fn update_user_service_key_status(
+    State(state): State<AppState>,
     Path(api_id): Path<i32>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateStatusRequest>,
 ) -> impl IntoResponse {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
     if api_id <= 0 {
         return response::error(
             StatusCode::BAD_REQUEST,
@@ -969,34 +1259,57 @@ pub async fn revoke_service_api(
         );
     }
 
-    // TODO: 实现实际的API撤销逻辑
-    let revoked_at = Utc::now().to_rfc3339();
+    let db = state.database.as_ref();
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
 
-    response::success_with_message(
-        RevokeResponse { revoked_at },
-        "Service API revoked successfully",
-    )
-}
+    // 验证API Key存在且属于当前用户
+    let _existing_api = match UserServiceApi::find_by_id(api_id)
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(api)) => api,
+        Ok(None) => {
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user service API: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch API Key",
+            );
+        }
+    };
 
-/// 获取调度策略列表
-pub async fn get_scheduling_strategies(State(_state): State<AppState>) -> impl IntoResponse {
-    let strategies = vec![
-        json!({
-            "key": "round_robin",
-            "name": "轮询调度",
-            "description": "按顺序轮流分配请求到各个后端服务"
-        }),
-        json!({
-            "key": "weighted",
-            "name": "加权轮询",
-            "description": "根据权重分配请求到各个后端服务"
-        }),
-        json!({
-            "key": "health_best",
-            "name": "健康优先",
-            "description": "优先选择健康状态最好的后端服务"
-        }),
-    ];
+    // 更新状态
+    let update_model = user_service_apis::ActiveModel {
+        id: Set(api_id),
+        is_active: Set(request.is_active),
+        updated_at: Set(Utc::now().naive_utc()),
+        ..Default::default()
+    };
 
-    response::success(strategies)
-}
+    let updated_api = match update_model.update(db).await {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Failed to update API key status: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to update API key status",
+            );
+        }
+    };
+
+    let data = json!({
+        "id": updated_api.id,
+        "is_active": updated_api.is_active,
+        "updated_at": DateTime::<Utc>::from_naive_utc_and_offset(updated_api.updated_at, Utc).to_rfc3339()
+    });
+
+    response::success_with_message(data, "API Key状态更新成功")}

@@ -47,8 +47,6 @@ pub enum Relation {
     ApiHealthStatus,
     #[sea_orm(has_many = "super::proxy_tracing::Entity")]
     ProxyTracing,
-    #[sea_orm(has_many = "super::user_service_api_providers::Entity")]
-    UserServiceApiProviders,
 }
 
 impl Related<super::users::Entity> for Entity {
@@ -75,21 +73,6 @@ impl Related<super::proxy_tracing::Entity> for Entity {
     }
 }
 
-impl Related<super::user_service_api_providers::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::UserServiceApiProviders.def()
-    }
-}
 
-// 通过中间表与user_service_apis建立多对多关系
-impl Related<super::user_service_apis::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::user_service_api_providers::Relation::UserServiceApi.def()
-    }
-
-    fn via() -> Option<RelationDef> {
-        Some(super::user_service_api_providers::Relation::UserProviderKey.def().rev())
-    }
-}
 
 impl ActiveModelBehavior for ActiveModel {}

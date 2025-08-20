@@ -361,7 +361,7 @@ impl AIProxyHandler {
 
         tracing::debug!(
             request_id = %ctx.request_id,
-            rate_limit = user_service_api.rate_limit,
+            rate_limit = user_service_api.max_request_per_min,
             "Rate limit check passed"
         );
 
@@ -488,8 +488,8 @@ impl AIProxyHandler {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
-                        Some(provider_type.id), // provider_type_id
-                        None,                    // model_used将在响应处理时设置
+                        Some(provider_type.id),    // provider_type_id
+                        None,                      // model_used将在响应处理时设置
                         Some(selected_backend.id), // user_provider_key_id
                     )
                     .await;
@@ -602,7 +602,7 @@ impl AIProxyHandler {
         &self,
         user_api: &user_service_apis::Model,
     ) -> Result<(), ProxyError> {
-        let rate_limit = user_api.rate_limit.unwrap_or(1000); // 默认每分钟1000次
+        let rate_limit = user_api.max_request_per_min.unwrap_or(60); // 默认每分钟60次
 
         if rate_limit <= 0 {
             return Ok(()); // 无限制
@@ -755,8 +755,7 @@ impl AIProxyHandler {
 
         // 为所有提供商配置通用选项
         if let Some(options) = peer.get_mut_peer_options() {
-            // 设置ALPN - 允许HTTP/2和HTTP/1.1协商，优先HTTP/2
-            options.alpn = ALPN::H2H1;
+            // 已移除 ALPN 配置，使用默认协议选项
 
             // 设置动态超时配置
             options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
@@ -764,9 +763,7 @@ impl AIProxyHandler {
             options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
 
-            // 设置TLS验证
-            options.verify_cert = true;
-            options.verify_hostname = true;
+            // 已移除 TLS 验证设置
 
             // 设置HTTP/2特定选项
             options.h2_ping_interval = Some(Duration::from_secs(30));
@@ -1293,10 +1290,14 @@ impl AIProxyHandler {
                 .as_ref()
                 .and_then(|p| {
                     // 从数据库配置中检查流式支持
-                    p.config_json.as_ref()
-                        .and_then(|config_str| serde_json::from_str::<serde_json::Value>(config_str).ok())
+                    p.config_json
+                        .as_ref()
+                        .and_then(|config_str| {
+                            serde_json::from_str::<serde_json::Value>(config_str).ok()
+                        })
                         .and_then(|config| {
-                            config.get("streaming")
+                            config
+                                .get("streaming")
                                 .and_then(|streaming| streaming.get("supported"))
                                 .and_then(|supported| supported.as_bool())
                         })
@@ -1579,8 +1580,7 @@ impl AIProxyHandler {
 
         // 设置正确的认证头（使用静态字符串映射解决生命周期问题）
         let static_header_name = get_static_header_name(&auth_name);
-        if let Err(e) = upstream_request.insert_header(static_header_name, &auth_value)
-        {
+        if let Err(e) = upstream_request.insert_header(static_header_name, &auth_value) {
             let error = ProxyError::internal(format!(
                 "Failed to set authentication header '{}': {}",
                 auth_name, e
@@ -1987,14 +1987,14 @@ impl LoadBalancer for HealthBestScheduler {
 }
 
 /// 将动态header name映射为静态字符串引用，解决Rust生命周期问题
-/// 
+///
 /// Pingora的insert_header方法需要'static生命周期的字符串引用，
 /// 但AuthHeader返回的是String类型。这个函数将常见的header names
 /// 映射为静态字符串常量，对于未知header则使用Box::leak作为fallback。
 fn get_static_header_name(header_name: &str) -> &'static str {
     match header_name {
         "authorization" => "authorization",
-        "x-goog-api-key" => "x-goog-api-key", 
+        "x-goog-api-key" => "x-goog-api-key",
         "x-api-key" => "x-api-key",
         "api-key" => "api-key",
         "x-custom-auth" => "x-custom-auth",

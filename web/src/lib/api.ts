@@ -134,6 +134,148 @@ export interface DashboardCardsResponse {
   rate_avg_response_time_today: string
 }
 
+// 用户服务API相关接口定义
+export interface UserServiceCardsResponse {
+  total_api_keys: number
+  active_api_keys: number
+  requests: number
+}
+
+export interface UserServiceApiKey {
+  id: number
+  name: string
+  description: string
+  provider: string
+  provider_type_id: number
+  api_key: string
+  usage?: {
+    success: number
+    failure: number
+  }
+  is_active: boolean
+  last_used_at: string
+  created_at: string
+  expires_at?: string
+}
+
+export interface UserServiceApiKeysResponse {
+  service_api_keys: UserServiceApiKey[]
+  pagination: {
+    page: number
+    limit: number
+    total: number
+    pages: number
+  }
+}
+
+export interface CreateUserServiceApiKeyRequest {
+  name: string
+  description?: string
+  provider_type_id: number
+  user_provider_keys_ids: number[]
+  scheduling_strategy?: string
+  retry_count?: number
+  timeout_seconds?: number
+  max_request_per_min?: number
+  max_requests_per_day?: number
+  max_tokens_per_day?: number
+  max_cost_per_day?: number
+  expires_at?: string
+  is_active?: boolean
+}
+
+export interface CreateUserServiceApiKeyResponse {
+  id: number
+  api_key: string
+  name: string
+  description: string
+  provider_type_id: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface UserServiceApiKeyDetail {
+  id: number
+  name: string
+  description: string
+  provider_type_id: number
+  provider: string
+  api_key: string
+  user_provider_keys_ids: number[]
+  scheduling_strategy: string
+  retry_count: number
+  timeout_seconds: number
+  max_request_per_min: number
+  max_requests_per_day: number
+  max_tokens_per_day: number
+  max_cost_per_day: number
+  expires_at?: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UpdateUserServiceApiKeyRequest {
+  name?: string
+  description?: string
+  user_provider_keys_ids?: number[]
+  scheduling_strategy?: string
+  retry_count?: number
+  timeout_seconds?: number
+  max_request_per_min?: number
+  max_requests_per_day?: number
+  max_tokens_per_day?: number
+  max_cost_per_day?: number
+  expires_at?: string
+}
+
+export interface UpdateUserServiceApiKeyResponse {
+  id: number
+  name: string
+  description: string
+  updated_at: string
+}
+
+export interface UserServiceApiKeyUsageResponse {
+  total_requests: number
+  successful_requests: number
+  failed_requests: number
+  success_rate: number
+  total_tokens: number
+  tokens_prompt: number
+  tokens_completion: number
+  cache_create_tokens: number
+  cache_read_tokens: number
+  total_cost: number
+  cost_currency: string
+  avg_response_time: number
+  last_used: string
+  usage_trend: Array<{
+    date: string
+    requests: number
+    successful_requests: number
+    failed_requests: number
+    tokens: number
+    cost: number
+  }>
+}
+
+export interface RegenerateUserServiceApiKeyResponse {
+  id: number
+  api_key: string
+  regenerated_at: string
+}
+
+export interface UpdateUserServiceApiKeyStatusRequest {
+  is_active: boolean
+}
+
+export interface UpdateUserServiceApiKeyStatusResponse {
+  id: number
+  is_active: boolean
+  updated_at: string
+}
+
 
 
 /**
@@ -526,6 +668,197 @@ export const api = {
           error: {
             code: 'USER_API_KEYS_TOKEN_TREND_ERROR',
             message: '获取用户API Keys Token趋势失败'
+          }
+        }
+      }
+    }
+  },
+
+  // 用户服务API相关接口
+  userService: {
+    /**
+     * 获取用户API Keys概览卡片数据
+     */
+    async getCards(): Promise<ApiResponse<UserServiceCardsResponse>> {
+      try {
+        return await apiClient.get<UserServiceCardsResponse>('/user-service/cards')
+      } catch (error) {
+        console.error('[UserService] Failed to fetch cards:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_CARDS_ERROR',
+            message: '获取用户服务概览数据失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取用户API Keys列表
+     */
+    async getKeys(params?: {
+      page?: number
+      limit?: number
+      name?: string
+      description?: string
+      provider_type_id?: number
+      is_active?: boolean
+    }): Promise<ApiResponse<UserServiceApiKeysResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.page) queryParams.page = params.page.toString()
+        if (params?.limit) queryParams.limit = params.limit.toString()
+        if (params?.name) queryParams.name = params.name
+        if (params?.description) queryParams.description = params.description
+        if (params?.provider_type_id) queryParams.provider_type_id = params.provider_type_id.toString()
+        if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
+
+        return await apiClient.get<UserServiceApiKeysResponse>('/user-service/keys', queryParams)
+      } catch (error) {
+        console.error('[UserService] Failed to fetch keys:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_KEYS_ERROR',
+            message: '获取API Keys列表失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 创建新的API Key
+     */
+    async createKey(data: CreateUserServiceApiKeyRequest): Promise<ApiResponse<CreateUserServiceApiKeyResponse>> {
+      try {
+        return await apiClient.post<CreateUserServiceApiKeyResponse>('/user-service/keys', data)
+      } catch (error) {
+        console.error('[UserService] Failed to create key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_CREATE_KEY_ERROR',
+            message: '创建API Key失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取API Key详情
+     */
+    async getKeyDetail(id: number): Promise<ApiResponse<UserServiceApiKeyDetail>> {
+      try {
+        return await apiClient.get<UserServiceApiKeyDetail>(`/user-service/keys/${id}`)
+      } catch (error) {
+        console.error('[UserService] Failed to fetch key detail:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_KEY_DETAIL_ERROR',
+            message: '获取API Key详情失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 更新API Key
+     */
+    async updateKey(id: number, data: UpdateUserServiceApiKeyRequest): Promise<ApiResponse<UpdateUserServiceApiKeyResponse>> {
+      try {
+        return await apiClient.put<UpdateUserServiceApiKeyResponse>(`/user-service/keys/${id}`, data)
+      } catch (error) {
+        console.error('[UserService] Failed to update key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_UPDATE_KEY_ERROR',
+            message: '更新API Key失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 删除API Key
+     */
+    async deleteKey(id: number): Promise<ApiResponse<null>> {
+      try {
+        return await apiClient.delete<null>(`/user-service/keys/${id}`)
+      } catch (error) {
+        console.error('[UserService] Failed to delete key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_DELETE_KEY_ERROR',
+            message: '删除API Key失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取API Key使用统计
+     */
+    async getKeyUsage(id: number, params?: {
+      time_range?: 'today' | '7days' | '30days'
+      start_date?: string
+      end_date?: string
+    }): Promise<ApiResponse<UserServiceApiKeyUsageResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.time_range) queryParams.time_range = params.time_range
+        if (params?.start_date) queryParams.start_date = params.start_date
+        if (params?.end_date) queryParams.end_date = params.end_date
+
+        return await apiClient.get<UserServiceApiKeyUsageResponse>(`/user-service/keys/${id}/usage`, queryParams)
+      } catch (error) {
+        console.error('[UserService] Failed to fetch key usage:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_KEY_USAGE_ERROR',
+            message: '获取API Key使用统计失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 重新生成API Key
+     */
+    async regenerateKey(id: number): Promise<ApiResponse<RegenerateUserServiceApiKeyResponse>> {
+      try {
+        return await apiClient.post<RegenerateUserServiceApiKeyResponse>(`/user-service/keys/${id}/regenerate`)
+      } catch (error) {
+        console.error('[UserService] Failed to regenerate key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_REGENERATE_KEY_ERROR',
+            message: '重新生成API Key失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 更新API Key状态
+     */
+    async updateKeyStatus(id: number, isActive: boolean): Promise<ApiResponse<UpdateUserServiceApiKeyStatusResponse>> {
+      try {
+        return await apiClient.put<UpdateUserServiceApiKeyStatusResponse>(`/user-service/keys/${id}/status`, {
+          is_active: isActive
+        })
+      } catch (error) {
+        console.error('[UserService] Failed to update key status:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_UPDATE_KEY_STATUS_ERROR',
+            message: '更新API Key状态失败'
           }
         }
       }

@@ -1,9 +1,9 @@
 //! # 健康检查类型定义
 
-use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant, SystemTime};
-use std::collections::HashMap;
 use crate::proxy::upstream::ProviderId;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{Duration, Instant, SystemTime};
 
 /// 健康检查结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,8 +32,6 @@ pub enum HealthCheckType {
     Http,
     /// TCP连接检查
     Tcp,
-    /// HTTPS SSL证书检查
-    Https,
     /// 自定义检查
     Custom,
 }
@@ -161,7 +159,7 @@ impl ServerHealthStatus {
     /// 更新健康状态
     pub fn update_status(&mut self, result: HealthCheckResult) {
         self.last_check = Some(result.timestamp);
-        
+
         // 保留最近50个结果
         self.recent_results.push(result.clone());
         if self.recent_results.len() > 50 {
@@ -189,18 +187,17 @@ impl ServerHealthStatus {
 
         // 计算平均响应时间
         if !self.recent_results.is_empty() {
-            let total_response_time: u64 = self.recent_results
+            let total_response_time: u64 = self
+                .recent_results
                 .iter()
                 .filter(|r| r.is_healthy)
                 .map(|r| r.response_time_ms)
                 .sum();
-            let healthy_count = self.recent_results
-                .iter()
-                .filter(|r| r.is_healthy)
-                .count();
-            
+            let healthy_count = self.recent_results.iter().filter(|r| r.is_healthy).count();
+
             if healthy_count > 0 {
-                self.avg_response_time = Duration::from_millis(total_response_time / healthy_count as u64);
+                self.avg_response_time =
+                    Duration::from_millis(total_response_time / healthy_count as u64);
             }
         }
 
@@ -216,7 +213,7 @@ impl ServerHealthStatus {
 
         let recent_count = std::cmp::min(self.recent_results.len(), 10);
         let recent_results = &self.recent_results[self.recent_results.len() - recent_count..];
-        
+
         // 基础健康率
         let healthy_count = recent_results.iter().filter(|r| r.is_healthy).count();
         let health_ratio = healthy_count as f32 / recent_results.len() as f32;
@@ -300,11 +297,7 @@ impl HealthCheckResult {
 
 impl HealthCheckTask {
     /// 创建新的健康检查任务
-    pub fn new(
-        server_address: String,
-        provider_id: ProviderId,
-        config: HealthCheckConfig,
-    ) -> Self {
+    pub fn new(server_address: String, provider_id: ProviderId, config: HealthCheckConfig) -> Self {
         let id = format!("{}:{}", provider_id.to_string(), server_address);
         Self {
             id,
@@ -332,7 +325,6 @@ impl HealthCheckTask {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,7 +336,8 @@ mod tests {
         assert_eq!(success.response_time_ms, 100);
         assert_eq!(success.status_code, Some(200));
 
-        let failure = HealthCheckResult::failure("Connection refused".to_string(), HealthCheckType::Tcp);
+        let failure =
+            HealthCheckResult::failure("Connection refused".to_string(), HealthCheckType::Tcp);
         assert!(!failure.is_healthy);
         assert!(failure.error_message.is_some());
     }
@@ -353,11 +346,12 @@ mod tests {
     fn test_server_health_status_update() {
         let provider_id = ProviderId::from_database_id(1);
         let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), provider_id);
-        
+
         // 模拟失败
-        let failure = HealthCheckResult::failure("Connection timeout".to_string(), HealthCheckType::Http);
+        let failure =
+            HealthCheckResult::failure("Connection timeout".to_string(), HealthCheckType::Http);
         status.update_status(failure);
-        
+
         assert_eq!(status.consecutive_failures, 1);
         assert_eq!(status.consecutive_successes, 0);
     }
@@ -366,13 +360,13 @@ mod tests {
     fn test_health_score_calculation() {
         let provider_id = ProviderId::from_database_id(1);
         let mut status = ServerHealthStatus::new("127.0.0.1:8080".to_string(), provider_id);
-        
+
         // 添加成功结果
         for _ in 0..5 {
             let success = HealthCheckResult::success(100, 200, HealthCheckType::Http);
             status.update_status(success);
         }
-        
+
         assert!(status.health_score > 90.0);
         assert!(status.is_healthy);
     }
@@ -381,15 +375,11 @@ mod tests {
     fn test_task_scheduling() {
         let config = HealthCheckConfig::default();
         let provider_id = ProviderId::from_database_id(1);
-        let mut task = HealthCheckTask::new(
-            "127.0.0.1:8080".to_string(),
-            provider_id,
-            config,
-        );
-        
+        let mut task = HealthCheckTask::new("127.0.0.1:8080".to_string(), provider_id, config);
+
         assert_eq!(task.status, TaskStatus::Pending);
         assert!(task.should_execute());
-        
+
         task.update_next_check();
         assert!(!task.should_execute());
     }

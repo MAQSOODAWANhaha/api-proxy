@@ -1,11 +1,11 @@
 //! # 健康检查器实现
 
+use super::types::{HealthCheckConfig, HealthCheckResult, HealthCheckType};
 use crate::error::Result;
-use super::types::{HealthCheckResult, HealthCheckConfig, HealthCheckType};
-use std::time::{Duration, Instant};
-use tokio::time::timeout;
 use reqwest::Client;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 /// HTTP健康检查器
 pub struct HealthChecker {
@@ -40,7 +40,6 @@ impl HealthChecker {
 
         match config.check_type {
             HealthCheckType::Http => self.check_http(server_address, config).await,
-            HealthCheckType::Https => self.check_https(server_address, config).await,
             HealthCheckType::Tcp => self.check_tcp(server_address, config).await,
             HealthCheckType::Custom => self.check_custom(server_address, config).await,
         }
@@ -53,7 +52,7 @@ impl HealthChecker {
         config: &HealthCheckConfig,
     ) -> Result<HealthCheckResult> {
         let start_time = Instant::now();
-        
+
         // 构建URL
         let path = config.path.as_deref().unwrap_or("/health");
         let url = if server_address.starts_with("http") {
@@ -75,14 +74,15 @@ impl HealthChecker {
             }
 
             request.send().await
-        }).await;
+        })
+        .await;
 
         let response_time = start_time.elapsed().as_millis() as u64;
 
         match result {
             Ok(Ok(response)) => {
                 let status_code = response.status().as_u16();
-                
+
                 if config.expected_status.contains(&status_code) {
                     Ok(HealthCheckResult::success(
                         response_time,
@@ -107,66 +107,7 @@ impl HealthChecker {
         }
     }
 
-    /// HTTPS健康检查
-    async fn check_https(
-        &self,
-        server_address: &str,
-        config: &HealthCheckConfig,
-    ) -> Result<HealthCheckResult> {
-        let start_time = Instant::now();
-        
-        // 构建HTTPS URL
-        let path = config.path.as_deref().unwrap_or("/health");
-        let url = if server_address.starts_with("https") {
-            format!("{}{}", server_address, path)
-        } else {
-            format!("https://{}{}", server_address, path)
-        };
-
-        // 执行HTTPS请求
-        let result = timeout(config.timeout, async {
-            let mut request = match config.body.as_ref() {
-                Some(body) => self.client.post(&url).body(body.clone()),
-                None => self.client.get(&url),
-            };
-
-            // 添加请求头
-            for (key, value) in &config.headers {
-                request = request.header(key, value);
-            }
-
-            request.send().await
-        }).await;
-
-        let response_time = start_time.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(Ok(response)) => {
-                let status_code = response.status().as_u16();
-                
-                if config.expected_status.contains(&status_code) {
-                    Ok(HealthCheckResult::success(
-                        response_time,
-                        status_code,
-                        HealthCheckType::Https,
-                    ))
-                } else {
-                    Ok(HealthCheckResult::failure(
-                        format!("Unexpected status code: {}", status_code),
-                        HealthCheckType::Https,
-                    ))
-                }
-            }
-            Ok(Err(e)) => Ok(HealthCheckResult::failure(
-                format!("HTTPS request failed: {}", e),
-                HealthCheckType::Https,
-            )),
-            Err(_) => Ok(HealthCheckResult::timeout(
-                config.timeout.as_millis() as u64,
-                HealthCheckType::Https,
-            )),
-        }
-    }
+    // 已移除 HTTPS 健康检查
 
     /// TCP连接检查
     async fn check_tcp(
@@ -175,21 +116,22 @@ impl HealthChecker {
         config: &HealthCheckConfig,
     ) -> Result<HealthCheckResult> {
         let start_time = Instant::now();
-        
+
         let result = timeout(config.timeout, async {
             // 解析服务器地址
-            let addrs: Vec<_> = server_address.to_socket_addrs()
+            let addrs: Vec<_> = server_address
+                .to_socket_addrs()
                 .map_err(|e| format!("Invalid address: {}", e))?
                 .collect();
-            
+
             if addrs.is_empty() {
                 return Err("No valid addresses found".to_string());
             }
 
             // 尝试TCP连接
-            TcpStream::connect(&addrs[0])
-                .map_err(|e| format!("TCP connection failed: {}", e))
-        }).await;
+            TcpStream::connect(&addrs[0]).map_err(|e| format!("TCP connection failed: {}", e))
+        })
+        .await;
 
         let response_time = start_time.elapsed().as_millis() as u64;
 
@@ -225,7 +167,7 @@ impl HealthChecker {
         servers: Vec<(String, HealthCheckConfig)>,
     ) -> Result<Vec<(String, HealthCheckResult)>> {
         let mut results = Vec::new();
-        
+
         // 并发执行所有检查
         let futures: Vec<_> = servers
             .into_iter()
@@ -240,7 +182,7 @@ impl HealthChecker {
 
         // 等待所有检查完成
         let check_results = futures::future::join_all(futures).await;
-        
+
         for (addr, result) in check_results {
             match result {
                 Ok(health_result) => results.push((addr, health_result)),
@@ -261,17 +203,13 @@ impl HealthChecker {
     }
 
     /// 快速TCP端口检查
-    pub async fn quick_tcp_check(
-        &self,
-        server_address: &str,
-        timeout_ms: u64,
-    ) -> bool {
+    pub async fn quick_tcp_check(&self, server_address: &str, timeout_ms: u64) -> bool {
         let timeout_duration = Duration::from_millis(timeout_ms);
-        
+
         let result = timeout(timeout_duration, async {
-            let addrs: std::io::Result<Vec<_>> = server_address.to_socket_addrs()
-                .map(|iter| iter.collect());
-            
+            let addrs: std::io::Result<Vec<_>> =
+                server_address.to_socket_addrs().map(|iter| iter.collect());
+
             match addrs {
                 Ok(addr_list) => {
                     if let Some(addr) = addr_list.into_iter().next() {
@@ -282,7 +220,8 @@ impl HealthChecker {
                 }
                 Err(_) => false,
             }
-        }).await;
+        })
+        .await;
 
         result.unwrap_or(false)
     }
@@ -302,18 +241,19 @@ impl HealthChecker {
 
         let result = timeout(config.timeout, async {
             self.client.head(&url).send().await
-        }).await;
+        })
+        .await;
 
         match result {
             Ok(Ok(response)) => {
                 let mut headers = std::collections::HashMap::new();
-                
+
                 for (key, value) in response.headers() {
                     if let Ok(value_str) = value.to_str() {
                         headers.insert(key.to_string(), value_str.to_string());
                     }
                 }
-                
+
                 Ok(Some(headers))
             }
             _ => Ok(None),
@@ -330,7 +270,6 @@ impl Default for HealthChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[tokio::test]
     async fn test_health_checker_creation() {
@@ -349,7 +288,7 @@ mod tests {
 
         let result = checker.check_tcp("invalid:99999", &config).await;
         assert!(result.is_ok());
-        
+
         let health_result = result.unwrap();
         assert!(!health_result.is_healthy);
     }
@@ -357,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn test_quick_tcp_check() {
         let checker = HealthChecker::new();
-        
+
         // 测试无效地址
         let result = checker.quick_tcp_check("invalid:99999", 100).await;
         assert!(!result);
@@ -382,10 +321,16 @@ mod tests {
 
         let result = checker.check_health("127.0.0.1:8080", &config).await;
         assert!(result.is_ok());
-        
+
         let health_result = result.unwrap();
         assert!(!health_result.is_healthy);
-        assert!(health_result.error_message.as_ref().unwrap().contains("disabled"));
+        assert!(
+            health_result
+                .error_message
+                .as_ref()
+                .unwrap()
+                .contains("disabled")
+        );
     }
 
     #[tokio::test]
@@ -398,7 +343,7 @@ mod tests {
 
         let results = checker.check_multiple(servers).await;
         assert!(results.is_ok());
-        
+
         let health_results = results.unwrap();
         assert_eq!(health_results.len(), 2);
     }

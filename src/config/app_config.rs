@@ -1,7 +1,7 @@
 //! # 应用配置结构定义
 
+use super::dual_port_config::DualPortServerConfig;
 use serde::{Deserialize, Serialize};
-use super::dual_port_config::{DualPortServerConfig, EnabledServices};
 
 /// 应用主配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,14 +18,6 @@ pub struct AppConfig {
     pub redis: RedisConfig,
     /// 缓存配置
     pub cache: CacheConfig,
-    /// TLS配置（传统模式，将被dual_port中的TLS配置替代）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tls: Option<TlsConfig>,
-    /// 全局服务启用配置
-    pub services: EnabledServices,
-    /// 请求追踪配置
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace: Option<TraceConfig>,
 }
 
 /// 服务器配置
@@ -120,42 +112,6 @@ impl Default for RedisConfig {
     }
 }
 
-/// TLS配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
-    /// 证书存储路径
-    pub cert_path: String,
-    /// ACME邮箱
-    pub acme_email: String,
-    /// 支持的域名
-    pub domains: Vec<String>,
-}
-
-/// 请求追踪配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraceConfig {
-    /// 是否启用追踪
-    pub enabled: bool,
-    /// 默认追踪级别 (0=基础, 1=详细, 2=完整)
-    pub default_trace_level: i32,
-    /// 采样率 (0.0 - 1.0)
-    pub sampling_rate: f64,
-    /// 批量处理大小
-    pub max_batch_size: usize,
-    /// 刷新间隔（秒）
-    pub flush_interval: u64,
-    /// 超时时间（秒）
-    pub timeout_seconds: u64,
-    /// 是否异步写入
-    pub async_write: bool,
-    /// 是否启用阶段追踪
-    pub enable_phases: bool,
-    /// 是否启用健康指标
-    pub enable_health_metrics: bool,
-    /// 是否启用性能指标
-    pub enable_performance_metrics: bool,
-}
-
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -163,33 +119,6 @@ impl Default for ServerConfig {
             port: 8080,
             https_port: 8443,
             workers: num_cpus::get(),
-        }
-    }
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            cert_path: "./certs".to_string(),
-            acme_email: "admin@example.com".to_string(),
-            domains: vec!["localhost".to_string()],
-        }
-    }
-}
-
-impl Default for TraceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            default_trace_level: 1,
-            sampling_rate: 1.0,
-            max_batch_size: 100,
-            flush_interval: 10,
-            timeout_seconds: 30,
-            async_write: true,
-            enable_phases: true,
-            enable_health_metrics: true,
-            enable_performance_metrics: true,
         }
     }
 }
@@ -202,9 +131,6 @@ impl Default for AppConfig {
             database: super::DatabaseConfig::default(),
             redis: RedisConfig::default(),
             cache: CacheConfig::default(),
-            tls: None, // TLS配置现在在dual_port中
-            services: EnabledServices::default(),
-            trace: Some(TraceConfig::default()),
         }
     }
 }
@@ -217,7 +143,9 @@ impl AppConfig {
             ServerConfig {
                 host: dual_port.management.http.host.clone(),
                 port: dual_port.management.http.port,
-                https_port: dual_port.proxy.https
+                https_port: dual_port
+                    .proxy
+                    .https
                     .as_ref()
                     .map(|https| https.port)
                     .unwrap_or(0),
@@ -285,7 +213,9 @@ impl AppConfig {
         }
 
         if self.server.is_some() && self.dual_port.is_some() {
-            return Err("Cannot use both server and dual_port configurations simultaneously".to_string());
+            return Err(
+                "Cannot use both server and dual_port configurations simultaneously".to_string(),
+            );
         }
 
         // 验证双端口配置
@@ -298,7 +228,9 @@ impl AppConfig {
             if server.port == 0 || server.port > 65535 {
                 return Err(format!("Invalid server port: {}", server.port));
             }
-            if server.https_port > 0 && (server.https_port > 65535 || server.https_port == server.port) {
+            if server.https_port > 0
+                && (server.https_port > 65535 || server.https_port == server.port)
+            {
                 return Err(format!("Invalid HTTPS port: {}", server.https_port));
             }
             if server.workers == 0 {
@@ -325,19 +257,24 @@ impl AppConfig {
     /// 获取所有监听地址信息
     pub fn get_listener_info(&self) -> Vec<(String, String, String)> {
         if let Some(dual_port) = &self.dual_port {
-            dual_port.get_all_listeners()
+            dual_port
+                .get_all_listeners()
                 .into_iter()
                 .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
                 .collect()
         } else if let Some(server) = &self.server {
             let mut listeners = Vec::new();
-            listeners.push(("server-http".to_string(), 
-                           format!("{}:{}", server.host, server.port), 
-                           "HTTP".to_string()));
+            listeners.push((
+                "server-http".to_string(),
+                format!("{}:{}", server.host, server.port),
+                "HTTP".to_string(),
+            ));
             if server.https_port > 0 {
-                listeners.push(("server-https".to_string(), 
-                               format!("{}:{}", server.host, server.https_port), 
-                               "HTTPS".to_string()));
+                listeners.push((
+                    "server-https".to_string(),
+                    format!("{}:{}", server.host, server.https_port),
+                    "HTTPS".to_string(),
+                ));
             }
             listeners
         } else {
@@ -345,13 +282,8 @@ impl AppConfig {
         }
     }
 
-    /// 获取追踪配置
-    pub fn get_trace_config(&self) -> Option<&TraceConfig> {
-        self.trace.as_ref()
-    }
-
     /// 是否启用追踪
     pub fn is_trace_enabled(&self) -> bool {
-        self.trace.as_ref().map(|t| t.enabled).unwrap_or(false)
+        false
     }
 }

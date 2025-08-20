@@ -307,15 +307,12 @@ impl ConfigManager {
                     )
                 })?;
             }
+            // TLS 配置已移除，忽略相关环境变量覆盖
             ["tls", "cert", "path"] | ["tls", "certpath"] => {
-                if let Some(ref mut tls) = config.tls {
-                    tls.cert_path = value.to_string();
-                }
+                warn!("TLS configuration has been removed, ignoring environment variable override for tls.cert_path");
             }
             ["tls", "acme", "email"] | ["tls", "acmeemail"] => {
-                if let Some(ref mut tls) = config.tls {
-                    tls.acme_email = value.to_string();
-                }
+                warn!("TLS configuration has been removed, ignoring environment variable override for tls.acme_email");
             }
             _ => {
                 warn!("未知的配置路径，忽略环境变量覆盖: {}", path);

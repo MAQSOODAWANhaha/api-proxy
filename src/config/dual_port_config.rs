@@ -14,8 +14,6 @@ pub struct DualPortServerConfig {
     pub proxy: ProxyPortConfig,
     /// 全局工作线程数
     pub workers: usize,
-    /// 启用的服务类型
-    pub enabled_services: EnabledServices,
 }
 
 /// 管理端口配置
@@ -58,52 +56,9 @@ pub struct ListenerConfig {
     /// 绑定地址（自动计算）
     #[serde(skip)]
     pub bind_addr: Option<SocketAddr>,
-    /// TLS 配置（对于 HTTPS）
-    pub tls: Option<TlsListenerConfig>,
 }
 
-/// TLS 监听器配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsListenerConfig {
-    /// 证书存储路径
-    pub cert_path: String,
-    /// 支持的域名
-    pub domains: Vec<String>,
-    /// ACME 配置
-    pub acme: Option<AcmeConfig>,
-    /// 手动证书配置
-    pub manual_cert: Option<ManualCertConfig>,
-}
 
-/// ACME 证书配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcmeConfig {
-    /// ACME 提供商（Let's Encrypt, ZeroSSL 等）
-    pub provider: AcmeProvider,
-    /// 联系邮箱
-    pub email: String,
-    /// 是否使用生产环境
-    pub production: bool,
-}
-
-/// ACME 提供商
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AcmeProvider {
-    LetsEncrypt,
-    ZeroSSL,
-    Custom { url: String },
-}
-
-/// 手动证书配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManualCertConfig {
-    /// 证书文件路径
-    pub cert_file: String,
-    /// 私钥文件路径
-    pub key_file: String,
-    /// CA 证书链文件路径（可选）
-    pub ca_file: Option<String>,
-}
 
 /// 访问控制配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,18 +105,7 @@ pub enum LoadBalancingStrategy {
     Random,
 }
 
-/// 启用的服务配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnabledServices {
-    /// 是否启用管理服务
-    pub management: bool,
-    /// 是否启用代理服务
-    pub proxy: bool,
-    /// 是否启用健康检查
-    pub health_check: bool,
-    /// 是否启用监控统计
-    pub monitoring: bool,
-}
+
 
 impl Default for DualPortServerConfig {
     fn default() -> Self {
@@ -169,7 +113,6 @@ impl Default for DualPortServerConfig {
             management: ManagementPortConfig::default(),
             proxy: ProxyPortConfig::default(),
             workers: num_cpus::get(),
-            enabled_services: EnabledServices::default(),
         }
     }
 }
@@ -181,16 +124,11 @@ impl Default for ManagementPortConfig {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 bind_addr: None,
-                tls: None,
             },
             https: None,
             enabled: true,
             access_control: AccessControlConfig::default(),
-            route_prefixes: vec![
-                "/api".to_string(),
-                "/admin".to_string(),
-                "/".to_string(),
-            ],
+            route_prefixes: vec!["/api".to_string(), "/admin".to_string(), "/".to_string()],
         }
     }
 }
@@ -202,38 +140,20 @@ impl Default for ProxyPortConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8081,
                 bind_addr: None,
-                tls: None,
             },
             https: Some(ListenerConfig {
                 host: "0.0.0.0".to_string(),
                 port: 8443,
                 bind_addr: None,
-                tls: Some(TlsListenerConfig::default()),
             }),
             enabled: true,
             load_balancing: LoadBalancingConfig::default(),
-            route_prefixes: vec![
-                "/v1".to_string(),
-                "/proxy".to_string(),
-            ],
+            route_prefixes: vec!["/v1".to_string(), "/proxy".to_string()],
         }
     }
 }
 
-impl Default for TlsListenerConfig {
-    fn default() -> Self {
-        Self {
-            cert_path: "./certs".to_string(),
-            domains: vec!["localhost".to_string()],
-            acme: Some(AcmeConfig {
-                provider: AcmeProvider::LetsEncrypt,
-                email: "admin@example.com".to_string(),
-                production: false,
-            }),
-            manual_cert: None,
-        }
-    }
-}
+
 
 impl Default for AccessControlConfig {
     fn default() -> Self {
@@ -257,16 +177,7 @@ impl Default for LoadBalancingConfig {
     }
 }
 
-impl Default for EnabledServices {
-    fn default() -> Self {
-        Self {
-            management: true,
-            proxy: true,
-            health_check: true,
-            monitoring: true,
-        }
-    }
-}
+
 
 impl ListenerConfig {
     /// 获取绑定地址
@@ -280,10 +191,7 @@ impl ListenerConfig {
         })
     }
 
-    /// 是否启用 TLS
-    pub fn is_tls_enabled(&self) -> bool {
-        self.tls.is_some()
-    }
+    
 }
 
 impl DualPortServerConfig {
@@ -293,10 +201,10 @@ impl DualPortServerConfig {
         if self.management.enabled && self.proxy.enabled {
             let mgmt_port = self.management.http.port;
             let proxy_port = self.proxy.http.port;
-            
+
             if mgmt_port == proxy_port {
                 return Err(format!(
-                    "Management port ({}) conflicts with proxy port ({})", 
+                    "Management port ({}) conflicts with proxy port ({})",
                     mgmt_port, proxy_port
                 ));
             }
@@ -305,15 +213,15 @@ impl DualPortServerConfig {
             if let Some(mgmt_https) = &self.management.https {
                 if mgmt_https.port == proxy_port {
                     return Err(format!(
-                        "Management HTTPS port ({}) conflicts with proxy HTTP port ({})", 
+                        "Management HTTPS port ({}) conflicts with proxy HTTP port ({})",
                         mgmt_https.port, proxy_port
                     ));
                 }
-                
+
                 if let Some(proxy_https) = &self.proxy.https {
                     if mgmt_https.port == proxy_https.port {
                         return Err(format!(
-                            "Management HTTPS port ({}) conflicts with proxy HTTPS port ({})", 
+                            "Management HTTPS port ({}) conflicts with proxy HTTPS port ({})",
                             mgmt_https.port, proxy_https.port
                         ));
                     }
@@ -327,19 +235,25 @@ impl DualPortServerConfig {
         }
 
         // 验证监听配置
-        self.management.http.bind_address()
+        self.management
+            .http
+            .bind_address()
             .map_err(|e| format!("Invalid management HTTP address: {}", e))?;
 
         if let Some(https) = &self.management.https {
-            https.bind_address()
+            https
+                .bind_address()
                 .map_err(|e| format!("Invalid management HTTPS address: {}", e))?;
         }
 
-        self.proxy.http.bind_address()
+        self.proxy
+            .http
+            .bind_address()
             .map_err(|e| format!("Invalid proxy HTTP address: {}", e))?;
 
         if let Some(https) = &self.proxy.https {
-            https.bind_address()
+            https
+                .bind_address()
                 .map_err(|e| format!("Invalid proxy HTTPS address: {}", e))?;
         }
 
@@ -354,7 +268,7 @@ impl DualPortServerConfig {
             if let Ok(addr) = self.management.http.bind_address() {
                 listeners.push(("management-http".to_string(), addr, "HTTP".to_string()));
             }
-            
+
             if let Some(https) = &self.management.https {
                 if let Ok(addr) = https.bind_address() {
                     listeners.push(("management-https".to_string(), addr, "HTTPS".to_string()));
@@ -366,7 +280,7 @@ impl DualPortServerConfig {
             if let Ok(addr) = self.proxy.http.bind_address() {
                 listeners.push(("proxy-http".to_string(), addr, "HTTP".to_string()));
             }
-            
+
             if let Some(https) = &self.proxy.https {
                 if let Ok(addr) = https.bind_address() {
                     listeners.push(("proxy-https".to_string(), addr, "HTTPS".to_string()));
@@ -385,7 +299,7 @@ mod tests {
     #[test]
     fn test_dual_port_config_default() {
         let config = DualPortServerConfig::default();
-        
+
         assert!(config.management.enabled);
         assert!(config.proxy.enabled);
         assert_eq!(config.management.http.port, 8080);
@@ -408,9 +322,8 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             bind_addr: None,
-            tls: None,
         };
-        
+
         let addr = listener.bind_address().unwrap();
         assert_eq!(addr.to_string(), "127.0.0.1:8080");
     }
@@ -419,10 +332,10 @@ mod tests {
     fn test_get_all_listeners() {
         let config = DualPortServerConfig::default();
         let listeners = config.get_all_listeners();
-        
+
         // 默认配置应该有 3 个监听器：管理HTTP、代理HTTP、代理HTTPS
         assert_eq!(listeners.len(), 3);
-        
+
         let names: Vec<&str> = listeners.iter().map(|(name, _, _)| name.as_str()).collect();
         assert!(names.contains(&"management-http"));
         assert!(names.contains(&"proxy-http"));

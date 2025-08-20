@@ -14,7 +14,6 @@ pub mod providers;
 pub mod proxy;
 pub mod scheduler;
 pub mod statistics;
-pub mod tls;
 pub mod trace;
 pub mod utils;
 

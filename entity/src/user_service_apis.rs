@@ -13,20 +13,20 @@ pub struct Model {
     pub id: i32,
     pub user_id: i32,
     pub provider_type_id: i32,
+    /// 关联的用户提供商密钥ID列表(JSON数组)
+    #[sea_orm(column_type = "Json")]
+    pub user_provider_keys_ids: sea_orm::prelude::Json,
     #[sea_orm(unique)]
     pub api_key: String,
-    pub api_secret: String,
     pub name: Option<String>,
     pub description: Option<String>,
     pub scheduling_strategy: Option<String>,
     pub retry_count: Option<i32>,
     pub timeout_seconds: Option<i32>,
-    pub rate_limit: Option<i32>,
+    pub max_request_per_min: Option<i32>,
+    pub max_requests_per_day: Option<i32>,
     pub max_tokens_per_day: Option<i32>,
-    pub used_tokens_today: Option<i32>,
-    pub total_requests: Option<i32>,
-    pub successful_requests: Option<i32>,
-    pub last_used: Option<DateTime>,
+    pub max_cost_per_day: Option<Decimal>,
     pub expires_at: Option<DateTime>,
     pub is_active: bool,
     pub created_at: DateTime,
@@ -51,8 +51,6 @@ pub enum Relation {
         on_delete = "Restrict"
     )]
     ProviderType,
-    #[sea_orm(has_many = "super::user_service_api_providers::Entity")]
-    UserServiceApiProviders,
     #[sea_orm(has_many = "super::proxy_tracing::Entity")]
     ProxyTracing,
     #[sea_orm(has_many = "super::daily_statistics::Entity")]
@@ -71,12 +69,6 @@ impl Related<super::provider_types::Entity> for Entity {
     }
 }
 
-impl Related<super::user_service_api_providers::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::UserServiceApiProviders.def()
-    }
-}
-
 impl Related<super::proxy_tracing::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ProxyTracing.def()
@@ -86,17 +78,6 @@ impl Related<super::proxy_tracing::Entity> for Entity {
 impl Related<super::daily_statistics::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::DailyStatistics.def()
-    }
-}
-
-// 通过中间表与user_provider_keys建立多对多关系
-impl Related<super::user_provider_keys::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::user_service_api_providers::Relation::UserProviderKey.def()
-    }
-
-    fn via() -> Option<RelationDef> {
-        Some(super::user_service_api_providers::Relation::UserServiceApi.def().rev())
     }
 }
 

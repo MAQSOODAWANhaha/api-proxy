@@ -29,15 +29,16 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
+                        ColumnDef::new(UserServiceApis::UserProviderKeysIds)
+                            .json()
+                            .not_null()
+                            .default("[]"),
+                    )
+                    .col(
                         ColumnDef::new(UserServiceApis::ApiKey)
                             .string_len(64)
                             .not_null()
                             .unique_key(),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::ApiSecret)
-                            .string_len(64)
-                            .not_null(),
                     )
                     .col(
                         ColumnDef::new(UserServiceApis::Name)
@@ -63,9 +64,13 @@ impl MigrationTrait for Migration {
                             .default(30),
                     )
                     .col(
-                        ColumnDef::new(UserServiceApis::RateLimit)
+                        ColumnDef::new(UserServiceApis::MaxRequestPerMin)
                             .integer()
                             .default(1000),
+                    )
+                    .col(
+                        ColumnDef::new(UserServiceApis::MaxRequestsPerDay)
+                            .integer(),
                     )
                     .col(
                         ColumnDef::new(UserServiceApis::MaxTokensPerDay)
@@ -73,23 +78,8 @@ impl MigrationTrait for Migration {
                             .default(10000000),
                     )
                     .col(
-                        ColumnDef::new(UserServiceApis::UsedTokensToday)
-                            .integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::TotalRequests)
-                            .integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::SuccessfulRequests)
-                            .integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::LastUsed)
-                            .timestamp(),
+                        ColumnDef::new(UserServiceApis::MaxCostPerDay)
+                            .decimal_len(10, 4),
                     )
                     .col(
                         ColumnDef::new(UserServiceApis::ExpiresAt)
@@ -181,19 +171,17 @@ enum UserServiceApis {
     Id,
     UserId,
     ProviderTypeId,
+    UserProviderKeysIds,
     ApiKey,
-    ApiSecret,
     Name,
     Description,
     SchedulingStrategy,
     RetryCount,
     TimeoutSeconds,
-    RateLimit,
+    MaxRequestPerMin,
+    MaxRequestsPerDay,
     MaxTokensPerDay,
-    UsedTokensToday,
-    TotalRequests,
-    SuccessfulRequests,
-    LastUsed,
+    MaxCostPerDay,
     ExpiresAt,
     IsActive,
     CreatedAt,

@@ -11,7 +11,7 @@ use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// 代理服务器组件构建器
-/// 
+///
 /// 统一管理数据库连接、缓存管理器、服务商配置等组件的创建逻辑
 pub struct ProxyServerBuilder {
     config: Arc<AppConfig>,
@@ -53,18 +53,23 @@ impl ProxyServerBuilder {
         }
 
         tracing::info!("设置数据库路径");
-        self.config.database.ensure_database_path().map_err(|e| {
-            ProxyError::server_init(format!("数据库路径设置失败: {}", e))
-        })?;
+        self.config
+            .database
+            .ensure_database_path()
+            .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {}", e)))?;
 
         tracing::info!("创建数据库连接");
-        let db_url = self.config.database.get_connection_url().map_err(|e| {
-            ProxyError::server_init(format!("数据库URL准备失败: {}", e))
-        })?;
+        let db_url = self
+            .config
+            .database
+            .get_connection_url()
+            .map_err(|e| ProxyError::server_init(format!("数据库URL准备失败: {}", e)))?;
 
-        let db = Arc::new(sea_orm::Database::connect(&db_url).await.map_err(|e| {
-            ProxyError::database(format!("数据库连接失败: {}", e))
-        })?);
+        let db = Arc::new(
+            sea_orm::Database::connect(&db_url)
+                .await
+                .map_err(|e| ProxyError::database(format!("数据库连接失败: {}", e)))?,
+        );
 
         self.db = Some(db.clone());
         Ok(db)
@@ -88,9 +93,9 @@ impl ProxyServerBuilder {
 
     /// 创建或获取服务商配置管理器
     pub fn ensure_provider_config_manager(
-        &mut self, 
-        db: Arc<DatabaseConnection>, 
-        cache: Arc<UnifiedCacheManager>
+        &mut self,
+        db: Arc<DatabaseConnection>,
+        cache: Arc<UnifiedCacheManager>,
     ) -> Arc<ProviderConfigManager> {
         if let Some(manager) = &self.provider_config_manager {
             return manager.clone();
@@ -110,7 +115,7 @@ impl ProxyServerBuilder {
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
         tracing::info!("创建AI代理服务");
-        
+
         ProxyService::new(
             self.config.clone(),
             db,
@@ -121,24 +126,23 @@ impl ProxyServerBuilder {
     }
 
     /// 构建完整的组件集合
-    /// 
+    ///
     /// 按照正确的依赖顺序创建所有必需的组件
     pub async fn build_components(&mut self) -> Result<ProxyServerComponents> {
         // 1. 确保数据库连接
         let db = self.ensure_database().await?;
-        
+
         // 2. 确保缓存管理器
         let cache = self.ensure_cache()?;
-        
+
         // 3. 确保服务商配置管理器
-        let provider_config_manager = self.ensure_provider_config_manager(db.clone(), cache.clone());
-        
+        let provider_config_manager =
+            self.ensure_provider_config_manager(db.clone(), cache.clone());
+
         // 4. 创建代理服务
-        let proxy_service = self.create_proxy_service(
-            db.clone(),
-            cache.clone(), 
-            provider_config_manager.clone()
-        ).map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {}", e)))?;
+        let proxy_service = self
+            .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
+            .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {}", e)))?;
 
         Ok(ProxyServerComponents {
             config: self.config.clone(),
@@ -171,7 +175,7 @@ impl ProxyServerBuilder {
 }
 
 /// 代理服务器组件集合
-/// 
+///
 /// 包含创建代理服务器所需的所有组件
 pub struct ProxyServerComponents {
     pub config: Arc<AppConfig>,
