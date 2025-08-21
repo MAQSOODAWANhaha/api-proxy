@@ -2,13 +2,12 @@ use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{entity::*, query::*};
 use serde_json::json;
 
 /// 获取服务提供商类型列表
-pub async fn list_provider_types(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn list_provider_types(State(state): State<AppState>) -> axum::response::Response {
     // changed
     // 获取所有活跃的服务提供商类型
     let provider_types_result = ProviderTypes::find()
@@ -55,7 +54,7 @@ pub async fn list_provider_types(State(state): State<AppState>) -> impl IntoResp
     response::success(data)
 }
 
-pub async fn get_scheduling_strategies(headers: HeaderMap) -> impl IntoResponse {
+pub async fn get_scheduling_strategies(headers: HeaderMap) -> axum::response::Response {
     // 从JWT token中提取用户ID进行身份验证
     let _user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
@@ -94,5 +93,5 @@ pub async fn get_scheduling_strategies(headers: HeaderMap) -> impl IntoResponse 
         "scheduling_strategies": scheduling_strategies
     });
 
-    response::success(data).into_response()
+    response::success(data)
 }

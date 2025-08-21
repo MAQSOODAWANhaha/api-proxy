@@ -3,7 +3,7 @@
 use crate::management::{response, server::AppState};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json};
+use axum::response::Json;
 use bcrypt;
 use chrono::{Duration, Utc};
 use entity::users::Entity as Users;
@@ -62,7 +62,7 @@ pub struct Claims {
 pub async fn login(
     State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 基本输入验证
     if request.username.is_empty() || request.password.is_empty() {
         return response::error(
@@ -186,7 +186,7 @@ pub struct ValidateTokenResponse {
 }
 
 /// 用户登出
-pub async fn logout(State(_state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+pub async fn logout(State(_state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
     // 从Authorization头中提取token
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {
@@ -255,7 +255,7 @@ pub async fn logout(State(_state): State<AppState>, headers: HeaderMap) -> impl 
 pub async fn validate_token(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 记录所有请求头用于调试
     tracing::info!("Validate token request headers:");
     for (name, value) in headers.iter() {

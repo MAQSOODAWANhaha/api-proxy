@@ -37,6 +37,8 @@ interface LocalProviderKey extends ProviderKey {
   tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute  
   requestLimitPerDay: number // 映射到 max_requests_per_day
   healthCheck: 'healthy' | 'warning' | 'error' // 映射到 health_status
+  cost: number // 从 usage.total_cost 映射
+  usage: number // 从 usage.total_requests 映射
 }
 
 /** 服务商类型 */
@@ -61,7 +63,10 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
     requestLimitPerMinute: apiKey.max_requests_per_minute,
     tokenLimitPromptPerMinute: apiKey.max_tokens_prompt_per_minute,
     requestLimitPerDay: apiKey.max_requests_per_day,
-    healthCheck: apiKey.health_status,
+    healthCheck: apiKey.health_status === 'healthy' ? 'healthy' : 'error',
+    // 添加缺失的字段，从usage中获取
+    cost: apiKey.usage?.total_cost || 0,
+    usage: apiKey.usage?.total_requests || 0,
   }
 }
 
@@ -498,7 +503,7 @@ const ProviderKeysPage: React.FC = () => {
                   <td className="px-4 py-3">{renderMaskedKey(item.keyValue, item.id)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">{item.usage.toLocaleString()}</span>
+                      <span className="text-sm">{(item.usage || 0).toLocaleString()}</span>
                       <button
                         onClick={() => {
                           setSelectedItem(item)
@@ -521,7 +526,7 @@ const ProviderKeysPage: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="text-sm font-medium text-neutral-900">${item.cost.toFixed(2)}</div>
+                    <div className="text-sm font-medium text-neutral-900">${(item.cost || 0).toFixed(2)}</div>
                     <div className="text-xs text-neutral-500">本月花费</div>
                   </td>
                   <td className="px-4 py-3">
@@ -1277,11 +1282,11 @@ const StatsDialog: React.FC<{
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-violet-50 rounded-xl">
             <div className="text-sm text-violet-600">使用次数</div>
-            <div className="text-2xl font-bold text-violet-900">{item.usage.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-violet-900">{(item.usage || 0).toLocaleString()}</div>
           </div>
           <div className="p-4 bg-orange-50 rounded-xl">
             <div className="text-sm text-orange-600">本月花费</div>
-            <div className="text-2xl font-bold text-orange-900">${item.cost.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-orange-900">${(item.cost || 0).toFixed(2)}</div>
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>

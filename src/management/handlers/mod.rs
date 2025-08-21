@@ -3,6 +3,7 @@ pub mod auth;
 pub mod auth_utils;
 pub mod health;
 pub mod loadbalancer;
+pub mod logs;
 pub mod provider_keys;
 pub mod provider_types;
 pub mod service_apis;

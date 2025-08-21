@@ -6,7 +6,6 @@ use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use sea_orm::{entity::*, query::*};
@@ -142,7 +141,7 @@ pub struct UserApiKeysTokenTrendResponse {
 pub async fn get_today_dashboard_cards(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -165,12 +164,12 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch today's traces: {}", err);
-            return response::error::<TodayDashboardCards>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch today's data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -185,12 +184,12 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch yesterday's traces: {}", err);
-            return response::error::<TodayDashboardCards>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch yesterday's data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -266,7 +265,7 @@ pub async fn get_today_dashboard_cards(
         rate_avg_response_time_today: rate_response_time,
     };
 
-    response::success(cards).into_response()
+    response::success(cards)
 }
 
 /// 2. 模型使用占比API: /api/statistics/models/rate
@@ -274,7 +273,7 @@ pub async fn get_models_usage_rate(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -294,12 +293,12 @@ pub async fn get_models_usage_rate(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models rate: {}", err);
-            return response::error::<ModelsRateResponse>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -337,7 +336,7 @@ pub async fn get_models_usage_rate(
     }
 
     let response = ModelsRateResponse { model_usage };
-    response::success(response).into_response()
+    response::success(response)
 }
 
 /// 3. 模型详细统计API: /api/statistics/models/statistics
@@ -345,7 +344,7 @@ pub async fn get_models_statistics(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -365,12 +364,12 @@ pub async fn get_models_statistics(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models statistics: {}", err);
-            return response::error::<ModelsStatisticsResponse>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -408,14 +407,14 @@ pub async fn get_models_statistics(
     model_usage.sort_by(|a, b| b.usage.cmp(&a.usage));
 
     let response = ModelsStatisticsResponse { model_usage };
-    response::success(response).into_response()
+    response::success(response)
 }
 
 /// 4. Token使用趋势API: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -433,12 +432,12 @@ pub async fn get_tokens_trend(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for tokens trend: {}", err);
-            return response::error::<TokensTrendResponse>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -522,14 +521,14 @@ pub async fn get_tokens_trend(
         max_token_usage,
     };
 
-    response::success(response).into_response()
+    response::success(response)
 }
 
 /// 5. 用户API Keys请求趋势API: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -550,12 +549,12 @@ pub async fn get_user_api_keys_request_trend(
                 "Failed to fetch traces for user API keys request trend: {}",
                 err
             );
-            return response::error::<UserApiKeysRequestTrendResponse>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -614,14 +613,14 @@ pub async fn get_user_api_keys_request_trend(
         max_request_usage,
     };
 
-    response::success(response).into_response()
+    response::success(response)
 }
 
 /// 6. 用户API Keys Token趋势API: /api/statistics/user-service-api-keys/token
 pub async fn get_user_api_keys_token_trend(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(error_response) => return error_response,
@@ -642,12 +641,12 @@ pub async fn get_user_api_keys_token_trend(
                 "Failed to fetch traces for user API keys token trend: {}",
                 err
             );
-            return response::error::<UserApiKeysTokenTrendResponse>(
+            return response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
             )
-            .into_response();
+            ;
         }
     };
 
@@ -710,7 +709,7 @@ pub async fn get_user_api_keys_token_trend(
         max_token_usage,
     };
 
-    response::success(response).into_response()
+    response::success(response)
 }
 
 // ===== 辅助函数 =====
@@ -736,21 +735,21 @@ fn parse_time_range(
                         DateTime::from_naive_utc_and_offset(start_datetime, Utc)
                     }
                     Err(_) => {
-                        return Err(response::error::<()>(
+                        return Err(response::error(
                             StatusCode::BAD_REQUEST,
                             "INVALID_DATE",
                             "Invalid start date format. Use YYYY-MM-DD",
                         )
-                        .into_response());
+                        );
                     }
                 }
             } else {
-                return Err(response::error::<()>(
+                return Err(response::error(
                     StatusCode::BAD_REQUEST,
                     "MISSING_DATES",
                     "Custom range requires both start and end dates",
                 )
-                .into_response());
+                );
             }
         }
         _ => end_time - Duration::days(7), // 默认7天

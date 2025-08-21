@@ -23,43 +23,9 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
+import { api, ProxyTraceEntry, LogsDashboardStatsResponse } from '../lib/api'
 
-/** 代理跟踪日志数据结构（基于 proxy_tracing 表） */
-interface ProxyTraceEntry {
-  id: number
-  request_id: string
-  user_service_api_id: number
-  user_provider_key_id?: number
-  user_id?: number
-  method: string
-  path?: string
-  status_code?: number
-  tokens_prompt: number
-  tokens_completion: number
-  tokens_total: number
-  token_efficiency_ratio?: number
-  cache_create_tokens: number
-  cache_read_tokens: number
-  cost?: number
-  cost_currency: string
-  model_used?: string
-  client_ip?: string
-  user_agent?: string
-  error_type?: string
-  error_message?: string
-  retry_count: number
-  provider_type_id?: number
-  start_time?: string
-  end_time?: string
-  duration_ms?: number
-  is_success: boolean
-  created_at: string
-  provider_name?: string
-  service_name?: string
-  provider_key_name?: string
-}
-
-// 移除模拟数据生成，实际数据将从API获取
+// 使用从api.ts导入的ProxyTraceEntry接口
 
 /** 弹窗类型 */
 type DialogType = 'details' | null
@@ -70,7 +36,7 @@ const LogsPage: React.FC = () => {
   const [data, setData] = useState<ProxyTraceEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [dashboardStats, setDashboardStats] = useState<any>(null)
+  const [dashboardStats, setDashboardStats] = useState<LogsDashboardStatsResponse | null>(null)
   
   // UI状态
   const [searchTerm, setSearchTerm] = useState('')
@@ -88,11 +54,10 @@ const LogsPage: React.FC = () => {
   // 获取仪表板统计数据
   const fetchDashboardStats = async () => {
     try {
-      // TODO: 实现 API 调用
-      // const response = await api.logs.getDashboardStats()
-      // if (response.success && response.data) {
-      //   setDashboardStats(response.data)
-      // }
+      const response = await api.logs.getDashboardStats()
+      if (response.success && response.data) {
+        setDashboardStats(response.data)
+      }
     } catch (error) {
       console.error('获取仪表板统计数据失败:', error)
     }
@@ -104,25 +69,21 @@ const LogsPage: React.FC = () => {
       setLoading(true)
       setError(null)
       
-      // TODO: 实现 API 调用
-      // const response = await api.logs.getList({
-      //   page: currentPage,
-      //   limit: pageSize,
-      //   search: searchTerm || undefined,
-      //   method: methodFilter === 'all' ? undefined : methodFilter,
-      //   status_code: statusFilter === 'all' ? undefined : parseInt(statusFilter),
-      // })
+      const response = await api.logs.getList({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm || undefined,
+        method: methodFilter === 'all' ? undefined : methodFilter,
+        status_code: statusFilter === 'all' ? undefined : parseInt(statusFilter),
+      })
       
-      // if (response.success && response.data) {
-      //   setData(response.data.traces)
-      //   setTotalItems(response.data.pagination.total)
-      //   setTotalPages(response.data.pagination.pages)
-      // } else {
-      //   throw new Error(response.error?.message || '获取日志列表失败')
-      // }
-      
-      // 临时使用空数组
-      setData([])
+      if (response.success && response.data) {
+        setData(response.data.traces)
+        setTotalItems(response.data.pagination.total)
+        setTotalPages(response.data.pagination.pages)
+      } else {
+        throw new Error(response.error?.message || '获取日志列表失败')
+      }
     } catch (error) {
       console.error('获取日志列表失败:', error)
       setError(error instanceof Error ? error.message : '获取数据失败')
@@ -578,18 +539,35 @@ const LogDetailsDialog: React.FC<{
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">输入Token</div>
-              <div className="font-medium">{item.tokens_prompt}</div>
+          <div className="p-3 bg-neutral-50 rounded-lg">
+            <div className="text-sm text-neutral-600 mb-3">Token使用详情</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-xs text-neutral-500">总Token数量</div>
+                <div className="font-medium text-lg text-violet-600">{item.tokens_total.toLocaleString()}</div>
+              </div>
+              <div>
+                <div className="text-xs text-neutral-500">效率比率</div>
+                <div className="font-medium">{item.token_efficiency_ratio?.toFixed(2) || 'N/A'}</div>
+              </div>
             </div>
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">输出Token</div>
-              <div className="font-medium">{item.tokens_completion}</div>
-            </div>
-            <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">总Token</div>
-              <div className="font-medium">{item.tokens_total}</div>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-neutral-600">输入Token:</span>
+                <span className="font-medium">{item.tokens_prompt.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-600">输出Token:</span>
+                <span className="font-medium">{item.tokens_completion.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-600">缓存创建:</span>
+                <span className="font-medium">{item.cache_create_tokens.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-600">缓存读取:</span>
+                <span className="font-medium">{item.cache_read_tokens.toLocaleString()}</span>
+              </div>
             </div>
           </div>
 

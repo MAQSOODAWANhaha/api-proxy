@@ -24,6 +24,8 @@ pub fn create_routes(state: AppState) -> Router {
         .nest("/provider-keys", provider_api_keys_routes())
         // Provider类型管理路由
         .nest("/provider-types", provider_type_routes())
+        // 日志管理路由
+        .nest("/logs", logs_routes())
         .with_state(state)
 }
 
@@ -273,5 +275,30 @@ fn provider_type_routes() -> Router<AppState> {
         .route(
             "/scheduling-strategies",
             get(crate::management::handlers::provider_types::get_scheduling_strategies),
+        )
+}
+
+/// 日志管理路由
+fn logs_routes() -> Router<AppState> {
+    Router::new()
+        // 获取日志仪表板统计数据
+        .route(
+            "/dashboard-stats",
+            get(crate::management::handlers::logs::get_dashboard_stats),
+        )
+        // 获取日志列表
+        .route(
+            "/traces",
+            get(crate::management::handlers::logs::get_traces_list),
+        )
+        // 获取日志详情
+        .route(
+            "/traces/{id}",
+            get(crate::management::handlers::logs::get_trace_detail),
+        )
+        // 获取日志统计分析
+        .route(
+            "/analytics",
+            get(crate::management::handlers::logs::get_logs_analytics),
         )
 }

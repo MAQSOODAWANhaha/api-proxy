@@ -2,7 +2,6 @@
 
 use crate::management::{response, server::AppState};
 use axum::extract::State;
-use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
 /// 健康检查服务器信息
@@ -17,7 +16,7 @@ pub struct HealthServerInfo {
 }
 
 /// 获取所有健康检查服务器状态
-pub async fn get_health_servers(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_health_servers(State(state): State<AppState>) -> axum::response::Response {
     // 从健康检查服务获取服务器状态
     let _health_service = &state.health_service;
 

@@ -3,7 +3,6 @@
 use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::State;
-use axum::response::IntoResponse;
 use chrono::Utc;
 use serde::Serialize;
 use std::fs;
@@ -49,7 +48,7 @@ struct ConfigurationInfo {
 }
 
 /// 获取系统信息
-pub async fn get_system_info(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_system_info(State(state): State<AppState>) -> axum::response::Response {
     let system_info = SystemInfo {
         service: ServiceInfo {
             name: "AI Proxy",
@@ -117,7 +116,7 @@ struct NetworkInfo {
 }
 
 /// 获取系统指标
-pub async fn get_system_metrics(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::response::Response {
     let metrics = SystemMetrics {
         memory: get_memory_info().await,
         cpu: get_cpu_info().await,

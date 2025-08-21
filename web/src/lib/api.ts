@@ -124,7 +124,7 @@ export interface UserApiKeysTokenTrendResponse {
 
 // Provider Keys 相关接口定义
 export interface ProviderKey {
-  id: string
+  id: number
   provider: string
   name: string
   api_key: string
@@ -133,10 +133,27 @@ export interface ProviderKey {
   max_tokens_prompt_per_minute: number
   max_requests_per_day: number
   is_active: boolean
-  usage: number
-  cost: number
+  usage: {
+    total_requests: number
+    successful_requests: number
+    failed_requests: number
+    success_rate: number
+    total_tokens: number
+    total_cost: number
+    avg_response_time: number
+    last_used_at?: string
+  }
+  limits: {
+    max_requests_per_minute: number
+    max_tokens_prompt_per_minute: number
+    max_requests_per_day: number
+  }
+  status: {
+    is_active: boolean
+    health_status: string
+  }
   created_at: string
-  updated_at?: string
+  updated_at: string
   health_status: 'healthy' | 'warning' | 'error'
 }
 
@@ -399,6 +416,91 @@ export interface UpdateUserServiceApiKeyStatusResponse {
   id: number
   is_active: boolean
   updated_at: string
+}
+
+// Logs 相关接口定义（基于 proxy_tracing 表）
+export interface ProxyTraceEntry {
+  id: number
+  request_id: string
+  user_service_api_id: number
+  user_provider_key_id?: number
+  user_id?: number
+  method: string
+  path?: string
+  status_code?: number
+  tokens_prompt: number
+  tokens_completion: number
+  tokens_total: number
+  token_efficiency_ratio?: number
+  cache_create_tokens: number
+  cache_read_tokens: number
+  cost?: number
+  cost_currency: string
+  model_used?: string
+  client_ip?: string
+  user_agent?: string
+  error_type?: string
+  error_message?: string
+  retry_count: number
+  provider_type_id?: number
+  start_time?: string
+  end_time?: string
+  duration_ms?: number
+  is_success: boolean
+  created_at: string
+  provider_name?: string
+  service_name?: string
+  provider_key_name?: string
+}
+
+export interface LogsListResponse {
+  traces: ProxyTraceEntry[]
+  pagination: {
+    page: number
+    limit: number
+    total: number
+    pages: number
+  }
+}
+
+export interface LogsDashboardStatsResponse {
+  total_requests: number
+  successful_requests: number
+  failed_requests: number
+  success_rate: number
+  total_tokens: number
+  total_cost: number
+  avg_response_time: number
+}
+
+export interface LogsAnalyticsResponse {
+  time_series: Array<{
+    timestamp: string
+    total_requests: number
+    successful_requests: number
+    failed_requests: number
+    total_tokens: number
+    total_cost: number
+    avg_response_time: number
+  }>
+  model_distribution: Array<{
+    model: string
+    request_count: number
+    token_count: number
+    cost: number
+    percentage: number
+  }>
+  provider_distribution: Array<{
+    provider_name: string
+    request_count: number
+    success_rate: number
+    avg_response_time: number
+  }>
+  status_distribution: Array<{
+    status_code: number
+    count: number
+    percentage: number
+  }>
 }
 
 
@@ -1238,6 +1340,113 @@ export const api = {
           error: {
             code: 'PROVIDER_KEYS_HEALTH_CHECK_ERROR',
             message: '执行健康检查失败'
+          }
+        }
+      }
+    }
+  },
+
+  // Logs 相关接口
+  logs: {
+    /**
+     * 获取日志仪表板统计数据
+     */
+    async getDashboardStats(): Promise<ApiResponse<LogsDashboardStatsResponse>> {
+      try {
+        return await apiClient.get<LogsDashboardStatsResponse>('/logs/dashboard-stats')
+      } catch (error) {
+        console.error('[Logs] Failed to fetch dashboard stats:', error)
+        return {
+          success: false,
+          error: {
+            code: 'LOGS_DASHBOARD_STATS_ERROR',
+            message: '获取日志仪表板统计失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取日志列表
+     */
+    async getList(params?: {
+      page?: number
+      limit?: number
+      search?: string
+      method?: string
+      status_code?: number
+      is_success?: boolean
+      model_used?: string
+      provider_type_id?: number
+      user_service_api_id?: number
+      start_time?: string
+      end_time?: string
+    }): Promise<ApiResponse<LogsListResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.page !== undefined) queryParams.page = params.page.toString()
+        if (params?.limit !== undefined) queryParams.limit = params.limit.toString()
+        if (params?.search) queryParams.search = params.search
+        if (params?.method) queryParams.method = params.method
+        if (params?.status_code !== undefined) queryParams.status_code = params.status_code.toString()
+        if (params?.is_success !== undefined) queryParams.is_success = params.is_success.toString()
+        if (params?.model_used) queryParams.model_used = params.model_used
+        if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
+        if (params?.user_service_api_id !== undefined) queryParams.user_service_api_id = params.user_service_api_id.toString()
+        if (params?.start_time) queryParams.start_time = params.start_time
+        if (params?.end_time) queryParams.end_time = params.end_time
+
+        return await apiClient.get<LogsListResponse>('/logs/traces', queryParams)
+      } catch (error) {
+        console.error('[Logs] Failed to fetch logs list:', error)
+        return {
+          success: false,
+          error: {
+            code: 'LOGS_LIST_ERROR',
+            message: '获取日志列表失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取日志详情
+     */
+    async getDetail(id: number): Promise<ApiResponse<ProxyTraceEntry>> {
+      try {
+        return await apiClient.get<ProxyTraceEntry>(`/logs/traces/${id}`)
+      } catch (error) {
+        console.error('[Logs] Failed to fetch log detail:', error)
+        return {
+          success: false,
+          error: {
+            code: 'LOGS_DETAIL_ERROR',
+            message: '获取日志详情失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取日志统计分析
+     */
+    async getAnalytics(params?: {
+      time_range?: '1h' | '6h' | '24h' | '7d' | '30d'
+      group_by?: 'hour' | 'day' | 'model' | 'provider' | 'status'
+    }): Promise<ApiResponse<LogsAnalyticsResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.time_range) queryParams.time_range = params.time_range
+        if (params?.group_by) queryParams.group_by = params.group_by
+
+        return await apiClient.get<LogsAnalyticsResponse>('/logs/analytics', queryParams)
+      } catch (error) {
+        console.error('[Logs] Failed to fetch logs analytics:', error)
+        return {
+          success: false,
+          error: {
+            code: 'LOGS_ANALYTICS_ERROR',
+            message: '获取日志统计分析失败'
           }
         }
       }

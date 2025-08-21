@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::error::ProxyError;
 
 /// # 分页信息
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,21 +42,11 @@ pub struct PaginatedResponse<T: Serialize> {
     pub timestamp: DateTime<Utc>,
 }
 
-/// # 错误详情
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ErrorDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub field: Option<String>,
-    pub reason: String,
-}
-
 /// # 标准错误信息
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<ErrorDetails>,
 }
 
 /// # 标准错误响应
@@ -63,18 +54,20 @@ pub struct ErrorInfo {
 pub struct ErrorResponse {
     pub success: bool,
     pub error: ErrorInfo,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// # API响应枚举
 ///
 /// 统一所有API出口，方便转换为 `axum::response::Response`
+#[derive(Debug)]
 pub enum ApiResponse<T: Serialize> {
     Success(T),
     SuccessWithMessage(T, String),
     SuccessWithoutData(String),
     Paginated(Vec<T>, Pagination),
     Error(StatusCode, String, String),
-    DetailedError(StatusCode, String, String, Option<ErrorDetails>),
+    AppError(ProxyError),
 }
 
 impl<T: Serialize> IntoResponse for ApiResponse<T> {
@@ -127,59 +120,88 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
                     error: ErrorInfo {
                         code,
                         message,
-                        details: None,
                     },
+                    timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
             }
-            ApiResponse::DetailedError(status, code, message, details) => {
+            ApiResponse::AppError(error) => {
+                // 将ProxyError转换为相应的HTTP状态码和错误信息
+                let (status, code) = match &error {
+                    ProxyError::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
+                    ProxyError::Database { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
+                    ProxyError::Network { .. } => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR"),
+                    ProxyError::Auth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+                    ProxyError::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
+                    ProxyError::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
+                    ProxyError::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
+                    ProxyError::Internal { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+                    ProxyError::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
+                    ProxyError::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
+                    ProxyError::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
+                    ProxyError::ServerInit { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR"),
+                    ProxyError::ServerStart { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR"),
+                    ProxyError::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTHENTICATION_ERROR"),
+                    ProxyError::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
+                    ProxyError::UpstreamNotAvailable { .. } => (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_NOT_AVAILABLE"),
+                    ProxyError::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_ERROR"),
+                    ProxyError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY_ERROR"),
+                    ProxyError::ConnectionTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT"),
+                    ProxyError::ReadTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "READ_TIMEOUT"),
+                    ProxyError::WriteTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "WRITE_TIMEOUT"),
+                    ProxyError::LoadBalancer { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR"),
+                    ProxyError::HealthCheck { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR"),
+                    ProxyError::Statistics { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR"),
+                    ProxyError::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
+                    ProxyError::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+                    ProxyError::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
+                    ProxyError::ManagementValidation { .. } => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
+                    ProxyError::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
+                    ProxyError::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
+                    ProxyError::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
+                    ProxyError::ManagementRateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED"),
+                };
+                
                 let error_response = ErrorResponse {
                     success: false,
                     error: ErrorInfo {
-                        code,
-                        message,
-                        details,
+                        code: code.to_string(),
+                        message: error.to_string(),
                     },
+                    timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
-            }
+            },
         }
     }
 }
 
 /// # 便捷函数：成功响应
-pub fn success<T: Serialize>(data: T) -> ApiResponse<T> {
-    ApiResponse::Success(data)
+pub fn success<T: Serialize>(data: T) -> axum::response::Response {
+    ApiResponse::Success(data).into_response()
 }
 
 /// # 便捷函数：带消息的成功响应
-pub fn success_with_message<T: Serialize>(data: T, message: &str) -> ApiResponse<T> {
-    ApiResponse::SuccessWithMessage(data, message.to_string())
+pub fn success_with_message<T: Serialize>(data: T, message: &str) -> axum::response::Response {
+    ApiResponse::SuccessWithMessage(data, message.to_string()).into_response()
 }
 
 /// # 便捷函数：无数据体的成功响应
-pub fn success_without_data(message: &str) -> ApiResponse<()> {
-    ApiResponse::SuccessWithoutData(message.to_string())
+pub fn success_without_data(message: &str) -> axum::response::Response {
+    ApiResponse::<()>::SuccessWithoutData(message.to_string()).into_response()
 }
 
 /// # 便捷函数：分页响应
-pub fn paginated<T: Serialize>(data: Vec<T>, pagination: Pagination) -> ApiResponse<T> {
-    ApiResponse::Paginated(data, pagination)
+pub fn paginated<T: Serialize>(data: Vec<T>, pagination: Pagination) -> axum::response::Response {
+    ApiResponse::Paginated(data, pagination).into_response()
 }
 
-/// # 便捷函数：简单错误响应（泛型，占位 T 以便与成功分支统一）
-/// 这样在 handler 中 `Ok` 分支返回 `ApiResponse<T>` 而错误分支返回 `ApiResponse<T>` 也能类型统一，
-/// 避免之前因为错误分支固定为 `ApiResponse<()>` 导致的 E0308 类型不匹配。
-pub fn error<T: Serialize>(status: StatusCode, code: &str, message: &str) -> ApiResponse<T> {
-    ApiResponse::Error(status, code.to_string(), message.to_string())
+/// # 便捷函数：HTTP错误响应
+pub fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
+    ApiResponse::<()>::Error(status, code.to_string(), message.to_string()).into_response()
 }
 
-/// # 便捷函数：带详情的错误响应（泛型版）
-pub fn detailed_error<T: Serialize>(
-    status: StatusCode,
-    code: &str,
-    message: &str,
-    details: Option<ErrorDetails>,
-) -> ApiResponse<T> {
-    ApiResponse::DetailedError(status, code.to_string(), message.to_string(), details)
+/// # 便捷函数：应用错误响应
+pub fn app_error(error: ProxyError) -> axum::response::Response {
+    ApiResponse::<()>::AppError(error).into_response()
 }

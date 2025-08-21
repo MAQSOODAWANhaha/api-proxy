@@ -2,10 +2,10 @@
 //!
 //! 提供统一的认证相关工具函数
 
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::HeaderMap;
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
+use crate::management::response;
 /// JWT Claims 结构体
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -30,26 +30,30 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
             Ok(header_str) => header_str,
             Err(_) => {
                 tracing::warn!("Invalid Authorization header format");
-                return Err((
-                    StatusCode::UNAUTHORIZED,
+                return Err(response::error(
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "AUTH_ERROR",
                     "Invalid Authorization header format",
-                )
-                    .into_response());
+                ));
             }
         },
         None => {
             tracing::warn!("Missing Authorization header");
-            return Err((StatusCode::UNAUTHORIZED, "Authorization header required").into_response());
+            return Err(response::error(
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AUTH_ERROR",
+                "Authorization header required",
+            ));
         }
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return Err((
-            StatusCode::UNAUTHORIZED,
+        return Err(response::error(
+            axum::http::StatusCode::UNAUTHORIZED,
+            "AUTH_ERROR",
             "Invalid Authorization header format",
-        )
-            .into_response());
+        ));
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀
@@ -68,7 +72,11 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Ok(data) => data,
         Err(err) => {
             tracing::warn!("JWT token validation failed: {}", err);
-            return Err((StatusCode::UNAUTHORIZED, "Invalid or expired token").into_response());
+            return Err(response::error(
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AUTH_ERROR",
+                "Invalid or expired token",
+            ));
         }
     };
 
@@ -80,11 +88,11 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
                 "Failed to parse user ID from JWT token: {}",
                 token_data.claims.sub
             );
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
+            return Err(response::error(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
                 "Invalid user ID in token",
-            )
-                .into_response());
+            ));
         }
     };
 

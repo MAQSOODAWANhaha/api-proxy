@@ -3,7 +3,7 @@
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json};
+use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::Utc;
 use entity::{users, users::Entity as Users};
@@ -136,7 +136,7 @@ impl From<users::Model> for UserResponse {
 pub async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20);
     let offset = (page - 1) * limit;
@@ -212,7 +212,7 @@ pub async fn list_users(
 pub async fn create_user(
     State(state): State<AppState>,
     Json(request): Json<CreateUserRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 验证输入
     if request.username.is_empty() {
         return response::error(
@@ -350,7 +350,7 @@ pub async fn create_user(
 pub async fn get_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     if user_id <= 0 {
         return response::error(
             axum::http::StatusCode::BAD_REQUEST,
@@ -413,7 +413,7 @@ pub struct ChangePasswordRequest {
 pub async fn get_user_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
@@ -472,7 +472,7 @@ pub async fn update_user_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<UpdateProfileRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
@@ -565,7 +565,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<ChangePasswordRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,

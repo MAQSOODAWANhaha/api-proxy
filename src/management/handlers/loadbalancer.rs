@@ -4,7 +4,7 @@ use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
+use axum::response::Json;
 use entity::{user_service_apis, user_service_apis::Entity as UserServiceApis};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
@@ -94,7 +94,7 @@ fn default_timeout() -> u64 {
 pub async fn add_server(
     State(state): State<AppState>,
     Json(request): Json<AddServerRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     if request.host.is_empty() {
         return response::error(
             StatusCode::BAD_REQUEST,
@@ -207,7 +207,7 @@ pub struct ChangeStrategyRequest {
 pub async fn change_strategy(
     State(state): State<AppState>,
     Json(request): Json<ChangeStrategyRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let strategy = match request.strategy.to_lowercase().as_str() {
         "round_robin" => crate::scheduler::types::SchedulingStrategy::RoundRobin,
         "weighted" => crate::scheduler::types::SchedulingStrategy::Weighted,
@@ -290,7 +290,7 @@ pub struct ServerActionRequest {
 pub async fn server_action(
     State(state): State<AppState>,
     Json(request): Json<ServerActionRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let action = request.action.to_lowercase();
 
     let parts: Vec<&str> = request.server_id.split('-').collect();
@@ -393,7 +393,7 @@ async fn remove_server(
 }
 
 /// 获取负载均衡器指标
-pub async fn get_lb_metrics(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_lb_metrics(State(state): State<AppState>) -> axum::response::Response {
     match state.load_balancer_manager.get_detailed_metrics().await {
         Ok(metrics) => response::success(metrics),
         Err(e) => {

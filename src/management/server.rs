@@ -16,8 +16,9 @@ use anyhow::Result;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::Json;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -263,12 +264,13 @@ impl ManagementServer {
 }
 
 /// 根路径处理器
-async fn root_handler() -> Json<serde_json::Value> {
+async fn root_handler() -> Response {
     Json(serde_json::json!({
-        "service": "AI Proxy Management API",
+        "success": true,
+        "message": "AI Proxy Management API",
         "version": env!("CARGO_PKG_VERSION"),
-        "status": "running"
-    }))
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    })).into_response()
 }
 
 /// Ping处理器
@@ -277,7 +279,7 @@ async fn ping_handler() -> &'static str {
 }
 
 /// 健康检查处理器
-pub async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
     match state.health_service.get_overall_health().await {
         Ok(health_status) => response::success(health_status),
         Err(e) => {
@@ -299,7 +301,7 @@ struct DetailedHealthStatus {
     load_balancers: String, // TODO: 添加负载均衡器状态
 }
 
-pub async fn detailed_health_check(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
     let health_status = match state.health_service.get_overall_health().await {
         Ok(status) => status,
         Err(e) => {

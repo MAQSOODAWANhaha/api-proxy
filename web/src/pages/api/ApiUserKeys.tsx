@@ -445,7 +445,7 @@ const ApiUserKeysPage: React.FC = () => {
                     </td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
-                        {getProviderDisplayName(item.provider_type_id)}
+                        {item.provider || `服务商 ${item.provider_type_id}`}
                       </span>
                     </td>
                     <td className="px-4 py-3">{renderMaskedKey(item.api_key, item.id)}</td>
@@ -1131,7 +1131,38 @@ const EditDialog: React.FC<{
   const [loadingProviderTypes, setLoadingProviderTypes] = useState(false)
   const [loadingSchedulingStrategies, setLoadingSchedulingStrategies] = useState(false)
   const [loadingKeys, setLoadingKeys] = useState(false)
+  const [loadingDetail, setLoadingDetail] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+
+  // 获取API Key完整详情数据
+  const fetchDetailData = async () => {
+    setLoadingDetail(true)
+    try {
+      const response = await api.userService.getKeyDetail(item.id)
+      if (response.success && response.data) {
+        // 使用完整的详情数据更新formData
+        setFormData({
+          ...formData, // 保留原有的字段
+          ...response.data,
+          // 确保数字字段有默认值
+          retry_count: response.data.retry_count || 0,
+          timeout_seconds: response.data.timeout_seconds || 0,
+          max_request_per_min: response.data.max_request_per_min || 0,
+          max_requests_per_day: response.data.max_requests_per_day || 0,
+          max_tokens_per_day: response.data.max_tokens_per_day || 0,
+          max_cost_per_day: response.data.max_cost_per_day || 0,
+          // 确保数组字段有默认值
+          user_provider_keys_ids: response.data.user_provider_keys_ids || []
+        })
+      } else {
+        console.error('获取API Key详情失败:', response.message)
+      }
+    } catch (err) {
+      console.error('获取API Key详情异常:', err)
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
 
   // 获取服务商类型列表
   const fetchProviderTypesLocal = async () => {
@@ -1225,23 +1256,39 @@ const EditDialog: React.FC<{
     }
   }, [formData.provider_type_id])
 
-  // 初始化：获取服务商类型、调度策略和当前服务商类型的密钥
+  // 初始化：获取完整详情数据、服务商类型、调度策略
   useEffect(() => {
     const initializeEditDialog = async () => {
+      // 首先获取完整的详情数据
+      await fetchDetailData()
+      
+      // 同时获取服务商类型和调度策略
       await Promise.all([
         fetchProviderTypesLocal(),
         fetchSchedulingStrategiesLocal()
       ])
-      // 在获取服务商类型后，再获取当前服务商的密钥
-      fetchUserProviderKeysLocal(formData.provider_type_id)
     }
     initializeEditDialog()
   }, [])
+  
+  // 当详情数据加载完成且provider_type_id确定后，获取对应的用户提供商密钥
+  useEffect(() => {
+    if (!loadingDetail && formData.provider_type_id) {
+      fetchUserProviderKeysLocal(formData.provider_type_id)
+    }
+  }, [loadingDetail, formData.provider_type_id])
 
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">编辑 API Key</h3>
-      <form onSubmit={handleSubmit} className="space-y-4">
+      
+      {loadingDetail ? (
+        <div className="flex items-center justify-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+          <span className="ml-2 text-neutral-600">正在加载详情数据...</span>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">服务名称 *</label>
@@ -1509,7 +1556,8 @@ const EditDialog: React.FC<{
             {submitting ? '保存中...' : '保存'}
           </button>
         </div>
-      </form>
+        </form>
+      )}
     </div>
   )
 }

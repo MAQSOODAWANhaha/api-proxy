@@ -204,6 +204,65 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
+
+    /// 管理模块认证错误
+    #[error("管理认证错误: {message}")]
+    ManagementAuth {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块权限错误
+    #[error("管理权限错误: {message}")]
+    ManagementPermission {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块验证错误
+    #[error("管理验证错误: {message}")]
+    ManagementValidation {
+        message: String,
+        field: Option<String>,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块业务错误
+    #[error("管理业务错误: {message}")]
+    ManagementBusiness {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块资源未找到错误
+    #[error("管理资源未找到: {resource_type} {identifier}")]
+    ManagementNotFound {
+        resource_type: String,
+        identifier: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块资源冲突错误
+    #[error("管理资源冲突: {resource_type} {identifier}")]
+    ManagementConflict {
+        resource_type: String,
+        identifier: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
+
+    /// 管理模块速率限制错误
+    #[error("管理速率限制: {message}")]
+    ManagementRateLimit {
+        message: String,
+        #[source]
+        source: Option<anyhow::Error>,
+    },
 }
 
 impl ProxyError {
@@ -600,6 +659,148 @@ impl ProxyError {
             source: Some(source.into()),
         }
     }
+
+    /// 创建管理模块认证错误
+    pub fn management_auth<T: Into<String>>(message: T) -> Self {
+        Self::ManagementAuth {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块认证错误
+    pub fn management_auth_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ManagementAuth {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块权限错误
+    pub fn management_permission<T: Into<String>>(message: T) -> Self {
+        Self::ManagementPermission {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块权限错误
+    pub fn management_permission_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ManagementPermission {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块验证错误
+    pub fn management_validation<T: Into<String>>(message: T, field: Option<String>) -> Self {
+        Self::ManagementValidation {
+            message: message.into(),
+            field,
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块验证错误
+    pub fn management_validation_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        field: Option<String>,
+        source: E,
+    ) -> Self {
+        Self::ManagementValidation {
+            message: message.into(),
+            field,
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块业务错误
+    pub fn management_business<T: Into<String>>(message: T) -> Self {
+        Self::ManagementBusiness {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块业务错误
+    pub fn management_business_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ManagementBusiness {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块资源未找到错误
+    pub fn management_not_found<T: Into<String>, I: Into<String>>(resource_type: T, identifier: I) -> Self {
+        Self::ManagementNotFound {
+            resource_type: resource_type.into(),
+            identifier: identifier.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块资源未找到错误
+    pub fn management_not_found_with_source<T: Into<String>, I: Into<String>, E: Into<anyhow::Error>>(
+        resource_type: T,
+        identifier: I,
+        source: E,
+    ) -> Self {
+        Self::ManagementNotFound {
+            resource_type: resource_type.into(),
+            identifier: identifier.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块资源冲突错误
+    pub fn management_conflict<T: Into<String>, I: Into<String>>(resource_type: T, identifier: I) -> Self {
+        Self::ManagementConflict {
+            resource_type: resource_type.into(),
+            identifier: identifier.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块资源冲突错误
+    pub fn management_conflict_with_source<T: Into<String>, I: Into<String>, E: Into<anyhow::Error>>(
+        resource_type: T,
+        identifier: I,
+        source: E,
+    ) -> Self {
+        Self::ManagementConflict {
+            resource_type: resource_type.into(),
+            identifier: identifier.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// 创建管理模块速率限制错误
+    pub fn management_rate_limit<T: Into<String>>(message: T) -> Self {
+        Self::ManagementRateLimit {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// 创建带来源的管理模块速率限制错误
+    pub fn management_rate_limit_with_source<T: Into<String>, E: Into<anyhow::Error>>(
+        message: T,
+        source: E,
+    ) -> Self {
+        Self::ManagementRateLimit {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
 }
 
 // 自动转换常见错误类型
@@ -704,3 +905,5 @@ impl From<pingora_core::Error> for ProxyError {
         Self::network_with_source("Pingora操作失败", err)
     }
 }
+
+// 空实现 - 不需要自引用转换
