@@ -25,6 +25,10 @@ interface User {
   last_login?: string;     // 最后登录时间 (ISO 8601格式)
   created_at: string;      // 创建时间 (ISO 8601格式)
   updated_at: string;      // 更新时间 (ISO 8601格式)
+  // 统计数据 (从proxy_tracing表聚合)
+  total_requests: number;  // 总请求数
+  total_cost: number;      // 总花费 (USD)
+  total_tokens: number;    // 总token消耗
 }
 ```
 
@@ -88,7 +92,10 @@ interface UserQueryParams {
       "is_admin": true,
       "last_login": "2024-01-15T10:30:00Z",
       "created_at": "2024-01-01T00:00:00Z",
-      "updated_at": "2024-01-15T10:30:00Z"
+      "updated_at": "2024-01-15T10:30:00Z",
+      "total_requests": 1250,
+      "total_cost": 45.67,
+      "total_tokens": 125000
     }
   ],
   "pagination": {
@@ -123,7 +130,10 @@ interface UserQueryParams {
     "is_admin": true,
     "last_login": "2024-01-15T10:30:00Z",
     "created_at": "2024-01-01T00:00:00Z",
-    "updated_at": "2024-01-15T10:30:00Z"
+    "updated_at": "2024-01-15T10:30:00Z",
+    "total_requests": 1250,
+    "total_cost": 45.67,
+    "total_tokens": 125000
   },
   "message": "获取成功",
   "timestamp": "2024-01-15T12:00:00Z"
@@ -164,7 +174,10 @@ interface UserQueryParams {
     "is_admin": false,
     "last_login": null,
     "created_at": "2024-01-15T12:00:00Z",
-    "updated_at": "2024-01-15T12:00:00Z"
+    "updated_at": "2024-01-15T12:00:00Z",
+    "total_requests": 0,
+    "total_cost": 0.0,
+    "total_tokens": 0
   },
   "message": "用户创建成功",
   "timestamp": "2024-01-15T12:00:00Z"
@@ -208,7 +221,10 @@ interface UserQueryParams {
     "is_admin": false,
     "last_login": null,
     "created_at": "2024-01-15T12:00:00Z",
-    "updated_at": "2024-01-15T12:05:00Z"
+    "updated_at": "2024-01-15T12:05:00Z",
+    "total_requests": 25,
+    "total_cost": 2.34,
+    "total_tokens": 3500
   },
   "message": "用户更新成功",
   "timestamp": "2024-01-15T12:05:00Z"
@@ -287,7 +303,10 @@ interface UserQueryParams {
     "is_admin": false,
     "last_login": null,
     "created_at": "2024-01-15T12:00:00Z",
-    "updated_at": "2024-01-15T12:20:00Z"
+    "updated_at": "2024-01-15T12:20:00Z",
+    "total_requests": 15,
+    "total_cost": 1.23,
+    "total_tokens": 2100
   },
   "message": "用户状态更新成功",
   "timestamp": "2024-01-15T12:20:00Z"
@@ -349,6 +368,16 @@ interface UserQueryParams {
 | `UNAUTHORIZED` | 401 | 未授权 |
 | `FORBIDDEN` | 403 | 权限不足 |
 | `INTERNAL_ERROR` | 500 | 服务器内部错误 |
+
+## 统计数据说明
+
+用户列表接口返回的统计数据来源于 `proxy_tracing` 表，通过以下方式计算：
+
+- **total_requests**: 统计该用户在 `proxy_tracing` 表中的记录总数
+- **total_cost**: 统计该用户所有请求的总花费（`cost` 字段求和）
+- **total_tokens**: 统计该用户所有请求的总token消耗（`tokens_total` 字段求和）
+
+统计数据通过 `LEFT JOIN` 查询实时计算，确保数据的准确性和实时性。
 
 ## 数据验证规则
 

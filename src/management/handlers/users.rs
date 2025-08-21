@@ -6,10 +6,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::Utc;
-use entity::{users, users::Entity as Users};
+use entity::{users, users::Entity as Users, proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::{Rng, distributions::Alphanumeric};
-use sea_orm::{entity::*, query::*};
+use sea_orm::{entity::*, query::*, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 // Removed unused serde_json imports
 
@@ -146,6 +146,12 @@ pub struct UserResponse {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// 最后登录时间
     pub last_login: Option<chrono::DateTime<chrono::Utc>>,
+    /// 总请求数
+    pub total_requests: i64,
+    /// 总花费
+    pub total_cost: f64,
+    /// 总token消耗
+    pub total_tokens: i64,
 }
 
 /// 将用户实体转换为响应DTO
@@ -160,7 +166,63 @@ impl From<users::Model> for UserResponse {
             created_at: user.created_at.and_utc(),
             updated_at: user.updated_at.and_utc(),
             last_login: user.last_login.map(|dt| dt.and_utc()),
+            total_requests: 0,
+            total_cost: 0.0,
+            total_tokens: 0,
         }
+    }
+}
+
+/// 用户统计数据
+#[derive(Debug)]
+pub struct UserStats {
+    pub total_requests: i64,
+    pub total_cost: f64,
+    pub total_tokens: i64,
+}
+
+impl UserResponse {
+    /// 从用户实体和统计数据创建响应DTO
+    pub fn from_user_with_stats(user: users::Model, stats: UserStats) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_active: user.is_active,
+            is_admin: user.is_admin,
+            created_at: user.created_at.and_utc(),
+            updated_at: user.updated_at.and_utc(),
+            last_login: user.last_login.map(|dt| dt.and_utc()),
+            total_requests: stats.total_requests,
+            total_cost: stats.total_cost,
+            total_tokens: stats.total_tokens,
+        }
+    }
+}
+
+/// 获取用户统计数据的辅助函数
+async fn get_user_statistics(user_id: i32, db: &DatabaseConnection) -> UserStats {
+    let stats_result = ProxyTracing::find()
+        .select_only()
+        .column_as(proxy_tracing::Column::Id.count(), "total_requests")
+        .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
+        .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .into_tuple::<(Option<i64>, Option<f64>, Option<i64>)>()
+        .one(db)
+        .await;
+
+    match stats_result {
+        Ok(Some((requests, cost, tokens))) => UserStats {
+            total_requests: requests.unwrap_or(0),
+            total_cost: cost.unwrap_or(0.0),
+            total_tokens: tokens.unwrap_or(0),
+        },
+        _ => UserStats {
+            total_requests: 0,
+            total_cost: 0.0,
+            total_tokens: 0,
+        },
     }
 }
 
@@ -268,8 +330,13 @@ pub async fn list_users(
         }
     };
 
-    // 转换为响应DTO
-    let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
+    // 获取用户统计数据并转换为响应DTO
+    let mut user_responses: Vec<UserResponse> = Vec::new();
+    
+    for user in users {
+        let stats = get_user_statistics(user.id, state.database.as_ref()).await;
+        user_responses.push(UserResponse::from_user_with_stats(user, stats));
+    }
 
     let pagination = response::Pagination {
         page: page as u64,
@@ -422,7 +489,8 @@ pub async fn create_user(
         }
     };
 
-    let user_response = UserResponse::from(created_user);
+    let stats = get_user_statistics(created_user.id, state.database.as_ref()).await;
+    let user_response = UserResponse::from_user_with_stats(created_user, stats);
 
     response::success_with_message(user_response, "用户创建成功")
 }
@@ -463,7 +531,9 @@ pub async fn get_user(
         }
     };
 
-    let user_response = UserResponse::from(user);
+    // 获取用户统计数据
+    let stats = get_user_statistics(user.id, state.database.as_ref()).await;
+    let user_response = UserResponse::from_user_with_stats(user, stats);
     response::success(user_response)
 }
 
@@ -924,7 +994,8 @@ pub async fn update_user(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
-            let user_response = UserResponse::from(updated_user);
+            let stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
+            let user_response = UserResponse::from_user_with_stats(updated_user, stats);
             response::success_with_message(user_response, "用户更新成功")
         }
         Err(err) => {
@@ -1155,7 +1226,8 @@ pub async fn toggle_user_status(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
-            let user_response = UserResponse::from(updated_user);
+            let stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
+            let user_response = UserResponse::from_user_with_stats(updated_user, stats);
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {

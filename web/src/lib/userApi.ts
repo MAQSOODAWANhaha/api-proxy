@@ -14,6 +14,10 @@ export interface User {
   created_at: string;
   updated_at: string;
   last_login?: string;
+  // 统计数据
+  total_requests: number;
+  total_cost: number;
+  total_tokens: number;
 }
 
 // 用户查询参数

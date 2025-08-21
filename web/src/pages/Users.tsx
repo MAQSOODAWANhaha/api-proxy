@@ -422,10 +422,10 @@ const UsersPage: React.FC = () => {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[1200px]">
                 <thead className="bg-neutral-50 text-neutral-600">
                   <tr>
-                    <th className="px-4 py-3 text-left">
+                    <th className="px-4 py-3 text-left w-[50px]">
                       <input
                         type="checkbox"
                         checked={selectedUsers.length === users.length && users.length > 0}
@@ -433,18 +433,21 @@ const UsersPage: React.FC = () => {
                         className="rounded border-neutral-300"
                       />
                     </th>
-                    <th className="px-4 py-3 text-left font-medium">用户</th>
-                    <th className="px-4 py-3 text-left font-medium">角色</th>
-                    <th className="px-4 py-3 text-left font-medium">状态</th>
-                    <th className="px-4 py-3 text-left font-medium">最后登录</th>
-                    <th className="px-4 py-3 text-left font-medium">创建时间</th>
-                    <th className="px-4 py-3 text-left font-medium">操作</th>
+                    <th className="px-4 py-3 text-left font-medium w-[280px]">用户</th>
+                    <th className="px-4 py-3 text-left font-medium w-[80px]">角色</th>
+                    <th className="px-4 py-3 text-left font-medium w-[80px]">状态</th>
+                    <th className="px-4 py-3 text-left font-medium w-[100px]">请求数</th>
+                    <th className="px-4 py-3 text-left font-medium w-[100px]">花费</th>
+                    <th className="px-4 py-3 text-left font-medium w-[120px]">Token</th>
+                    <th className="px-4 py-3 text-left font-medium w-[140px]">最后登录</th>
+                    <th className="px-4 py-3 text-left font-medium w-[140px]">创建时间</th>
+                    <th className="px-4 py-3 text-left font-medium w-[150px]">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
                   {users.map((user) => (
                     <tr key={user.id} className="text-neutral-800 hover:bg-neutral-50">
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-[50px]">
                         <input
                           type="checkbox"
                           checked={selectedUsers.includes(user.id)}
@@ -452,35 +455,57 @@ const UsersPage: React.FC = () => {
                           className="rounded border-neutral-300"
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-[280px]">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-violet-100 flex items-center justify-center">
                             <User size={18} className="text-violet-600" />
                           </div>
-                          <div>
-                            <div className="font-medium">{user.username}</div>
-                            <div className="text-xs text-neutral-500 flex items-center gap-1">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate">{user.username}</div>
+                            <div className="text-xs text-neutral-500 flex items-center gap-1 truncate">
                               <Mail size={10} />
-                              {user.email}
+                              <span className="truncate">{user.email}</span>
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3">{renderUserRole(user.is_admin)}</td>
-                      <td className="px-4 py-3">{renderUserStatus(user.is_active)}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-[80px]">{renderUserRole(user.is_admin)}</td>
+                      <td className="px-4 py-3 w-[80px]">{renderUserStatus(user.is_active)}</td>
+                      <td className="px-4 py-3 w-[100px]">
+                        <div className="flex items-center gap-1">
+                          <BarChart3 size={12} className="text-blue-400" />
+                          <span className="text-xs font-medium text-blue-600">
+                            {user.total_requests.toLocaleString()}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 w-[100px]">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-green-600 font-medium">
+                            ${user.total_cost.toFixed(2)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 w-[120px]">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-purple-600 font-medium">
+                            {user.total_tokens.toLocaleString()}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 w-[140px]">
                         <div className="flex items-center gap-1">
                           <Clock size={12} className="text-neutral-400" />
-                          <span className="text-xs">{formatLastLogin(user.last_login)}</span>
+                          <span className="text-xs truncate">{formatLastLogin(user.last_login)}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-[140px]">
                         <div className="flex items-center gap-1">
                           <Calendar size={12} className="text-neutral-400" />
-                          <span className="text-xs">{formatDate(user.created_at)}</span>
+                          <span className="text-xs truncate">{formatDate(user.created_at)}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-[150px]">
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleToggleStatus(user)}
@@ -1034,10 +1059,25 @@ const UserDetailsDialog: React.FC<{
           </div>
         </div>
 
-        {user.last_login && (
+        <div className="grid grid-cols-3 gap-4">
           <div className="p-3 bg-blue-50 rounded-lg">
-            <div className="text-sm text-blue-600">最后登录时间</div>
-            <div className="mt-1 text-blue-900">{new Date(user.last_login).toLocaleString()}</div>
+            <div className="text-sm text-blue-600">总请求数</div>
+            <div className="mt-1 text-blue-900 font-medium">{user.total_requests.toLocaleString()}</div>
+          </div>
+          <div className="p-3 bg-green-50 rounded-lg">
+            <div className="text-sm text-green-600">总花费</div>
+            <div className="mt-1 text-green-900 font-medium">${user.total_cost.toFixed(2)}</div>
+          </div>
+          <div className="p-3 bg-purple-50 rounded-lg">
+            <div className="text-sm text-purple-600">总Token数</div>
+            <div className="mt-1 text-purple-900 font-medium">{user.total_tokens.toLocaleString()}</div>
+          </div>
+        </div>
+
+        {user.last_login && (
+          <div className="p-3 bg-orange-50 rounded-lg">
+            <div className="text-sm text-orange-600">最后登录时间</div>
+            <div className="mt-1 text-orange-900">{new Date(user.last_login).toLocaleString()}</div>
           </div>
         )}
       </div>
