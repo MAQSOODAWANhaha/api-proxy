@@ -503,6 +503,20 @@ export interface LogsAnalyticsResponse {
   }>
 }
 
+export interface SystemMetrics {
+  cpu_usage: number;
+  memory: {
+    total_mb: number;
+    used_mb: number;
+    usage_percentage: number;
+  };
+  disk: {
+    total_gb: number;
+    used_gb: number;
+    usage_percentage: number;
+  };
+  uptime: string;
+}
 
 
 /**
@@ -1392,7 +1406,7 @@ export const api = {
         if (params?.is_success !== undefined) queryParams.is_success = params.is_success.toString()
         if (params?.model_used) queryParams.model_used = params.model_used
         if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
-        if (params?.user_service_api_id !== undefined) queryParams.user_service_api_id = params.user_service_api_id.toString()
+        if (params?.user_service_api_id !== undefined) query_params.user_service_api_id = params.user_service_api_id.toString()
         if (params?.start_time) queryParams.start_time = params.start_time
         if (params?.end_time) queryParams.end_time = params.end_time
 
@@ -1447,6 +1461,23 @@ export const api = {
           error: {
             code: 'LOGS_ANALYTICS_ERROR',
             message: '获取日志统计分析失败'
+          }
+        }
+      }
+    }
+  },
+
+  system: {
+    async getMetrics(): Promise<ApiResponse<SystemMetrics>> {
+      try {
+        return await apiClient.get<SystemMetrics>('/system/metrics')
+      } catch (error) {
+        console.error('[System] Failed to fetch metrics:', error)
+        return {
+          success: false,
+          error: {
+            code: 'SYSTEM_METRICS_ERROR',
+            message: '获取系统指标失败'
           }
         }
       }

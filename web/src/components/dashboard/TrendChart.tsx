@@ -16,6 +16,7 @@ import {
   Line,
   CartesianGrid,
 } from 'recharts'
+import { TitledCard } from '@/components/common/UnifiedCard'
 
 /** 单条趋势数据结构 */
 export interface TrendPoint {
@@ -74,37 +75,39 @@ const TrendChart: React.FC = () => {
     ].join(' ')
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="text-base font-semibold text-neutral-900">请求趋势</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-lg bg-neutral-50 p-1">
-            {[7, 30, 90].map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPeriod(p as 7 | 30 | 90)}
-                className={tabCls(period === p)}
-                aria-pressed={period === p}
-              >
-                最近{p}天
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 rounded-lg bg-neutral-50 p-1">
-            {(['all', 'openai', 'claude', 'gemini'] as Provider[]).map((pv) => (
-              <button
-                key={pv}
-                type="button"
-                onClick={() => setProvider(pv)}
-                className={tabCls(provider === pv)}
-                aria-pressed={provider === pv}
-                title={pv === 'all' ? '全部服务商' : pv.toUpperCase()}
-              >
-                {pv === 'all' ? '全部' : pv.toUpperCase()}
-              </button>
-            ))}
-          </div>
+    <TitledCard
+      variant="compact"
+      title="请求趋势"
+      headerClassName="pb-2"
+      contentClassName="pt-2"
+    >
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-50 p-1">
+          {[7, 30, 90].map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPeriod(p as 7 | 30 | 90)}
+              className={tabCls(period === p)}
+              aria-pressed={period === p}
+            >
+              最近{p}天
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 rounded-lg bg-neutral-50 p-1">
+          {(['all', 'openai', 'claude', 'gemini'] as Provider[]).map((pv) => (
+            <button
+              key={pv}
+              type="button"
+              onClick={() => setProvider(pv)}
+              className={tabCls(provider === pv)}
+              aria-pressed={provider === pv}
+              title={pv === 'all' ? '全部服务商' : pv.toUpperCase()}
+            >
+              {pv === 'all' ? '全部' : pv.toUpperCase()}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -152,7 +155,7 @@ const TrendChart: React.FC = () => {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </TitledCard>
   )
 }
 

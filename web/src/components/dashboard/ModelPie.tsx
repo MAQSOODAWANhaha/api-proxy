@@ -5,6 +5,7 @@
 
 import React from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
+import { TitledCard } from '@/components/common/UnifiedCard'
 
 /** 模型占比数据结构 */
 export interface ModelSlice {
@@ -28,8 +29,12 @@ const COLORS = ['#6D5BD0', '#8757E8', '#10b981', '#f59e0b', '#ef4444']
  */
 const ModelPie: React.FC<ModelPieProps> = ({ data }) => {
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-base font-semibold text-neutral-900">模型使用占比</h3>
+    <TitledCard
+      variant="compact"
+      title="模型使用占比"
+      headerClassName="pb-2"
+      contentClassName="pt-2"
+    >
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -52,7 +57,7 @@ const ModelPie: React.FC<ModelPieProps> = ({ data }) => {
           </PieChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </TitledCard>
   )
 }
 

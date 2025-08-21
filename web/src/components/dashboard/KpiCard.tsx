@@ -4,6 +4,7 @@
  */
 
 import React from 'react'
+import { UnifiedStatCard } from '@/components/common/UnifiedCard'
 
 /** KPI 卡片的属性定义 */
 export interface KpiCardProps {
@@ -23,38 +24,45 @@ export interface KpiCardProps {
 
 /**
  * KpiCard
- * - 白色卡片、细边、轻阴影，延续现有风格
+ * - 使用统一的UnifiedStatCard组件
  * - delta 正向为绿色、负向为红色，自动判断
  */
 const KpiCard: React.FC<KpiCardProps> = ({ title, value, delta, hint, subtext, badge }) => {
   /** 简单判断 delta 正负，空值不展示颜色 */
   const isPositive = typeof delta === 'string' ? delta.trim().startsWith('+') : undefined
+  
+  // 确定 deltaType
+  const deltaType = isPositive === undefined 
+    ? 'neutral' 
+    : isPositive 
+      ? 'positive' 
+      : 'negative'
+  
+  // 组合 delta 显示文本
+  const deltaText = delta && hint ? `${delta} ${hint}` : delta
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-sm text-neutral-500">{title}</div>
-        {badge}
-      </div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <div className="text-2xl font-semibold text-neutral-900">{value}</div>
-        {delta && (
-          <div
-            className={[
-              'text-xs',
-              isPositive === undefined
-                ? 'text-neutral-500'
-                : isPositive
-                ? 'text-emerald-600'
-                : 'text-rose-600',
-            ].join(' ')}
-            aria-label="变化百分比"
-          >
-            {delta} {hint ? hint : ''}
-          </div>
-        )}
-      </div>
-      {subtext && <div className="mt-1 text-xs text-neutral-400">{subtext}</div>}
+    <div className="relative">
+      <UnifiedStatCard
+        label={title}
+        value={value}
+        delta={deltaText}
+        deltaType={deltaType}
+      />
+      
+      {/* 右上角角标 */}
+      {badge && (
+        <div className="absolute top-4 right-4">
+          {badge}
+        </div>
+      )}
+      
+      {/* 底部补充说明 */}
+      {subtext && (
+        <div className="mt-2 text-xs text-neutral-400 text-center">
+          {subtext}
+        </div>
+      )}
     </div>
   )
 }

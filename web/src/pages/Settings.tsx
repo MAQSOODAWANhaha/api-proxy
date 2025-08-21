@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react'
+import SystemInfo from '@/components/SystemInfo';
 import ModernSelect from '../components/common/ModernSelect'
 import {
   Settings,
@@ -162,19 +163,8 @@ const SettingsPage: React.FC = () => {
       </div>
 
       {/* 系统信息统计 */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-neutral-200">
-          <div className="text-sm text-violet-600">系统版本</div>
-          <div className="text-2xl font-bold text-violet-900">v2.1.0</div>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-neutral-200">
-          <div className="text-sm text-emerald-600">运行时间</div>
-          <div className="text-2xl font-bold text-emerald-900">15天 6小时</div>
-        </div>
-        <div className="bg-white p-4 rounded-xl border border-neutral-200">
-          <div className="text-sm text-blue-600">最后更新</div>
-          <div className="text-2xl font-bold text-blue-900">2024-01-16</div>
-        </div>
+      <div className="mb-6">
+        <SystemInfo />
       </div>
 
       {/* 标签导航 */}

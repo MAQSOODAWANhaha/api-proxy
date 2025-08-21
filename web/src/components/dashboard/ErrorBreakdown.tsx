@@ -13,6 +13,7 @@ import {
   Bar,
   CartesianGrid,
 } from 'recharts'
+import { TitledCard } from '@/components/common/UnifiedCard'
 
 /** 错误分布数据结构 */
 export interface ErrorBucket {
@@ -31,8 +32,12 @@ export interface ErrorBreakdownProps {
  */
 const ErrorBreakdown: React.FC<ErrorBreakdownProps> = ({ data }) => {
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-base font-semibold text-neutral-900">错误类型分布</h3>
+    <TitledCard
+      variant="compact"
+      title="错误类型分布"
+      headerClassName="pb-2"
+      contentClassName="pt-2"
+    >
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
@@ -50,7 +55,7 @@ const ErrorBreakdown: React.FC<ErrorBreakdownProps> = ({ data }) => {
           </BarChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </TitledCard>
   )
 }
 

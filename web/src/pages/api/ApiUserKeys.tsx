@@ -412,7 +412,7 @@ const ApiUserKeysPage: React.FC = () => {
 
       {/* 数据表格 */}
       {!loading && (
-        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-neutral-50 text-neutral-600">
@@ -824,7 +824,7 @@ const AddDialog: React.FC<{
   }, [formData.provider_type_id])
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">新增 API Key</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
@@ -1279,7 +1279,7 @@ const EditDialog: React.FC<{
   }, [loadingDetail, formData.provider_type_id])
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">编辑 API Key</h3>
       
       {loadingDetail ? (
@@ -1569,7 +1569,7 @@ const DeleteDialog: React.FC<{
   onConfirm: () => void
 }> = ({ item, onClose, onConfirm }) => {
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-2">确认删除</h3>
       <p className="text-sm text-neutral-600 mb-4">
         确定要删除密钥 <strong>{item.name}</strong> 吗？此操作无法撤销。
@@ -1609,7 +1609,7 @@ const StatsDialog: React.FC<{
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">API Key 统计</h3>
         <button

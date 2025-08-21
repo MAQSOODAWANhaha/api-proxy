@@ -413,19 +413,19 @@ const ApiUserKeysPage: React.FC = () => {
       {/* 统计信息 */}
       <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
-          icon={<Key size={18} />}
+          icon={<Key size={16} />}
           value={cardsData?.total_api_keys?.toString() || '0'}
           label="总密钥数"
           color="#7c3aed"
         />
         <StatCard
-          icon={<Activity size={18} />}
+          icon={<Activity size={16} />}
           value={cardsData?.active_api_keys?.toString() || '0'}
           label="活跃密钥"
           color="#10b981"
         />
         <StatCard
-          icon={<Users size={18} />}
+          icon={<Users size={16} />}
           value={cardsData?.requests?.toLocaleString() || '0'}
           label="总使用次数"
           color="#0ea5e9"
@@ -459,7 +459,7 @@ const ApiUserKeysPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-neutral-50 text-neutral-600">
@@ -811,7 +811,7 @@ const AddDialog: React.FC<{
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">新增 API Key</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
@@ -1095,7 +1095,7 @@ const EditDialog: React.FC<{
 
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">编辑 API Key</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 服务名称 */}
@@ -1341,7 +1341,7 @@ const DeleteDialog: React.FC<{
   onConfirm: () => void
 }> = ({ item, onClose, onConfirm }) => {
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-2">确认删除</h3>
       <p className="text-sm text-neutral-600 mb-4">
         确定要删除密钥 <strong>{item.keyName}</strong> 吗？此操作无法撤销。
@@ -1381,7 +1381,7 @@ const StatsDialog: React.FC<{
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">API Key 统计</h3>
         <button
@@ -1461,7 +1461,7 @@ const RegenerateDialog: React.FC<{
   onConfirm: () => void
 }> = ({ item, onClose, onConfirm }) => {
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-2">重新生成API Key</h3>
       <p className="text-sm text-neutral-600 mb-4">
         确定要重新生成密钥 <strong>{item.keyName}</strong> 吗？
@@ -1498,7 +1498,7 @@ const UsageDialog: React.FC<{
 }> = ({ item, usageData, loading, onClose }) => {
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
         <div className="flex items-center justify-center py-8">
           <RefreshCw size={24} className="animate-spin text-violet-600" />
           <span className="ml-2 text-neutral-600">加载使用统计...</span>
@@ -1509,7 +1509,7 @@ const UsageDialog: React.FC<{
 
   if (!usageData) {
     return (
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
         <h3 className="text-lg font-medium text-neutral-900 mb-4">使用统计</h3>
         <p className="text-sm text-neutral-600 text-center py-4">暂无使用数据</p>
         <button
@@ -1523,7 +1523,7 @@ const UsageDialog: React.FC<{
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">
           {item.keyName} - 使用统计
@@ -1616,7 +1616,7 @@ const DetailDialog: React.FC<{
 }> = ({ item, keyDetail, loading, onClose }) => {
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
         <div className="flex items-center justify-center py-8">
           <RefreshCw size={24} className="animate-spin text-violet-600" />
           <span className="ml-2 text-neutral-600">加载详细信息...</span>
@@ -1643,7 +1643,7 @@ const DetailDialog: React.FC<{
   };
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">API Key详情</h3>
         <button
