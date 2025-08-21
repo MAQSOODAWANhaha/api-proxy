@@ -2,13 +2,16 @@
 //!
 //! 提供高级缓存操作和策略集成
 
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn, error};
 use std::sync::Arc;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
+use tracing::{debug, error, info, warn};
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
-use crate::{config::RedisConfig, error::{ProxyError, Result}};
+use crate::{
+    config::RedisConfig,
+    error::{ProxyError, Result},
+};
 use entity::*;
 
 /// 缓存的提供商配置结构

@@ -20,7 +20,7 @@ pub struct HealthServerInfo {
 pub async fn get_health_servers(State(state): State<AppState>) -> impl IntoResponse {
     // 从健康检查服务获取服务器状态
     let _health_service = &state.health_service;
-    
+
     // 获取服务器状态信息
     let servers = vec![
         HealthServerInfo {

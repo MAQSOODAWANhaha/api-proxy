@@ -1,7 +1,7 @@
 //! # 负载均衡调度器类型定义
 
-use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 /// 调度策略枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,23 +212,32 @@ mod tests {
 
     #[test]
     fn test_scheduling_strategy_parsing() {
-        assert_eq!(SchedulingStrategy::from_str("round_robin"), Some(SchedulingStrategy::RoundRobin));
-        assert_eq!(SchedulingStrategy::from_str("weighted"), Some(SchedulingStrategy::Weighted));
-        assert_eq!(SchedulingStrategy::from_str("health_based"), Some(SchedulingStrategy::HealthBased));
+        assert_eq!(
+            SchedulingStrategy::from_str("round_robin"),
+            Some(SchedulingStrategy::RoundRobin)
+        );
+        assert_eq!(
+            SchedulingStrategy::from_str("weighted"),
+            Some(SchedulingStrategy::Weighted)
+        );
+        assert_eq!(
+            SchedulingStrategy::from_str("health_based"),
+            Some(SchedulingStrategy::HealthBased)
+        );
         assert_eq!(SchedulingStrategy::from_str("unknown"), None);
     }
 
     #[test]
     fn test_server_metrics_health_score() {
         let mut metrics = ServerMetrics::new();
-        
+
         // 健康服务器应该有高分数
         assert!(metrics.health_score() > 90.0);
-        
+
         // 不健康服务器应该得0分
         metrics.is_healthy = false;
         assert_eq!(metrics.health_score(), 0.0);
-        
+
         // 高延迟应该降低分数
         metrics.is_healthy = true;
         metrics.avg_response_time = 5000.0; // 5秒
@@ -238,30 +247,30 @@ mod tests {
     #[test]
     fn test_server_metrics_success_rate() {
         let mut metrics = ServerMetrics::new();
-        
+
         // 初始成功率应该是100%
         assert_eq!(metrics.success_rate(), 1.0);
-        
+
         // 添加一些请求
         metrics.record_success();
         metrics.record_success();
         metrics.record_failure();
-        
+
         // 成功率应该是2/3
-        assert!((metrics.success_rate() - 2.0/3.0).abs() < 0.001);
+        assert!((metrics.success_rate() - 2.0 / 3.0).abs() < 0.001);
     }
 
     #[test]
     fn test_server_metrics_overload_detection() {
         let mut metrics = ServerMetrics::new();
-        
+
         // 正常情况下不应该过载
         assert!(!metrics.is_overloaded());
-        
+
         // 连接数过多应该检测为过载
         metrics.active_connections = 950; // 95%
         assert!(metrics.is_overloaded());
-        
+
         // CPU过高应该检测为过载
         metrics.active_connections = 100;
         metrics.cpu_usage = 95.0;
@@ -271,11 +280,11 @@ mod tests {
     #[test]
     fn test_response_time_update() {
         let mut metrics = ServerMetrics::new();
-        
+
         // 更新响应时间
         metrics.update_response_time(Duration::from_millis(100));
         assert!(metrics.avg_response_time > 0.0);
-        
+
         // 再次更新，应该使用移动平均
         let first_avg = metrics.avg_response_time;
         metrics.update_response_time(Duration::from_millis(200));

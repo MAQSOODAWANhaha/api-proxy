@@ -26,34 +26,34 @@ impl CacheTtl {
     /// 获取TTL秒数
     pub fn as_seconds(&self) -> Option<u64> {
         match self {
-            CacheTtl::Short => Some(300),      // 5分钟
-            CacheTtl::Medium => Some(3600),    // 1小时
-            CacheTtl::Long => Some(86400),     // 24小时
+            CacheTtl::Short => Some(300),   // 5分钟
+            CacheTtl::Medium => Some(3600), // 1小时
+            CacheTtl::Long => Some(86400),  // 24小时
             CacheTtl::Custom(seconds) => Some(*seconds),
             CacheTtl::Never => None,
         }
     }
-    
+
     /// 获取 Duration
     pub fn as_duration(&self) -> Option<Duration> {
         self.as_seconds().map(Duration::from_secs)
     }
-    
+
     /// 从秒数创建自定义 TTL
     pub fn from_seconds(seconds: u64) -> Self {
         CacheTtl::Custom(seconds)
     }
-    
+
     /// 从分钟创建自定义 TTL
     pub fn from_minutes(minutes: u64) -> Self {
         CacheTtl::Custom(minutes * 60)
     }
-    
+
     /// 从小时创建自定义 TTL
     pub fn from_hours(hours: u64) -> Self {
         CacheTtl::Custom(hours * 3600)
     }
-    
+
     /// 从天创建自定义 TTL
     pub fn from_days(days: u64) -> Self {
         CacheTtl::Custom(days * 86400)
@@ -98,7 +98,7 @@ impl CacheStrategy {
             warmup_enabled: false,
         }
     }
-    
+
     /// 创建中期缓存策略
     pub fn medium_term() -> Self {
         Self {
@@ -109,7 +109,7 @@ impl CacheStrategy {
             warmup_enabled: false,
         }
     }
-    
+
     /// 创建长期缓存策略
     pub fn long_term() -> Self {
         Self {
@@ -120,7 +120,7 @@ impl CacheStrategy {
             warmup_enabled: true,
         }
     }
-    
+
     /// 创建自定义缓存策略
     pub fn custom(ttl: CacheTtl) -> Self {
         Self {
@@ -128,7 +128,7 @@ impl CacheStrategy {
             ..Default::default()
         }
     }
-    
+
     /// 根据缓存键自动选择策略
     pub fn for_key(key: &CacheKey) -> Self {
         if key.is_temporary() {
@@ -141,47 +141,47 @@ impl CacheStrategy {
             Self::default()
         }
     }
-    
+
     /// 设置 TTL
     pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
         self.ttl = ttl;
         self
     }
-    
+
     /// 设置是否允许缓存空值
     pub fn with_null_values(mut self, cache_null_values: bool) -> Self {
         self.cache_null_values = cache_null_values;
         self
     }
-    
+
     /// 设置是否启用压缩
     pub fn with_compression(mut self, compression_enabled: bool) -> Self {
         self.compression_enabled = compression_enabled;
         self
     }
-    
+
     /// 设置最大值大小
     pub fn with_max_value_size(mut self, max_value_size: usize) -> Self {
         self.max_value_size = max_value_size;
         self
     }
-    
+
     /// 设置是否启用预热
     pub fn with_warmup(mut self, warmup_enabled: bool) -> Self {
         self.warmup_enabled = warmup_enabled;
         self
     }
-    
+
     /// 验证值是否符合策略要求
     pub fn validate_value(&self, value: &str) -> bool {
         if value.is_empty() && !self.cache_null_values {
             return false;
         }
-        
+
         if value.len() > self.max_value_size {
             return false;
         }
-        
+
         true
     }
 }
@@ -197,7 +197,7 @@ impl CacheStrategies {
             .with_null_values(false)
             .with_compression(false)
     }
-    
+
     /// 认证令牌缓存策略（15分钟）
     pub fn auth_token() -> CacheStrategy {
         CacheStrategy::short_term()
@@ -205,7 +205,7 @@ impl CacheStrategies {
             .with_null_values(false)
             .with_compression(false)
     }
-    
+
     /// API健康状态缓存策略（5分钟）
     pub fn api_health() -> CacheStrategy {
         CacheStrategy::short_term()
@@ -213,7 +213,7 @@ impl CacheStrategies {
             .with_null_values(true)
             .with_compression(false)
     }
-    
+
     /// 用户API密钥缓存策略（2小时）
     pub fn user_api_key() -> CacheStrategy {
         CacheStrategy::medium_term()
@@ -221,7 +221,7 @@ impl CacheStrategies {
             .with_null_values(false)
             .with_compression(false)
     }
-    
+
     /// 请求统计缓存策略（6小时）
     pub fn request_stats() -> CacheStrategy {
         CacheStrategy::medium_term()
@@ -229,7 +229,7 @@ impl CacheStrategies {
             .with_null_values(true)
             .with_compression(true)
     }
-    
+
     /// 每日统计缓存策略（24小时）
     pub fn daily_stats() -> CacheStrategy {
         CacheStrategy::long_term()
@@ -237,7 +237,7 @@ impl CacheStrategies {
             .with_null_values(true)
             .with_compression(true)
     }
-    
+
     /// 配置缓存策略（12小时）
     pub fn config() -> CacheStrategy {
         CacheStrategy::long_term()
@@ -246,7 +246,7 @@ impl CacheStrategies {
             .with_compression(false)
             .with_warmup(true)
     }
-    
+
     /// 提供商配置缓存策略（6小时）
     pub fn provider_config() -> CacheStrategy {
         CacheStrategy::medium_term()
@@ -255,7 +255,7 @@ impl CacheStrategies {
             .with_compression(false)
             .with_warmup(true)
     }
-    
+
     /// 速率限制缓存策略（1分钟）
     pub fn rate_limit() -> CacheStrategy {
         CacheStrategy::short_term()
@@ -263,7 +263,7 @@ impl CacheStrategies {
             .with_null_values(false)
             .with_compression(false)
     }
-    
+
     /// 根据缓存键获取推荐策略
     pub fn for_key(key: &CacheKey) -> CacheStrategy {
         match key {
@@ -294,39 +294,39 @@ mod tests {
         assert_eq!(CacheTtl::Custom(1800).as_seconds(), Some(1800));
         assert_eq!(CacheTtl::Never.as_seconds(), None);
     }
-    
+
     #[test]
     fn test_cache_ttl_creation() {
         assert_eq!(CacheTtl::from_minutes(30).as_seconds(), Some(1800));
         assert_eq!(CacheTtl::from_hours(2).as_seconds(), Some(7200));
         assert_eq!(CacheTtl::from_days(1).as_seconds(), Some(86400));
     }
-    
+
     #[test]
     fn test_cache_strategy_validation() {
         let strategy = CacheStrategy::default();
-        
+
         // 正常值应该通过验证
         assert!(strategy.validate_value("normal value"));
-        
+
         // 空值在不允许时应该失败
         let no_null_strategy = CacheStrategy::default().with_null_values(false);
         assert!(!no_null_strategy.validate_value(""));
-        
+
         // 空值在允许时应该通过
         let allow_null_strategy = CacheStrategy::default().with_null_values(true);
         assert!(allow_null_strategy.validate_value(""));
-        
+
         // 超大值应该失败
         let small_size_strategy = CacheStrategy::default().with_max_value_size(10);
         assert!(!small_size_strategy.validate_value("this is a very long string"));
     }
-    
+
     #[test]
     fn test_predefined_strategies() {
         let session_strategy = CacheStrategies::user_session();
         assert_eq!(session_strategy.ttl.as_seconds(), Some(1800)); // 30分钟
-        
+
         let config_strategy = CacheStrategies::config();
         assert_eq!(config_strategy.ttl.as_seconds(), Some(43200)); // 12小时
         assert!(config_strategy.warmup_enabled);

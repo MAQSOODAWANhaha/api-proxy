@@ -18,20 +18,13 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(UserSessions::UserId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(UserSessions::UserId).integer().not_null())
                     .col(
                         ColumnDef::new(UserSessions::TokenHash)
                             .string_len(255)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(UserSessions::RefreshTokenHash)
-                            .string_len(255),
-                    )
+                    .col(ColumnDef::new(UserSessions::RefreshTokenHash).string_len(255))
                     .col(
                         ColumnDef::new(UserSessions::ExpiresAt)
                             .timestamp()

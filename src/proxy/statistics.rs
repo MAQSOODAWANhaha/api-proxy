@@ -1,14 +1,14 @@
 //! # 代理统计收集模块
-//! 
+//!
 //! 收集和分析代理请求的详细统计信息
 
+use super::forwarding::{ForwardingContext, ForwardingResult};
 use crate::error::{ProxyError, Result};
-use super::forwarding::{ForwardingResult, ForwardingContext};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 /// 统计收集器
 pub struct StatisticsCollector {
@@ -247,11 +247,14 @@ impl StatisticsCollector {
         result: &ForwardingResult,
     ) -> Result<()> {
         let mut stats = self.real_time_stats.write().await;
-        
+
         // 检查是否需要重置窗口
         let now = SystemTime::now();
-        if now.duration_since(stats.window_start).unwrap_or(Duration::from_secs(0)) 
-            > Duration::from_secs(self.config.real_time_window) {
+        if now
+            .duration_since(stats.window_start)
+            .unwrap_or(Duration::from_secs(0))
+            > Duration::from_secs(self.config.real_time_window)
+        {
             stats.reset_window(now);
         }
 
@@ -264,7 +267,8 @@ impl StatisticsCollector {
         }
 
         // 更新QPS
-        let window_duration = now.duration_since(stats.window_start)
+        let window_duration = now
+            .duration_since(stats.window_start)
             .unwrap_or(Duration::from_secs(1))
             .as_secs_f64();
         stats.current_qps = stats.total_requests as f64 / window_duration.max(1.0);
@@ -274,7 +278,10 @@ impl StatisticsCollector {
 
         // 更新上游统计
         let upstream_key = format!("{:?}", context.upstream_type);
-        let upstream_stats = stats.by_upstream.entry(upstream_key).or_insert_with(UpstreamRealTimeStats::new);
+        let upstream_stats = stats
+            .by_upstream
+            .entry(upstream_key)
+            .or_insert_with(UpstreamRealTimeStats::new);
         upstream_stats.update(result, window_duration);
 
         // 更新状态码统计
@@ -299,15 +306,21 @@ impl StatisticsCollector {
     ) -> Result<()> {
         let mut stats = self.historical_stats.write().await;
         let now = SystemTime::now();
-        
+
         // 更新每日统计
         let date_key = format_date(now);
-        let daily_stats = stats.daily_stats.entry(date_key).or_insert_with(|| DailyStats::new(&format_date(now)));
+        let daily_stats = stats
+            .daily_stats
+            .entry(date_key)
+            .or_insert_with(|| DailyStats::new(&format_date(now)));
         daily_stats.update(context, result);
 
         // 更新每小时统计
         let hour_key = format_hour(now);
-        let hourly_stats = stats.hourly_stats.entry(hour_key).or_insert_with(|| HourlyStats::new(&format_hour(now)));
+        let hourly_stats = stats
+            .hourly_stats
+            .entry(hour_key)
+            .or_insert_with(|| HourlyStats::new(&format_hour(now)));
         hourly_stats.update(result);
 
         // 更新趋势数据
@@ -339,7 +352,8 @@ impl StatisticsCollector {
             } else {
                 0.0
             },
-            total_requests_today: historical.daily_stats
+            total_requests_today: historical
+                .daily_stats
                 .get(&format_date(SystemTime::now()))
                 .map(|d| d.total_requests)
                 .unwrap_or(0),
@@ -355,10 +369,11 @@ impl StatisticsCollector {
     /// 清理过期数据
     pub async fn cleanup_expired_data(&self) -> Result<usize> {
         let mut historical = self.historical_stats.write().await;
-        let cutoff_date = SystemTime::now() - Duration::from_secs(86400 * self.config.historical_retention_days as u64);
-        
+        let cutoff_date = SystemTime::now()
+            - Duration::from_secs(86400 * self.config.historical_retention_days as u64);
+
         let mut removed_count = 0;
-        
+
         // 清理过期的每日统计
         historical.daily_stats.retain(|date_str, _| {
             if let Ok(date) = parse_date(date_str) {
@@ -386,10 +401,10 @@ impl StatisticsCollector {
     pub async fn reset_all_stats(&self) -> Result<()> {
         let mut real_time = self.real_time_stats.write().await;
         let mut historical = self.historical_stats.write().await;
-        
+
         *real_time = RealTimeStats::new(self.config.real_time_window);
         *historical = HistoricalStats::new();
-        
+
         Ok(())
     }
 }
@@ -462,7 +477,7 @@ impl RealTimeStats {
         // 简化实现，实际应该维护响应时间的分布
         let total_time = self.avg_response_time * (self.total_requests - 1) as u32 + response_time;
         self.avg_response_time = total_time / self.total_requests as u32;
-        
+
         // 简化的百分位数计算
         self.p95_response_time = response_time; // 应该基于实际分布计算
         self.p99_response_time = response_time;
@@ -485,7 +500,7 @@ impl UpstreamRealTimeStats {
     /// 更新统计
     pub fn update(&mut self, result: &ForwardingResult, window_duration: f64) {
         self.request_count += 1;
-        
+
         if result.success {
             self.success_count += 1;
         } else {
@@ -493,7 +508,8 @@ impl UpstreamRealTimeStats {
         }
 
         // 更新平均响应时间
-        let total_time = self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
+        let total_time =
+            self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
         self.avg_response_time = total_time / self.request_count as u32;
 
         // 更新QPS
@@ -569,7 +585,7 @@ impl DailyStats {
     /// 更新每日统计
     pub fn update(&mut self, context: &ForwardingContext, result: &ForwardingResult) {
         self.total_requests += 1;
-        
+
         if result.success {
             self.successful_requests += 1;
         } else {
@@ -579,12 +595,16 @@ impl DailyStats {
         self.total_bytes += result.bytes_transferred;
 
         // 更新平均响应时间
-        let total_time = self.avg_response_time * (self.total_requests - 1) as u32 + result.response_time;
+        let total_time =
+            self.avg_response_time * (self.total_requests - 1) as u32 + result.response_time;
         self.avg_response_time = total_time / self.total_requests as u32;
 
         // 更新上游统计
         let upstream_key = format!("{:?}", context.upstream_type);
-        let upstream_stats = self.by_upstream.entry(upstream_key).or_insert_with(DailyUpstreamStats::new);
+        let upstream_stats = self
+            .by_upstream
+            .entry(upstream_key)
+            .or_insert_with(DailyUpstreamStats::new);
         upstream_stats.update(result);
     }
 }
@@ -606,7 +626,7 @@ impl DailyUpstreamStats {
         self.bytes_transferred += result.bytes_transferred;
 
         // 更新成功率
-        let success_count = if result.success { 
+        let success_count = if result.success {
             self.request_count as f64 * self.success_rate / 100.0 + 1.0
         } else {
             self.request_count as f64 * self.success_rate / 100.0
@@ -614,7 +634,8 @@ impl DailyUpstreamStats {
         self.success_rate = success_count / self.request_count as f64 * 100.0;
 
         // 更新平均响应时间
-        let total_time = self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
+        let total_time =
+            self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
         self.avg_response_time = total_time / self.request_count as u32;
     }
 }
@@ -644,7 +665,8 @@ impl HourlyStats {
         self.success_rate = success_count / self.request_count as f64 * 100.0;
 
         // 更新平均响应时间
-        let total_time = self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
+        let total_time =
+            self.avg_response_time * (self.request_count - 1) as u32 + result.response_time;
         self.avg_response_time = total_time / self.request_count as u32;
 
         // 更新QPS（基于小时）
@@ -673,33 +695,52 @@ impl TrendData {
 
         // 保持最近24小时的数据
         let cutoff = timestamp - Duration::from_secs(86400);
-        self.response_time_trend_24h.retain(|point| point.timestamp > cutoff);
+        self.response_time_trend_24h
+            .retain(|point| point.timestamp > cutoff);
         self.qps_trend_24h.retain(|point| point.timestamp > cutoff);
-        self.success_rate_trend_24h.retain(|point| point.timestamp > cutoff);
-        self.error_rate_trend_24h.retain(|point| point.timestamp > cutoff);
+        self.success_rate_trend_24h
+            .retain(|point| point.timestamp > cutoff);
+        self.error_rate_trend_24h
+            .retain(|point| point.timestamp > cutoff);
     }
 }
 
 // 辅助函数
 fn format_date(time: SystemTime) -> String {
     // 简化实现，实际应该使用正确的日期格式化
-    format!("{}", time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 86400)
+    format!(
+        "{}",
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 86400
+    )
 }
 
 fn format_hour(time: SystemTime) -> String {
     // 简化实现，实际应该使用正确的小时格式化
-    format!("{}", time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() / 3600)
+    format!(
+        "{}",
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 3600
+    )
 }
 
 fn parse_date(date_str: &str) -> Result<SystemTime> {
     // 简化实现，实际应该解析日期字符串
-    let days: u64 = date_str.parse().map_err(|_| ProxyError::internal("Failed to parse date string"))?;
+    let days: u64 = date_str
+        .parse()
+        .map_err(|_| ProxyError::internal("Failed to parse date string"))?;
     Ok(SystemTime::UNIX_EPOCH + Duration::from_secs(days * 86400))
 }
 
 fn parse_hour(hour_str: &str) -> Result<SystemTime> {
     // 简化实现，实际应该解析小时字符串
-    let hours: u64 = hour_str.parse().map_err(|_| ProxyError::internal("Failed to parse hour string"))?;
+    let hours: u64 = hour_str
+        .parse()
+        .map_err(|_| ProxyError::internal("Failed to parse hour string"))?;
     Ok(SystemTime::UNIX_EPOCH + Duration::from_secs(hours * 3600))
 }
 
@@ -712,7 +753,7 @@ mod tests {
     async fn test_statistics_collector_creation() {
         let config = StatisticsConfig::default();
         let collector = StatisticsCollector::new(config);
-        
+
         let stats = collector.get_real_time_stats().await;
         assert_eq!(stats.total_requests, 0);
     }
@@ -721,8 +762,9 @@ mod tests {
     async fn test_record_request_completion() {
         let config = StatisticsConfig::default();
         let collector = StatisticsCollector::new(config);
-        
-        let context = ForwardingContext::new("req_123".to_string(), ProviderId::from_database_id(1));
+
+        let context =
+            ForwardingContext::new("req_123".to_string(), ProviderId::from_database_id(1));
         let result = ForwardingResult {
             success: true,
             response_time: Duration::from_millis(100),
@@ -733,8 +775,13 @@ mod tests {
             upstream_server: Some("test-upstream-server:443".to_string()),
         };
 
-        assert!(collector.record_request_completion(&context, &result).await.is_ok());
-        
+        assert!(
+            collector
+                .record_request_completion(&context, &result)
+                .await
+                .is_ok()
+        );
+
         let stats = collector.get_real_time_stats().await;
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.successful_requests, 1);
@@ -744,7 +791,7 @@ mod tests {
     async fn test_stats_summary() {
         let config = StatisticsConfig::default();
         let collector = StatisticsCollector::new(config);
-        
+
         let summary = collector.get_stats_summary().await;
         assert_eq!(summary.current_qps, 0.0);
         assert_eq!(summary.success_rate, 0.0);

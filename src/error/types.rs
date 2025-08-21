@@ -56,9 +56,7 @@ pub enum ProxyError {
 
     /// 业务逻辑错误
     #[error("业务错误: {message}")]
-    Business {
-        message: String,
-    },
+    Business { message: String },
 
     /// 系统内部错误
     #[error("内部错误: {message}")]

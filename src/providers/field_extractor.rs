@@ -2,9 +2,9 @@
 //!
 //! 基于数据库配置的通用字段提取器，支持JSONPath查询和数值转换
 
-use std::collections::HashMap;
-use serde_json::Value;
 use anyhow::{Result, anyhow};
+use serde_json::Value;
+use std::collections::HashMap;
 use tracing::debug;
 
 /// 数值转换类型
@@ -53,34 +53,34 @@ impl TransformRule {
     /// 应用转换规则
     pub fn apply(&self, value: &Value) -> Value {
         match self {
-            TransformRule::Multiply(factor) => {
-                match value {
-                    Value::Number(n) => {
-                        if let Some(num) = n.as_f64() {
-                            Value::Number(serde_json::Number::from_f64(num * factor).unwrap_or(n.clone()))
+            TransformRule::Multiply(factor) => match value {
+                Value::Number(n) => {
+                    if let Some(num) = n.as_f64() {
+                        Value::Number(
+                            serde_json::Number::from_f64(num * factor).unwrap_or(n.clone()),
+                        )
+                    } else {
+                        value.clone()
+                    }
+                }
+                _ => value.clone(),
+            },
+            TransformRule::Divide(divisor) => match value {
+                Value::Number(n) => {
+                    if let Some(num) = n.as_f64() {
+                        if *divisor != 0.0 {
+                            Value::Number(
+                                serde_json::Number::from_f64(num / divisor).unwrap_or(n.clone()),
+                            )
                         } else {
                             value.clone()
                         }
+                    } else {
+                        value.clone()
                     }
-                    _ => value.clone(),
                 }
-            }
-            TransformRule::Divide(divisor) => {
-                match value {
-                    Value::Number(n) => {
-                        if let Some(num) = n.as_f64() {
-                            if *divisor != 0.0 {
-                                Value::Number(serde_json::Number::from_f64(num / divisor).unwrap_or(n.clone()))
-                            } else {
-                                value.clone()
-                            }
-                        } else {
-                            value.clone()
-                        }
-                    }
-                    _ => value.clone(),
-                }
-            }
+                _ => value.clone(),
+            },
             TransformRule::Fixed(fixed_val) => fixed_val.clone(),
             TransformRule::None => value.clone(),
         }
@@ -102,15 +102,14 @@ impl FieldMappingConfig {
     /// 从JSON字符串解析配置
     pub fn from_json(json_str: &str) -> Result<Self> {
         let config_value: Value = serde_json::from_str(json_str)?;
-        
+
         // 解析字段映射
         let field_mappings = if let Some(mappings) = config_value.get("field_mappings") {
-            mappings.as_object()
+            mappings
+                .as_object()
                 .unwrap_or(&serde_json::Map::new())
                 .iter()
-                .filter_map(|(k, v)| {
-                    v.as_str().map(|s| (k.clone(), s.to_string()))
-                })
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                 .collect()
         } else {
             HashMap::new()
@@ -118,7 +117,8 @@ impl FieldMappingConfig {
 
         // 解析默认值
         let default_values = if let Some(defaults) = config_value.get("default_values") {
-            defaults.as_object()
+            defaults
+                .as_object()
                 .unwrap_or(&serde_json::Map::new())
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -129,12 +129,11 @@ impl FieldMappingConfig {
 
         // 解析转换规则
         let transformations = if let Some(transforms) = config_value.get("transformations") {
-            transforms.as_object()
+            transforms
+                .as_object()
                 .unwrap_or(&serde_json::Map::new())
                 .iter()
-                .filter_map(|(k, v)| {
-                    v.as_str().map(|s| (k.clone(), TransformRule::from_str(s)))
-                })
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), TransformRule::from_str(s))))
                 .collect()
         } else {
             HashMap::new()
@@ -142,7 +141,7 @@ impl FieldMappingConfig {
 
         Ok(Self {
             field_mappings,
-            default_values, 
+            default_values,
             transformations,
         })
     }
@@ -150,9 +149,10 @@ impl FieldMappingConfig {
     /// 转换为JSON字符串
     pub fn to_json(&self) -> Result<String> {
         let mut config = serde_json::Map::new();
-        
+
         // 字段映射
-        let mappings: serde_json::Map<String, Value> = self.field_mappings
+        let mappings: serde_json::Map<String, Value> = self
+            .field_mappings
             .iter()
             .map(|(k, v)| (k.clone(), Value::String(v.clone())))
             .collect();
@@ -164,8 +164,9 @@ impl FieldMappingConfig {
 
         // 转换规则
         let transforms = serde_json::Map::from_iter(
-            self.transformations.iter()
-                .map(|(k, v)| (k.clone(), Value::String(format!("{:?}", v))))
+            self.transformations
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(format!("{:?}", v)))),
         );
         config.insert("transformations".to_string(), Value::Object(transforms));
 
@@ -226,7 +227,7 @@ impl FieldExtractor {
                 let bracket_pos = part.find('[').unwrap();
                 let field_name = &part[..bracket_pos];
                 let index_str = &part[bracket_pos + 1..part.len() - 1];
-                
+
                 // 先获取数组字段
                 if let Some(array_field) = current.get(field_name) {
                     if let Some(array) = array_field.as_array() {
@@ -268,8 +269,7 @@ impl FieldExtractor {
 
     /// 提取f64类型字段
     pub fn extract_f64(&self, response: &Value, field_name: &str) -> Option<f64> {
-        self.extract_field(response, field_name)?
-            .as_f64()
+        self.extract_field(response, field_name)?.as_f64()
     }
 
     /// 提取字符串类型字段
@@ -281,8 +281,7 @@ impl FieldExtractor {
 
     /// 提取布尔类型字段
     pub fn extract_bool(&self, response: &Value, field_name: &str) -> Option<bool> {
-        self.extract_field(response, field_name)?
-            .as_bool()
+        self.extract_field(response, field_name)?.as_bool()
     }
 
     /// 获取所有配置的字段名
@@ -293,13 +292,13 @@ impl FieldExtractor {
     /// 验证配置是否有效
     pub fn validate_config(&self, sample_response: &Value) -> Vec<String> {
         let mut errors = Vec::new();
-        
+
         for (field_name, json_path) in &self.config.field_mappings {
             if self.extract_by_path(sample_response, json_path).is_none() {
                 // 如果有默认值就不算错误
                 if !self.config.default_values.contains_key(field_name) {
                     errors.push(format!(
-                        "Field '{}' with path '{}' not found in sample response", 
+                        "Field '{}' with path '{}' not found in sample response",
                         field_name, json_path
                     ));
                 }
@@ -319,15 +318,20 @@ mod tests {
     fn test_simple_field_extraction() {
         let config = FieldMappingConfig {
             field_mappings: [
-                ("input_tokens".to_string(), "usage.prompt_tokens".to_string()),
+                (
+                    "input_tokens".to_string(),
+                    "usage.prompt_tokens".to_string(),
+                ),
                 ("model_name".to_string(), "model".to_string()),
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             default_values: HashMap::new(),
             transformations: HashMap::new(),
         };
 
         let extractor = FieldExtractor::new(config);
-        
+
         let response = json!({
             "model": "gpt-4",
             "usage": {
@@ -337,21 +341,27 @@ mod tests {
         });
 
         assert_eq!(extractor.extract_u32(&response, "input_tokens"), Some(100));
-        assert_eq!(extractor.extract_string(&response, "model_name"), Some("gpt-4".to_string()));
+        assert_eq!(
+            extractor.extract_string(&response, "model_name"),
+            Some("gpt-4".to_string())
+        );
     }
 
     #[test]
     fn test_array_index_extraction() {
         let config = FieldMappingConfig {
-            field_mappings: [
-                ("content".to_string(), "choices[0].message.content".to_string()),
-            ].into_iter().collect(),
+            field_mappings: [(
+                "content".to_string(),
+                "choices[0].message.content".to_string(),
+            )]
+            .into_iter()
+            .collect(),
             default_values: HashMap::new(),
             transformations: HashMap::new(),
         };
 
         let extractor = FieldExtractor::new(config);
-        
+
         let response = json!({
             "choices": [{
                 "message": {
@@ -361,7 +371,7 @@ mod tests {
         });
 
         assert_eq!(
-            extractor.extract_string(&response, "content"), 
+            extractor.extract_string(&response, "content"),
             Some("Hello, world!".to_string())
         );
     }
@@ -373,7 +383,9 @@ mod tests {
             default_values: [
                 ("cache_tokens".to_string(), json!(0)),
                 ("currency".to_string(), json!("USD")),
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             transformations: HashMap::new(),
         };
 
@@ -381,23 +393,26 @@ mod tests {
         let response = json!({});
 
         assert_eq!(extractor.extract_u32(&response, "cache_tokens"), Some(0));
-        assert_eq!(extractor.extract_string(&response, "currency"), Some("USD".to_string()));
+        assert_eq!(
+            extractor.extract_string(&response, "currency"),
+            Some("USD".to_string())
+        );
     }
 
     #[test]
     fn test_transformations() {
         let config = FieldMappingConfig {
-            field_mappings: [
-                ("cost".to_string(), "billing.total".to_string()),
-            ].into_iter().collect(),
+            field_mappings: [("cost".to_string(), "billing.total".to_string())]
+                .into_iter()
+                .collect(),
             default_values: HashMap::new(),
-            transformations: [
-                ("cost".to_string(), TransformRule::Divide(1000.0)),
-            ].into_iter().collect(),
+            transformations: [("cost".to_string(), TransformRule::Divide(1000.0))]
+                .into_iter()
+                .collect(),
         };
 
         let extractor = FieldExtractor::new(config);
-        
+
         let response = json!({
             "billing": {
                 "total": 5000.0
@@ -407,18 +422,21 @@ mod tests {
         assert_eq!(extractor.extract_f64(&response, "cost"), Some(5.0));
     }
 
-    #[test] 
+    #[test]
     fn test_config_serialization() {
         let config = FieldMappingConfig {
-            field_mappings: [
-                ("input_tokens".to_string(), "usage.prompt_tokens".to_string()),
-            ].into_iter().collect(),
-            default_values: [
-                ("cache_tokens".to_string(), json!(0)),
-            ].into_iter().collect(),
-            transformations: [
-                ("cost".to_string(), TransformRule::Divide(1000.0)),
-            ].into_iter().collect(),
+            field_mappings: [(
+                "input_tokens".to_string(),
+                "usage.prompt_tokens".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            default_values: [("cache_tokens".to_string(), json!(0))]
+                .into_iter()
+                .collect(),
+            transformations: [("cost".to_string(), TransformRule::Divide(1000.0))]
+                .into_iter()
+                .collect(),
         };
 
         let json_str = config.to_json().unwrap();

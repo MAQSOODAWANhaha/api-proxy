@@ -39,10 +39,7 @@ impl MigrationTrait for Migration {
                             .string_len(50)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(ProviderTypes::DefaultModel)
-                            .string_len(100),
-                    )
+                    .col(ColumnDef::new(ProviderTypes::DefaultModel).string_len(100))
                     .col(
                         ColumnDef::new(ProviderTypes::MaxTokens)
                             .integer()
@@ -74,10 +71,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(true),
                     )
-                    .col(
-                        ColumnDef::new(ProviderTypes::ConfigJson)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(ProviderTypes::ConfigJson).text())
                     .col(
                         ColumnDef::new(ProviderTypes::CreatedAt)
                             .timestamp()

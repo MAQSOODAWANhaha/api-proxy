@@ -9,13 +9,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
-use jsonwebtoken::{DecodingKey, Validation, decode};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // 导入JWT Claims结构体
-use crate::management::handlers::auth::Claims;
 
 /// 统计查询参数（向后兼容）
 #[derive(Debug, Deserialize)]

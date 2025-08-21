@@ -2,22 +2,22 @@
 //!
 //! Axum HTTP服务器，提供管理和监控API
 
-use super::middleware::{ip_filter_middleware, IpFilterConfig};
+use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;
 use crate::config::AppConfig;
 use crate::health::service::HealthCheckService as HealthService;
 use crate::health::service::HealthCheckStatistics;
 use crate::management::response::{self};
-use crate::providers::dynamic_manager::AdapterStats;
 use crate::providers::DynamicAdapterManager;
+use crate::providers::dynamic_manager::AdapterStats;
 use crate::scheduler::manager::LoadBalancerManager;
 use crate::statistics::service::StatisticsService;
 use anyhow::Result;
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::get;
-use axum::Router;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,8 +26,8 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 /// 管理服务器配置
@@ -143,7 +143,10 @@ impl ManagementServer {
         let static_service = if static_dir.exists() {
             info!("Enabling static file service from /app/static");
             // 创建静态文件服务，支持SPA应用的fallback
-            Some(ServeDir::new(static_dir).not_found_service(ServeFile::new("/app/static/index.html")))
+            Some(
+                ServeDir::new(static_dir)
+                    .not_found_service(ServeFile::new("/app/static/index.html")),
+            )
         } else {
             warn!("Static directory /app/static not found, static files will not be served");
             None

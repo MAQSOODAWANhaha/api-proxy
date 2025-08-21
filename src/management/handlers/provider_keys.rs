@@ -6,10 +6,12 @@ use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json, Response};
-use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
-use serde::{Deserialize, Serialize};
+use axum::response::{IntoResponse, Json};
+use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+};
+use serde::Deserialize;
 use serde_json::json;
 
 /// 获取提供商密钥列表
@@ -544,6 +546,195 @@ pub async fn get_provider_key_stats(
             "max_tokens_prompt_per_minute": provider_key.0.max_tokens_prompt_per_minute,
             "max_requests_per_day": provider_key.0.max_requests_per_day
         }
+    });
+
+    response::success(data).into_response()
+}
+
+/// 获取提供商密钥卡片统计数据
+pub async fn get_provider_keys_dashboard_stats(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    use entity::user_provider_keys::{self, Entity as UserProviderKey};
+
+    let db = state.database.as_ref();
+
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response.into_response(),
+    };
+
+    // 查询总密钥数
+    let total_keys = match UserProviderKey::find()
+        .filter(user_provider_keys::Column::UserId.eq(user_id))
+        .count(db)
+        .await
+    {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::error!("Failed to count total keys: {}", err);
+            return response::error::<serde_json::Value>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count total keys",
+            )
+            .into_response();
+        }
+    };
+
+    // 查询活跃密钥数
+    let active_keys = match UserProviderKey::find()
+        .filter(user_provider_keys::Column::UserId.eq(user_id))
+        .filter(user_provider_keys::Column::IsActive.eq(true))
+        .count(db)
+        .await
+    {
+        Ok(count) => count,
+        Err(err) => {
+            tracing::error!("Failed to count active keys: {}", err);
+            return response::error::<serde_json::Value>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to count active keys",
+            )
+            .into_response();
+        }
+    };
+
+    // 查询总使用次数和总花费 - 从 proxy_tracing 表中统计
+    // 使用子查询来获取该用户的provider_key_ids
+    let user_provider_key_ids: Vec<i32> = match UserProviderKey::find()
+        .filter(user_provider_keys::Column::UserId.eq(user_id))
+        .all(db)
+        .await
+    {
+        Ok(keys) => keys.iter().map(|k| k.id).collect(),
+        Err(err) => {
+            tracing::error!("Failed to fetch user provider keys: {}", err);
+            return response::error::<serde_json::Value>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch user provider keys",
+            )
+            .into_response();
+        }
+    };
+
+    // 统计使用次数和费用
+    let (total_usage, total_cost) = if user_provider_key_ids.is_empty() {
+        (0u64, 0.0f64)
+    } else {
+        use entity::proxy_tracing::{self, Entity as ProxyTracing};
+
+        match ProxyTracing::find()
+            .filter(proxy_tracing::Column::UserProviderKeyId.is_in(user_provider_key_ids))
+            .filter(proxy_tracing::Column::IsSuccess.eq(true))
+            .all(db)
+            .await
+        {
+            Ok(records) => {
+                let usage_count = records.len() as u64;
+                let cost_sum: f64 = records.iter().filter_map(|record| record.cost).sum();
+                (usage_count, cost_sum)
+            }
+            Err(err) => {
+                tracing::error!("Failed to fetch proxy tracing records: {}", err);
+                return response::error::<serde_json::Value>(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DB_ERROR",
+                    "Failed to fetch usage statistics",
+                )
+                .into_response();
+            }
+        }
+    };
+
+    let data = json!({
+        "total_keys": total_keys,
+        "active_keys": active_keys,
+        "total_usage": total_usage,
+        "total_cost": total_cost
+    });
+
+    response::success(data).into_response()
+}
+
+/// 获取简单提供商密钥列表（用于下拉选择）
+pub async fn get_simple_provider_keys_list(
+    State(state): State<AppState>,
+    Query(query): Query<UserProviderKeyQuery>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    use entity::provider_types::Entity as ProviderType;
+    use entity::user_provider_keys::{self, Entity as UserProviderKey};
+
+    let db = state.database.as_ref();
+
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response.into_response(),
+    };
+
+    // 构建查询条件
+    let mut select = UserProviderKey::find().filter(user_provider_keys::Column::UserId.eq(user_id));
+
+    // 应用服务商类型筛选
+    if let Some(provider_type_id) = query.provider_type_id {
+        select = select.filter(user_provider_keys::Column::ProviderTypeId.eq(provider_type_id));
+    }
+
+    // 应用状态筛选
+    if let Some(is_active) = query.is_active {
+        select = select.filter(user_provider_keys::Column::IsActive.eq(is_active));
+    }
+
+    // 执行查询并关联 provider_types 表
+    let provider_keys = match select
+        .find_also_related(ProviderType)
+        .order_by_desc(user_provider_keys::Column::CreatedAt)
+        .all(db)
+        .await
+    {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Failed to fetch simple provider keys: {}", err);
+            return response::error::<serde_json::Value>(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "Failed to fetch provider keys",
+            )
+            .into_response();
+        }
+    };
+
+    // 构建响应数据
+    let mut provider_keys_list = Vec::new();
+
+    for (provider_key, provider_type_opt) in provider_keys {
+        let provider_name = provider_type_opt
+            .as_ref()
+            .map(|pt| pt.display_name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let display_name = format!("{} ({})", provider_key.name, provider_name);
+
+        let response_key = json!({
+            "id": provider_key.id,
+            "name": provider_key.name,
+            "display_name": display_name,
+            "provider": provider_name,
+            "provider_type_id": provider_key.provider_type_id,
+            "is_active": provider_key.is_active
+        });
+
+        provider_keys_list.push(response_key);
+    }
+
+    let data = json!({
+        "provider_keys": provider_keys_list
     });
 
     response::success(data).into_response()

@@ -2,12 +2,12 @@
 //!
 //! Provides JWT token generation, validation and refresh functionality
 
-use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{
-    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation, TokenData,
+    Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::auth::types::{AuthConfig, AuthError, JwtClaims};
@@ -32,9 +32,9 @@ impl From<JwtError> for AuthError {
     fn from(jwt_error: JwtError) -> Self {
         match jwt_error {
             JwtError::TokenExpired => AuthError::TokenExpired,
-            JwtError::TokenValidation(_) | 
-            JwtError::InvalidFormat | 
-            JwtError::MissingClaims => AuthError::InvalidToken,
+            JwtError::TokenValidation(_) | JwtError::InvalidFormat | JwtError::MissingClaims => {
+                AuthError::InvalidToken
+            }
             JwtError::TokenGeneration(msg) => AuthError::InternalError(msg),
         }
     }
@@ -57,14 +57,14 @@ impl JwtManager {
     pub fn new(config: Arc<AuthConfig>) -> Result<Self> {
         let encoding_key = EncodingKey::from_secret(config.jwt_secret.as_bytes());
         let decoding_key = DecodingKey::from_secret(config.jwt_secret.as_bytes());
-        
+
         let mut validation = Validation::new(Algorithm::HS256);
         validation.set_issuer(&["ai-proxy"]);
         validation.set_audience(&["ai-proxy-users"]);
         validation.validate_exp = true;
         validation.validate_nbf = false;
         validation.leeway = 30; // 30 seconds tolerance
-        
+
         Ok(Self {
             encoding_key,
             decoding_key,
@@ -90,27 +90,23 @@ impl JwtManager {
         );
 
         let header = Header::new(Algorithm::HS256);
-        
+
         encode(&header, &claims, &self.encoding_key)
             .map_err(|e| JwtError::TokenGeneration(e.to_string()).into())
     }
 
     /// Generate refresh token
-    pub fn generate_refresh_token(
-        &self,
-        user_id: i32,
-        username: String,
-    ) -> Result<String> {
+    pub fn generate_refresh_token(&self, user_id: i32, username: String) -> Result<String> {
         let claims = JwtClaims::new(
             user_id,
             username,
-            false, // Refresh tokens don't include admin permissions
+            false,  // Refresh tokens don't include admin permissions
             vec![], // Refresh tokens don't include specific permissions
             self.config.refresh_expires_in,
         );
 
         let header = Header::new(Algorithm::HS256);
-        
+
         encode(&header, &claims, &self.encoding_key)
             .map_err(|e| JwtError::TokenGeneration(e.to_string()).into())
     }
@@ -118,15 +114,13 @@ impl JwtManager {
     /// Validate and parse token
     pub fn validate_token(&self, token: &str) -> Result<JwtClaims> {
         let token_data: TokenData<JwtClaims> = decode(token, &self.decoding_key, &self.validation)
-            .map_err(|e| {
-                match e.kind() {
-                    jsonwebtoken::errors::ErrorKind::ExpiredSignature => JwtError::TokenExpired,
-                    _ => JwtError::TokenValidation(e.to_string()),
-                }
+            .map_err(|e| match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => JwtError::TokenExpired,
+                _ => JwtError::TokenValidation(e.to_string()),
             })?;
 
         let claims = token_data.claims;
-        
+
         // Additional check for token expiration
         if claims.is_expired() {
             return Err(JwtError::TokenExpired.into());
@@ -144,10 +138,9 @@ impl JwtManager {
     ) -> Result<String> {
         // Validate refresh token
         let claims = self.validate_token(refresh_token)?;
-        
+
         // Check if user ID is valid
-        let user_id = claims.user_id()
-            .map_err(|_| JwtError::MissingClaims)?;
+        let user_id = claims.user_id().map_err(|_| JwtError::MissingClaims)?;
 
         // Generate new access token
         self.generate_access_token(user_id, claims.username, is_admin, permissions)
@@ -158,7 +151,7 @@ impl JwtManager {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.insecure_disable_signature_validation();
         validation.validate_exp = false;
-        
+
         decode::<JwtClaims>(token, &self.decoding_key, &validation)
             .map(|token_data| token_data.claims)
             .ok()
@@ -166,16 +159,15 @@ impl JwtManager {
 
     /// Get remaining token TTL
     pub fn get_token_ttl(&self, token: &str) -> Option<Duration> {
-        self.extract_claims_unsafe(token)
-            .and_then(|claims| {
-                let exp_time = DateTime::<Utc>::from_timestamp(claims.exp, 0)?;
-                let now = Utc::now();
-                if exp_time > now {
-                    Some(exp_time - now)
-                } else {
-                    None
-                }
-            })
+        self.extract_claims_unsafe(token).and_then(|claims| {
+            let exp_time = DateTime::<Utc>::from_timestamp(claims.exp, 0)?;
+            let now = Utc::now();
+            if exp_time > now {
+                Some(exp_time - now)
+            } else {
+                None
+            }
+        })
     }
 
     /// Check if token is expiring soon
@@ -203,15 +195,11 @@ impl JwtManager {
         is_admin: bool,
         permissions: Vec<String>,
     ) -> Result<TokenPair> {
-        let access_token = self.generate_access_token(
-            user_id,
-            username.clone(),
-            is_admin,
-            permissions,
-        )?;
-        
+        let access_token =
+            self.generate_access_token(user_id, username.clone(), is_admin, permissions)?;
+
         let refresh_token = self.generate_refresh_token(user_id, username)?;
-        
+
         Ok(TokenPair {
             access_token,
             refresh_token,
@@ -252,14 +240,16 @@ mod tests {
     #[test]
     fn test_token_generation_and_validation() {
         let manager = create_test_manager();
-        
-        let token = manager.generate_access_token(
-            1,
-            "testuser".to_string(),
-            false,
-            vec!["use_openai".to_string()],
-        ).unwrap();
-        
+
+        let token = manager
+            .generate_access_token(
+                1,
+                "testuser".to_string(),
+                false,
+                vec!["use_openai".to_string()],
+            )
+            .unwrap();
+
         let claims = manager.validate_token(&token).unwrap();
         assert_eq!(claims.user_id().unwrap(), 1);
         assert_eq!(claims.username, "testuser");
@@ -270,20 +260,17 @@ mod tests {
     #[test]
     fn test_refresh_token_flow() {
         let manager = create_test_manager();
-        
+
         // Generate refresh token
-        let refresh_token = manager.generate_refresh_token(
-            1,
-            "testuser".to_string(),
-        ).unwrap();
-        
+        let refresh_token = manager
+            .generate_refresh_token(1, "testuser".to_string())
+            .unwrap();
+
         // Use refresh token to generate new access token
-        let new_access_token = manager.refresh_access_token(
-            &refresh_token,
-            vec!["use_openai".to_string()],
-            false,
-        ).unwrap();
-        
+        let new_access_token = manager
+            .refresh_access_token(&refresh_token, vec!["use_openai".to_string()], false)
+            .unwrap();
+
         let claims = manager.validate_token(&new_access_token).unwrap();
         assert_eq!(claims.user_id().unwrap(), 1);
         assert_eq!(claims.username, "testuser");
@@ -292,19 +279,21 @@ mod tests {
     #[test]
     fn test_token_pair_generation() {
         let manager = create_test_manager();
-        
-        let token_pair = manager.generate_token_pair(
-            1,
-            "testuser".to_string(),
-            true,
-            vec!["super_admin".to_string()],
-        ).unwrap();
-        
+
+        let token_pair = manager
+            .generate_token_pair(
+                1,
+                "testuser".to_string(),
+                true,
+                vec!["super_admin".to_string()],
+            )
+            .unwrap();
+
         // Validate access token
         let access_claims = manager.validate_token(&token_pair.access_token).unwrap();
         assert_eq!(access_claims.user_id().unwrap(), 1);
         assert!(access_claims.is_admin);
-        
+
         // Validate refresh token
         let refresh_claims = manager.validate_token(&token_pair.refresh_token).unwrap();
         assert_eq!(refresh_claims.user_id().unwrap(), 1);
@@ -314,17 +303,19 @@ mod tests {
     #[test]
     fn test_token_expiration_checking() {
         let manager = create_test_manager();
-        
-        let token = manager.generate_access_token(
-            1,
-            "testuser".to_string(),
-            false,
-            vec!["use_openai".to_string()],
-        ).unwrap();
-        
+
+        let token = manager
+            .generate_access_token(
+                1,
+                "testuser".to_string(),
+                false,
+                vec!["use_openai".to_string()],
+            )
+            .unwrap();
+
         // Check if token is expiring soon (should not be, since just generated)
         assert!(!manager.is_token_expiring_soon(&token, 60));
-        
+
         // Check with large threshold
         assert!(manager.is_token_expiring_soon(&token, 7200)); // 2 hours
     }
@@ -332,17 +323,19 @@ mod tests {
     #[test]
     fn test_token_ttl() {
         let manager = create_test_manager();
-        
-        let token = manager.generate_access_token(
-            1,
-            "testuser".to_string(),
-            false,
-            vec!["use_openai".to_string()],
-        ).unwrap();
-        
+
+        let token = manager
+            .generate_access_token(
+                1,
+                "testuser".to_string(),
+                false,
+                vec!["use_openai".to_string()],
+            )
+            .unwrap();
+
         let ttl = manager.get_token_ttl(&token);
         assert!(ttl.is_some());
-        
+
         let ttl_seconds = ttl.unwrap().num_seconds();
         // TTL should be close to but less than 3600 seconds
         assert!(ttl_seconds > 3550 && ttl_seconds <= 3600);
@@ -351,11 +344,11 @@ mod tests {
     #[test]
     fn test_invalid_token() {
         let manager = create_test_manager();
-        
+
         // Test invalid token
         let result = manager.validate_token("invalid-token");
         assert!(result.is_err());
-        
+
         // Test empty token
         let result = manager.validate_token("");
         assert!(result.is_err());
@@ -364,17 +357,19 @@ mod tests {
     #[test]
     fn test_token_revocation() {
         let manager = create_test_manager();
-        
-        let token = manager.generate_access_token(
-            1,
-            "testuser".to_string(),
-            false,
-            vec!["use_openai".to_string()],
-        ).unwrap();
-        
+
+        let token = manager
+            .generate_access_token(
+                1,
+                "testuser".to_string(),
+                false,
+                vec!["use_openai".to_string()],
+            )
+            .unwrap();
+
         let jti = manager.revoke_token(&token).unwrap();
         assert!(!jti.is_empty());
-        
+
         // Test revoking invalid token
         let result = manager.revoke_token("invalid-token");
         assert!(result.is_err());
@@ -383,17 +378,19 @@ mod tests {
     #[test]
     fn test_unsafe_claims_extraction() {
         let manager = create_test_manager();
-        
-        let token = manager.generate_access_token(
-            1,
-            "testuser".to_string(),
-            false,
-            vec!["use_openai".to_string()],
-        ).unwrap();
-        
+
+        let token = manager
+            .generate_access_token(
+                1,
+                "testuser".to_string(),
+                false,
+                vec!["use_openai".to_string()],
+            )
+            .unwrap();
+
         let claims = manager.extract_claims_unsafe(&token);
         assert!(claims.is_some());
-        
+
         let claims = claims.unwrap();
         assert_eq!(claims.user_id().unwrap(), 1);
         assert_eq!(claims.username, "testuser");

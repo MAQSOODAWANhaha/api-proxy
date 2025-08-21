@@ -16,14 +16,21 @@ pub trait ProviderAdapter: Send + Sync {
     fn transform_request(&self, request: &AdapterRequest) -> ProviderResult<AdapterRequest>;
 
     /// 转换响应格式
-    fn transform_response(&self, response: &AdapterResponse, original_request: &AdapterRequest) -> ProviderResult<AdapterResponse>;
+    fn transform_response(
+        &self,
+        response: &AdapterResponse,
+        original_request: &AdapterRequest,
+    ) -> ProviderResult<AdapterResponse>;
 
     /// 处理流式响应块
-    fn handle_streaming_chunk(&self, chunk: &[u8], request: &AdapterRequest) -> ProviderResult<Option<StreamChunk>>;
+    fn handle_streaming_chunk(
+        &self,
+        chunk: &[u8],
+        request: &AdapterRequest,
+    ) -> ProviderResult<Option<StreamChunk>>;
 
     /// 验证请求格式
     fn validate_request(&self, request: &AdapterRequest) -> ProviderResult<()>;
-
 
     /// 检查请求是否要求流式响应
     fn is_streaming_request(&self, request: &AdapterRequest) -> bool;

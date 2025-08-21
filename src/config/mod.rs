@@ -13,9 +13,7 @@ mod watcher;
 pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig};
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use database::DatabaseConfig;
-pub use dual_port_config::{
-    DualPortServerConfig, ManagementPortConfig, ProxyPortConfig,
-};
+pub use dual_port_config::{DualPortServerConfig, ManagementPortConfig, ProxyPortConfig};
 pub use manager::ConfigManager;
 pub use provider_config::{ProviderConfig, ProviderConfigManager};
 pub use watcher::{ConfigEvent, ConfigWatcher};

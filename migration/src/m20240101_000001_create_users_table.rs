@@ -35,11 +35,7 @@ impl MigrationTrait for Migration {
                             .string_len(255)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Users::Salt)
-                            .string_len(32)
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Users::Salt).string_len(32).not_null())
                     .col(
                         ColumnDef::new(Users::IsActive)
                             .boolean()
@@ -52,10 +48,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .col(
-                        ColumnDef::new(Users::LastLogin)
-                            .timestamp(),
-                    )
+                    .col(ColumnDef::new(Users::LastLogin).timestamp())
                     .col(
                         ColumnDef::new(Users::CreatedAt)
                             .timestamp()

@@ -13,7 +13,7 @@ pub struct Model {
     pub id: i32,
     #[sea_orm(unique)]
     pub username: String,
-    #[sea_orm(unique)]  
+    #[sea_orm(unique)]
     pub email: String,
     pub password_hash: String,
     pub salt: String,

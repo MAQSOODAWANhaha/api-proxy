@@ -73,6 +73,4 @@ impl Related<super::proxy_tracing::Entity> for Entity {
     }
 }
 
-
-
 impl ActiveModelBehavior for ActiveModel {}

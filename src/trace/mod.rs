@@ -2,17 +2,17 @@
 //!
 //! 负责收集代理请求的详细追踪数据，用于健康状态监控和性能分析
 
-pub mod models;
 pub mod immediate;
+pub mod models;
 
-pub use models::*;
 pub use immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
+pub use models::*;
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// 统一追踪系统入口
-/// 
+///
 /// 现在只支持即时写入模式，确保长时间请求不会导致内存泄漏
 pub struct UnifiedTraceSystem {
     tracer: Arc<ImmediateProxyTracer>,
@@ -25,10 +25,8 @@ impl UnifiedTraceSystem {
         config: ImmediateTracerConfig,
     ) -> Self {
         let tracer = Arc::new(ImmediateProxyTracer::new(db, config));
-        
-        Self {
-            tracer,
-        }
+
+        Self { tracer }
     }
 
     /// 获取即时写入追踪器

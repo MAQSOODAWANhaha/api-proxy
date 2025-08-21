@@ -6,11 +6,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use bcrypt;
 use chrono::{Duration, Utc};
-use entity::{provider_types, provider_types::Entity as ProviderTypes, users::Entity as Users};
+use entity::users::Entity as Users;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
-use serde_json::json; // remove unused Value
+ // remove unused Value
 
 /// 登录请求
 #[derive(Debug, Deserialize)]

@@ -4,4 +4,4 @@
 
 pub mod ip_filter;
 
-pub use ip_filter::{ip_filter_middleware, IpFilterConfig, get_real_client_ip};
+pub use ip_filter::{IpFilterConfig, get_real_client_ip, ip_filter_middleware};

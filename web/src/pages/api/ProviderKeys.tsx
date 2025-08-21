@@ -3,7 +3,7 @@
  * 账号（上游服务商）API Keys 管理页：完整的增删改查和统计功能
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search,
   Plus,
@@ -24,23 +24,19 @@ import {
 import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
-import { api } from '../../lib/api'
+import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse } from '../../lib/api'
 
-/** 账号 API Key 数据结构 */
-interface ProviderKey {
-  id: string
-  provider: string
-  keyName: string
-  keyValue: string
-  weight: number
-  requestLimitPerMinute: number
-  tokenLimitPromptPerMinute: number
-  requestLimitPerDay: number
-  status: 'active' | 'disabled' | 'error'
-  usage: number
-  cost: number
-  createdAt: string
-  healthCheck: 'healthy' | 'warning' | 'error'
+/** 账号 API Key 数据结构 - 与后端保持一致 */
+interface LocalProviderKey extends ProviderKey {
+  // 为了兼容现有UI，添加一些别名
+  keyName: string  // 映射到 name
+  keyValue: string // 映射到 api_key
+  status: 'active' | 'disabled' | 'error' // 基于 is_active 转换
+  createdAt: string // 映射到 created_at
+  requestLimitPerMinute: number // 映射到 max_requests_per_minute
+  tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute  
+  requestLimitPerDay: number // 映射到 max_requests_per_day
+  healthCheck: 'healthy' | 'warning' | 'error' // 映射到 health_status
 }
 
 /** 服务商类型 */
@@ -54,71 +50,110 @@ interface ProviderType {
   created_at: string
 }
 
-/** 模拟数据 */
-const initialData: ProviderKey[] = [
-  {
-    id: '1',
-    provider: 'OpenAI',
-    keyName: 'Primary GPT Key',
-    keyValue: 'sk-1234567890abcdef1234567890abcdef',
-    weight: 1,
-    requestLimitPerMinute: 60,
-    tokenLimitPromptPerMinute: 1000,
-    requestLimitPerDay: 10000,
-    status: 'active',
-    usage: 8520,
-    cost: 125.50,
-    createdAt: '2024-01-10',
-    healthCheck: 'healthy',
-  },
-  {
-    id: '2',
-    provider: 'Anthropic',
-    keyName: 'Claude Production',
-    keyValue: 'sk-ant-abcdef1234567890abcdef1234567890',
-    weight: 2,
-    requestLimitPerMinute: 30,
-    tokenLimitPromptPerMinute: 800,
-    requestLimitPerDay: 5000,
-    status: 'active',
-    usage: 3420,
-    cost: 89.30,
-    createdAt: '2024-01-12',
-    healthCheck: 'healthy',
-  },
-  {
-    id: '3',
-    provider: 'Google',
-    keyName: 'Gemini Backup',
-    keyValue: 'AIzaSyDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    weight: 3,
-    requestLimitPerMinute: 20,
-    tokenLimitPromptPerMinute: 500,
-    requestLimitPerDay: 2500,
-    status: 'disabled',
-    usage: 145,
-    cost: 12.80,
-    createdAt: '2024-01-08',
-    healthCheck: 'error',
-  },
-]
+// 数据转换工具函数
+const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
+  return {
+    ...apiKey,
+    keyName: apiKey.name,
+    keyValue: apiKey.api_key,
+    status: apiKey.is_active ? 'active' : 'disabled',
+    createdAt: apiKey.created_at,
+    requestLimitPerMinute: apiKey.max_requests_per_minute,
+    tokenLimitPromptPerMinute: apiKey.max_tokens_prompt_per_minute,
+    requestLimitPerDay: apiKey.max_requests_per_day,
+    healthCheck: apiKey.health_status,
+  }
+}
+
+const transformProviderKeyToAPI = (localKey: Partial<LocalProviderKey>): any => {
+  return {
+    name: localKey.keyName,
+    api_key: localKey.keyValue,
+    is_active: localKey.status === 'active',
+    max_requests_per_minute: localKey.requestLimitPerMinute,
+    max_tokens_prompt_per_minute: localKey.tokenLimitPromptPerMinute,
+    max_requests_per_day: localKey.requestLimitPerDay,
+    weight: localKey.weight,
+  }
+}
 
 /** 弹窗类型 */
 type DialogType = 'add' | 'edit' | 'delete' | 'stats' | null
 
 /** 页面主组件 */
 const ProviderKeysPage: React.FC = () => {
-  const [data, setData] = useState<ProviderKey[]>(initialData)
+  // 数据状态
+  const [data, setData] = useState<LocalProviderKey[]>([])
+  const [dashboardStats, setDashboardStats] = useState<ProviderKeysDashboardStatsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  
+  // UI状态
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'error'>('all')
   const [providerFilter, setProviderFilter] = useState<string>('all')
-  const [selectedItem, setSelectedItem] = useState<ProviderKey | null>(null)
+  const [selectedItem, setSelectedItem] = useState<LocalProviderKey | null>(null)
   const [dialogType, setDialogType] = useState<DialogType>(null)
   const [showKeyValues, setShowKeyValues] = useState<{ [key: string]: boolean }>({})
   
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [totalItems, setTotalItems] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
+
+  // 获取仪表板统计数据
+  const fetchDashboardStats = async () => {
+    try {
+      const response = await api.providerKeys.getDashboardStats()
+      if (response.success && response.data) {
+        setDashboardStats(response.data)
+      } else {
+        console.error('获取仪表板统计数据失败:', response.error?.message)
+      }
+    } catch (error) {
+      console.error('获取仪表板统计数据异常:', error)
+    }
+  }
+
+  // 获取密钥列表数据
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      const response = await api.providerKeys.getList({
+        page: currentPage,
+        limit: pageSize,
+        search: searchTerm || undefined,
+        provider: providerFilter === 'all' ? undefined : providerFilter,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+      })
+
+      if (response.success && response.data) {
+        const transformedData = response.data.provider_keys.map(transformProviderKeyFromAPI)
+        setData(transformedData)
+        setTotalItems(response.data.pagination.total)
+        setTotalPages(response.data.pagination.pages)
+      } else {
+        throw new Error(response.error?.message || '获取密钥列表失败')
+      }
+    } catch (error) {
+      console.error('获取密钥列表失败:', error)
+      setError(error instanceof Error ? error.message : '获取数据失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 初始化数据加载
+  useEffect(() => {
+    fetchDashboardStats()
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [currentPage, pageSize, searchTerm, statusFilter, providerFilter])
 
   // 获取所有账号列表
   const providers = useMemo(() => {
@@ -126,25 +161,8 @@ const ProviderKeysPage: React.FC = () => {
     return uniqueProviders
   }, [data])
 
-  // 过滤数据
-  const filteredData = useMemo(() => {
-    return data.filter((item) => {
-      const matchesSearch = 
-        item.provider.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.keyName.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter === 'all' || item.status === statusFilter
-      const matchesProvider = providerFilter === 'all' || item.provider === providerFilter
-      return matchesSearch && matchesStatus && matchesProvider
-    })
-  }, [data, searchTerm, statusFilter, providerFilter])
-
-  // 分页数据和计算
-  const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    return filteredData.slice(startIndex, startIndex + pageSize)
-  }, [filteredData, currentPage, pageSize])
-
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  // 由于后端已经处理了过滤和分页，前端直接使用返回的数据
+  const paginatedData = data
   
   // 重置页码当过滤条件改变时
   React.useEffect(() => {
@@ -164,43 +182,134 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 添加新API Key
-  const handleAdd = (newKey: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck' | 'keyValue'>) => {
-    const providerKey: ProviderKey = {
-      ...newKey,
-      id: Date.now().toString(),
-      usage: 0,
-      cost: 0,
-      createdAt: new Date().toISOString().split('T')[0],
-      keyValue: generateApiKey(newKey.provider),
-      healthCheck: 'healthy',
+  const handleAdd = async (newKey: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => {
+    try {
+      // 找到对应的provider_type_id
+      const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
+      let providerTypeId = 1 // 默认值
+      
+      if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
+        const matchedType = providerTypesResponse.data.provider_types.find(
+          type => type.display_name === newKey.provider
+        )
+        if (matchedType) {
+          providerTypeId = matchedType.id
+        }
+      }
+
+      const response = await api.providerKeys.create({
+        provider_type_id: providerTypeId,
+        name: newKey.keyName,
+        api_key: newKey.keyValue || generateApiKey(newKey.provider),
+        weight: newKey.weight || 1,
+        max_requests_per_minute: newKey.requestLimitPerMinute || 0,
+        max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
+        max_requests_per_day: newKey.requestLimitPerDay || 0,
+        is_active: newKey.status === 'active',
+      })
+
+      if (response.success) {
+        // 刷新数据
+        await fetchData()
+        await fetchDashboardStats()
+        setDialogType(null)
+      } else {
+        throw new Error(response.error?.message || '创建密钥失败')
+      }
+    } catch (error) {
+      console.error('添加密钥失败:', error)
+      alert(error instanceof Error ? error.message : '添加密钥失败')
     }
-    setData([...data, providerKey])
-    setDialogType(null)
   }
 
   // 编辑API Key
-  const handleEdit = (updatedKey: ProviderKey) => {
-    setData(data.map(item => item.id === updatedKey.id ? updatedKey : item))
-    setDialogType(null)
-    setSelectedItem(null)
+  const handleEdit = async (updatedKey: LocalProviderKey) => {
+    try {
+      // 找到对应的provider_type_id
+      const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
+      let providerTypeId = 1 // 默认值
+      
+      if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
+        const matchedType = providerTypesResponse.data.provider_types.find(
+          type => type.display_name === updatedKey.provider
+        )
+        if (matchedType) {
+          providerTypeId = matchedType.id
+        }
+      }
+
+      const response = await api.providerKeys.update(updatedKey.id, {
+        provider_type_id: providerTypeId,
+        name: updatedKey.keyName,
+        api_key: updatedKey.keyValue,
+        weight: updatedKey.weight,
+        max_requests_per_minute: updatedKey.requestLimitPerMinute,
+        max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
+        max_requests_per_day: updatedKey.requestLimitPerDay,
+        is_active: updatedKey.status === 'active',
+      })
+
+      if (response.success) {
+        // 刷新数据
+        await fetchData()
+        await fetchDashboardStats()
+        setDialogType(null)
+        setSelectedItem(null)
+      } else {
+        throw new Error(response.error?.message || '更新密钥失败')
+      }
+    } catch (error) {
+      console.error('编辑密钥失败:', error)
+      alert(error instanceof Error ? error.message : '编辑密钥失败')
+    }
   }
 
   // 删除API Key
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (selectedItem) {
-      setData(data.filter(item => item.id !== selectedItem.id))
-      setDialogType(null)
-      setSelectedItem(null)
+      try {
+        const response = await api.providerKeys.delete(selectedItem.id)
+        
+        if (response.success) {
+          // 刷新数据
+          await fetchData()
+          await fetchDashboardStats()
+          setDialogType(null)
+          setSelectedItem(null)
+        } else {
+          throw new Error(response.error?.message || '删除密钥失败')
+        }
+      } catch (error) {
+        console.error('删除密钥失败:', error)
+        alert(error instanceof Error ? error.message : '删除密钥失败')
+      }
     }
   }
 
   // 健康检查
   const performHealthCheck = async (id: string) => {
-    setData(data.map(item => 
-      item.id === id 
-        ? { ...item, healthCheck: Math.random() > 0.3 ? 'healthy' : 'warning' as const }
-        : item
-    ))
+    try {
+      const response = await api.providerKeys.healthCheck(id)
+      
+      if (response.success) {
+        // 更新本地数据中的健康状态
+        setData(data.map(item => 
+          item.id === id 
+            ? { ...item, healthCheck: response.data?.health_status || 'healthy' }
+            : item
+        ))
+      } else {
+        throw new Error(response.error?.message || '健康检查失败')
+      }
+    } catch (error) {
+      console.error('健康检查失败:', error)
+      // 显示错误状态
+      setData(data.map(item => 
+        item.id === id 
+          ? { ...item, healthCheck: 'error' as const }
+          : item
+      ))
+    }
   }
 
   // 切换API Key可见性
@@ -266,7 +375,10 @@ const ProviderKeysPage: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setData([...initialData])}
+            onClick={() => {
+              fetchData()
+              fetchDashboardStats()
+            }}
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
             title="刷新数据"
           >
@@ -287,25 +399,25 @@ const ProviderKeysPage: React.FC = () => {
       <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard
           icon={<Shield size={18} />}
-          value={data.length.toString()}
+          value={dashboardStats?.total_keys?.toString() || '0'}
           label="总密钥数"
           color="#7c3aed"
         />
         <StatCard
           icon={<Activity size={18} />}
-          value={data.filter(item => item.status === 'active').length.toString()}
+          value={dashboardStats?.active_keys?.toString() || '0'}
           label="活跃密钥"
           color="#10b981"
         />
         <StatCard
           icon={<BarChart3 size={18} />}
-          value={data.reduce((sum, item) => sum + item.usage, 0).toLocaleString()}
+          value={dashboardStats?.total_usage?.toLocaleString() || '0'}
           label="总使用次数"
           color="#0ea5e9"
         />
         <StatCard
           icon={<DollarSign size={18} />}
-          value={`$${data.reduce((sum, item) => sum + item.cost, 0).toFixed(2)}`}
+          value={`$${dashboardStats?.total_cost?.toFixed(2) || '0.00'}`}
           label="总花费"
           color="#f59e0b"
         />
@@ -463,7 +575,7 @@ const ProviderKeysPage: React.FC = () => {
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-200">
             <div className="text-sm text-neutral-600">
-              显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filteredData.length)} 条，共 {filteredData.length} 条记录
+              显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, totalItems)} 条，共 {totalItems} 条记录
             </div>
             <div className="flex items-center gap-4">
               {/* 每页数量选择 */}
@@ -556,10 +668,10 @@ const ProviderKeysPage: React.FC = () => {
 /** 对话框门户组件 */
 const DialogPortal: React.FC<{
   type: DialogType
-  selectedItem: ProviderKey | null
+  selectedItem: LocalProviderKey | null
   onClose: () => void
-  onAdd: (item: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'lastUsed' | 'healthCheck'>) => void
-  onEdit: (item: ProviderKey) => void
+  onAdd: (item: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => void
+  onEdit: (item: LocalProviderKey) => void
   onDelete: () => void
 }> = ({ type, selectedItem, onClose, onAdd, onEdit, onDelete }) => {
   if (!type) return null
@@ -577,11 +689,12 @@ const DialogPortal: React.FC<{
 /** 添加对话框 */
 const AddDialog: React.FC<{
   onClose: () => void
-  onSubmit: (item: Omit<ProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck' | 'keyValue'>) => void
+  onSubmit: (item: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => void
 }> = ({ onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     provider: '',
     keyName: '',
+    keyValue: '',
     weight: 1,
     requestLimitPerMinute: 0,
     tokenLimitPromptPerMinute: 0,
@@ -693,6 +806,9 @@ const AddDialog: React.FC<{
           </label>
           <input
             type="text"
+            required
+            value={formData.keyValue}
+            onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
             placeholder="请输入API密钥"
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           />
@@ -853,9 +969,9 @@ const AddDialog: React.FC<{
 
 /** 编辑对话框 */
 const EditDialog: React.FC<{
-  item: ProviderKey
+  item: LocalProviderKey
   onClose: () => void
-  onSubmit: (item: ProviderKey) => void
+  onSubmit: (item: LocalProviderKey) => void
 }> = ({ item, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({ ...item })
 
@@ -1016,13 +1132,13 @@ const EditDialog: React.FC<{
           </div>
         </div>
 
-        {/* Token限制/天 */}
+        {/* Token限制/分钟 */}
         <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">Token限制/天</label>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">Token限制/分钟</label>
           <div className="flex items-center">
             <button
               type="button"
-              onClick={() => handleNumberChange('tokenLimitPerDay', -1)}
+              onClick={() => handleNumberChange('tokenLimitPromptPerMinute', -10)}
               className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
             >
               −
@@ -1030,13 +1146,13 @@ const EditDialog: React.FC<{
             <input
               type="number"
               min="0"
-              value={formData.tokenLimitPerDay}
-              onChange={(e) => setFormData({ ...formData, tokenLimitPerDay: parseInt(e.target.value) || 0 })}
+              value={formData.tokenLimitPromptPerMinute}
+              onChange={(e) => setFormData({ ...formData, tokenLimitPromptPerMinute: parseInt(e.target.value) || 0 })}
               className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
             />
             <button
               type="button"
-              onClick={() => handleNumberChange('tokenLimitPerDay', 1)}
+              onClick={() => handleNumberChange('tokenLimitPromptPerMinute', 10)}
               className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
             >
               +
@@ -1087,7 +1203,7 @@ const EditDialog: React.FC<{
 
 /** 删除确认对话框 */
 const DeleteDialog: React.FC<{
-  item: ProviderKey
+  item: LocalProviderKey
   onClose: () => void
   onConfirm: () => void
 }> = ({ item, onClose, onConfirm }) => {
@@ -1117,7 +1233,7 @@ const DeleteDialog: React.FC<{
 
 /** 统计对话框 */
 const StatsDialog: React.FC<{
-  item: ProviderKey
+  item: LocalProviderKey
   onClose: () => void
 }> = ({ item, onClose }) => {
   // 模拟统计数据
@@ -1220,7 +1336,7 @@ const StatsDialog: React.FC<{
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">Token限制</div>
-              <div className="font-medium">{item.tokenLimitPerDay.toLocaleString()} Token/天</div>
+              <div className="font-medium">{(item.tokenLimitPromptPerMinute || 0).toLocaleString()} Token/分钟</div>
             </div>
           </div>
         </div>

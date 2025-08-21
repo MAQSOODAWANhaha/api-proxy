@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::error::{ErrorContext, ProxyError};
     use std::error::Error;
-    use crate::error::{ProxyError, ErrorContext};
 
     #[test]
     fn test_config_error_creation() {
@@ -16,7 +16,7 @@ mod tests {
     fn test_config_error_with_source() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "文件不存在");
         let err = ProxyError::config_with_source("配置文件加载失败", io_err);
-        
+
         assert!(matches!(err, ProxyError::Config { .. }));
         assert!(err.to_string().contains("配置错误: 配置文件加载失败"));
         assert!(err.source().is_some());
@@ -33,10 +33,12 @@ mod tests {
     fn test_error_context_trait() {
         let result: Result<(), std::io::Error> = Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            "权限不足"
+            "权限不足",
         ));
-        
-        let err = result.with_config_context(|| "读取配置文件失败".to_string()).unwrap_err();
+
+        let err = result
+            .with_config_context(|| "读取配置文件失败".to_string())
+            .unwrap_err();
         assert!(matches!(err, ProxyError::Config { .. }));
         assert!(err.to_string().contains("配置错误: 读取配置文件失败"));
     }
@@ -44,8 +46,10 @@ mod tests {
     #[test]
     fn test_option_error_context() {
         let option: Option<String> = None;
-        let err = option.with_database_context(|| "找不到数据库连接".to_string()).unwrap_err();
-        
+        let err = option
+            .with_database_context(|| "找不到数据库连接".to_string())
+            .unwrap_err();
+
         assert!(matches!(err, ProxyError::Database { .. }));
         assert_eq!(err.to_string(), "数据库错误: 找不到数据库连接");
     }
@@ -54,7 +58,7 @@ mod tests {
     fn test_auto_conversion_from_io_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "文件不存在");
         let proxy_err: ProxyError = io_err.into();
-        
+
         assert!(matches!(proxy_err, ProxyError::Io { .. }));
         assert!(proxy_err.to_string().contains("IO错误: 文件操作失败"));
     }
@@ -64,7 +68,7 @@ mod tests {
         let invalid_toml = "invalid = toml = syntax";
         let toml_err = toml::from_str::<toml::Value>(invalid_toml).unwrap_err();
         let proxy_err: ProxyError = toml_err.into();
-        
+
         assert!(matches!(proxy_err, ProxyError::Config { .. }));
         assert!(proxy_err.to_string().contains("配置错误: TOML解析失败"));
     }
@@ -80,7 +84,7 @@ mod tests {
     fn test_error_chain() {
         let root_cause = std::io::Error::new(std::io::ErrorKind::NotFound, "文件不存在");
         let config_err = ProxyError::config_with_source("无法读取配置", root_cause);
-        
+
         // 验证错误链
         assert!(config_err.source().is_some());
         let source = config_err.source().unwrap();
@@ -109,15 +113,33 @@ mod tests {
     #[test]
     fn test_timeout_errors() {
         let err = ProxyError::connection_timeout("连接超时", 30);
-        assert!(matches!(err, ProxyError::ConnectionTimeout { timeout_seconds: 30, .. }));
+        assert!(matches!(
+            err,
+            ProxyError::ConnectionTimeout {
+                timeout_seconds: 30,
+                ..
+            }
+        ));
         assert!(err.to_string().contains("连接超时: 连接超时"));
 
         let err = ProxyError::read_timeout("读取超时", 30);
-        assert!(matches!(err, ProxyError::ReadTimeout { timeout_seconds: 30, .. }));
+        assert!(matches!(
+            err,
+            ProxyError::ReadTimeout {
+                timeout_seconds: 30,
+                ..
+            }
+        ));
         assert!(err.to_string().contains("读取超时: 读取超时"));
 
         let err = ProxyError::write_timeout("写入超时", 30);
-        assert!(matches!(err, ProxyError::WriteTimeout { timeout_seconds: 30, .. }));
+        assert!(matches!(
+            err,
+            ProxyError::WriteTimeout {
+                timeout_seconds: 30,
+                ..
+            }
+        ));
         assert!(err.to_string().contains("写入超时: 写入超时"));
     }
 

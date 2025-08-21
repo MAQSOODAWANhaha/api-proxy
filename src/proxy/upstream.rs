@@ -2,7 +2,7 @@
 //!
 //! 基于数据库驱动的 AI 服务提供商上游连接管理
 
-use crate::config::{AppConfig, ProviderConfigManager, ProviderConfig};
+use crate::config::{AppConfig, ProviderConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::scheduler::balancer::LoadBalancerConfig;
 use crate::scheduler::{LoadBalancer, SchedulingStrategy};
@@ -21,12 +21,12 @@ impl ProviderId {
     pub fn from_database_id(id: i32) -> Self {
         Self(id)
     }
-    
+
     /// 获取数据库ID
     pub fn id(&self) -> i32 {
         self.0
     }
-    
+
     /// 转换为字符串形式（用于日志等）
     pub fn as_string(&self) -> String {
         format!("provider_{}", self.0)
@@ -44,7 +44,6 @@ impl From<i32> for ProviderId {
         ProviderId(id)
     }
 }
-
 
 /// 上游服务器信息
 #[derive(Debug, Clone)]
@@ -95,8 +94,8 @@ pub struct UpstreamManager {
 impl UpstreamManager {
     /// 创建基于数据库驱动的上游管理器（推荐使用）
     pub fn new_database_driven(
-        config: Arc<AppConfig>, 
-        provider_config_manager: Arc<ProviderConfigManager>
+        config: Arc<AppConfig>,
+        provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
         let lb_config = LoadBalancerConfig {
             default_strategy: SchedulingStrategy::RoundRobin,
@@ -131,27 +130,41 @@ impl UpstreamManager {
             Ok(providers) => {
                 let providers_count = providers.len();
                 tracing::info!("Loading {} active providers from database", providers_count);
-                
+
                 for provider in providers {
                     let provider_id = ProviderId::from_database_id(provider.id);
                     let upstream_server = self.provider_config_to_upstream_server(&provider)?;
-                    
+
                     // 添加服务器到负载均衡器
-                    if let Err(e) = self.load_balancer.add_server(provider_id.clone(), upstream_server) {
-                        tracing::warn!("Failed to add upstream server for provider {}: {}", provider_id, e);
+                    if let Err(e) = self
+                        .load_balancer
+                        .add_server(provider_id.clone(), upstream_server)
+                    {
+                        tracing::warn!(
+                            "Failed to add upstream server for provider {}: {}",
+                            provider_id,
+                            e
+                        );
                         continue;
                     }
-                    
+
                     tracing::info!(
                         "Added upstream server: {} (ID:{}) -> {} ({})",
                         provider.name,
                         provider_id,
                         provider.upstream_address,
-                        if provider.base_url.contains("443") { "TLS" } else { "HTTP" }
+                        if provider.base_url.contains("443") {
+                            "TLS"
+                        } else {
+                            "HTTP"
+                        }
                     );
                 }
-                
-                tracing::info!("Successfully initialized {} database-driven upstream servers", providers_count);
+
+                tracing::info!(
+                    "Successfully initialized {} database-driven upstream servers",
+                    providers_count
+                );
                 Ok(())
             }
             Err(e) => {
@@ -162,18 +175,23 @@ impl UpstreamManager {
     }
 
     /// 将ProviderConfig转换为UpstreamServer
-    fn provider_config_to_upstream_server(&self, config: &ProviderConfig) -> Result<UpstreamServer> {
+    fn provider_config_to_upstream_server(
+        &self,
+        config: &ProviderConfig,
+    ) -> Result<UpstreamServer> {
         // 解析地址和端口
         let (host, port) = if config.upstream_address.contains(':') {
             let parts: Vec<&str> = config.upstream_address.splitn(2, ':').collect();
             if parts.len() != 2 {
                 return Err(ProxyError::config(&format!(
-                    "Invalid upstream address format: {}", config.upstream_address
+                    "Invalid upstream address format: {}",
+                    config.upstream_address
                 )));
             }
             let port = parts[1].parse::<u16>().map_err(|_| {
                 ProxyError::config(&format!(
-                    "Invalid port in upstream address: {}", config.upstream_address
+                    "Invalid port in upstream address: {}",
+                    config.upstream_address
                 ))
             })?;
             (parts[0].to_string(), port)
@@ -185,7 +203,7 @@ impl UpstreamManager {
         let use_tls = port == 443 || config.base_url.starts_with("https");
 
         let mut server = UpstreamServer::new(host, port, use_tls);
-        
+
         // 应用配置中的超时设置
         if let Some(timeout_seconds) = config.timeout_seconds {
             server.timeout_ms = (timeout_seconds as u64) * 1000;
@@ -196,10 +214,15 @@ impl UpstreamManager {
             if let Some(weight) = json_config.get("weight").and_then(|v| v.as_u64()) {
                 server.weight = weight as u32;
             }
-            if let Some(max_connections) = json_config.get("max_connections").and_then(|v| v.as_u64()) {
+            if let Some(max_connections) =
+                json_config.get("max_connections").and_then(|v| v.as_u64())
+            {
                 server.max_connections = Some(max_connections as u32);
             }
-            if let Some(health_check_interval) = json_config.get("health_check_interval").and_then(|v| v.as_u64()) {
+            if let Some(health_check_interval) = json_config
+                .get("health_check_interval")
+                .and_then(|v| v.as_u64())
+            {
                 server.health_check_interval = health_check_interval * 1000; // 转换为毫秒
             }
         }
@@ -213,7 +236,7 @@ impl UpstreamManager {
         if let Err(e) = self.provider_config_manager.refresh_cache().await {
             tracing::warn!("Failed to refresh provider config cache: {}", e);
         }
-        
+
         // 重新初始化上游服务器
         self.initialize_dynamic_upstreams().await
     }
@@ -250,7 +273,8 @@ impl UpstreamManager {
 
     /// 移除上游服务器
     pub fn remove_upstream(&self, provider_id: &ProviderId, server_address: &str) -> Result<()> {
-        self.load_balancer.remove_server(provider_id, server_address)
+        self.load_balancer
+            .remove_server(provider_id, server_address)
     }
 
     /// 更新服务器健康状态

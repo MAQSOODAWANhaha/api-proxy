@@ -1965,9 +1965,7 @@ impl LoadBalancer for HealthBestScheduler {
         // 简化实现：选择权重最高的密钥（假设权重高的更健康）
         let best_key = available_keys
             .into_iter()
-            .max_by_key(|key| {
-                key.weight.unwrap_or(1)
-            })
+            .max_by_key(|key| key.weight.unwrap_or(1))
             .unwrap();
 
         tracing::debug!(

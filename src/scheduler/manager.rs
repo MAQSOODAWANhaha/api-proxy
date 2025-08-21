@@ -3,10 +3,10 @@
 //! 管理多个负载均衡器实例
 
 use crate::config::AppConfig;
-use crate::proxy::upstream::ProviderId;
-use crate::proxy::provider_resolver::ProviderResolver;
-use crate::scheduler::balancer::LoadBalancer;
 use crate::error::{ProxyError, Result};
+use crate::proxy::provider_resolver::ProviderResolver;
+use crate::proxy::upstream::ProviderId;
+use crate::scheduler::balancer::LoadBalancer;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -65,7 +65,10 @@ impl LoadBalancerManager {
         use_tls: bool,
     ) -> Result<()> {
         // 使用ProviderResolver解析提供商ID
-        let provider_id = self.provider_resolver.resolve_provider(provider_id_str).await?;
+        let provider_id = self
+            .provider_resolver
+            .resolve_provider(provider_id_str)
+            .await?;
 
         // 构建服务器信息
         use crate::proxy::upstream::UpstreamServer;
@@ -110,7 +113,10 @@ impl LoadBalancerManager {
     /// 移除服务器
     pub async fn remove_server(&self, provider_id_str: &str, api_id: i32) -> Result<()> {
         // 使用ProviderResolver解析提供商ID
-        let provider_id = self.provider_resolver.resolve_provider(provider_id_str).await?;
+        let provider_id = self
+            .provider_resolver
+            .resolve_provider(provider_id_str)
+            .await?;
 
         let load_balancers = self.load_balancers.read().await;
         if let Some(load_balancer) = load_balancers.get(&provider_id) {

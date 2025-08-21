@@ -1,9 +1,9 @@
 //! # 负载均衡调度算法实现
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use super::types::{SchedulingResult, SchedulingStrategy, ServerMetrics};
 use crate::error::{ProxyError, Result};
 use crate::proxy::upstream::UpstreamServer;
-use super::types::{ServerMetrics, SchedulingResult, SchedulingStrategy};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 调度算法特质
 pub trait SchedulingAlgorithm: Send + Sync {
@@ -47,7 +47,9 @@ impl SchedulingAlgorithm for RoundRobinScheduler {
         metrics: &[ServerMetrics],
     ) -> Result<SchedulingResult> {
         if servers.is_empty() {
-            return Err(ProxyError::upstream_not_available("No servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No servers available".to_string(),
+            ));
         }
 
         // 过滤健康的服务器
@@ -59,7 +61,9 @@ impl SchedulingAlgorithm for RoundRobinScheduler {
             .collect();
 
         if healthy_indices.is_empty() {
-            return Err(ProxyError::upstream_not_available("No healthy servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No healthy servers available".to_string(),
+            ));
         }
 
         // 轮询选择
@@ -118,7 +122,9 @@ impl SchedulingAlgorithm for WeightedScheduler {
         metrics: &[ServerMetrics],
     ) -> Result<SchedulingResult> {
         if servers.is_empty() {
-            return Err(ProxyError::upstream_not_available("No servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No servers available".to_string(),
+            ));
         }
 
         // 过滤健康的服务器及其权重
@@ -130,17 +136,19 @@ impl SchedulingAlgorithm for WeightedScheduler {
             .collect();
 
         if healthy_servers.is_empty() {
-            return Err(ProxyError::upstream_not_available("No healthy servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No healthy servers available".to_string(),
+            ));
         }
 
         // 初始化权重
         self.initialize_weights(servers.len(), servers);
 
         let mut current_weights = self.current_weights.lock().unwrap();
-        
+
         // 计算总权重
         let total_weight: u32 = healthy_servers.iter().map(|(_, w)| *w).sum();
-        
+
         if total_weight == 0 {
             // 如果所有权重都是0，退化为轮询
             let selected_index = healthy_servers[0].0;
@@ -158,7 +166,7 @@ impl SchedulingAlgorithm for WeightedScheduler {
         // 为所有健康服务器增加权重
         for &(index, weight) in &healthy_servers {
             current_weights[index] += weight as i32;
-            
+
             // 找到当前权重最大的服务器
             if current_weights[index] > max_current_weight {
                 max_current_weight = current_weights[index];
@@ -171,8 +179,10 @@ impl SchedulingAlgorithm for WeightedScheduler {
 
         Ok(SchedulingResult::new(
             selected_index,
-            format!("Weighted selection (weight: {}, current: {})", 
-                   servers[selected_index].weight, max_current_weight),
+            format!(
+                "Weighted selection (weight: {}, current: {})",
+                servers[selected_index].weight, max_current_weight
+            ),
             SchedulingStrategy::Weighted,
         ))
     }
@@ -229,7 +239,9 @@ impl SchedulingAlgorithm for HealthBasedScheduler {
         metrics: &[ServerMetrics],
     ) -> Result<SchedulingResult> {
         if servers.is_empty() {
-            return Err(ProxyError::upstream_not_available("No servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No servers available".to_string(),
+            ));
         }
 
         // 计算所有健康服务器的分数
@@ -241,7 +253,9 @@ impl SchedulingAlgorithm for HealthBasedScheduler {
             .collect();
 
         if scored_servers.is_empty() {
-            return Err(ProxyError::upstream_not_available("No healthy servers available".to_string()));
+            return Err(ProxyError::upstream_not_available(
+                "No healthy servers available".to_string(),
+            ));
         }
 
         // 选择分数最高的服务器
@@ -255,7 +269,8 @@ impl SchedulingAlgorithm for HealthBasedScheduler {
             selected_index,
             format!("Health-based selection (score: {:.2})", best_score),
             SchedulingStrategy::HealthBased,
-        ).with_health_score(best_score))
+        )
+        .with_health_score(best_score))
     }
 
     fn name(&self) -> &'static str {
@@ -351,10 +366,10 @@ mod tests {
         // 测试多次选择，应该轮询健康的服务器
         let result1 = scheduler.select_server(&servers, &metrics).unwrap();
         let result2 = scheduler.select_server(&servers, &metrics).unwrap();
-        
+
         assert!(result1.server_index < servers.len());
         assert!(result2.server_index < servers.len());
-        
+
         // 确保不会选择不健康的服务器（索引2）
         assert_ne!(result1.server_index, 2);
         assert_ne!(result2.server_index, 2);
@@ -375,7 +390,7 @@ mod tests {
 
         // 确保不会选择不健康的服务器
         assert!(!selections.contains_key(&2));
-        
+
         // 权重高的服务器应该被选择更多次（但由于算法复杂性，不做严格检查）
         assert!(selections.len() <= 2); // 最多选择2个健康服务器
     }
@@ -391,7 +406,7 @@ mod tests {
         metrics[1].avg_response_time = 200.0;
 
         let result = scheduler.select_server(&servers, &metrics).unwrap();
-        
+
         // 应该选择健康且表现好的服务器
         assert_ne!(result.server_index, 2); // 不会选择不健康的
         assert!(result.health_score.is_some());

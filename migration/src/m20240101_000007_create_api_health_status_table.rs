@@ -39,14 +39,8 @@ impl MigrationTrait for Migration {
                             .float()
                             .default(1.0),
                     )
-                    .col(
-                        ColumnDef::new(ApiHealthStatus::LastSuccess)
-                            .timestamp(),
-                    )
-                    .col(
-                        ColumnDef::new(ApiHealthStatus::LastFailure)
-                            .timestamp(),
-                    )
+                    .col(ColumnDef::new(ApiHealthStatus::LastSuccess).timestamp())
+                    .col(ColumnDef::new(ApiHealthStatus::LastFailure).timestamp())
                     .col(
                         ColumnDef::new(ApiHealthStatus::ConsecutiveFailures)
                             .integer()
@@ -62,10 +56,7 @@ impl MigrationTrait for Migration {
                             .integer()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(ApiHealthStatus::LastErrorMessage)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(ApiHealthStatus::LastErrorMessage).text())
                     .col(
                         ColumnDef::new(ApiHealthStatus::CreatedAt)
                             .timestamp()

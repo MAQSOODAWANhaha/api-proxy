@@ -4,11 +4,11 @@ use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
-use bcrypt::{hash, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash};
 use chrono::Utc;
 use entity::{users, users::Entity as Users};
-use jsonwebtoken::{decode, DecodingKey, Validation};
-use rand::{distributions::Alphanumeric, Rng};
+use jsonwebtoken::{DecodingKey, Validation, decode};
+use rand::{Rng, distributions::Alphanumeric};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
 // Removed unused serde_json imports

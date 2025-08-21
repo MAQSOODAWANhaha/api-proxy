@@ -24,10 +24,7 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(ProxyTracing::UserProviderKeyId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::UserProviderKeyId).integer())
                     .col(
                         ColumnDef::new(ProxyTracing::RequestId)
                             .string_len(255)
@@ -38,14 +35,8 @@ impl MigrationTrait for Migration {
                             .string_len(10)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(ProxyTracing::Path)
-                            .string_len(1000),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::StatusCode)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::Path).string_len(1000))
+                    .col(ColumnDef::new(ProxyTracing::StatusCode).integer())
                     // === Token使用统计 ===
                     .col(
                         ColumnDef::new(ProxyTracing::TokensPrompt)
@@ -62,10 +53,7 @@ impl MigrationTrait for Migration {
                             .integer()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(ProxyTracing::TokenEfficiencyRatio)
-                            .double(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::TokenEfficiencyRatio).double())
                     // === 缓存Token统计 (新增) ===
                     .col(
                         ColumnDef::new(ProxyTracing::CacheCreateTokens)
@@ -78,64 +66,31 @@ impl MigrationTrait for Migration {
                             .default(0),
                     )
                     // === 费用统计 (新增) ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::Cost)
-                            .double(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::Cost).double())
                     .col(
                         ColumnDef::new(ProxyTracing::CostCurrency)
                             .string_len(10)
                             .default("USD"),
                     )
                     // === 用户ID (新增，用于直接查询) ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::UserId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::UserId).integer())
                     // === 业务信息 ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::ModelUsed)
-                            .string_len(100),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ClientIp)
-                            .string_len(45),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::UserAgent)
-                            .text(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ErrorType)
-                            .string_len(50),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::ErrorMessage)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::ModelUsed).string_len(100))
+                    .col(ColumnDef::new(ProxyTracing::ClientIp).string_len(45))
+                    .col(ColumnDef::new(ProxyTracing::UserAgent).text())
+                    .col(ColumnDef::new(ProxyTracing::ErrorType).string_len(50))
+                    .col(ColumnDef::new(ProxyTracing::ErrorMessage).text())
                     .col(
                         ColumnDef::new(ProxyTracing::RetryCount)
                             .integer()
                             .default(0),
                     )
                     // === 提供商信息（只保留必需的外键） ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::ProviderTypeId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::ProviderTypeId).integer())
                     // === 详细时间追踪 ===
-                    .col(
-                        ColumnDef::new(ProxyTracing::StartTime)
-                            .timestamp(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::EndTime)
-                            .timestamp(),
-                    )
-                    .col(
-                        ColumnDef::new(ProxyTracing::DurationMs)
-                            .big_integer(),
-                    )
+                    .col(ColumnDef::new(ProxyTracing::StartTime).timestamp())
+                    .col(ColumnDef::new(ProxyTracing::EndTime).timestamp())
+                    .col(ColumnDef::new(ProxyTracing::DurationMs).big_integer())
                     .col(
                         ColumnDef::new(ProxyTracing::IsSuccess)
                             .boolean()

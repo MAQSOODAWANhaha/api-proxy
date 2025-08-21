@@ -1,43 +1,43 @@
 //! # 适配器通用类型定义
 
-use std::collections::HashMap;
+use crate::error::{ProxyError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::error::{ProxyError, Result};
+use std::collections::HashMap;
 
 /// 适配器错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("Invalid request format: {0}")]
     InvalidRequest(String),
-    
+
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
-    
+
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
-    
+
     #[error("Provider API error: {status_code} - {message}")]
     ApiError { status_code: u16, message: String },
-    
+
     #[error("Request timeout: {0}")]
     Timeout(String),
-    
+
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
-    
+
     #[error("Response parse error: {0}")]
     ResponseParseError(String),
-    
+
     #[error("Stream parse error: {0}")]
     StreamParseError(String),
-    
+
     #[error("Unsupported operation: {0}")]
     UnsupportedOperation(String),
 }
@@ -149,9 +149,12 @@ impl AdapterResponse {
 
     pub fn streaming(mut self) -> Self {
         self.is_streaming = true;
-        self.headers.insert("Content-Type".to_string(), "text/event-stream".to_string());
-        self.headers.insert("Cache-Control".to_string(), "no-cache".to_string());
-        self.headers.insert("Connection".to_string(), "keep-alive".to_string());
+        self.headers
+            .insert("Content-Type".to_string(), "text/event-stream".to_string());
+        self.headers
+            .insert("Cache-Control".to_string(), "no-cache".to_string());
+        self.headers
+            .insert("Connection".to_string(), "keep-alive".to_string());
         self
     }
 
@@ -215,10 +218,12 @@ impl StreamChunk {
         match self {
             StreamChunk::Raw(data) => std::str::from_utf8(data)
                 .map_err(|e| ProxyError::internal(format!("Invalid UTF-8 in stream data: {}", e))),
-            _ => Err(ProxyError::internal("Cannot convert non-Raw chunk to string".to_string())),
+            _ => Err(ProxyError::internal(
+                "Cannot convert non-Raw chunk to string".to_string(),
+            )),
         }
     }
-    
+
     /// 检查是否为最终块
     pub fn is_final(&self) -> bool {
         matches!(self, StreamChunk::Done | StreamChunk::Error(_))
@@ -259,7 +264,6 @@ impl StreamingResponse {
             .map_err(|e| ProxyError::internal(format!("Invalid UTF-8 in stream data: {}", e)))
     }
 }
-
 
 /// 通用模型参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,7 +424,10 @@ mod tests {
 
         assert_eq!(request.method, "POST");
         assert_eq!(request.path, "/v1/chat/completions");
-        assert_eq!(request.get_header("Authorization"), Some(&"Bearer test-key".to_string()));
+        assert_eq!(
+            request.get_header("Authorization"),
+            Some(&"Bearer test-key".to_string())
+        );
         assert!(request.body.is_some());
         assert_eq!(request.query.get("stream"), Some(&"true".to_string()));
     }
@@ -431,7 +438,10 @@ mod tests {
             .with_header("Content-Type", "application/json");
 
         assert_eq!(response.status_code, 200);
-        assert_eq!(response.headers.get("Content-Type"), Some(&"application/json".to_string()));
+        assert_eq!(
+            response.headers.get("Content-Type"),
+            Some(&"application/json".to_string())
+        );
         assert!(!response.is_streaming);
     }
 

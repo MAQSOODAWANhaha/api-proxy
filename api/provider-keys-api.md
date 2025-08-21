@@ -335,6 +335,92 @@
 
 ---
 
+## 获取简单提供商密钥列表（用于下拉选择）
+
+### 接口信息
+- **请求路由**: `GET /api/provider-keys/simple`
+- **请求方法**: GET
+- **作用**: 获取简单的提供商密钥列表，专门用于下拉选择器，不包含分页结构
+
+### 查询参数
+| 参数名 | 类型 | 必填 | 描述 | 默认值 |
+|--------|------|------|------|--------|
+| provider_type_id | int | 否 | 筛选指定服务商类型ID | - |
+| is_active | boolean | 否 | 筛选状态（true/false） | - |
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "provider_keys": [
+            {
+                "id": 1,
+                "name": "Primary GPT Key",
+                "display_name": "Primary GPT Key (OpenAI)",
+                "provider": "OpenAI",
+                "provider_type_id": 1,
+                "is_active": true
+            },
+            {
+                "id": 2,
+                "name": "Secondary Claude Key", 
+                "display_name": "Secondary Claude Key (Anthropic)",
+                "provider": "Anthropic",
+                "provider_type_id": 2,
+                "is_active": true
+            }
+        ]
+    },
+    "message": "操作成功",
+    "timestamp": "2025-08-20T06:47:12.364806516Z"
+}
+```
+
+### 字段说明
+| 字段名 | 类型 | 描述 |
+|--------|------|------|
+| id | int | 密钥唯一标识 |
+| name | string | 密钥名称 |
+| display_name | string | 显示名称（包含服务商信息） |
+| provider | string | 服务商名称 |
+| provider_type_id | int | 服务商类型ID |
+| is_active | boolean | 是否启用 |
+
+---
+
+## 获取提供商密钥卡片统计数据
+
+### 接口信息
+- **请求路由**: `GET /api/provider-keys/dashboard-stats`
+- **请求方法**: GET
+- **作用**: 获取提供商密钥管理页面的卡片统计数据
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "total_keys": 25,
+        "active_keys": 18,
+        "total_usage": 125420,
+        "total_cost": 2847.50
+    },
+    "message": "操作成功",
+    "timestamp": "2025-08-20T06:47:12.364806516Z"
+}
+```
+
+### 统计字段说明
+| 字段名 | 类型 | 描述 |
+|--------|------|------|
+| total_keys | int | 用户的总密钥数量 |
+| active_keys | int | 当前活跃的密钥数量 |
+| total_usage | int | 所有密钥的总使用次数 |
+| total_cost | float | 所有密钥的总花费（USD） |
+
+---
+
 ## 通用响应格式
 
 所有接口都遵循统一的响应格式：
@@ -378,6 +464,7 @@
 3. 密钥的健康状态监控
 4. 使用统计和费用分析
 5. 密钥配置和限制管理
+6. 管理页面的卡片统计数据展示
 
 ## 注意事项
 

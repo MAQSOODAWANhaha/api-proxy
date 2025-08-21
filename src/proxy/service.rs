@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora_core::protocols::Digest;
-use pingora_core::{prelude::*, upstreams::peer::HttpPeer, ErrorType};
+use pingora_core::{ErrorType, prelude::*, upstreams::peer::HttpPeer};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
-use crate::trace::{immediate::ImmediateProxyTracer, UnifiedTraceSystem};
+use crate::trace::{UnifiedTraceSystem, immediate::ImmediateProxyTracer};
 use sea_orm::DatabaseConnection;
 
 /// AI 代理服务 - 透明代理设计
@@ -171,16 +171,29 @@ impl ProxyHttp for ProxyService {
                         let msg = format!(r#"{{"error":"{}","code":"RATE_LIMIT"}}"#, e);
                         Err(Error::explain(ErrorType::HTTPStatus(429), msg))
                     }
-                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => {
-                        let msg = format!(r#"{{"error":"Connection timeout after {}s","code":"CONNECTION_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds);
+                    crate::error::ProxyError::ConnectionTimeout {
+                        timeout_seconds, ..
+                    } => {
+                        let msg = format!(
+                            r#"{{"error":"Connection timeout after {}s","code":"CONNECTION_TIMEOUT","timeout_configured":{}}}"#,
+                            timeout_seconds, timeout_seconds
+                        );
                         Err(Error::explain(ErrorType::HTTPStatus(504), msg))
                     }
-                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => {
-                        let msg = format!(r#"{{"error":"Read timeout after {}s","code":"READ_TIMEOUT","timeout_configured":{}}}"#, timeout_seconds, timeout_seconds);
+                    crate::error::ProxyError::ReadTimeout {
+                        timeout_seconds, ..
+                    } => {
+                        let msg = format!(
+                            r#"{{"error":"Read timeout after {}s","code":"READ_TIMEOUT","timeout_configured":{}}}"#,
+                            timeout_seconds, timeout_seconds
+                        );
                         Err(Error::explain(ErrorType::HTTPStatus(504), msg))
                     }
                     crate::error::ProxyError::Network { message, .. } => {
-                        let msg = format!(r#"{{"error":"Network error: {}","code":"NETWORK_ERROR"}}"#, message);
+                        let msg = format!(
+                            r#"{{"error":"Network error: {}","code":"NETWORK_ERROR"}}"#,
+                            message
+                        );
                         Err(Error::explain(ErrorType::HTTPStatus(502), msg))
                     }
                     crate::error::ProxyError::BadGateway { .. } => {
@@ -250,10 +263,11 @@ impl ProxyHttp for ProxyService {
                     "Failed to filter upstream request"
                 );
                 match e {
-                    crate::error::ProxyError::Network { .. } => {
-                        Error::explain(ErrorType::HTTPStatus(502), "Network error during request processing")
-                    }
-                    _ => Error::new(ErrorType::InternalError)
+                    crate::error::ProxyError::Network { .. } => Error::explain(
+                        ErrorType::HTTPStatus(502),
+                        "Network error during request processing",
+                    ),
+                    _ => Error::new(ErrorType::InternalError),
                 }
             })
     }
@@ -305,7 +319,7 @@ impl ProxyHttp for ProxyService {
         // 收集响应体数据块
         if let Some(data) = body {
             ctx.response_details.add_body_chunk(data);
-            
+
             tracing::info!(
                 request_id = %ctx.request_id,
                 chunk_size = data.len(),
@@ -313,7 +327,7 @@ impl ProxyHttp for ProxyService {
                 "Collected response body chunk"
             );
         }
-        
+
         Ok(None)
     }
 
@@ -351,8 +365,8 @@ impl ProxyHttp for ProxyService {
         // 检测超时和网络错误，进行错误转换
         let is_timeout_or_network_error = matches!(
             &e.etype,
-            ErrorType::ConnectTimedout 
-                | ErrorType::ReadTimedout 
+            ErrorType::ConnectTimedout
+                | ErrorType::ReadTimedout
                 | ErrorType::WriteTimedout
                 | ErrorType::ConnectError
                 | ErrorType::ConnectRefused
@@ -360,7 +374,7 @@ impl ProxyHttp for ProxyService {
 
         if is_timeout_or_network_error {
             let converted_error = self.ai_handler.convert_pingora_error(e, ctx);
-            
+
             tracing::error!(
                 request_id = %ctx.request_id,
                 original_error = %e,
@@ -373,36 +387,40 @@ impl ProxyHttp for ProxyService {
                 if let Some(tracer) = &self.tracer {
                     let error_code = match converted_error {
                         crate::error::ProxyError::ConnectionTimeout { .. } => 504,
-                        crate::error::ProxyError::ReadTimeout { .. } => 504, 
+                        crate::error::ProxyError::ReadTimeout { .. } => 504,
                         crate::error::ProxyError::Network { .. } => 502,
                         crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
                         _ => 502,
                     };
-                    
+
                     let error_type = match converted_error {
                         crate::error::ProxyError::ConnectionTimeout { .. } => "connection_timeout",
-                        crate::error::ProxyError::ReadTimeout { .. } => "read_timeout", 
+                        crate::error::ProxyError::ReadTimeout { .. } => "read_timeout",
                         crate::error::ProxyError::Network { .. } => "network_error",
-                        crate::error::ProxyError::UpstreamNotAvailable { .. } => "upstream_unavailable",
+                        crate::error::ProxyError::UpstreamNotAvailable { .. } => {
+                            "upstream_unavailable"
+                        }
                         _ => "upstream_connection_failed",
                     };
-                    
-                    let _ = tracer.complete_trace(
-                        &ctx.request_id,
-                        error_code,
-                        false,
-                        None,
-                        None,
-                        Some(error_type.to_string()),
-                        Some(converted_error.to_string()),
-                    ).await;
+
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            error_code,
+                            false,
+                            None,
+                            None,
+                            Some(error_type.to_string()),
+                            Some(converted_error.to_string()),
+                        )
+                        .await;
                 }
             }
 
             // 返回转换后的错误信息，让 Pingora 处理 HTTP 响应
             let error_code = match converted_error {
                 crate::error::ProxyError::ConnectionTimeout { .. } => 504,
-                crate::error::ProxyError::ReadTimeout { .. } => 504, 
+                crate::error::ProxyError::ReadTimeout { .. } => 504,
                 crate::error::ProxyError::Network { .. } => 502,
                 crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
                 _ => 502,
@@ -418,18 +436,20 @@ impl ProxyHttp for ProxyService {
         // 其他类型的连接失败也记录
         if ctx.trace_enabled {
             if let Some(tracer) = &self.tracer {
-                let _ = tracer.complete_trace(
-                    &ctx.request_id,
-                    500,
-                    false,
-                    None,
-                    None,
-                    Some("proxy_error".to_string()),
-                    Some(format!("Pingora error: {}", e)),
-                ).await;
+                let _ = tracer
+                    .complete_trace(
+                        &ctx.request_id,
+                        500,
+                        false,
+                        None,
+                        None,
+                        Some("proxy_error".to_string()),
+                        Some(format!("Pingora error: {}", e)),
+                    )
+                    .await;
             }
         }
-        
+
         FailToProxy {
             error_code: 500,
             can_reuse_downstream: false,
@@ -490,29 +510,30 @@ impl ProxyHttp for ProxyService {
             if let Some(tracer) = &self.tracer {
                 if ctx.trace_enabled {
                     // 从上下文获取响应信息
-                    let status_code = session.response_written()
+                    let status_code = session
+                        .response_written()
                         .map(|resp| resp.status.as_u16())
                         .unwrap_or(200);
-                    
+
                     // 注意：响应时间在complete_trace方法内部计算
                     // let response_time_ms = duration.as_millis() as u64;
-                    
+
                     // 使用详细的token信息
                     let tokens_prompt = ctx.token_usage.prompt_tokens;
                     let tokens_completion = ctx.token_usage.completion_tokens;
-                    
+
                     // Response size no longer stored in simplified trace schema
-                    
+
                     // 完成响应体数据收集
                     ctx.response_details.finalize_body();
-                    
+
                     tracing::info!(
                         request_id = %ctx.request_id,
                         response_body_size = ctx.response_details.body_size,
                         body_collected = ctx.response_details.body.is_some(),
                         "Finalized response body collection"
                     );
-                    
+
                     // 构建请求详情JSON
                     let request_json = match serde_json::to_value(&ctx.request_details) {
                         Ok(json) => {
@@ -532,9 +553,12 @@ impl ProxyHttp for ProxyService {
                             None
                         }
                     };
-                    
+
                     // 构建响应详情JSON (使用可序列化版本)
-                    let serializable_response = crate::proxy::ai_handler::SerializableResponseDetails::from(&ctx.response_details);
+                    let serializable_response =
+                        crate::proxy::ai_handler::SerializableResponseDetails::from(
+                            &ctx.response_details,
+                        );
                     let response_json = match serde_json::to_value(&serializable_response) {
                         Ok(json) => {
                             tracing::info!(
@@ -554,20 +578,23 @@ impl ProxyHttp for ProxyService {
                             None
                         }
                     };
-                    
-                    match tracer.complete_trace_with_stats(
-                        &ctx.request_id,
-                        status_code,
-                        true, // 成功标志
-                        tokens_prompt,
-                        tokens_completion,
-                        None, // 无错误类型
-                        None, // 无错误消息
-                        None, // cache_create_tokens
-                        None, // cache_read_tokens
-                        None, // cost
-                        None, // cost_currency
-                    ).await {
+
+                    match tracer
+                        .complete_trace_with_stats(
+                            &ctx.request_id,
+                            status_code,
+                            true, // 成功标志
+                            tokens_prompt,
+                            tokens_completion,
+                            None, // 无错误类型
+                            None, // 无错误消息
+                            None, // cache_create_tokens
+                            None, // cache_read_tokens
+                            None, // cost
+                            None, // cost_currency
+                        )
+                        .await
+                    {
                         Ok(_) => {
                             tracing::info!(
                                 request_id = %ctx.request_id,
@@ -586,7 +613,7 @@ impl ProxyHttp for ProxyService {
                     }
                 }
             }
-            
+
             tracing::debug!(
                 request_id = %ctx.request_id,
                 duration_ms = duration.as_millis(),

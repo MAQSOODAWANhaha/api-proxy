@@ -4,4 +4,4 @@
 
 pub mod service;
 
-pub use service::{StatisticsService, RequestStats, TimeRangeQuery};
+pub use service::{RequestStats, StatisticsService, TimeRangeQuery};

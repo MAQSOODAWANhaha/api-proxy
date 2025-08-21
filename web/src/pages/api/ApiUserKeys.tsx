@@ -760,12 +760,16 @@ const AddDialog: React.FC<{
     
     setLoadingKeys(true)
     try {
-      const response = await api.auth.getUserProviderKeys({ 
+      const response = await api.providerKeys.getSimpleList({ 
         is_active: true,
         provider_type_id: providerTypeId
       })
       if (response.success && response.data) {
-        setUserProviderKeys(response.data.user_provider_keys || [])
+        setUserProviderKeys(response.data.provider_keys.map(key => ({
+          id: key.id,
+          name: key.name,
+          display_name: key.display_name
+        })) || [])
       } else {
         setUserProviderKeys([])
       }
@@ -1171,12 +1175,16 @@ const EditDialog: React.FC<{
     
     setLoadingKeys(true)
     try {
-      const response = await api.auth.getUserProviderKeys({ 
+      const response = await api.providerKeys.getSimpleList({ 
         is_active: true,
         provider_type_id: providerTypeId
       })
       if (response.success && response.data) {
-        setUserProviderKeys(response.data.user_provider_keys || [])
+        setUserProviderKeys(response.data.provider_keys.map(key => ({
+          id: key.id,
+          name: key.name,
+          display_name: key.display_name
+        })) || [])
       } else {
         setUserProviderKeys([])
       }

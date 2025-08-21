@@ -2,12 +2,12 @@
 //!
 //! 基于数据库配置的通用AI服务适配器，支持任意提供商
 
+use super::field_extractor::FieldExtractor;
 use super::traits::ProviderAdapter;
 use super::types::{
     AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
-    ChatMessage, MessageRole, ProviderError, ProviderResult, StreamChunk, Usage, TraceStats,
+    ChatMessage, MessageRole, ProviderError, ProviderResult, StreamChunk, TraceStats, Usage,
 };
-use super::field_extractor::FieldExtractor;
 use crate::proxy::upstream::ProviderId;
 use serde_json::{Value, json};
 use tracing::{debug, warn};
@@ -77,7 +77,7 @@ impl GenericAdapter {
                     "default_values": config.get("default_values").unwrap_or(&Value::Object(serde_json::Map::new())),
                     "transformations": config.get("transformations").unwrap_or(&Value::Object(serde_json::Map::new()))
                 });
-                
+
                 match serde_json::to_string(&field_config) {
                     Ok(config_str) => {
                         match FieldExtractor::from_json_config(&config_str) {
@@ -133,8 +133,11 @@ impl GenericAdapter {
     fn extract_usage_info(&self, response: &Value) -> Option<Usage> {
         if let Some(extractor) = &self.config.field_extractor {
             let input_tokens = extractor.extract_u32(response, "input_tokens").unwrap_or(0);
-            let output_tokens = extractor.extract_u32(response, "output_tokens").unwrap_or(0);
-            let total_tokens = extractor.extract_u32(response, "total_tokens")
+            let output_tokens = extractor
+                .extract_u32(response, "output_tokens")
+                .unwrap_or(0);
+            let total_tokens = extractor
+                .extract_u32(response, "total_tokens")
                 .unwrap_or(input_tokens + output_tokens);
 
             debug!(
@@ -167,7 +170,8 @@ impl GenericAdapter {
     /// 使用字段提取器提取内容
     fn extract_content(&self, response: &Value) -> String {
         if let Some(extractor) = &self.config.field_extractor {
-            extractor.extract_string(response, "content")
+            extractor
+                .extract_string(response, "content")
                 .unwrap_or_else(|| "".to_string())
         } else {
             // 回退到默认行为
@@ -178,7 +182,8 @@ impl GenericAdapter {
     /// 使用字段提取器提取模型名称
     fn extract_model_name(&self, response: &Value, fallback: &str) -> String {
         if let Some(extractor) = &self.config.field_extractor {
-            extractor.extract_string(response, "model_name")
+            extractor
+                .extract_string(response, "model_name")
                 .unwrap_or_else(|| fallback.to_string())
         } else {
             fallback.to_string()
@@ -374,7 +379,11 @@ impl GenericAdapter {
                                 index: 0,
                                 message: ChatMessage {
                                     role: MessageRole::Assistant,
-                                    content: if content.is_empty() { text_part.to_string() } else { content },
+                                    content: if content.is_empty() {
+                                        text_part.to_string()
+                                    } else {
+                                        content
+                                    },
                                     name: None,
                                     tool_calls: None,
                                     tool_call_id: None,
@@ -434,7 +443,11 @@ impl GenericAdapter {
                         index: 0,
                         message: ChatMessage {
                             role: MessageRole::Assistant,
-                            content: if content.is_empty() { text_block.to_string() } else { content },
+                            content: if content.is_empty() {
+                                text_block.to_string()
+                            } else {
+                                content
+                            },
                             name: None,
                             tool_calls: None,
                             tool_call_id: None,

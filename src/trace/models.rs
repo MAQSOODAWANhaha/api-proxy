@@ -2,9 +2,9 @@
 //!
 //! 定义所有 trace 相关的数据结构
 
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 请求追踪数据 - 完整的请求生命周期记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,16 +269,25 @@ impl RequestTrace {
     }
 
     /// 完成当前阶段
-    pub fn complete_phase(&mut self, phase: RequestPhase, status: PhaseStatus, details: Option<String>) {
-        if let Some(current_phase) = self.phases.iter_mut().rev().find(|p| p.phase == phase && p.status == PhaseStatus::InProgress) {
+    pub fn complete_phase(
+        &mut self,
+        phase: RequestPhase,
+        status: PhaseStatus,
+        details: Option<String>,
+    ) {
+        if let Some(current_phase) = self
+            .phases
+            .iter_mut()
+            .rev()
+            .find(|p| p.phase == phase && p.status == PhaseStatus::InProgress)
+        {
             current_phase.end_time = Some(Utc::now());
             current_phase.status = status;
             current_phase.details = details;
-            
+
             if let Some(end_time) = current_phase.end_time {
-                current_phase.duration_ms = Some(
-                    (end_time - current_phase.start_time).num_milliseconds() as u64
-                );
+                current_phase.duration_ms =
+                    Some((end_time - current_phase.start_time).num_milliseconds() as u64);
             }
         }
     }
@@ -288,11 +297,9 @@ impl RequestTrace {
         self.end_time = Some(Utc::now());
         self.status_code = Some(status_code);
         self.is_success = is_success;
-        
+
         if let Some(end_time) = self.end_time {
-            self.duration_ms = Some(
-                (end_time - self.start_time).num_milliseconds() as u64
-            );
+            self.duration_ms = Some((end_time - self.start_time).num_milliseconds() as u64);
         }
     }
 
@@ -308,9 +315,10 @@ impl RequestTrace {
         self.token_usage.prompt_tokens = prompt_tokens;
         self.token_usage.completion_tokens = completion_tokens;
         self.token_usage.total_tokens = prompt_tokens + completion_tokens;
-        
+
         if prompt_tokens > 0 {
-            self.token_usage.efficiency_ratio = Some(completion_tokens as f64 / prompt_tokens as f64);
+            self.token_usage.efficiency_ratio =
+                Some(completion_tokens as f64 / prompt_tokens as f64);
         }
     }
 
@@ -333,29 +341,29 @@ impl HealthMetrics {
     /// 计算健康评分
     pub fn calculate_health_score(&mut self) {
         let mut score = 100.0;
-        
+
         // 成功率权重 40%
         if self.success_rate < 0.95 {
             score -= (0.95 - self.success_rate) * 400.0;
         }
-        
+
         // 平均响应时间权重 30%
         if self.avg_response_time_ms > 1000.0 {
             score -= ((self.avg_response_time_ms - 1000.0) / 1000.0) * 30.0;
         }
-        
+
         // P95 响应时间权重 20%
         if self.p95_response_time_ms > 5000.0 {
             score -= ((self.p95_response_time_ms - 5000.0) / 5000.0) * 20.0;
         }
-        
+
         // 错误多样性权重 10%
         if self.error_distribution.len() > 3 {
             score -= (self.error_distribution.len() as f64 - 3.0) * 2.5;
         }
-        
+
         self.health_score = score.max(0.0).min(100.0);
-        
+
         // 确定健康状态
         self.health_status = match self.health_score {
             s if s >= 80.0 => HealthStatus::Healthy,

@@ -18,11 +18,7 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(UserServiceApis::UserId)
-                            .integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(UserServiceApis::UserId).integer().not_null())
                     .col(
                         ColumnDef::new(UserServiceApis::ProviderTypeId)
                             .integer()
@@ -40,14 +36,8 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .unique_key(),
                     )
-                    .col(
-                        ColumnDef::new(UserServiceApis::Name)
-                            .string_len(100),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::Description)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(UserServiceApis::Name).string_len(100))
+                    .col(ColumnDef::new(UserServiceApis::Description).text())
                     .col(
                         ColumnDef::new(UserServiceApis::SchedulingStrategy)
                             .string_len(20)
@@ -68,23 +58,14 @@ impl MigrationTrait for Migration {
                             .integer()
                             .default(1000),
                     )
-                    .col(
-                        ColumnDef::new(UserServiceApis::MaxRequestsPerDay)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(UserServiceApis::MaxRequestsPerDay).integer())
                     .col(
                         ColumnDef::new(UserServiceApis::MaxTokensPerDay)
                             .integer()
                             .default(10000000),
                     )
-                    .col(
-                        ColumnDef::new(UserServiceApis::MaxCostPerDay)
-                            .decimal_len(10, 4),
-                    )
-                    .col(
-                        ColumnDef::new(UserServiceApis::ExpiresAt)
-                            .timestamp(),
-                    )
+                    .col(ColumnDef::new(UserServiceApis::MaxCostPerDay).decimal_len(10, 4))
+                    .col(ColumnDef::new(UserServiceApis::ExpiresAt).timestamp())
                     .col(
                         ColumnDef::new(UserServiceApis::IsActive)
                             .boolean()
@@ -122,7 +103,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
 
         // 创建索引
         manager

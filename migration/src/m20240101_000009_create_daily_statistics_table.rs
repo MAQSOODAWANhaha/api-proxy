@@ -18,25 +18,14 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(DailyStatistics::UserId)
-                            .integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(DailyStatistics::UserServiceApiId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(DailyStatistics::UserId).integer().not_null())
+                    .col(ColumnDef::new(DailyStatistics::UserServiceApiId).integer())
                     .col(
                         ColumnDef::new(DailyStatistics::ProviderTypeId)
                             .integer()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(DailyStatistics::Date)
-                            .date()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(DailyStatistics::Date).date().not_null())
                     .col(
                         ColumnDef::new(DailyStatistics::TotalRequests)
                             .integer()

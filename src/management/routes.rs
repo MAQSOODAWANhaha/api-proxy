@@ -165,10 +165,20 @@ fn user_routes() -> Router<AppState> {
 fn provider_api_keys_routes() -> Router<AppState> {
     use axum::routing::{delete, post, put};
     Router::new()
+        // 获取提供商密钥卡片统计数据
+        .route(
+            "/dashboard-stats",
+            get(crate::management::handlers::provider_keys::get_provider_keys_dashboard_stats),
+        )
         // 获取提供商密钥列表（完整版，支持分页搜索过滤）
         .route(
             "/keys",
             get(crate::management::handlers::provider_keys::get_provider_keys_list),
+        )
+        // 获取简单提供商密钥列表（用于下拉选择）
+        .route(
+            "/simple",
+            get(crate::management::handlers::provider_keys::get_simple_provider_keys_list),
         )
         // 创建提供商密钥
         .route(

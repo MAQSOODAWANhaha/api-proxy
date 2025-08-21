@@ -18,35 +18,17 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::UserId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(UserAuditLogs::UserId).integer())
                     .col(
                         ColumnDef::new(UserAuditLogs::Action)
                             .string_len(50)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::ResourceType)
-                            .string_len(50),
-                    )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::ResourceId)
-                            .integer(),
-                    )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::IpAddress)
-                            .string_len(45),
-                    )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::UserAgent)
-                            .text(),
-                    )
-                    .col(
-                        ColumnDef::new(UserAuditLogs::Details)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(UserAuditLogs::ResourceType).string_len(50))
+                    .col(ColumnDef::new(UserAuditLogs::ResourceId).integer())
+                    .col(ColumnDef::new(UserAuditLogs::IpAddress).string_len(45))
+                    .col(ColumnDef::new(UserAuditLogs::UserAgent).text())
+                    .col(ColumnDef::new(UserAuditLogs::Details).text())
                     .col(
                         ColumnDef::new(UserAuditLogs::CreatedAt)
                             .timestamp()

@@ -5,10 +5,7 @@ use crate::management::server::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
-use entity::{
-    user_service_apis,
-    user_service_apis::Entity as UserServiceApis,
-};
+use entity::{user_service_apis, user_service_apis::Entity as UserServiceApis};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
 use serde_json::json;

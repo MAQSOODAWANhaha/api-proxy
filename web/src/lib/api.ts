@@ -122,6 +122,131 @@ export interface UserApiKeysTokenTrendResponse {
   max_token_usage: number
 }
 
+// Provider Keys 相关接口定义
+export interface ProviderKey {
+  id: string
+  provider: string
+  name: string
+  api_key: string
+  weight: number
+  max_requests_per_minute: number
+  max_tokens_prompt_per_minute: number
+  max_requests_per_day: number
+  is_active: boolean
+  usage: number
+  cost: number
+  created_at: string
+  updated_at?: string
+  health_status: 'healthy' | 'warning' | 'error'
+}
+
+export interface ProviderKeysListResponse {
+  provider_keys: ProviderKey[]
+  pagination: {
+    page: number
+    limit: number
+    total: number
+    pages: number
+  }
+}
+
+export interface CreateProviderKeyRequest {
+  provider_type_id: number
+  name: string
+  api_key: string
+  weight?: number
+  max_requests_per_minute?: number
+  max_tokens_prompt_per_minute?: number
+  max_requests_per_day?: number
+  is_active?: boolean
+}
+
+export interface CreateProviderKeyResponse {
+  id: string
+  provider: string
+  name: string
+  created_at: string
+}
+
+export interface UpdateProviderKeyRequest {
+  provider_type_id: number
+  name: string
+  api_key: string
+  weight?: number
+  max_requests_per_minute?: number
+  max_tokens_prompt_per_minute?: number
+  max_requests_per_day?: number
+  is_active?: boolean
+}
+
+export interface UpdateProviderKeyResponse {
+  id: string
+  name: string
+  updated_at: string
+}
+
+export interface DeleteProviderKeyResponse {
+  id: string
+  deleted_at: string
+}
+
+export interface ProviderKeyStatsResponse {
+  basic_info: {
+    provider: string
+    name: string
+    weight: number
+  }
+  usage_stats: {
+    total_usage: number
+    monthly_cost: number
+    success_rate: number
+    avg_response_time: number
+  }
+  daily_trends: {
+    usage: number[]
+    cost: number[]
+  }
+  limits: {
+    max_requests_per_minute: number
+    max_tokens_prompt_per_minute: number
+    max_requests_per_day: number
+  }
+}
+
+export interface HealthCheckResponse {
+  id: string
+  health_status: 'healthy' | 'warning' | 'error'
+  check_time: string
+  response_time: number
+  details: {
+    status_code: number
+    latency: number
+    error_message: string | null
+  }
+}
+
+export interface ProviderKeysDashboardStatsResponse {
+  total_keys: number
+  active_keys: number
+  total_usage: number
+  total_cost: number
+}
+
+// 简单提供商密钥列表响应接口（用于下拉选择）
+export interface SimpleProviderKeysListResponse {
+  provider_keys: SimpleProviderKey[]
+}
+
+// 简单提供商密钥接口（用于下拉选择）
+export interface SimpleProviderKey {
+  id: number
+  name: string
+  display_name: string
+  provider: string
+  provider_type_id: number
+  is_active: boolean
+}
+
 // Dashboard Cards响应接口（更新为新的后端API格式）
 export interface DashboardCardsResponse {
   requests_today: number
@@ -928,6 +1053,191 @@ export const api = {
           error: {
             code: 'USER_PROVIDER_KEYS_ERROR',
             message: '获取用户提供商密钥失败'
+          }
+        }
+      }
+    }
+  },
+
+  // Provider Keys 相关接口
+  providerKeys: {
+    /**
+     * 获取卡片统计数据
+     */
+    async getDashboardStats(): Promise<ApiResponse<ProviderKeysDashboardStatsResponse>> {
+      try {
+        return await apiClient.get<ProviderKeysDashboardStatsResponse>('/provider-keys/dashboard-stats')
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch dashboard stats:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_DASHBOARD_STATS_ERROR',
+            message: '获取提供商密钥统计数据失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取提供商密钥列表
+     */
+    async getList(params?: {
+      page?: number
+      limit?: number
+      search?: string
+      provider?: string
+      status?: string
+    }): Promise<ApiResponse<ProviderKeysListResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.page !== undefined) queryParams.page = params.page.toString()
+        if (params?.limit !== undefined) queryParams.limit = params.limit.toString()
+        if (params?.search) queryParams.search = params.search
+        if (params?.provider) queryParams.provider = params.provider
+        if (params?.status) queryParams.status = params.status
+
+        return await apiClient.get<ProviderKeysListResponse>('/provider-keys/keys', queryParams)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch keys list:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_LIST_ERROR',
+            message: '获取提供商密钥列表失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 创建提供商密钥
+     */
+    async create(data: CreateProviderKeyRequest): Promise<ApiResponse<CreateProviderKeyResponse>> {
+      try {
+        return await apiClient.post<CreateProviderKeyResponse>('/provider-keys/keys', data)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to create key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_CREATE_ERROR',
+            message: '创建提供商密钥失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取提供商密钥详情
+     */
+    async getDetail(id: string): Promise<ApiResponse<ProviderKey>> {
+      try {
+        return await apiClient.get<ProviderKey>(`/provider-keys/keys/${id}`)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch key detail:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_DETAIL_ERROR',
+            message: '获取提供商密钥详情失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 更新提供商密钥
+     */
+    async update(id: string, data: UpdateProviderKeyRequest): Promise<ApiResponse<UpdateProviderKeyResponse>> {
+      try {
+        return await apiClient.put<UpdateProviderKeyResponse>(`/provider-keys/keys/${id}`, data)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to update key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_UPDATE_ERROR',
+            message: '更新提供商密钥失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 删除提供商密钥
+     */
+    async delete(id: string): Promise<ApiResponse<DeleteProviderKeyResponse>> {
+      try {
+        return await apiClient.delete<DeleteProviderKeyResponse>(`/provider-keys/keys/${id}`)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to delete key:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_DELETE_ERROR',
+            message: '删除提供商密钥失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取密钥统计信息
+     */
+    async getStats(id: string): Promise<ApiResponse<ProviderKeyStatsResponse>> {
+      try {
+        return await apiClient.get<ProviderKeyStatsResponse>(`/provider-keys/keys/${id}/stats`)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch key stats:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_STATS_ERROR',
+            message: '获取密钥统计信息失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取简单提供商密钥列表（用于下拉选择）
+     */
+    async getSimpleList(params?: {
+      provider_type_id?: number
+      is_active?: boolean
+    }): Promise<ApiResponse<SimpleProviderKeysListResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
+        if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
+
+        return await apiClient.get<SimpleProviderKeysListResponse>('/provider-keys/simple', queryParams)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch simple keys list:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_SIMPLE_LIST_ERROR',
+            message: '获取简单提供商密钥列表失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 执行健康检查
+     */
+    async healthCheck(id: string): Promise<ApiResponse<HealthCheckResponse>> {
+      try {
+        return await apiClient.post<HealthCheckResponse>(`/provider-keys/keys/${id}/health-check`)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to perform health check:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_HEALTH_CHECK_ERROR',
+            message: '执行健康检查失败'
           }
         }
       }

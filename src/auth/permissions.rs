@@ -19,7 +19,7 @@ pub enum Permission {
     UseGemini,
     /// 使用所有 AI 提供商
     UseAllProviders,
-    
+
     // === 管理权限 ===
     /// 查看用户信息
     ViewUsers,
@@ -33,7 +33,7 @@ pub enum Permission {
     ViewStatistics,
     /// 管理统计信息
     ManageStatistics,
-    
+
     // === 系统权限 ===
     /// 查看系统健康状态
     ViewHealth,
@@ -45,7 +45,7 @@ pub enum Permission {
     ViewLogs,
     /// 管理日志
     ManageLogs,
-    
+
     // === 特殊权限 ===
     /// 超级管理员权限
     SuperAdmin,
@@ -300,8 +300,7 @@ impl PermissionChecker {
 
     /// 检查是否有指定权限
     pub fn has(&self, permission: &Permission) -> bool {
-        self.permissions.contains(permission) || 
-        self.permissions.contains(&Permission::SuperAdmin)
+        self.permissions.contains(permission) || self.permissions.contains(&Permission::SuperAdmin)
     }
 
     /// 检查是否有任意权限
@@ -324,54 +323,37 @@ impl PermissionChecker {
         // API 路径权限检查
         if path.starts_with("/api/") {
             return match path {
-                p if p.starts_with("/api/users") => {
-                    match method {
-                        "GET" => self.has(&Permission::ViewUsers),
-                        "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageUsers),
-                        _ => false,
-                    }
+                p if p.starts_with("/api/users") => match method {
+                    "GET" => self.has(&Permission::ViewUsers),
+                    "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageUsers),
+                    _ => false,
                 },
-                p if p.starts_with("/api/keys") => {
-                    match method {
-                        "GET" => self.has(&Permission::ViewApiKeys),
-                        "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageApiKeys),
-                        _ => false,
-                    }
+                p if p.starts_with("/api/keys") => match method {
+                    "GET" => self.has(&Permission::ViewApiKeys),
+                    "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageApiKeys),
+                    _ => false,
                 },
-                p if p.starts_with("/api/stats") => {
-                    match method {
-                        "GET" => self.has(&Permission::ViewStatistics),
-                        "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageStatistics),
-                        _ => false,
-                    }
+                p if p.starts_with("/api/stats") => match method {
+                    "GET" => self.has(&Permission::ViewStatistics),
+                    "POST" | "PUT" | "DELETE" => self.has(&Permission::ManageStatistics),
+                    _ => false,
                 },
-                p if p.starts_with("/api/config") => {
-                    self.has(&Permission::ManageConfig)
-                },
+                p if p.starts_with("/api/config") => self.has(&Permission::ManageConfig),
                 _ => self.has(&Permission::SuperAdmin),
             };
         }
 
         // AI 服务路径权限检查
         if path.starts_with("/v1/") {
-            return self.has_any(&[
-                Permission::UseOpenAI,
-                Permission::UseAllProviders,
-            ]);
+            return self.has_any(&[Permission::UseOpenAI, Permission::UseAllProviders]);
         }
 
         if path.contains("anthropic") {
-            return self.has_any(&[
-                Permission::UseAnthropic,
-                Permission::UseAllProviders,
-            ]);
+            return self.has_any(&[Permission::UseAnthropic, Permission::UseAllProviders]);
         }
 
         if path.contains("gemini") || path.contains("google") {
-            return self.has_any(&[
-                Permission::UseGemini,
-                Permission::UseAllProviders,
-            ]);
+            return self.has_any(&[Permission::UseGemini, Permission::UseAllProviders]);
         }
 
         // 默认拒绝访问
@@ -387,7 +369,10 @@ mod tests {
     fn test_permission_string_conversion() {
         let permission = Permission::UseOpenAI;
         assert_eq!(permission.as_str(), "use_openai");
-        assert_eq!(Permission::from_str("use_openai"), Some(Permission::UseOpenAI));
+        assert_eq!(
+            Permission::from_str("use_openai"),
+            Some(Permission::UseOpenAI)
+        );
     }
 
     #[test]

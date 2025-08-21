@@ -2,14 +2,16 @@
 //!
 //! Redis 缓存客户端和缓存策略实现
 
+pub mod abstract_cache;
 pub mod client;
+pub mod integration;
 pub mod keys;
 pub mod strategies;
-pub mod integration;
-pub mod abstract_cache;
 
+pub use abstract_cache::{
+    CacheProvider, CacheProviderType, CacheStats, MemoryCache, RedisCache, UnifiedCacheManager,
+};
 pub use client::{CacheClient, RedisConfig};
+pub use integration::{CacheDecorator, CacheManager};
 pub use keys::{CacheKey, CacheKeyBuilder};
-pub use strategies::{CacheStrategy, CacheStrategies, CacheTtl};
-pub use integration::{CacheManager, CacheDecorator};
-pub use abstract_cache::{CacheProvider, CacheProviderType, UnifiedCacheManager, CacheStats, MemoryCache, RedisCache};
+pub use strategies::{CacheStrategies, CacheStrategy, CacheTtl};

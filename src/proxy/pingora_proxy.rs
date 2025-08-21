@@ -74,8 +74,6 @@ impl PingoraProxyServer {
             builder = builder.with_database(shared_db.clone());
         }
 
-        
-
         let components = builder.build_components().await?;
 
         // 创建 HTTP 代理服务

@@ -3,7 +3,7 @@
  * 请求记录页面：完整的请求记录数据展示、搜索过滤和分页功能
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Search,
   Filter,
@@ -24,116 +24,135 @@ import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
 
-/** 请求记录级别类型 */
-type LogLevel = 'info' | 'warn' | 'error' | 'success'
-
-/** 请求记录数据结构 */
-interface LogEntry {
-  id: string
-  timestamp: string
-  level: LogLevel
-  service: string
-  endpoint: string
-  message: string
-  userId?: string
-  ip: string
-  duration: number
-  statusCode: number
-  requestId: string
+/** 代理跟踪日志数据结构（基于 proxy_tracing 表） */
+interface ProxyTraceEntry {
+  id: number
+  request_id: string
+  user_service_api_id: number
+  user_provider_key_id?: number
+  user_id?: number
+  method: string
+  path?: string
+  status_code?: number
+  tokens_prompt: number
+  tokens_completion: number
+  tokens_total: number
+  token_efficiency_ratio?: number
+  cache_create_tokens: number
+  cache_read_tokens: number
+  cost?: number
+  cost_currency: string
+  model_used?: string
+  client_ip?: string
+  user_agent?: string
+  error_type?: string
+  error_message?: string
+  retry_count: number
+  provider_type_id?: number
+  start_time?: string
+  end_time?: string
+  duration_ms?: number
+  is_success: boolean
+  created_at: string
+  provider_name?: string
+  service_name?: string
+  provider_key_name?: string
 }
 
-/** 模拟请求记录数据 */
-const generateMockLogs = (): LogEntry[] => {
-  const services = ['api-gateway', 'auth-service', 'user-service', 'ai-service', 'billing-service']
-  const endpoints = ['/api/chat/completions', '/api/auth/login', '/api/users/profile', '/api/keys/create', '/api/billing/usage']
-  const levels: LogLevel[] = ['info', 'warn', 'error', 'success']
-  const messages = {
-    info: ['Request processed successfully', 'User authenticated', 'API key validated', 'Cache hit'],
-    warn: ['Rate limit approaching', 'Slow query detected', 'Deprecated API used', 'High memory usage'],
-    error: ['Authentication failed', 'Database connection error', 'Invalid API key', 'Request timeout'],
-    success: ['Payment processed', 'User created', 'API key generated', 'Export completed']
-  }
-
-  const logs: LogEntry[] = []
-  for (let i = 0; i < 150; i++) {
-    const level = levels[Math.floor(Math.random() * levels.length)]
-    const service = services[Math.floor(Math.random() * services.length)]
-    const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)]
-    const messageArray = messages[level]
-    const message = messageArray[Math.floor(Math.random() * messageArray.length)]
-    
-    const date = new Date()
-    date.setMinutes(date.getMinutes() - Math.floor(Math.random() * 10080)) // 过去7天内
-    
-    logs.push({
-      id: `log-${i + 1}`,
-      timestamp: date.toISOString(),
-      level,
-      service,
-      endpoint,
-      message,
-      userId: Math.random() > 0.3 ? `user-${Math.floor(Math.random() * 100)}` : undefined,
-      ip: `192.168.1.${Math.floor(Math.random() * 255)}`,
-      duration: Math.floor(Math.random() * 2000) + 50,
-      statusCode: level === 'error' ? [400, 401, 403, 404, 500][Math.floor(Math.random() * 5)] : 
-                  level === 'warn' ? [429, 503][Math.floor(Math.random() * 2)] : 200,
-      requestId: `req-${Math.random().toString(36).substring(2, 12)}`
-    })
-  }
-
-  return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-}
-
-const initialData = generateMockLogs()
+// 移除模拟数据生成，实际数据将从API获取
 
 /** 弹窗类型 */
 type DialogType = 'details' | null
 
 /** 页面主组件 */
 const LogsPage: React.FC = () => {
-  const [data] = useState<LogEntry[]>(initialData)
+  // 数据状态
+  const [data, setData] = useState<ProxyTraceEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [dashboardStats, setDashboardStats] = useState<any>(null)
+  
+  // UI状态
   const [searchTerm, setSearchTerm] = useState('')
-  const [levelFilter, setLevelFilter] = useState<'all' | LogLevel>('all')
-  const [serviceFilter, setServiceFilter] = useState<string>('all')
-  const [selectedItem, setSelectedItem] = useState<LogEntry | null>(null)
+  const [methodFilter, setMethodFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [selectedItem, setSelectedItem] = useState<ProxyTraceEntry | null>(null)
   const [dialogType, setDialogType] = useState<DialogType>(null)
   
-  // 分页状态
+  // 分页状态（后端分页）
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [totalItems, setTotalItems] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
 
-  // 获取所有服务列表
-  const services = useMemo(() => {
-    const uniqueServices = Array.from(new Set(data.map(item => item.service)))
-    return uniqueServices
+  // 获取仪表板统计数据
+  const fetchDashboardStats = async () => {
+    try {
+      // TODO: 实现 API 调用
+      // const response = await api.logs.getDashboardStats()
+      // if (response.success && response.data) {
+      //   setDashboardStats(response.data)
+      // }
+    } catch (error) {
+      console.error('获取仪表板统计数据失败:', error)
+    }
+  }
+
+  // 获取日志列表数据
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      // TODO: 实现 API 调用
+      // const response = await api.logs.getList({
+      //   page: currentPage,
+      //   limit: pageSize,
+      //   search: searchTerm || undefined,
+      //   method: methodFilter === 'all' ? undefined : methodFilter,
+      //   status_code: statusFilter === 'all' ? undefined : parseInt(statusFilter),
+      // })
+      
+      // if (response.success && response.data) {
+      //   setData(response.data.traces)
+      //   setTotalItems(response.data.pagination.total)
+      //   setTotalPages(response.data.pagination.pages)
+      // } else {
+      //   throw new Error(response.error?.message || '获取日志列表失败')
+      // }
+      
+      // 临时使用空数组
+      setData([])
+    } catch (error) {
+      console.error('获取日志列表失败:', error)
+      setError(error instanceof Error ? error.message : '获取数据失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 初始化数据加载
+  useEffect(() => {
+    fetchDashboardStats()
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [currentPage, pageSize, searchTerm, methodFilter, statusFilter])
+
+  // 获取所有HTTP方法列表
+  const methods = useMemo(() => {
+    const uniqueMethods = Array.from(new Set(data.map(item => item.method)))
+    return uniqueMethods
   }, [data])
 
-  // 过滤数据
-  const filteredData = useMemo(() => {
-    return data.filter((item) => {
-      const matchesSearch = 
-        item.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.endpoint.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.requestId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.userId && item.userId.toLowerCase().includes(searchTerm.toLowerCase()))
-      const matchesLevel = levelFilter === 'all' || item.level === levelFilter
-      const matchesService = serviceFilter === 'all' || item.service === serviceFilter
-      return matchesSearch && matchesLevel && matchesService
-    })
-  }, [data, searchTerm, levelFilter, serviceFilter])
-
-  // 分页数据和计算
-  const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    return filteredData.slice(startIndex, startIndex + pageSize)
-  }, [filteredData, currentPage, pageSize])
-
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  // 由于后端已经处理了过滤和分页，前端直接使用返回的数据
+  const paginatedData = data
   
   // 重置页码当过滤条件改变时
   React.useEffect(() => {
     setCurrentPage(1)
-  }, [searchTerm, levelFilter, serviceFilter])
+  }, [searchTerm, methodFilter, statusFilter])
 
   // 格式化时间戳
   const formatTimestamp = (timestamp: string) => {
@@ -144,45 +163,17 @@ const LogsPage: React.FC = () => {
     }
   }
 
-  // 渲染请求记录级别
-  const renderLogLevel = (level: LogLevel) => {
-    const levelConfig = {
-      info: { 
-        icon: Info, 
-        color: 'text-blue-600', 
-        bg: 'bg-blue-50', 
-        ring: 'ring-blue-200', 
-        text: 'INFO' 
-      },
-      warn: { 
-        icon: AlertTriangle, 
-        color: 'text-yellow-600', 
-        bg: 'bg-yellow-50', 
-        ring: 'ring-yellow-200', 
-        text: 'WARN' 
-      },
-      error: { 
-        icon: XCircle, 
-        color: 'text-red-600', 
-        bg: 'bg-red-50', 
-        ring: 'ring-red-200', 
-        text: 'ERROR' 
-      },
-      success: { 
-        icon: CheckCircle, 
-        color: 'text-emerald-600', 
-        bg: 'bg-emerald-50', 
-        ring: 'ring-emerald-200', 
-        text: 'SUCCESS' 
-      },
-    }
-    const config = levelConfig[level]
-    const IconComponent = config.icon
-    
-    return (
-      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${config.bg} ${config.color} ring-1 ${config.ring}`}>
-        <IconComponent size={10} className="mr-1" />
-        {config.text}
+  // 渲染成功状态
+  const renderSuccessStatus = (isSuccess: boolean) => {
+    return isSuccess ? (
+      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+        <CheckCircle size={10} className="mr-1" />
+        成功
+      </span>
+    ) : (
+      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
+        <XCircle size={10} className="mr-1" />
+        失败
       </span>
     )
   }
@@ -206,44 +197,55 @@ const LogsPage: React.FC = () => {
       {/* 页面头部 */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-medium text-neutral-800">请求记录</h2>
-          <p className="text-sm text-neutral-600 mt-1">查看和分析API请求记录</p>
+          <h2 className="text-lg font-medium text-neutral-800">代理跟踪日志</h2>
+          <p className="text-sm text-neutral-600 mt-1">查看和分析API代理请求的跟踪记录</p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => window.location.reload()}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
+            onClick={() => {
+              fetchData()
+              fetchDashboardStats()
+            }}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             刷新
           </button>
         </div>
       </div>
 
+      {/* 错误提示 */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
       {/* 统计信息 */}
       <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard
           icon={<FileText size={18} />}
-          value={data.length.toString()}
-          label="总记录数"
+          value={dashboardStats?.total_requests?.toString() || '0'}
+          label="总请求数"
           color="#7c3aed"
         />
         <StatCard
+          icon={<CheckCircle size={18} />}
+          value={dashboardStats?.successful_requests?.toString() || '0'}
+          label="成功请求"
+          color="#10b981"
+        />
+        <StatCard
           icon={<XCircle size={18} />}
-          value={data.filter(item => item.level === 'error').length.toString()}
-          label="错误记录"
+          value={dashboardStats?.failed_requests?.toString() || '0'}
+          label="失败请求"
           color="#ef4444"
         />
         <StatCard
-          icon={<AlertTriangle size={18} />}
-          value={data.filter(item => item.level === 'warn').length.toString()}
-          label="警告记录"
-          color="#f59e0b"
-        />
-        <StatCard
           icon={<Timer size={18} />}
-          value={`${Math.round(data.reduce((sum, item) => sum + item.duration, 0) / data.length)}ms`}
+          value={dashboardStats?.avg_response_time ? `${dashboardStats.avg_response_time}ms` : '0ms'}
           label="平均响应时间"
           color="#0ea5e9"
         />
@@ -255,7 +257,7 @@ const LogsPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400" size={16} />
           <input
             type="text"
-            placeholder="搜索消息、接口、请求ID或用户..."
+            placeholder="搜索路径、请求ID、模型或错误信息..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
@@ -263,28 +265,30 @@ const LogsPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-4">
           <FilterSelect
-            value={serviceFilter}
-            onValueChange={setServiceFilter}
+            value={methodFilter}
+            onValueChange={setMethodFilter}
             options={[
-              { value: 'all', label: '全部服务' },
-              ...services.map(service => ({
-                value: service,
-                label: service
-              }))
+              { value: 'all', label: '全部方法' },
+              { value: 'GET', label: 'GET' },
+              { value: 'POST', label: 'POST' },
+              { value: 'PUT', label: 'PUT' },
+              { value: 'DELETE', label: 'DELETE' }
             ]}
-            placeholder="全部服务"
+            placeholder="全部方法"
           />
           <FilterSelect
-            value={levelFilter}
-            onValueChange={(value) => setLevelFilter(value as 'all' | LogLevel)}
+            value={statusFilter}
+            onValueChange={setStatusFilter}
             options={[
-              { value: 'all', label: '全部级别' },
-              { value: 'info', label: 'INFO' },
-              { value: 'warn', label: 'WARN' },
-              { value: 'error', label: 'ERROR' },
-              { value: 'success', label: 'SUCCESS' }
+              { value: 'all', label: '全部状态' },
+              { value: '200', label: '200 成功' },
+              { value: '400', label: '400 错误请求' },
+              { value: '401', label: '401 未授权' },
+              { value: '403', label: '403 禁止访问' },
+              { value: '404', label: '404 未找到' },
+              { value: '500', label: '500 服务器错误' }
             ]}
-            placeholder="全部级别"
+            placeholder="全部状态"
           />
         </div>
       </div>
@@ -296,67 +300,105 @@ const LogsPage: React.FC = () => {
             <thead className="bg-neutral-50 text-neutral-600">
               <tr>
                 <th className="px-4 py-3 text-left font-medium">时间</th>
-                <th className="px-4 py-3 text-left font-medium">级别</th>
-                <th className="px-4 py-3 text-left font-medium">服务</th>
-                <th className="px-4 py-3 text-left font-medium">接口</th>
-                <th className="px-4 py-3 text-left font-medium">消息</th>
-                <th className="px-4 py-3 text-left font-medium">状态码</th>
-                <th className="px-4 py-3 text-left font-medium">耗时</th>
+                <th className="px-4 py-3 text-left font-medium">请求ID</th>
+                <th className="px-4 py-3 text-left font-medium">方法</th>
+                <th className="px-4 py-3 text-left font-medium">路径</th>
+                <th className="px-4 py-3 text-left font-medium">状态</th>
+                <th className="px-4 py-3 text-left font-medium">模型</th>
+                <th className="px-4 py-3 text-left font-medium">Token</th>
+                <th className="px-4 py-3 text-left font-medium">费用</th>
                 <th className="px-4 py-3 text-left font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {paginatedData.map((item) => {
-                const { date, time } = formatTimestamp(item.timestamp)
-                return (
-                  <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <Calendar size={14} className="text-neutral-400" />
-                        <div>
-                          <div className="text-xs text-neutral-500">{date}</div>
-                          <div className="text-xs font-mono text-neutral-700">{time}</div>
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center">
+                    <div className="flex justify-center items-center gap-2">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                      <span className="text-neutral-600">加载中...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedData.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
+                    暂无数据
+                  </td>
+                </tr>
+              ) : (
+                paginatedData.map((item) => {
+                  const { date, time } = formatTimestamp(item.created_at)
+                  return (
+                    <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Calendar size={14} className="text-neutral-400" />
+                          <div>
+                            <div className="text-xs text-neutral-500">{date}</div>
+                            <div className="text-xs font-mono text-neutral-700">{time}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">{renderLogLevel(item.level)}</td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-mono">
-                        {item.service}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <code className="text-xs bg-neutral-100 px-2 py-1 rounded">
-                        {item.endpoint}
-                      </code>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="max-w-xs truncate" title={item.message}>
-                        {item.message}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">{renderStatusCode(item.statusCode)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <Clock size={12} className="text-neutral-400" />
-                        <span className="text-xs">{item.duration}ms</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => {
-                          setSelectedItem(item)
-                          setDialogType('details')
-                        }}
-                        className="p-1 text-neutral-500 hover:text-violet-600"
-                        title="查看详情"
-                      >
-                        <Eye size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <code className="text-xs bg-neutral-100 px-2 py-1 rounded font-mono">
+                          {item.request_id}
+                        </code>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-mono">
+                          {item.method}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <code className="text-xs bg-neutral-100 px-2 py-1 rounded max-w-xs truncate block">
+                          {item.path || 'N/A'}
+                        </code>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {renderSuccessStatus(item.is_success)}
+                          {item.status_code && renderStatusCode(item.status_code)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-neutral-600">
+                          {item.model_used || 'N/A'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-xs space-y-1">
+                          <div className="font-medium">总计: {item.tokens_total.toLocaleString()}</div>
+                          <div className="text-neutral-500 space-y-0.5">
+                            <div>输入: {item.tokens_prompt.toLocaleString()} | 输出: {item.tokens_completion.toLocaleString()}</div>
+                            <div>缓存创建: {item.cache_create_tokens.toLocaleString()} | 缓存读取: {item.cache_read_tokens.toLocaleString()}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-xs">
+                          {item.cost ? `$${item.cost.toFixed(4)}` : 'N/A'}
+                          {item.cost_currency && item.cost_currency !== 'USD' && (
+                            <span className="text-neutral-500"> {item.cost_currency}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setDialogType('details')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-violet-600"
+                          title="查看详情"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -365,7 +407,7 @@ const LogsPage: React.FC = () => {
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-neutral-200">
             <div className="text-sm text-neutral-600">
-              显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filteredData.length)} 条，共 {filteredData.length} 条记录
+              显示 {(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, totalItems)} 条，共 {totalItems} 条记录
             </div>
             <div className="flex items-center gap-4">
               {/* 每页数量选择 */}
@@ -465,24 +507,24 @@ const LogsPage: React.FC = () => {
   )
 }
 
-/** 请求记录详情对话框 */
+/** 代理跟踪日志详情对话框 */
 const LogDetailsDialog: React.FC<{
-  item: LogEntry
+  item: ProxyTraceEntry
   onClose: () => void
 }> = ({ item, onClose }) => {
   const { date, time } = React.useMemo(() => {
-    const d = new Date(item.timestamp)
+    const d = new Date(item.created_at)
     return {
       date: d.toLocaleDateString(),
       time: d.toLocaleTimeString()
     }
-  }, [item.timestamp])
+  }, [item.created_at])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-neutral-900">请求记录详情</h3>
+          <h3 className="text-lg font-medium text-neutral-900">代理跟踪日志详情</h3>
           <button
             onClick={onClose}
             className="text-neutral-500 hover:text-neutral-700"
@@ -495,51 +537,126 @@ const LogDetailsDialog: React.FC<{
           <div className="grid grid-cols-2 gap-4">
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">请求ID</div>
-              <div className="font-mono text-sm">{item.requestId}</div>
+              <div className="font-mono text-sm">{item.request_id}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">时间戳</div>
+              <div className="text-sm text-neutral-600">创建时间</div>
               <div className="text-sm">{date} {time}</div>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">服务</div>
-              <div className="font-medium">{item.service}</div>
+              <div className="text-sm text-neutral-600">HTTP方法</div>
+              <div className="font-medium">{item.method}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">状态码</div>
-              <div className="font-medium">{item.statusCode}</div>
+              <div className="font-medium">{item.status_code || 'N/A'}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">耗时</div>
-              <div className="font-medium">{item.duration}ms</div>
+              <div className="text-sm text-neutral-600">执行状态</div>
+              <div className="font-medium">{item.is_success ? '成功' : '失败'}</div>
             </div>
           </div>
 
           <div className="p-3 bg-neutral-50 rounded-lg">
-            <div className="text-sm text-neutral-600">接口</div>
+            <div className="text-sm text-neutral-600">请求路径</div>
             <code className="text-sm bg-neutral-100 px-2 py-1 rounded mt-1 inline-block">
-              {item.endpoint}
+              {item.path || 'N/A'}
             </code>
-          </div>
-
-          <div className="p-3 bg-neutral-50 rounded-lg">
-            <div className="text-sm text-neutral-600">消息</div>
-            <div className="mt-1">{item.message}</div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">用户ID</div>
-              <div className="font-mono text-sm">{item.userId || 'N/A'}</div>
+              <div className="text-sm text-neutral-600">使用模型</div>
+              <div className="font-medium">{item.model_used || 'N/A'}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">IP地址</div>
-              <div className="font-mono text-sm">{item.ip}</div>
+              <div className="text-sm text-neutral-600">服务商</div>
+              <div className="font-medium">{item.provider_name || 'N/A'}</div>
             </div>
           </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">输入Token</div>
+              <div className="font-medium">{item.tokens_prompt}</div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">输出Token</div>
+              <div className="font-medium">{item.tokens_completion}</div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">总Token</div>
+              <div className="font-medium">{item.tokens_total}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">费用</div>
+              <div className="font-medium">{item.cost ? `$${item.cost.toFixed(4)}` : 'N/A'} {item.cost_currency}</div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">重试次数</div>
+              <div className="font-medium">{item.retry_count}</div>
+            </div>
+          </div>
+
+          {(item.start_time || item.end_time || item.duration_ms) && (
+            <div className="grid grid-cols-3 gap-4">
+              {item.start_time && (
+                <div className="p-3 bg-neutral-50 rounded-lg">
+                  <div className="text-sm text-neutral-600">开始时间</div>
+                  <div className="text-xs font-mono">{new Date(item.start_time).toLocaleString()}</div>
+                </div>
+              )}
+              {item.end_time && (
+                <div className="p-3 bg-neutral-50 rounded-lg">
+                  <div className="text-sm text-neutral-600">结束时间</div>
+                  <div className="text-xs font-mono">{new Date(item.end_time).toLocaleString()}</div>
+                </div>
+              )}
+              {item.duration_ms && (
+                <div className="p-3 bg-neutral-50 rounded-lg">
+                  <div className="text-sm text-neutral-600">执行时长</div>
+                  <div className="font-medium">{item.duration_ms}ms</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">客户端IP</div>
+              <div className="font-mono text-sm">{item.client_ip || 'N/A'}</div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">用户代理</div>
+              <div className="text-xs truncate max-w-xs" title={item.user_agent || 'N/A'}>
+                {item.user_agent || 'N/A'}
+              </div>
+            </div>
+          </div>
+
+          {(item.error_type || item.error_message) && (
+            <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+              <div className="text-sm text-red-600 font-medium mb-2">错误信息</div>
+              {item.error_type && (
+                <div className="mb-1">
+                  <span className="text-xs text-red-500">类型: </span>
+                  <span className="text-sm font-mono">{item.error_type}</span>
+                </div>
+              )}
+              {item.error_message && (
+                <div>
+                  <span className="text-xs text-red-500">消息: </span>
+                  <span className="text-sm">{item.error_message}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

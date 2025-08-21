@@ -58,8 +58,6 @@ pub struct ListenerConfig {
     pub bind_addr: Option<SocketAddr>,
 }
 
-
-
 /// 访问控制配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessControlConfig {
@@ -104,8 +102,6 @@ pub enum LoadBalancingStrategy {
     IpHash,
     Random,
 }
-
-
 
 impl Default for DualPortServerConfig {
     fn default() -> Self {
@@ -153,8 +149,6 @@ impl Default for ProxyPortConfig {
     }
 }
 
-
-
 impl Default for AccessControlConfig {
     fn default() -> Self {
         Self {
@@ -177,8 +171,6 @@ impl Default for LoadBalancingConfig {
     }
 }
 
-
-
 impl ListenerConfig {
     /// 获取绑定地址
     pub fn bind_address(&self) -> std::io::Result<SocketAddr> {
@@ -190,8 +182,6 @@ impl ListenerConfig {
             )
         })
     }
-
-    
 }
 
 impl DualPortServerConfig {

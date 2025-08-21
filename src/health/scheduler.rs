@@ -1,7 +1,7 @@
 //! # 健康检查调度器
 
-use crate::error::{ProxyError, Result};
 use super::service::HealthCheckService;
+use crate::error::{ProxyError, Result};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -43,7 +43,9 @@ impl HealthCheckScheduler {
     /// 启动调度器
     pub async fn start(&mut self) -> Result<()> {
         if self.is_running {
-            return Err(ProxyError::server_init("Scheduler already running".to_string()));
+            return Err(ProxyError::server_init(
+                "Scheduler already running".to_string(),
+            ));
         }
 
         // 启动健康检查服务
@@ -91,10 +93,10 @@ impl HealthCheckScheduler {
 
         let task = tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // 检查服务是否仍在运行
                 if !health_service.is_running().await {
                     tracing::debug!("Health service stopped, exiting main loop");
@@ -113,7 +115,7 @@ impl HealthCheckScheduler {
                     }
                 }
             }
-            
+
             tracing::debug!("Health check main loop ended");
         });
 
@@ -129,10 +131,10 @@ impl HealthCheckScheduler {
 
         let task = tokio::spawn(async move {
             let mut interval = interval(interval_duration);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // 检查服务是否仍在运行
                 if !health_service.is_running().await {
                     tracing::debug!("Health service stopped, exiting cleanup loop");
@@ -151,7 +153,7 @@ impl HealthCheckScheduler {
                     }
                 }
             }
-            
+
             tracing::debug!("Health check cleanup loop ended");
         });
 
@@ -248,7 +250,8 @@ impl HealthCheckSchedulerBuilder {
 
     /// 构建调度器
     pub fn build(self) -> Result<HealthCheckScheduler> {
-        let health_service = self.health_service
+        let health_service = self
+            .health_service
             .ok_or_else(|| ProxyError::server_init("Health service is required".to_string()))?;
 
         Ok(HealthCheckScheduler::new(
@@ -309,7 +312,7 @@ impl SchedulerManager {
     /// 执行所有调度器的立即检查
     pub async fn execute_immediate_checks(&self) -> Result<usize> {
         let mut total_executed = 0;
-        
+
         for scheduler in &self.schedulers {
             if scheduler.is_running() {
                 match scheduler.execute_immediate_check().await {
@@ -318,7 +321,7 @@ impl SchedulerManager {
                 }
             }
         }
-        
+
         Ok(total_executed)
     }
 }
@@ -342,7 +345,7 @@ mod tests {
             Some(Duration::from_millis(100)),
             Some(Duration::from_millis(500)),
         );
-        
+
         assert!(!scheduler.is_running());
         assert_eq!(scheduler.check_interval(), Duration::from_millis(100));
         assert_eq!(scheduler.cleanup_interval(), Duration::from_millis(500));
@@ -351,13 +354,13 @@ mod tests {
     #[tokio::test]
     async fn test_scheduler_builder() {
         let health_service = Arc::new(HealthCheckService::new(None));
-        
+
         let scheduler = HealthCheckSchedulerBuilder::new()
             .with_health_service(health_service)
             .with_check_interval(Duration::from_millis(200))
             .with_cleanup_interval(Duration::from_secs(1))
             .build();
-        
+
         assert!(scheduler.is_ok());
         let scheduler = scheduler.unwrap();
         assert_eq!(scheduler.check_interval(), Duration::from_millis(200));
@@ -372,13 +375,13 @@ mod tests {
             Some(Duration::from_millis(50)),
             Some(Duration::from_millis(100)),
         );
-        
+
         assert!(scheduler.start().await.is_ok());
         assert!(scheduler.is_running());
-        
+
         // 等待一小段时间确保任务启动
         tokio::time::sleep(Duration::from_millis(10)).await;
-        
+
         assert!(scheduler.stop().await.is_ok());
         assert!(!scheduler.is_running());
     }
@@ -387,27 +390,21 @@ mod tests {
     async fn test_scheduler_manager() {
         let health_service1 = Arc::new(HealthCheckService::new(None));
         let health_service2 = Arc::new(HealthCheckService::new(None));
-        
-        let scheduler1 = HealthCheckScheduler::new(
-            health_service1,
-            Some(Duration::from_millis(100)),
-            None,
-        );
-        let scheduler2 = HealthCheckScheduler::new(
-            health_service2,
-            Some(Duration::from_millis(100)),
-            None,
-        );
-        
+
+        let scheduler1 =
+            HealthCheckScheduler::new(health_service1, Some(Duration::from_millis(100)), None);
+        let scheduler2 =
+            HealthCheckScheduler::new(health_service2, Some(Duration::from_millis(100)), None);
+
         let mut manager = SchedulerManager::new();
         manager.add_scheduler(scheduler1);
         manager.add_scheduler(scheduler2);
-        
+
         assert_eq!(manager.running_count(), 0);
-        
+
         assert!(manager.start_all().await.is_ok());
         assert_eq!(manager.running_count(), 2);
-        
+
         assert!(manager.stop_all().await.is_ok());
         assert_eq!(manager.running_count(), 0);
     }
@@ -415,21 +412,18 @@ mod tests {
     #[tokio::test]
     async fn test_immediate_check() {
         let health_service = Arc::new(HealthCheckService::new(None));
-        let mut scheduler = HealthCheckScheduler::new(
-            health_service,
-            Some(Duration::from_secs(1)),
-            None,
-        );
-        
+        let mut scheduler =
+            HealthCheckScheduler::new(health_service, Some(Duration::from_secs(1)), None);
+
         // 在未启动时应该失败
         assert!(scheduler.execute_immediate_check().await.is_err());
-        
+
         // 启动后应该成功（即使没有服务器）
         assert!(scheduler.start().await.is_ok());
         let result = scheduler.execute_immediate_check().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0); // 没有服务器，执行0个检查
-        
+
         assert!(scheduler.stop().await.is_ok());
     }
 }

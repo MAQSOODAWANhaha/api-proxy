@@ -276,14 +276,23 @@ mod tests {
 
     #[test]
     fn test_gemini_model_display() {
-        assert_eq!(GeminiModel::Gemini15ProLatest.to_string(), "gemini-1.5-pro-latest");
+        assert_eq!(
+            GeminiModel::Gemini15ProLatest.to_string(),
+            "gemini-1.5-pro-latest"
+        );
         assert_eq!(GeminiModel::GeminiPro.to_string(), "gemini-pro");
     }
 
     #[test]
     fn test_claude_model_display() {
-        assert_eq!(ClaudeModel::Claude3Sonnet20240229.to_string(), "claude-3-sonnet-20240229");
-        assert_eq!(ClaudeModel::Claude3Opus20240229.to_string(), "claude-3-opus-20240229");
+        assert_eq!(
+            ClaudeModel::Claude3Sonnet20240229.to_string(),
+            "claude-3-sonnet-20240229"
+        );
+        assert_eq!(
+            ClaudeModel::Claude3Opus20240229.to_string(),
+            "claude-3-opus-20240229"
+        );
     }
 
     #[test]

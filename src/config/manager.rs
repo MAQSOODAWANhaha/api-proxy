@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 
 use super::{AppConfig, ConfigCrypto, ConfigEvent, ConfigWatcher, SensitiveFields};
@@ -309,10 +309,14 @@ impl ConfigManager {
             }
             // TLS 配置已移除，忽略相关环境变量覆盖
             ["tls", "cert", "path"] | ["tls", "certpath"] => {
-                warn!("TLS configuration has been removed, ignoring environment variable override for tls.cert_path");
+                warn!(
+                    "TLS configuration has been removed, ignoring environment variable override for tls.cert_path"
+                );
             }
             ["tls", "acme", "email"] | ["tls", "acmeemail"] => {
-                warn!("TLS configuration has been removed, ignoring environment variable override for tls.acme_email");
+                warn!(
+                    "TLS configuration has been removed, ignoring environment variable override for tls.acme_email"
+                );
             }
             _ => {
                 warn!("未知的配置路径，忽略环境变量覆盖: {}", path);

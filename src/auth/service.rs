@@ -2,20 +2,20 @@
 //!
 //! Provides unified authentication and authorization services
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use chrono::Utc;
-use thiserror::Error;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QuerySelect};
-use entity::{users, users::Entity as Users};
 use bcrypt::verify;
+use chrono::Utc;
+use entity::{users, users::Entity as Users};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use std::collections::HashMap;
+use std::sync::Arc;
+use thiserror::Error;
 
 use crate::auth::{
-    AuthResult, AuthMethod, AuthContext, AuthError,
-    jwt::{JwtManager, TokenPair},
+    AuthContext, AuthError, AuthMethod, AuthResult,
     api_key::ApiKeyManager,
-    types::{AuthConfig, TokenType, UserInfo, AuditLogEntry, AuditEventType, AuditResult},
+    jwt::{JwtManager, TokenPair},
     permissions::{Permission, PermissionChecker},
+    types::{AuditEventType, AuditLogEntry, AuditResult, AuthConfig, TokenType, UserInfo},
 };
 use crate::cache::abstract_cache::UnifiedCacheManager;
 use crate::cache::keys::CacheKeyBuilder;
@@ -79,7 +79,7 @@ impl AuthService {
             audit_cache: tokio::sync::RwLock::new(Vec::new()),
         }
     }
-    
+
     /// Create authentication service with cache manager
     pub fn with_cache(
         jwt_manager: Arc<JwtManager>,
@@ -99,10 +99,14 @@ impl AuthService {
     }
 
     /// Authenticate request using various methods
-    pub async fn authenticate(&self, auth_header: &str, context: &mut AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate(
+        &self,
+        auth_header: &str,
+        context: &mut AuthContext,
+    ) -> Result<AuthResult> {
         // Parse authentication token
-        let token_type = TokenType::from_auth_header(auth_header)
-            .ok_or(AuthServiceError::InvalidCredentials)?;
+        let token_type =
+            TokenType::from_auth_header(auth_header).ok_or(AuthServiceError::InvalidCredentials)?;
 
         let auth_result = match token_type {
             TokenType::Bearer(token) => self.authenticate_jwt(&token, context).await,
@@ -117,20 +121,31 @@ impl AuthService {
             context,
             AuditEventType::ApiCall,
             AuditResult::Success,
-            Some(format!("Authentication successful via {:?}", auth_result.auth_method)),
-        ).await;
+            Some(format!(
+                "Authentication successful via {:?}",
+                auth_result.auth_method
+            )),
+        )
+        .await;
 
         Ok(auth_result)
     }
 
     /// Authenticate using JWT token
-    pub async fn authenticate_jwt(&self, token: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_jwt(
+        &self,
+        token: &str,
+        _context: &AuthContext,
+    ) -> Result<AuthResult> {
         let claims = self.jwt_manager.validate_token(token)?;
-        
-        let user_id = claims.user_id()
+
+        let user_id = claims
+            .user_id()
             .map_err(|_| AuthServiceError::InvalidCredentials)?;
 
-        let permissions = claims.permissions.iter()
+        let permissions = claims
+            .permissions
+            .iter()
             .filter_map(|p| crate::auth::permissions::Permission::from_str(p))
             .collect();
 
@@ -145,7 +160,11 @@ impl AuthService {
     }
 
     /// Authenticate using API key
-    pub async fn authenticate_api_key(&self, api_key: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_api_key(
+        &self,
+        api_key: &str,
+        _context: &AuthContext,
+    ) -> Result<AuthResult> {
         let validation_result = self.api_key_manager.validate_api_key(api_key).await?;
 
         Ok(AuthResult {
@@ -159,7 +178,12 @@ impl AuthService {
     }
 
     /// Authenticate using basic authentication
-    pub async fn authenticate_basic(&self, username: &str, password: &str, _context: &AuthContext) -> Result<AuthResult> {
+    pub async fn authenticate_basic(
+        &self,
+        username: &str,
+        password: &str,
+        _context: &AuthContext,
+    ) -> Result<AuthResult> {
         // Query user from database
         let user = Users::find()
             .filter(users::Column::Username.eq(username))
@@ -171,8 +195,9 @@ impl AuthService {
         let user = user.ok_or(AuthServiceError::InvalidCredentials)?;
 
         // Verify password
-        let password_valid = verify(password, &user.password_hash)
-            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e)))?;
+        let password_valid = verify(password, &user.password_hash).map_err(|e| {
+            AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e))
+        })?;
 
         if !password_valid {
             return Err(AuthServiceError::InvalidCredentials.into());
@@ -198,11 +223,9 @@ impl AuthService {
     /// Authorize request based on permissions
     pub async fn authorize(&self, auth_result: &AuthResult, context: &AuthContext) -> Result<bool> {
         let permission_checker = PermissionChecker::new(auth_result.permissions.clone());
-        
-        let is_authorized = permission_checker.can_access_path(
-            &context.resource_path,
-            &context.method,
-        );
+
+        let is_authorized =
+            permission_checker.can_access_path(&context.resource_path, &context.method);
 
         if !is_authorized {
             // Log authorization failure
@@ -210,8 +233,12 @@ impl AuthService {
                 context,
                 AuditEventType::PermissionCheck,
                 AuditResult::PermissionDenied,
-                Some(format!("Access denied to {} {}", context.method, context.resource_path)),
-            ).await;
+                Some(format!(
+                    "Access denied to {} {}",
+                    context.method, context.resource_path
+                )),
+            )
+            .await;
 
             return Err(AuthServiceError::AuthorizationFailed.into());
         }
@@ -221,8 +248,12 @@ impl AuthService {
             context,
             AuditEventType::PermissionCheck,
             AuditResult::Success,
-            Some(format!("Access granted to {} {}", context.method, context.resource_path)),
-        ).await;
+            Some(format!(
+                "Access granted to {} {}",
+                context.method, context.resource_path
+            )),
+        )
+        .await;
 
         Ok(true)
     }
@@ -240,8 +271,9 @@ impl AuthService {
         let user = user.ok_or(AuthServiceError::InvalidCredentials)?;
 
         // Verify password
-        let password_valid = verify(password, &user.password_hash)
-            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e)))?;
+        let password_valid = verify(password, &user.password_hash).map_err(|e| {
+            AuthServiceError::ServiceUnavailable(format!("Password verification error: {}", e))
+        })?;
 
         if !password_valid {
             return Err(AuthServiceError::InvalidCredentials.into());
@@ -267,7 +299,8 @@ impl AuthService {
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<String> {
         // Validate refresh token and get user ID
         let claims = self.jwt_manager.validate_token(refresh_token)?;
-        let user_id = claims.user_id()
+        let user_id = claims
+            .user_id()
             .map_err(|_| AuthServiceError::InvalidCredentials)?;
 
         // Get user from database
@@ -284,13 +317,14 @@ impl AuthService {
         // Get current user permissions
         let permissions = self.get_user_permissions(&user).await;
 
-        self.jwt_manager.refresh_access_token(refresh_token, permissions, user.is_admin)
+        self.jwt_manager
+            .refresh_access_token(refresh_token, permissions, user.is_admin)
     }
 
     /// Logout user (revoke tokens)
     pub async fn logout(&self, access_token: &str) -> Result<()> {
         let jti = self.jwt_manager.revoke_token(access_token)?;
-        
+
         // Add JTI to blacklist in Redis
         if let Some(cache_manager) = &self.cache_manager {
             let blacklist_key = CacheKeyBuilder::auth_token(&jti);
@@ -299,18 +333,21 @@ impl AuthService {
                 "token_type": "access_token",
                 "reason": "user_logout"
             });
-            
-            if let Err(e) = cache_manager.set_with_strategy(&blacklist_key, &blacklist_data).await {
+
+            if let Err(e) = cache_manager
+                .set_with_strategy(&blacklist_key, &blacklist_data)
+                .await
+            {
                 tracing::warn!("Failed to add token to blacklist cache: {}", e);
             } else {
                 tracing::debug!("Token added to blacklist: {}", jti);
             }
         }
-        
+
         tracing::info!("Token revoked: {}", jti);
         Ok(())
     }
-    
+
     /// Check if token is blacklisted
     pub async fn is_token_blacklisted(&self, jti: &str) -> bool {
         if let Some(cache_manager) = &self.cache_manager {
@@ -338,12 +375,16 @@ impl AuthService {
 
     /// Check if user has specific permission
     pub fn check_permission(&self, auth_result: &AuthResult, permission: &Permission) -> bool {
-        auth_result.permissions.contains(permission) ||
-        auth_result.permissions.contains(&Permission::SuperAdmin)
+        auth_result.permissions.contains(permission)
+            || auth_result.permissions.contains(&Permission::SuperAdmin)
     }
 
     /// Check if user has any of the specified permissions
-    pub fn check_any_permission(&self, auth_result: &AuthResult, permissions: &[Permission]) -> bool {
+    pub fn check_any_permission(
+        &self,
+        auth_result: &AuthResult,
+        permissions: &[Permission],
+    ) -> bool {
         let permission_checker = PermissionChecker::new(auth_result.permissions.clone());
         permission_checker.has_any(permissions)
     }
@@ -357,10 +398,11 @@ impl AuthService {
 
         if let Some(user) = user {
             let permission_strings = self.get_user_permissions(&user).await;
-            let permissions: Vec<Permission> = permission_strings.iter()
+            let permissions: Vec<Permission> = permission_strings
+                .iter()
                 .filter_map(|s| Permission::from_str(s))
                 .collect();
-            
+
             Ok(Some(UserInfo {
                 id: user.id,
                 username: user.username,
@@ -415,17 +457,13 @@ impl AuthService {
     /// Get recent audit logs
     pub async fn get_audit_logs(&self, limit: usize) -> Vec<AuditLogEntry> {
         let cache = self.audit_cache.read().await;
-        cache.iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        cache.iter().rev().take(limit).cloned().collect()
     }
 
     /// Sanitize token for logging
     fn sanitize_token(&self, token: &str) -> String {
         if token.len() > 20 {
-            format!("{}***{}", &token[..8], &token[token.len()-8..])
+            format!("{}***{}", &token[..8], &token[token.len() - 8..])
         } else if token.len() > 8 {
             format!("{}***", &token[..4])
         } else {
@@ -436,7 +474,7 @@ impl AuthService {
     /// Health check for authentication service
     pub async fn health_check(&self) -> HashMap<String, String> {
         let mut status = HashMap::new();
-        
+
         status.insert("jwt_manager".to_string(), "healthy".to_string());
         status.insert("api_key_manager".to_string(), "healthy".to_string());
         // Real database health check
@@ -445,15 +483,15 @@ impl AuthService {
             Err(_) => "unhealthy",
         };
         status.insert("database".to_string(), db_status.to_string());
-        
+
         // Check cache stats
         let cache_stats = self.api_key_manager.get_cache_stats().await;
         status.insert("cache_keys".to_string(), cache_stats.total_keys.to_string());
-        
+
         // Check audit log cache
         let audit_count = self.audit_cache.read().await.len();
         status.insert("audit_entries".to_string(), audit_count.to_string());
-        
+
         status
     }
 
@@ -461,7 +499,7 @@ impl AuthService {
     pub async fn cleanup(&self) {
         // Cleanup API key cache
         self.api_key_manager.cleanup_expired_cache().await;
-        
+
         // Cleanup old audit logs
         let mut cache = self.audit_cache.write().await;
         let one_day_ago = Utc::now() - chrono::Duration::days(1);
@@ -492,7 +530,7 @@ impl AuthService {
     /// Update user's last login time
     async fn update_last_login(&self, user_id: i32) -> Result<()> {
         use sea_orm::ActiveModelTrait;
-        
+
         // Find the user
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
@@ -503,7 +541,7 @@ impl AuthService {
         // Update last login time
         let mut user: users::ActiveModel = user.into();
         user.last_login = sea_orm::Set(Some(Utc::now().naive_utc()));
-        
+
         user.update(self.db.as_ref())
             .await
             .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?;
@@ -518,8 +556,13 @@ impl AuthService {
             .limit(1)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database connection test failed: {}", e)))?;
-        
+            .map_err(|e| {
+                AuthServiceError::ServiceUnavailable(format!(
+                    "Database connection test failed: {}",
+                    e
+                ))
+            })?;
+
         Ok(())
     }
 }
@@ -533,19 +576,19 @@ mod tests {
         // Test token sanitization logic
         fn sanitize_token(token: &str) -> String {
             if token.len() > 20 {
-                format!("{}***{}", &token[..8], &token[token.len()-8..])
+                format!("{}***{}", &token[..8], &token[token.len() - 8..])
             } else if token.len() > 8 {
                 format!("{}***", &token[..4])
             } else {
                 "***".to_string()
             }
         }
-        
+
         let long_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ";
         let sanitized = sanitize_token(long_token);
         assert!(sanitized.contains("***"));
         assert!(sanitized.len() < long_token.len());
-        
+
         let short_token = "short";
         let sanitized_short = sanitize_token(short_token);
         assert_eq!(sanitized_short, "***");

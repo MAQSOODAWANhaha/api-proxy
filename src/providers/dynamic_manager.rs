@@ -117,7 +117,7 @@ impl DynamicAdapterManager {
                 .config_json
                 .as_ref()
                 .and_then(|c| c.get("streaming").cloned()),
-            field_extractor: None,  // TODO: 从config_json创建FieldExtractor
+            field_extractor: None, // TODO: 从config_json创建FieldExtractor
         };
 
         let adapter =

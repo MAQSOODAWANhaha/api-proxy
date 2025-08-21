@@ -232,7 +232,7 @@ impl Default for AuthConfig {
             session_timeout: 3600, // 1 小时
             max_login_attempts: 5,
             login_lockout_duration: 900, // 15 分钟
-            cache_ttl_minutes: 10, // 10 分钟缓存
+            cache_ttl_minutes: 10,       // 10 分钟缓存
         }
     }
 }

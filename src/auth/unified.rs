@@ -2,22 +2,21 @@
 //!
 //! 为双端口架构提供统一的认证服务，可被Pingora代理服务和Axum管理服务共享使用
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::RwLock;
-use serde::Serialize;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::auth::{
-    AuthResult, AuthMethod, AuthContext, AuthError,
-    AuthService, JwtManager, ApiKeyManager,
+    ApiKeyManager, AuthContext, AuthError, AuthMethod, AuthResult, AuthService, JwtManager,
     types::AuthConfig,
 };
 use crate::error::Result;
 
 /// 统一认证管理器
-/// 
+///
 /// 提供跨服务的认证功能，支持多种认证方式的统一处理
 pub struct UnifiedAuthManager {
     /// 核心认证服务
@@ -29,7 +28,7 @@ pub struct UnifiedAuthManager {
 }
 
 /// 认证缓存
-/// 
+///
 /// 缓存认证结果以提高性能，避免重复的数据库查询
 #[derive(Debug, Default)]
 struct AuthCache {
@@ -95,10 +94,13 @@ impl UnifiedAuthManager {
     }
 
     /// 统一认证接口
-    /// 
+    ///
     /// 支持多种认证方式：JWT、API Key、Basic Auth
     pub async fn authenticate(&self, request: AuthRequest) -> Result<AuthResult> {
-        debug!("Processing authentication request for path: {}", request.path);
+        debug!(
+            "Processing authentication request for path: {}",
+            request.path
+        );
 
         // 更新统计
         {
@@ -112,8 +114,11 @@ impl UnifiedAuthManager {
         }
 
         // 尝试从额外头部获取API Key
-        if let Some(api_key) = request.extra_headers.get("x-api-key")
-            .or_else(|| request.extra_headers.get("api-key")) {
+        if let Some(api_key) = request
+            .extra_headers
+            .get("x-api-key")
+            .or_else(|| request.extra_headers.get("api-key"))
+        {
             return self.authenticate_api_key(api_key, &request).await;
         }
 
@@ -126,7 +131,11 @@ impl UnifiedAuthManager {
     }
 
     /// 从Authorization头认证
-    async fn authenticate_from_header(&self, auth_header: &str, request: &AuthRequest) -> Result<AuthResult> {
+    async fn authenticate_from_header(
+        &self,
+        auth_header: &str,
+        request: &AuthRequest,
+    ) -> Result<AuthResult> {
         if auth_header.starts_with("Bearer ") {
             // JWT认证
             let token = &auth_header[7..]; // 移除 "Bearer " 前缀
@@ -161,7 +170,11 @@ impl UnifiedAuthManager {
         context.client_ip = request.client_ip.clone();
         context.user_agent = request.user_agent.clone();
 
-        match self.auth_service.authenticate_jwt(token, &mut context).await {
+        match self
+            .auth_service
+            .authenticate_jwt(token, &mut context)
+            .await
+        {
             Ok(auth_result) => {
                 // 缓存结果
                 self.cache_auth_result(&token_hash, &auth_result).await;
@@ -175,7 +188,11 @@ impl UnifiedAuthManager {
     }
 
     /// API Key认证
-    async fn authenticate_api_key(&self, api_key: &str, request: &AuthRequest) -> Result<AuthResult> {
+    async fn authenticate_api_key(
+        &self,
+        api_key: &str,
+        request: &AuthRequest,
+    ) -> Result<AuthResult> {
         let key_hash = self.hash_token(api_key);
 
         // 检查缓存
@@ -189,7 +206,11 @@ impl UnifiedAuthManager {
         context.client_ip = request.client_ip.clone();
         context.user_agent = request.user_agent.clone();
 
-        match self.auth_service.authenticate_api_key(api_key, &mut context).await {
+        match self
+            .auth_service
+            .authenticate_api_key(api_key, &mut context)
+            .await
+        {
             Ok(auth_result) => {
                 // 缓存结果
                 self.cache_auth_result(&key_hash, &auth_result).await;
@@ -206,12 +227,12 @@ impl UnifiedAuthManager {
     async fn authenticate_basic(&self, encoded: &str, request: &AuthRequest) -> Result<AuthResult> {
         // Basic认证通常不缓存，因为包含密码
         use base64::{Engine as _, engine::general_purpose};
-        let decoded = general_purpose::STANDARD.decode(encoded)
+        let decoded = general_purpose::STANDARD
+            .decode(encoded)
             .map_err(|_| AuthError::InvalidCredentials)?;
-        
-        let credentials = String::from_utf8(decoded)
-            .map_err(|_| AuthError::InvalidCredentials)?;
-        
+
+        let credentials = String::from_utf8(decoded).map_err(|_| AuthError::InvalidCredentials)?;
+
         let parts: Vec<&str> = credentials.splitn(2, ':').collect();
         if parts.len() != 2 {
             return Err(AuthError::InvalidCredentials.into());
@@ -221,20 +242,19 @@ impl UnifiedAuthManager {
         context.client_ip = request.client_ip.clone();
         context.user_agent = request.user_agent.clone();
 
-        self.auth_service.authenticate_basic(parts[0], parts[1], &mut context).await
+        self.auth_service
+            .authenticate_basic(parts[0], parts[1], &mut context)
+            .await
     }
 
     /// 检查是否为公开路径
     fn is_public_path(&self, path: &str) -> bool {
         // 定义公开路径模式
-        let public_patterns = [
-            "/health",
-            "/metrics",
-            "/api/health",
-            "/api/version",
-        ];
+        let public_patterns = ["/health", "/metrics", "/api/health", "/api/version"];
 
-        public_patterns.iter().any(|pattern| path.starts_with(pattern))
+        public_patterns
+            .iter()
+            .any(|pattern| path.starts_with(pattern))
     }
 
     /// 创建匿名认证结果
@@ -254,7 +274,7 @@ impl UnifiedAuthManager {
         let token_hash = self.hash_token(token);
         let mut cache = self.auth_cache.write().await;
         cache.blacklist.insert(token_hash.clone(), expire_time);
-        
+
         // 从认证缓存中移除
         cache.jwt_cache.remove(&token_hash);
         cache.api_key_cache.remove(&token_hash);
@@ -274,7 +294,7 @@ impl UnifiedAuthManager {
     /// 获取缓存的认证结果
     async fn get_cached_auth_result(&self, token_hash: &str) -> Option<AuthResult> {
         let cache = self.auth_cache.read().await;
-        
+
         // 检查JWT缓存
         if let Some((auth_result, expire_time)) = cache.jwt_cache.get(token_hash) {
             if Utc::now() < *expire_time {
@@ -301,15 +321,20 @@ impl UnifiedAuthManager {
 
     /// 缓存认证结果
     async fn cache_auth_result(&self, token_hash: &str, auth_result: &AuthResult) {
-        let expire_time = Utc::now() + chrono::Duration::minutes(self.config.cache_ttl_minutes as i64);
+        let expire_time =
+            Utc::now() + chrono::Duration::minutes(self.config.cache_ttl_minutes as i64);
         let mut cache = self.auth_cache.write().await;
-        
+
         match auth_result.auth_method {
             AuthMethod::Jwt => {
-                cache.jwt_cache.insert(token_hash.to_string(), (auth_result.clone(), expire_time));
+                cache
+                    .jwt_cache
+                    .insert(token_hash.to_string(), (auth_result.clone(), expire_time));
             }
             AuthMethod::ApiKey => {
-                cache.api_key_cache.insert(token_hash.to_string(), (auth_result.clone(), expire_time));
+                cache
+                    .api_key_cache
+                    .insert(token_hash.to_string(), (auth_result.clone(), expire_time));
             }
             _ => {
                 // Basic认证等不缓存
@@ -331,7 +356,7 @@ impl UnifiedAuthManager {
 
     /// 哈希令牌
     fn hash_token(&self, token: &str) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         format!("{:x}", hasher.finalize())
@@ -343,11 +368,15 @@ impl UnifiedAuthManager {
         let now = Utc::now();
 
         // 清理JWT缓存
-        cache.jwt_cache.retain(|_, (_, expire_time)| now < *expire_time);
-        
+        cache
+            .jwt_cache
+            .retain(|_, (_, expire_time)| now < *expire_time);
+
         // 清理API Key缓存
-        cache.api_key_cache.retain(|_, (_, expire_time)| now < *expire_time);
-        
+        cache
+            .api_key_cache
+            .retain(|_, (_, expire_time)| now < *expire_time);
+
         // 清理黑名单
         cache.blacklist.retain(|_, expire_time| now < *expire_time);
 

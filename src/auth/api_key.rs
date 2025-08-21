@@ -2,8 +2,8 @@
 //!
 //! Provides API key validation, management and caching functionality
 
-use chrono::{DateTime, Utc, Timelike};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, ActiveModelTrait, Set};
+use chrono::{DateTime, Timelike, Utc};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -202,8 +202,10 @@ impl ApiKeyManager {
         if let Some(cached) = self.get_from_cache(api_key).await {
             if !cached.is_expired() {
                 // Get current rate limit info
-                let (remaining_requests, remaining_tokens) = self.get_rate_limit_info(api_key, &cached.api_key_info).await;
-                
+                let (remaining_requests, remaining_tokens) = self
+                    .get_rate_limit_info(api_key, &cached.api_key_info)
+                    .await;
+
                 return Ok(ApiKeyValidationResult {
                     api_key_info: cached.api_key_info.clone(),
                     permissions: cached.permissions.clone(),
@@ -250,7 +252,8 @@ impl ApiKeyManager {
         let permissions = self.get_user_permissions(api_key_model.user_id).await?;
 
         // Check rate limits
-        let (remaining_requests, remaining_tokens) = self.get_rate_limit_info(api_key, &api_key_info).await;
+        let (remaining_requests, remaining_tokens) =
+            self.get_rate_limit_info(api_key, &api_key_info).await;
 
         // Cache result
         self.cache_api_key(api_key, &api_key_info, &permissions)
@@ -283,16 +286,18 @@ impl ApiKeyManager {
     /// Get user permissions from database
     async fn get_user_permissions(&self, user_id: i32) -> Result<Vec<Permission>> {
         use entity::{users, users::Entity as Users};
-        use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, PaginatorTrait};
-        
+        use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+
         // 从数据库查询用户信息
         let user = Users::find()
             .filter(users::Column::Id.eq(user_id))
             .filter(users::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error::ProxyError::database(format!("Failed to query user: {}", e)))?;
-        
+            .map_err(|e| {
+                crate::error::ProxyError::database(format!("Failed to query user: {}", e))
+            })?;
+
         let user = match user {
             Some(u) => u,
             None => {
@@ -300,19 +305,19 @@ impl ApiKeyManager {
                 return Ok(vec![Permission::UseApi]);
             }
         };
-        
+
         // 根据用户类型确定权限
         let mut permissions = Vec::new();
-        
+
         // 基础权限：所有激活用户都有的权限
         permissions.push(Permission::UseApi);
-        
+
         // 管理员权限
         if user.is_admin {
             permissions.extend(Role::Admin.permissions());
             return Ok(permissions);
         }
-        
+
         // 检查用户是否有活跃的API密钥（表示是付费用户）
         let api_count = entity::user_service_apis::Entity::find()
             .filter(entity::user_service_apis::Column::UserId.eq(user_id))
@@ -320,7 +325,7 @@ impl ApiKeyManager {
             .count(self.db.as_ref())
             .await
             .unwrap_or(0);
-        
+
         if api_count > 0 {
             // 有活跃API密钥的用户，给予更多权限
             permissions.extend(vec![
@@ -329,7 +334,7 @@ impl ApiKeyManager {
                 Permission::UseAnthropic,
                 Permission::UseGemini,
             ]);
-            
+
             // 根据API密钥数量给予不同权限等级
             if api_count >= 5 {
                 // 高级用户
@@ -338,20 +343,18 @@ impl ApiKeyManager {
             }
         } else {
             // 没有API密钥的用户，只有基础权限
-            permissions.extend(vec![
-                Permission::ViewApiKeys,
-            ]);
+            permissions.extend(vec![Permission::ViewApiKeys]);
         }
-        
+
         // 根据用户注册时间给予一些额外权限
         let now = chrono::Utc::now().naive_utc();
         let user_age_days = (now - user.created_at).num_days();
-        
+
         if user_age_days >= 30 {
             // 注册超过30天的用户，给予查看健康状态权限
             permissions.push(Permission::ViewHealth);
         }
-        
+
         Ok(permissions)
     }
 
@@ -444,16 +447,23 @@ impl ApiKeyManager {
             .or_insert_with(RateLimitTracker::new);
 
         // Check request rate limit
-        let request_allowed = tracker.check_and_update_request(api_key_model.max_requests_per_minute);
-        
+        let request_allowed =
+            tracker.check_and_update_request(api_key_model.max_requests_per_minute);
+
         // Check token rate limit
-        let token_allowed = tracker.check_and_update_tokens(request_cost, api_key_model.max_requests_per_day);
+        let token_allowed =
+            tracker.check_and_update_tokens(request_cost, api_key_model.max_requests_per_day);
 
         let allowed = request_allowed && token_allowed;
 
         // Determine reset time (next minute for requests, next day for tokens)
         let reset_time = if !request_allowed {
-            Utc::now().with_second(0).unwrap().with_nanosecond(0).unwrap() + chrono::Duration::minutes(1)
+            Utc::now()
+                .with_second(0)
+                .unwrap()
+                .with_nanosecond(0)
+                .unwrap()
+                + chrono::Duration::minutes(1)
         } else if !token_allowed {
             let tomorrow = Utc::now().date_naive() + chrono::Duration::days(1);
             tomorrow.and_hms_opt(0, 0, 0).unwrap().and_utc()
@@ -480,11 +490,12 @@ impl ApiKeyManager {
             .ok_or(ApiKeyError::NotFound)?;
 
         let mut active_model: user_provider_keys::ActiveModel = api_key_model.into();
-        
+
         // Update timestamp
         active_model.updated_at = Set(Utc::now().naive_utc());
 
-        active_model.update(self.db.as_ref())
+        active_model
+            .update(self.db.as_ref())
             .await
             .map_err(|e| ApiKeyError::Database(e.to_string()))?;
 
@@ -499,21 +510,29 @@ impl ApiKeyManager {
             self.sanitize_api_key(api_key),
             tokens_used
         );
-        
+
         Ok(())
     }
 
     /// Get rate limit information for API key
-    async fn get_rate_limit_info(&self, api_key: &str, api_key_info: &ApiKeyInfo) -> (Option<i32>, Option<i32>) {
+    async fn get_rate_limit_info(
+        &self,
+        api_key: &str,
+        api_key_info: &ApiKeyInfo,
+    ) -> (Option<i32>, Option<i32>) {
         let rate_limits = self.rate_limits.read().await;
-        
+
         if let Some(tracker) = rate_limits.get(api_key) {
-            let remaining_requests = tracker.remaining_requests(api_key_info.max_requests_per_minute);
+            let remaining_requests =
+                tracker.remaining_requests(api_key_info.max_requests_per_minute);
             let remaining_tokens = tracker.remaining_tokens(api_key_info.max_requests_per_day);
             (remaining_requests, remaining_tokens)
         } else {
             // No rate limit data yet, return maximum values
-            (api_key_info.max_requests_per_minute, api_key_info.max_requests_per_day)
+            (
+                api_key_info.max_requests_per_minute,
+                api_key_info.max_requests_per_day,
+            )
         }
     }
 
@@ -522,7 +541,7 @@ impl ApiKeyManager {
         let mut rate_limits = self.rate_limits.write().await;
         let now = Utc::now();
         let one_hour_ago = now - chrono::Duration::hours(1);
-        
+
         rate_limits.retain(|_, tracker| tracker.last_request_at > one_hour_ago);
     }
 
@@ -530,16 +549,19 @@ impl ApiKeyManager {
     pub async fn get_rate_limit_stats(&self) -> HashMap<String, serde_json::Value> {
         let rate_limits = self.rate_limits.read().await;
         let mut stats = HashMap::new();
-        
+
         for (api_key, tracker) in rate_limits.iter() {
             let sanitized_key = self.sanitize_api_key(api_key);
-            stats.insert(sanitized_key, serde_json::json!({
-                "requests_current_minute": tracker.requests_current_minute,
-                "tokens_used_today": tracker.tokens_used_today,
-                "last_request_at": tracker.last_request_at
-            }));
+            stats.insert(
+                sanitized_key,
+                serde_json::json!({
+                    "requests_current_minute": tracker.requests_current_minute,
+                    "tokens_used_today": tracker.tokens_used_today,
+                    "last_request_at": tracker.last_request_at
+                }),
+            );
         }
-        
+
         stats
     }
 }
@@ -575,10 +597,15 @@ mod tests {
     #[test]
     fn test_api_key_format_validation() {
         // Test API key format validation logic
-        assert!("sk-1234567890abcdef12345".starts_with("sk-") && "sk-1234567890abcdef12345".len() >= 20);
+        assert!(
+            "sk-1234567890abcdef12345".starts_with("sk-") && "sk-1234567890abcdef12345".len() >= 20
+        );
         assert!(!("invalid-key".starts_with("sk-") && "invalid-key".len() >= 20));
         assert!(!("sk-short".starts_with("sk-") && "sk-short".len() >= 20));
-        assert!(!("ak-1234567890abcdef12345".starts_with("sk-") && "ak-1234567890abcdef12345".len() >= 20));
+        assert!(
+            !("ak-1234567890abcdef12345".starts_with("sk-")
+                && "ak-1234567890abcdef12345".len() >= 20)
+        );
     }
 
     #[test]
@@ -586,7 +613,7 @@ mod tests {
         // Test sanitization logic
         fn sanitize_api_key(api_key: &str) -> String {
             if api_key.len() > 10 {
-                format!("{}***{}", &api_key[..4], &api_key[api_key.len()-4..])
+                format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
             } else {
                 "***".to_string()
             }
@@ -618,7 +645,7 @@ mod tests {
             },
             permissions: vec![Permission::UseOpenAI],
             cached_at: Utc::now() - chrono::Duration::seconds(400), // Expired
-            ttl: 300, // 5 minutes
+            ttl: 300,                                               // 5 minutes
         };
 
         assert!(cached.is_expired());

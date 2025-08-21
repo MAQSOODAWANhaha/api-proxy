@@ -2,24 +2,23 @@
 //!
 //! 提供完整的身份验证和权限控制功能
 
-pub mod types;
-pub mod service;
-pub mod middleware;
-pub mod jwt;
 pub mod api_key;
-pub mod permissions;
-pub mod unified;
 pub mod header_parser;
+pub mod jwt;
+pub mod middleware;
+pub mod permissions;
+pub mod service;
+pub mod types;
+pub mod unified;
 
-pub use types::*;
-pub use service::AuthService;
-pub use middleware::AuthMiddleware;
-pub use jwt::JwtManager;
 pub use api_key::ApiKeyManager;
+pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
+pub use jwt::JwtManager;
+pub use middleware::AuthMiddleware;
 pub use permissions::{Permission, Role};
-pub use unified::{UnifiedAuthManager, AuthRequest, CacheStats, create_unified_auth_manager};
-pub use header_parser::{AuthHeaderParser, AuthHeader, AuthParseError};
-
+pub use service::AuthService;
+pub use types::*;
+pub use unified::{AuthRequest, CacheStats, UnifiedAuthManager, create_unified_auth_manager};
 
 /// 认证结果
 #[derive(Debug, Clone)]
@@ -90,14 +89,16 @@ impl AuthContext {
 
     /// 检查是否为管理员
     pub fn is_admin(&self) -> bool {
-        self.auth_result.as_ref()
+        self.auth_result
+            .as_ref()
             .map(|r| r.is_admin)
             .unwrap_or(false)
     }
 
     /// 检查是否有特定权限
     pub fn has_permission(&self, permission: &Permission) -> bool {
-        self.auth_result.as_ref()
+        self.auth_result
+            .as_ref()
             .map(|r| r.permissions.contains(permission))
             .unwrap_or(false)
     }

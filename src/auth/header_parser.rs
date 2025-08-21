@@ -26,15 +26,17 @@ impl AuthHeader {
 /// 认证头解析错误
 #[derive(Debug, thiserror::Error)]
 pub enum AuthParseError {
-    #[error("Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'")]
+    #[error(
+        "Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'"
+    )]
     InvalidFormat(String),
-    
+
     #[error("Empty header name in format: '{0}'")]
     EmptyHeaderName(String),
-    
+
     #[error("Empty header value template in format: '{0}'")]
     EmptyHeaderValue(String),
-    
+
     #[error("Missing key placeholder '{{key}}' in header value: '{0}'")]
     MissingKeyPlaceholder(String),
 }
@@ -63,56 +65,61 @@ impl AuthHeaderParser {
     pub fn parse(format: &str, api_key: &str) -> Result<AuthHeader, AuthParseError> {
         // 分割头名称和值模板
         let (header_name, value_template) = Self::split_header_format(format)?;
-        
+
         // 验证头名称
         if header_name.trim().is_empty() {
             return Err(AuthParseError::EmptyHeaderName(format.to_string()));
         }
-        
+
         // 验证值模板
         if value_template.trim().is_empty() {
             return Err(AuthParseError::EmptyHeaderValue(format.to_string()));
         }
-        
+
         // 检查是否包含 {key} 占位符
         if !value_template.contains("{key}") {
-            return Err(AuthParseError::MissingKeyPlaceholder(value_template.to_string()));
+            return Err(AuthParseError::MissingKeyPlaceholder(
+                value_template.to_string(),
+            ));
         }
-        
+
         // 替换占位符
         let header_value = value_template.replace("{key}", api_key);
-        
+
         Ok(AuthHeader::new(header_name.to_string(), header_value))
     }
-    
+
     /// 分割头格式为名称和值模板
     fn split_header_format(format: &str) -> Result<(&str, &str), AuthParseError> {
-        format.split_once(": ")
+        format
+            .split_once(": ")
             .ok_or_else(|| AuthParseError::InvalidFormat(format.to_string()))
     }
-    
+
     /// 验证认证头格式是否有效（不替换密钥）
     pub fn validate_format(format: &str) -> Result<(), AuthParseError> {
         let (_header_name, value_template) = Self::split_header_format(format)?;
-        
+
         if !value_template.contains("{key}") {
-            return Err(AuthParseError::MissingKeyPlaceholder(value_template.to_string()));
+            return Err(AuthParseError::MissingKeyPlaceholder(
+                value_template.to_string(),
+            ));
         }
-        
+
         Ok(())
     }
-    
+
     /// 提取头名称（不包含值）
     pub fn extract_header_name(format: &str) -> Result<String, AuthParseError> {
         let (header_name, _) = Self::split_header_format(format)?;
-        
+
         if header_name.trim().is_empty() {
             return Err(AuthParseError::EmptyHeaderName(format.to_string()));
         }
-        
+
         Ok(header_name.to_lowercase())
     }
-    
+
     /// 构建标准格式的认证头字符串（用于配置迁移）
     pub fn build_standard_format(header_name: &str, value_template: &str) -> String {
         format!("{}: {}", header_name, value_template)
@@ -187,7 +194,10 @@ mod tests {
     #[test]
     fn test_missing_key_placeholder() {
         let result = AuthHeaderParser::parse("Authorization: Bearer token", "test");
-        assert!(matches!(result, Err(AuthParseError::MissingKeyPlaceholder(_))));
+        assert!(matches!(
+            result,
+            Err(AuthParseError::MissingKeyPlaceholder(_))
+        ));
     }
 
     #[test]
@@ -225,7 +235,8 @@ mod tests {
     #[test]
     fn test_multiple_key_replacements() {
         // 测试多个 {key} 占位符的情况
-        let result = AuthHeaderParser::parse("X-Custom: prefix-{key}-suffix-{key}", "token123").unwrap();
+        let result =
+            AuthHeaderParser::parse("X-Custom: prefix-{key}-suffix-{key}", "token123").unwrap();
         assert_eq!(result.name, "x-custom");
         assert_eq!(result.value, "prefix-token123-suffix-token123");
     }

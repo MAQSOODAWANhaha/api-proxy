@@ -2,8 +2,8 @@
 //!
 //! 统一的错误类型定义和处理
 
-mod types;
 mod macros;
+mod types;
 
 #[cfg(test)]
 mod tests;

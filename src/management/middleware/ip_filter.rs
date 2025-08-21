@@ -8,9 +8,9 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use ipnetwork::IpNetwork;
 use std::net::{IpAddr, SocketAddr};
 use tracing::{debug, warn};
-use ipnetwork::IpNetwork;
 
 /// IP访问控制配置
 #[derive(Debug, Clone)]
@@ -23,7 +23,10 @@ pub struct IpFilterConfig {
 
 impl IpFilterConfig {
     /// 从字符串列表创建配置
-    pub fn from_strings(allowed: &[String], denied: &[String]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_strings(
+        allowed: &[String],
+        denied: &[String],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut allowed_ips = Vec::new();
         let mut denied_ips = Vec::new();
 
@@ -36,8 +39,12 @@ impl IpFilterConfig {
                     // 尝试解析为单个IP地址
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
-                            IpAddr::V4(ipv4) => IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?),
-                            IpAddr::V6(ipv6) => IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?),
+                            IpAddr::V4(ipv4) => {
+                                IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?)
+                            }
+                            IpAddr::V6(ipv6) => {
+                                IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?)
+                            }
                         };
                         allowed_ips.push(network);
                     }
@@ -53,8 +60,12 @@ impl IpFilterConfig {
                     warn!("Failed to parse denied IP '{}': {}", ip_str, e);
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
-                            IpAddr::V4(ipv4) => IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?),
-                            IpAddr::V6(ipv6) => IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?),
+                            IpAddr::V4(ipv4) => {
+                                IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?)
+                            }
+                            IpAddr::V6(ipv6) => {
+                                IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?)
+                            }
                         };
                         denied_ips.push(network);
                     }
@@ -103,12 +114,9 @@ pub async fn ip_filter_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let client_ip = addr.ip();
-    
+
     // 从请求扩展中获取IP过滤配置
-    let config = request
-        .extensions()
-        .get::<IpFilterConfig>()
-        .cloned();
+    let config = request.extensions().get::<IpFilterConfig>().cloned();
 
     if let Some(config) = config {
         if !config.is_allowed(client_ip) {
@@ -160,16 +168,16 @@ mod tests {
     fn test_ip_filter_config() {
         let allowed = vec!["192.168.1.0/24".to_string(), "10.0.0.1".to_string()];
         let denied = vec!["192.168.1.100".to_string()];
-        
+
         let config = IpFilterConfig::from_strings(&allowed, &denied).unwrap();
-        
+
         // 测试允许的IP
         assert!(config.is_allowed(Ipv4Addr::new(192, 168, 1, 1).into()));
         assert!(config.is_allowed(Ipv4Addr::new(10, 0, 0, 1).into()));
-        
+
         // 测试拒绝的IP
         assert!(!config.is_allowed(Ipv4Addr::new(192, 168, 1, 100).into()));
-        
+
         // 测试不在列表中的IP
         assert!(!config.is_allowed(Ipv4Addr::new(192, 168, 2, 1).into()));
     }
