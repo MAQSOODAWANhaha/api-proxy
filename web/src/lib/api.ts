@@ -518,6 +518,7 @@ export interface SystemMetrics {
   uptime: string;
 }
 
+import { userApi } from './userApi';
 
 /**
  * API客户端类
@@ -772,6 +773,7 @@ export const api = {
   login: (credentials: LoginRequest) => apiClient.login(credentials),
   logout: () => apiClient.logout(),
   validateToken: () => apiClient.validateToken(),
+  users: userApi,
   
   // Dashboard相关API
   dashboard: {
