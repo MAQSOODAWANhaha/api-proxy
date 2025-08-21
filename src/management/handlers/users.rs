@@ -73,8 +73,16 @@ pub struct UserQuery {
     pub page: Option<u32>,
     /// 每页大小
     pub limit: Option<u32>,
-    /// 状态过滤
-    pub status: Option<String>,
+    /// 搜索关键词
+    pub search: Option<String>,
+    /// 激活状态筛选
+    pub is_active: Option<bool>,
+    /// 管理员状态筛选
+    pub is_admin: Option<bool>,
+    /// 排序字段
+    pub sort: Option<String>,
+    /// 排序方向
+    pub order: Option<String>,
 }
 
 /// 创建用户请求
@@ -86,8 +94,37 @@ pub struct CreateUserRequest {
     pub email: String,
     /// 密码
     pub password: String,
-    /// 角色
-    pub role: Option<String>,
+    /// 是否管理员
+    pub is_admin: Option<bool>,
+}
+
+/// 更新用户请求
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    /// 用户名
+    pub username: Option<String>,
+    /// 邮箱
+    pub email: Option<String>,
+    /// 密码
+    pub password: Option<String>,
+    /// 是否激活
+    pub is_active: Option<bool>,
+    /// 是否管理员
+    pub is_admin: Option<bool>,
+}
+
+/// 批量删除请求
+#[derive(Debug, Deserialize)]
+pub struct BatchDeleteRequest {
+    /// 用户ID列表
+    pub ids: Vec<i32>,
+}
+
+/// 重置密码请求
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    /// 新密码
+    pub new_password: String,
 }
 
 /// 用户响应
@@ -99,12 +136,14 @@ pub struct UserResponse {
     pub username: String,
     /// 邮箱
     pub email: String,
-    /// 角色
-    pub role: String,
-    /// 状态
-    pub status: String,
+    /// 是否激活
+    pub is_active: bool,
+    /// 是否管理员
+    pub is_admin: bool,
     /// 创建时间
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 更新时间
+    pub updated_at: chrono::DateTime<chrono::Utc>,
     /// 最后登录时间
     pub last_login: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -116,17 +155,10 @@ impl From<users::Model> for UserResponse {
             id: user.id,
             username: user.username,
             email: user.email,
-            role: if user.is_admin {
-                "admin".to_string()
-            } else {
-                "user".to_string()
-            },
-            status: if user.is_active {
-                "active".to_string()
-            } else {
-                "inactive".to_string()
-            },
+            is_active: user.is_active,
+            is_admin: user.is_admin,
             created_at: user.created_at.and_utc(),
+            updated_at: user.updated_at.and_utc(),
             last_login: user.last_login.map(|dt| dt.and_utc()),
         }
     }
@@ -137,60 +169,101 @@ pub async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
 ) -> axum::response::Response {
-    let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(20);
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(10).min(100);
     let offset = (page - 1) * limit;
 
     // 构建查询条件
     let mut select = Users::find();
+    let mut count_select = Users::find();
 
-    // 状态过滤
-    if let Some(status) = &query.status {
-        match status.as_str() {
-            "active" => select = select.filter(users::Column::IsActive.eq(true)),
-            "inactive" => select = select.filter(users::Column::IsActive.eq(false)),
-            _ => {}
+    // 搜索过滤
+    if let Some(search) = &query.search {
+        if !search.trim().is_empty() {
+            let search_pattern = format!("%{}%", search.trim());
+            let search_condition = users::Column::Username
+                .like(&search_pattern)
+                .or(users::Column::Email.like(&search_pattern));
+            select = select.filter(search_condition.clone());
+            count_select = count_select.filter(search_condition);
         }
     }
+
+    // 激活状态过滤
+    if let Some(is_active) = query.is_active {
+        select = select.filter(users::Column::IsActive.eq(is_active));
+        count_select = count_select.filter(users::Column::IsActive.eq(is_active));
+    }
+
+    // 管理员状态过滤
+    if let Some(is_admin) = query.is_admin {
+        select = select.filter(users::Column::IsAdmin.eq(is_admin));
+        count_select = count_select.filter(users::Column::IsAdmin.eq(is_admin));
+    }
+
+    // 排序
+    let sort_field = query.sort.as_deref().unwrap_or("created_at");
+    let order_desc = query.order.as_deref() == Some("asc");
+    
+    select = match sort_field {
+        "username" => {
+            if order_desc {
+                select.order_by_asc(users::Column::Username)
+            } else {
+                select.order_by_desc(users::Column::Username)
+            }
+        }
+        "email" => {
+            if order_desc {
+                select.order_by_asc(users::Column::Email)
+            } else {
+                select.order_by_desc(users::Column::Email)
+            }
+        }
+        "updated_at" => {
+            if order_desc {
+                select.order_by_asc(users::Column::UpdatedAt)
+            } else {
+                select.order_by_desc(users::Column::UpdatedAt)
+            }
+        }
+        _ => {
+            if order_desc {
+                select.order_by_asc(users::Column::CreatedAt)
+            } else {
+                select.order_by_desc(users::Column::CreatedAt)
+            }
+        }
+    };
 
     // 分页查询
     let users_result = select
         .offset(offset as u64)
         .limit(limit as u64)
-        .order_by_asc(users::Column::Id)
         .all(state.database.as_ref())
         .await;
 
     let users = match users_result {
         Ok(users) => users,
         Err(err) => {
-            tracing::error!("Failed to fetch users: {}", err);
+            tracing::error!("获取用户列表失败: {}", err);
             return response::error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to fetch users",
+                "获取用户列表失败",
             );
         }
     };
 
     // 获取总数
-    let mut count_select = Users::find();
-    if let Some(status) = &query.status {
-        match status.as_str() {
-            "active" => count_select = count_select.filter(users::Column::IsActive.eq(true)),
-            "inactive" => count_select = count_select.filter(users::Column::IsActive.eq(false)),
-            _ => {}
-        }
-    }
-
     let total = match count_select.count(state.database.as_ref()).await {
         Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count users: {}", err);
+            tracing::error!("获取用户总数失败: {}", err);
             return response::error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
-                "Failed to count users",
+                "获取用户总数失败",
             );
         }
     };
@@ -214,27 +287,27 @@ pub async fn create_user(
     Json(request): Json<CreateUserRequest>,
 ) -> axum::response::Response {
     // 验证输入
-    if request.username.is_empty() {
+    if request.username.len() < 3 || request.username.len() > 50 {
         return response::error(
             axum::http::StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
-            "Username cannot be empty",
+            "用户名长度必须在3-50字符之间",
         );
     }
 
-    if request.email.is_empty() || !request.email.contains('@') {
+    if request.email.len() > 100 || !request.email.contains('@') {
         return response::error(
             axum::http::StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
-            "Invalid email format",
+            "邮箱格式无效或长度超过100字符",
         );
     }
 
-    if request.password.len() < 6 {
+    if request.password.len() < 8 {
         return response::error(
             axum::http::StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
-            "Password must be at least 6 characters long",
+            "密码长度至少8字符",
         );
     }
 
@@ -249,12 +322,20 @@ pub async fn create_user(
         .await;
 
     match existing_user {
-        Ok(Some(_)) => {
-            return response::error(
-                axum::http::StatusCode::CONFLICT,
-                "USER_EXISTS",
-                "Username or email already exists",
-            );
+        Ok(Some(existing)) => {
+            if existing.username == request.username {
+                return response::error(
+                    axum::http::StatusCode::CONFLICT,
+                    "USERNAME_EXISTS",
+                    "用户名已存在",
+                );
+            } else {
+                return response::error(
+                    axum::http::StatusCode::CONFLICT,
+                    "EMAIL_EXISTS",
+                    "邮箱已存在",
+                );
+            }
         }
         Err(err) => {
             tracing::error!("Failed to check existing user: {}", err);
@@ -287,7 +368,7 @@ pub async fn create_user(
     };
 
     // 创建用户
-    let is_admin = request.role.as_deref() == Some("admin");
+    let is_admin = request.is_admin.unwrap_or(false);
     let now = Utc::now().naive_utc();
 
     let user = users::ActiveModel {
@@ -343,7 +424,7 @@ pub async fn create_user(
 
     let user_response = UserResponse::from(created_user);
 
-    response::success_with_message(user_response, "User created successfully")
+    response::success_with_message(user_response, "用户创建成功")
 }
 
 /// 获取单个用户
@@ -662,6 +743,518 @@ pub async fn change_password(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update password",
+            )
+        }
+    }
+}
+
+/// 更新用户
+pub async fn update_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<i32>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateUserRequest>,
+) -> axum::response::Response {
+    // 从JWT token中获取当前用户信息
+    let claims = match extract_user_from_jwt(&headers) {
+        Ok(claims) => claims,
+        Err(status_code) => {
+            return response::error(
+                status_code,
+                "AUTHENTICATION_REQUIRED",
+                "认证失败",
+            );
+        }
+    };
+
+    let current_user_id: i32 = match claims.sub.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "无效的用户ID",
+            );
+        }
+    };
+
+    // 权限检查：只有管理员可以更新其他用户，用户只能更新自己的部分信息
+    let is_self = current_user_id == user_id;
+    if !is_self && !claims.is_admin {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "权限不足",
+        );
+    }
+
+    // 如果不是管理员，不能修改is_admin字段
+    if !claims.is_admin && request.is_admin.is_some() {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "只有管理员可以修改权限",
+        );
+    }
+
+    // 验证输入
+    if let Some(ref username) = request.username {
+        if username.len() < 3 || username.len() > 50 {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "用户名长度必须在3-50字符之间",
+            );
+        }
+    }
+
+    if let Some(ref email) = request.email {
+        if email.len() > 100 || !email.contains('@') {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "邮箱格式无效或长度超过100字符",
+            );
+        }
+    }
+
+    if let Some(ref password) = request.password {
+        if password.len() < 8 {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "密码长度至少8字符",
+            );
+        }
+    }
+
+    // 获取现有用户
+    let user = match Users::find_by_id(user_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "USER_NOT_FOUND",
+                "用户不存在",
+            );
+        }
+        Err(err) => {
+            tracing::error!("获取用户失败: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "获取用户失败",
+            );
+        }
+    };
+
+    // 检查用户名和邮箱是否与其他用户冲突
+    if request.username.is_some() || request.email.is_some() {
+        let mut check_query = Users::find().filter(users::Column::Id.ne(user_id));
+        
+        if let Some(ref username) = request.username {
+            check_query = check_query.filter(users::Column::Username.eq(username));
+        }
+        
+        if let Some(ref email) = request.email {
+            check_query = check_query.filter(users::Column::Email.eq(email));
+        }
+
+        if let Ok(Some(existing)) = check_query.one(state.database.as_ref()).await {
+            if let Some(ref username) = request.username {
+                if existing.username == *username {
+                    return response::error(
+                        StatusCode::CONFLICT,
+                        "USERNAME_EXISTS",
+                        "用户名已存在",
+                    );
+                }
+            }
+            if let Some(ref email) = request.email {
+                if existing.email == *email {
+                    return response::error(
+                        StatusCode::CONFLICT,
+                        "EMAIL_EXISTS",
+                        "邮箱已存在",
+                    );
+                }
+            }
+        }
+    }
+
+    // 更新用户信息
+    let mut active_model: users::ActiveModel = user.into();
+    
+    if let Some(username) = request.username {
+        active_model.username = Set(username);
+    }
+    
+    if let Some(email) = request.email {
+        active_model.email = Set(email);
+    }
+    
+    if let Some(password) = request.password {
+        // 生成新密码哈希
+        let password_hash = match hash(&password, DEFAULT_COST) {
+            Ok(hash) => hash,
+            Err(err) => {
+                tracing::error!("密码加密失败: {}", err);
+                return response::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "HASH_ERROR",
+                    "密码加密失败",
+                );
+            }
+        };
+        active_model.password_hash = Set(password_hash);
+    }
+    
+    if let Some(is_active) = request.is_active {
+        active_model.is_active = Set(is_active);
+    }
+    
+    if let Some(is_admin) = request.is_admin {
+        active_model.is_admin = Set(is_admin);
+    }
+    
+    active_model.updated_at = Set(Utc::now().naive_utc());
+
+    match active_model.update(state.database.as_ref()).await {
+        Ok(updated_user) => {
+            let user_response = UserResponse::from(updated_user);
+            response::success_with_message(user_response, "用户更新成功")
+        }
+        Err(err) => {
+            tracing::error!("更新用户失败: {}", err);
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "更新用户失败",
+            )
+        }
+    }
+}
+
+/// 删除用户
+pub async fn delete_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<i32>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    // 从JWT token中获取当前用户信息
+    let claims = match extract_user_from_jwt(&headers) {
+        Ok(claims) => claims,
+        Err(status_code) => {
+            return response::error(
+                status_code,
+                "AUTHENTICATION_REQUIRED",
+                "认证失败",
+            );
+        }
+    };
+
+    // 权限检查：只有管理员可以删除用户
+    if !claims.is_admin {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "权限不足",
+        );
+    }
+
+    let current_user_id: i32 = match claims.sub.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "无效的用户ID",
+            );
+        }
+    };
+
+    // 不能删除自己
+    if current_user_id == user_id {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "不能删除自己",
+        );
+    }
+
+    // 检查用户是否存在
+    let user = match Users::find_by_id(user_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "USER_NOT_FOUND",
+                "用户不存在",
+            );
+        }
+        Err(err) => {
+            tracing::error!("获取用户失败: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "获取用户失败",
+            );
+        }
+    };
+
+    // 删除用户
+    match Users::delete_by_id(user_id).exec(state.database.as_ref()).await {
+        Ok(_) => response::success_without_data("用户删除成功"),
+        Err(err) => {
+            tracing::error!("删除用户失败: {}", err);
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "删除用户失败",
+            )
+        }
+    }
+}
+
+/// 批量删除用户
+pub async fn batch_delete_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<BatchDeleteRequest>,
+) -> axum::response::Response {
+    // 从JWT token中获取当前用户信息
+    let claims = match extract_user_from_jwt(&headers) {
+        Ok(claims) => claims,
+        Err(status_code) => {
+            return response::error(
+                status_code,
+                "AUTHENTICATION_REQUIRED",
+                "认证失败",
+            );
+        }
+    };
+
+    // 权限检查：只有管理员可以删除用户
+    if !claims.is_admin {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "权限不足",
+        );
+    }
+
+    let current_user_id: i32 = match claims.sub.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return response::error(
+                StatusCode::BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "无效的用户ID",
+            );
+        }
+    };
+
+    if request.ids.is_empty() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "用户ID列表不能为空",
+        );
+    }
+
+    // 检查是否包含当前用户
+    if request.ids.contains(&current_user_id) {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "不能删除自己",
+        );
+    }
+
+    // 执行批量删除
+    match Users::delete_many()
+        .filter(users::Column::Id.is_in(request.ids.clone()))
+        .exec(state.database.as_ref())
+        .await
+    {
+        Ok(result) => {
+            let deleted_count = result.rows_affected;
+            response::success_without_data(&format!("成功删除 {} 个用户", deleted_count))
+        }
+        Err(err) => {
+            tracing::error!("批量删除用户失败: {}", err);
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "批量删除用户失败",
+            )
+        }
+    }
+}
+
+/// 切换用户状态
+pub async fn toggle_user_status(
+    State(state): State<AppState>,
+    Path(user_id): Path<i32>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    // 从JWT token中获取当前用户信息
+    let claims = match extract_user_from_jwt(&headers) {
+        Ok(claims) => claims,
+        Err(status_code) => {
+            return response::error(
+                status_code,
+                "AUTHENTICATION_REQUIRED",
+                "认证失败",
+            );
+        }
+    };
+
+    // 权限检查：只有管理员可以切换用户状态
+    if !claims.is_admin {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "权限不足",
+        );
+    }
+
+    // 获取现有用户
+    let user = match Users::find_by_id(user_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "USER_NOT_FOUND",
+                "用户不存在",
+            );
+        }
+        Err(err) => {
+            tracing::error!("获取用户失败: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "获取用户失败",
+            );
+        }
+    };
+
+    // 切换状态
+    let mut active_model: users::ActiveModel = user.into();
+    active_model.is_active = Set(!active_model.is_active.as_ref());
+    active_model.updated_at = Set(Utc::now().naive_utc());
+
+    match active_model.update(state.database.as_ref()).await {
+        Ok(updated_user) => {
+            let user_response = UserResponse::from(updated_user);
+            response::success_with_message(user_response, "用户状态更新成功")
+        }
+        Err(err) => {
+            tracing::error!("更新用户状态失败: {}", err);
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "更新用户状态失败",
+            )
+        }
+    }
+}
+
+/// 重置用户密码
+pub async fn reset_user_password(
+    State(state): State<AppState>,
+    Path(user_id): Path<i32>,
+    headers: HeaderMap,
+    Json(request): Json<ResetPasswordRequest>,
+) -> axum::response::Response {
+    // 从JWT token中获取当前用户信息
+    let claims = match extract_user_from_jwt(&headers) {
+        Ok(claims) => claims,
+        Err(status_code) => {
+            return response::error(
+                status_code,
+                "AUTHENTICATION_REQUIRED",
+                "认证失败",
+            );
+        }
+    };
+
+    // 权限检查：只有管理员可以重置密码
+    if !claims.is_admin {
+        return response::error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "权限不足",
+        );
+    }
+
+    // 验证新密码强度
+    if request.new_password.len() < 8 {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_ERROR",
+            "密码长度至少8字符",
+        );
+    }
+
+    // 获取现有用户
+    let user = match Users::find_by_id(user_id)
+        .one(state.database.as_ref())
+        .await
+    {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return response::error(
+                StatusCode::NOT_FOUND,
+                "USER_NOT_FOUND",
+                "用户不存在",
+            );
+        }
+        Err(err) => {
+            tracing::error!("获取用户失败: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "获取用户失败",
+            );
+        }
+    };
+
+    // 生成新密码哈希
+    let new_password_hash = match hash(&request.new_password, DEFAULT_COST) {
+        Ok(hash) => hash,
+        Err(err) => {
+            tracing::error!("密码加密失败: {}", err);
+            return response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "HASH_ERROR",
+                "密码加密失败",
+            );
+        }
+    };
+
+    // 更新密码
+    let mut active_model: users::ActiveModel = user.into();
+    active_model.password_hash = Set(new_password_hash);
+    active_model.updated_at = Set(Utc::now().naive_utc());
+
+    match active_model.update(state.database.as_ref()).await {
+        Ok(_) => response::success_without_data("密码重置成功"),
+        Err(err) => {
+            tracing::error!("重置密码失败: {}", err);
+            response::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB_ERROR",
+                "重置密码失败",
             )
         }
     }

@@ -409,13 +409,16 @@ impl ImmediateProxyTracer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{Database, EntityTrait, PaginatorTrait};
+    use sea_orm::{Database, EntityTrait, PaginatorTrait, Set};
     use std::sync::Arc;
+    use migration::{Migrator, MigratorTrait};
+    use chrono::Utc;
 
     async fn setup_test_db() -> Arc<DatabaseConnection> {
         let db = Database::connect("sqlite::memory:")
             .await
             .expect("Failed to connect to test database");
+        Migrator::up(&db, None).await.expect("Failed to run migrations");
         Arc::new(db)
     }
 
@@ -424,6 +427,33 @@ mod tests {
         let db = setup_test_db().await;
         let config = ImmediateTracerConfig::default();
         let tracer = ImmediateProxyTracer::new(db.clone(), config);
+
+        // Insert a user record
+        let user = entity::users::ActiveModel {
+            id: Set(1),
+            username: Set("testuser".to_string()),
+            password_hash: Set("...".to_string()),
+            email: Set("test@test.com".to_string()),
+            salt: Set("salt".to_string()),
+            is_admin: Set(false),
+            is_active: Set(true),
+            created_at: Set(Utc::now().naive_utc()),
+            updated_at: Set(Utc::now().naive_utc()),
+            ..Default::default()
+        };
+        entity::users::Entity::insert(user).exec(&*db).await.unwrap();
+
+        // Insert a user_service_api record
+        let user_service_api = entity::user_service_apis::ActiveModel {
+            id: Set(1),
+            user_id: Set(1),
+            name: Set("Test API".to_string()),
+            is_active: Set(true),
+            created_at: Set(Utc::now().naive_utc()),
+            updated_at: Set(Utc::now().naive_utc()),
+            ..Default::default()
+        };
+        entity::user_service_apis::Entity::insert(user_service_api).exec(&*db).await.unwrap();
 
         let request_id = "test_immediate_12345".to_string();
 

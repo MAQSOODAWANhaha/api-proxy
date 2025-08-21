@@ -132,11 +132,25 @@ fn user_api_keys_stats_routes() -> Router<AppState> {
 
 /// 用户管理路由
 fn user_routes() -> Router<AppState> {
-    use axum::routing::put;
+    use axum::routing::{delete, patch, put};
     Router::new()
+        // 用户CRUD基础接口
         .route("/", get(crate::management::handlers::users::list_users))
         .route("/", post(crate::management::handlers::users::create_user))
+        .route("/", delete(crate::management::handlers::users::batch_delete_users))
         .route("/{id}", get(crate::management::handlers::users::get_user))
+        .route("/{id}", put(crate::management::handlers::users::update_user))
+        .route("/{id}", delete(crate::management::handlers::users::delete_user))
+        // 用户状态管理
+        .route(
+            "/{id}/toggle-status",
+            patch(crate::management::handlers::users::toggle_user_status),
+        )
+        .route(
+            "/{id}/reset-password",
+            patch(crate::management::handlers::users::reset_user_password),
+        )
+        // 用户个人资料管理
         .route(
             "/profile",
             get(crate::management::handlers::users::get_user_profile),
@@ -149,6 +163,7 @@ fn user_routes() -> Router<AppState> {
             "/password",
             post(crate::management::handlers::users::change_password),
         )
+        // 认证相关接口
         .route(
             "/auth/login",
             post(crate::management::handlers::auth::login),

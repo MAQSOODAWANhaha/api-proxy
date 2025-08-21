@@ -408,13 +408,18 @@ impl HealthCheckService {
         if let Some(status) = health_map.get_mut(server_address) {
             status.is_healthy = false;
             status.consecutive_failures += 1;
+            status.consecutive_successes = 0;
 
             // 添加强制失败结果
             let failure_result = HealthCheckResult::failure(
                 format!("Manually marked unhealthy: {}", reason),
                 self.global_config.check_type,
             );
-            status.update_status(failure_result);
+            status.recent_results.push(failure_result);
+            if status.recent_results.len() > 50 {
+                status.recent_results.remove(0);
+            }
+            status.last_check = Some(Instant::now());
 
             tracing::warn!(
                 "Manually marked server {} as unhealthy: {}",
