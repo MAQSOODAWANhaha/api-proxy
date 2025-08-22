@@ -2,6 +2,7 @@
 //!
 //! 定义了标准的 JSON API 响应格式，包括成功、失败和分页响应。
 
+use crate::error::ProxyError;
 use axum::{
     Json,
     http::StatusCode,
@@ -9,7 +10,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::error::ProxyError;
 
 /// # 分页信息
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,10 +117,7 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
             ApiResponse::Error(status, code, message) => {
                 let error_response = ErrorResponse {
                     success: false,
-                    error: ErrorInfo {
-                        code,
-                        message,
-                    },
+                    error: ErrorInfo { code, message },
                     timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
@@ -138,7 +135,7 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
                     timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
-            },
+            }
         }
     }
 }

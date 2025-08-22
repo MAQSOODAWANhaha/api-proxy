@@ -29,15 +29,19 @@ pub enum AuthParseError {
     #[error(
         "Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'"
     )]
+    /// 认证头格式无效
     InvalidFormat(String),
 
     #[error("Empty header name in format: '{0}'")]
+    /// 认证头名称为空
     EmptyHeaderName(String),
 
     #[error("Empty header value template in format: '{0}'")]
+    /// 认证头值模板为空
     EmptyHeaderValue(String),
 
     #[error("Missing key placeholder '{{key}}' in header value: '{0}'")]
+    /// 缺少密钥占位符
     MissingKeyPlaceholder(String),
 }
 

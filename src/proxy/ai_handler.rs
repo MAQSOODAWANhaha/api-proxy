@@ -1486,6 +1486,7 @@ impl AIProxyHandler {
     }
 
     /// 提取token使用信息（向后兼容方法）
+    #[allow(dead_code)]
     fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
         // 尝试从不同的响应头中提取token使用信息
         let token_headers = [

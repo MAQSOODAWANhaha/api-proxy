@@ -17,14 +17,19 @@ use crate::error::Result;
 #[derive(Debug, Error)]
 pub enum JwtError {
     #[error("Token generation failed: {0}")]
+    /// Token生成失败
     TokenGeneration(String),
     #[error("Token validation failed: {0}")]
+    /// Token验证失败
     TokenValidation(String),
     #[error("Token expired")]
+    /// Token已过期
     TokenExpired,
     #[error("Invalid token format")]
+    /// Token格式无效
     InvalidFormat,
     #[error("Missing claims")]
+    /// 缺少声明信息
     MissingClaims,
 }
 

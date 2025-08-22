@@ -7,7 +7,7 @@ use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
@@ -67,8 +67,7 @@ pub async fn get_provider_keys_list(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count provider keys",
-            )
-            ;
+            );
         }
     };
 
@@ -88,8 +87,7 @@ pub async fn get_provider_keys_list(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider keys",
-            )
-            ;
+            );
         }
     };
 
@@ -106,7 +104,10 @@ pub async fn get_provider_keys_list(
             .unwrap_or_else(|| "Unknown".to_string());
 
         // 获取该密钥的使用统计
-        let key_stats = usage_stats.get(&provider_key.id).cloned().unwrap_or_default();
+        let key_stats = usage_stats
+            .get(&provider_key.id)
+            .cloned()
+            .unwrap_or_default();
 
         let response_key = json!({
             "id": provider_key.id,
@@ -185,15 +186,16 @@ pub async fn create_provider_key(
 
     match existing {
         Ok(Some(_)) => {
-            return response::app_error(
-                crate::error::ProxyError::management_conflict("ProviderKey", &payload.name)
-            );
+            return response::app_error(crate::error::ProxyError::management_conflict(
+                "ProviderKey",
+                &payload.name,
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to check existing provider key: {}", err);
             return response::app_error(crate::error::ProxyError::database_with_source(
-                "Failed to check existing provider key", 
-                err
+                "Failed to check existing provider key",
+                err,
             ));
         }
         _ => {}
@@ -221,8 +223,8 @@ pub async fn create_provider_key(
         Err(err) => {
             tracing::error!("Failed to create provider key: {}", err);
             return response::app_error(crate::error::ProxyError::database_with_source(
-                "Failed to create provider key", 
-                err
+                "Failed to create provider key",
+                err,
             ));
         }
     };
@@ -273,12 +275,7 @@ pub async fn get_provider_key_detail(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "密钥不存在",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider key detail: {}", err);
@@ -286,8 +283,7 @@ pub async fn get_provider_key_detail(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider key detail",
-            )
-            ;
+            );
         }
     };
 
@@ -298,7 +294,10 @@ pub async fn get_provider_key_detail(
 
     // 获取使用统计
     let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id]).await;
-    let key_stats = usage_stats.get(&provider_key.0.id).cloned().unwrap_or_default();
+    let key_stats = usage_stats
+        .get(&provider_key.0.id)
+        .cloned()
+        .unwrap_or_default();
 
     let data = json!({
         "id": provider_key.0.id,
@@ -362,12 +361,7 @@ pub async fn update_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "密钥不存在",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
         }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
@@ -375,8 +369,7 @@ pub async fn update_provider_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to find provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -392,12 +385,7 @@ pub async fn update_provider_key(
 
         match duplicate {
             Ok(Some(_)) => {
-                return response::error(
-                    StatusCode::CONFLICT,
-                    "DUPLICATE_NAME",
-                    "密钥名称已存在",
-                )
-                ;
+                return response::error(StatusCode::CONFLICT, "DUPLICATE_NAME", "密钥名称已存在");
             }
             Err(err) => {
                 tracing::error!("Failed to check duplicate name: {}", err);
@@ -405,8 +393,7 @@ pub async fn update_provider_key(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DB_ERROR",
                     "Failed to check duplicate name",
-                )
-                ;
+                );
             }
             _ => {}
         }
@@ -432,8 +419,7 @@ pub async fn update_provider_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -471,12 +457,7 @@ pub async fn delete_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "密钥不存在",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
         }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
@@ -484,8 +465,7 @@ pub async fn delete_provider_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to find provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -499,8 +479,7 @@ pub async fn delete_provider_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to delete provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -539,12 +518,7 @@ pub async fn get_provider_key_stats(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "密钥不存在",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider key: {}", err);
@@ -552,8 +526,7 @@ pub async fn get_provider_key_stats(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -617,8 +590,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count total keys",
-            )
-            ;
+            );
         }
     };
 
@@ -636,8 +608,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count active keys",
-            )
-            ;
+            );
         }
     };
 
@@ -655,8 +626,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch user provider keys",
-            )
-            ;
+            );
         }
     };
 
@@ -683,8 +653,7 @@ pub async fn get_provider_keys_dashboard_stats(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DB_ERROR",
                     "Failed to fetch usage statistics",
-                )
-                ;
+                );
             }
         }
     };
@@ -743,8 +712,7 @@ pub async fn get_simple_provider_keys_list(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider keys",
-            )
-            ;
+            );
         }
     };
 
@@ -803,12 +771,7 @@ pub async fn health_check_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "密钥不存在",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
         }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
@@ -816,8 +779,7 @@ pub async fn health_check_provider_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to find provider key",
-            )
-            ;
+            );
         }
     };
 
@@ -923,13 +885,13 @@ async fn fetch_provider_keys_usage_stats(
     provider_key_ids: &[i32],
 ) -> HashMap<i32, ProviderKeyUsageStats> {
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
-    
+
     let mut stats_map = HashMap::new();
-    
+
     if provider_key_ids.is_empty() {
         return stats_map;
     }
-    
+
     // 批量查询所有密钥的使用记录
     let traces = match ProxyTracing::find()
         .filter(proxy_tracing::Column::UserProviderKeyId.is_in(provider_key_ids.to_vec()))
@@ -942,16 +904,18 @@ async fn fetch_provider_keys_usage_stats(
             return stats_map;
         }
     };
-    
+
     // 按密钥ID分组统计
     for trace in traces {
         let key_id = match trace.user_provider_key_id {
             Some(id) => id,
             None => continue,
         };
-        
-        let entry = stats_map.entry(key_id).or_insert_with(ProviderKeyUsageStats::default);
-        
+
+        let entry = stats_map
+            .entry(key_id)
+            .or_insert_with(ProviderKeyUsageStats::default);
+
         // 统计请求数
         entry.total_requests += 1;
         if trace.is_success {
@@ -959,40 +923,50 @@ async fn fetch_provider_keys_usage_stats(
         } else {
             entry.failed_requests += 1;
         }
-        
+
         // 统计token数
         if let Some(tokens) = trace.tokens_total {
             entry.total_tokens += tokens as i64;
         }
-        
+
         // 统计费用
         if let Some(cost) = trace.cost {
             entry.total_cost += cost;
         }
-        
+
         // 统计响应时间
         if let Some(duration) = trace.duration_ms {
             // 简单平均，实际应该加权平均
             entry.avg_response_time = (entry.avg_response_time + duration) / 2;
         }
-        
+
         // 更新最后使用时间
-        let created_at = trace.created_at.and_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        if entry.last_used_at.is_none() || entry.last_used_at.as_ref().map_or(true, |last| last < &created_at) {
+        let created_at = trace
+            .created_at
+            .and_utc()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        if entry.last_used_at.is_none()
+            || entry
+                .last_used_at
+                .as_ref()
+                .map_or(true, |last| last < &created_at)
+        {
             entry.last_used_at = Some(created_at);
         }
     }
-    
+
     // 计算成功率
     for stats in stats_map.values_mut() {
         if stats.total_requests > 0 {
-            stats.success_rate = (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0;
+            stats.success_rate =
+                (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0;
             stats.success_rate = (stats.success_rate * 100.0).round() / 100.0; // 保留两位小数
         }
-        
+
         // 格式化费用
         stats.total_cost = (stats.total_cost * 100.0).round() / 100.0;
     }
-    
+
     stats_map
 }

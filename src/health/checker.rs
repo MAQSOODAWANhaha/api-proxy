@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_checker_creation() {
-        let checker = HealthChecker::new();
+        let _checker = HealthChecker::new();
         assert!(true); // 如果能创建就说明成功
     }
 

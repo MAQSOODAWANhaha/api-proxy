@@ -6,6 +6,7 @@ pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod database;
+/// 双端口服务器设置和配置模块
 pub mod dual_port_setup;
 pub mod error;
 pub mod health;
@@ -15,6 +16,7 @@ pub mod proxy;
 pub mod scheduler;
 pub mod statistics;
 pub mod trace;
+/// 通用工具和辅助函数模块
 pub mod utils;
 
 // Re-export commonly used types

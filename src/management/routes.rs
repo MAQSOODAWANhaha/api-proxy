@@ -137,10 +137,19 @@ fn user_routes() -> Router<AppState> {
         // 用户CRUD基础接口
         .route("/", get(crate::management::handlers::users::list_users))
         .route("/", post(crate::management::handlers::users::create_user))
-        .route("/", delete(crate::management::handlers::users::batch_delete_users))
+        .route(
+            "/",
+            delete(crate::management::handlers::users::batch_delete_users),
+        )
         .route("/{id}", get(crate::management::handlers::users::get_user))
-        .route("/{id}", put(crate::management::handlers::users::update_user))
-        .route("/{id}", delete(crate::management::handlers::users::delete_user))
+        .route(
+            "/{id}",
+            put(crate::management::handlers::users::update_user),
+        )
+        .route(
+            "/{id}",
+            delete(crate::management::handlers::users::delete_user),
+        )
         // 用户状态管理
         .route(
             "/{id}/toggle-status",

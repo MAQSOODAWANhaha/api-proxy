@@ -9,47 +9,9 @@ use entity::{user_service_apis, user_service_apis::Entity as UserServiceApis};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use tracing::info;
 use tracing::warn;
 
-#[derive(Serialize)]
-struct LoadBalancerStatus {
-    status: &'static str,
-    algorithms: Vec<&'static str>,
-    current_algorithm: &'static str,
-    load_balancers: HashMap<String, ProviderStats>,
-}
-
-#[derive(Serialize)]
-struct ProviderStats {
-    total_servers: usize,
-    healthy_servers: usize,
-    current_requests: i32,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Server {
-    id: String,
-    api_id: i32,
-    upstream_type: String,
-    display_name: String,
-    host: String,
-    port: u16,
-    use_tls: bool,
-    weight: u32,
-    is_healthy: bool,
-    is_active: bool,
-    response_time_ms: i32,
-    requests_total: i32,
-    requests_successful: i32,
-    requests_failed: i32,
-    rate_limit: i32,
-    timeout_seconds: i32,
-    created_at: chrono::DateTime<chrono::Utc>,
-    last_used: Option<chrono::DateTime<chrono::Utc>>,
-}
 
 /// 服务器查询参数
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,36 +125,6 @@ pub async fn add_server(
     }
 }
 
-/// 解析base_url获取主机、端口和TLS信息
-fn parse_base_url(base_url: &str) -> (String, u16, bool) {
-    if base_url.is_empty() {
-        return ("unknown".to_string(), 80, false);
-    }
-
-    // 简单的URL解析
-    let use_tls = base_url.starts_with("https://");
-    let default_port = if use_tls { 443 } else { 80 };
-
-    // 移除协议前缀
-    let url_without_protocol = base_url
-        .strip_prefix("https://")
-        .or_else(|| base_url.strip_prefix("http://"))
-        .unwrap_or(base_url);
-
-    // 移除路径部分，只保留主机:端口
-    let host_port = url_without_protocol
-        .split('/')
-        .next()
-        .unwrap_or(url_without_protocol);
-
-    // 解析主机和端口
-    if let Some((host_part, port_part)) = host_port.split_once(':') {
-        let port = port_part.parse().unwrap_or(default_port);
-        (host_part.to_string(), port, use_tls)
-    } else {
-        (host_port.to_string(), default_port, use_tls)
-    }
-}
 
 /// 更改调度策略请求
 #[derive(Debug, Deserialize)]

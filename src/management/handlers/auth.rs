@@ -10,7 +10,7 @@ use entity::users::Entity as Users;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sea_orm::{entity::*, query::*};
 use serde::{Deserialize, Serialize};
- // remove unused Value
+// remove unused Value
 
 /// 登录请求
 #[derive(Debug, Deserialize)]
@@ -186,7 +186,10 @@ pub struct ValidateTokenResponse {
 }
 
 /// 用户登出
-pub async fn logout(State(_state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
+pub async fn logout(
+    State(_state): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
     // 从Authorization头中提取token
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {

@@ -48,14 +48,14 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
 fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     // 验证服务器配置（传统单端口模式）
     if let Some(server) = &config.server {
-        if server.port == 0 || server.port > 65535 {
+        if server.port == 0 {
             return Err(crate::error::ProxyError::config(format!(
                 "无效的服务器端口: {}",
                 server.port
             )));
         }
 
-        if server.https_port == 0 || server.https_port > 65535 {
+        if server.https_port == 0 {
             return Err(crate::error::ProxyError::config(format!(
                 "无效的HTTPS端口: {}",
                 server.https_port

@@ -18,16 +18,22 @@ use entity::user_provider_keys;
 #[derive(Debug, Error)]
 pub enum ApiKeyError {
     #[error("API key not found")]
+    /// API密钥未找到
     NotFound,
     #[error("API key is inactive")]
+    /// API密钥未激活
     Inactive,
     #[error("API key has expired")]
+    /// API密钥已过期
     Expired,
     #[error("Rate limit exceeded")]
+    /// 速率限制超出
     RateLimitExceeded,
     #[error("Database error: {0}")]
+    /// 数据库错误
     Database(String),
     #[error("Invalid API key format")]
+    /// API密钥格式无效
     InvalidFormat,
 }
 

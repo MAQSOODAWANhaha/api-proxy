@@ -22,6 +22,7 @@ pub struct ProviderConfigManager {
     /// 缓存管理器
     cache: Arc<UnifiedCacheManager>,
     /// 配置缓存
+    #[allow(dead_code)]
     config_cache: Arc<RwLock<HashMap<String, ProviderConfig>>>,
 }
 

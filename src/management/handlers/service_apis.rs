@@ -234,8 +234,7 @@ pub async fn get_user_service_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count active user service APIs",
-            )
-            ;
+            );
         }
     };
 
@@ -252,8 +251,7 @@ pub async fn get_user_service_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count user requests",
-            )
-            ;
+            );
         }
     };
 
@@ -317,8 +315,7 @@ pub async fn list_user_service_keys(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to count user service APIs",
-            )
-            ;
+            );
         }
     };
 
@@ -350,8 +347,7 @@ pub async fn list_user_service_keys(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch user service APIs",
-            )
-            ;
+            );
         }
     };
 
@@ -459,8 +455,7 @@ pub async fn create_user_service_key(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "至少需要选择一个提供商API密钥",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -482,8 +477,7 @@ pub async fn create_user_service_key(
                 StatusCode::BAD_REQUEST,
                 "VALIDATION_ERROR",
                 "无效的服务商类型",
-            )
-            ;
+            );
         }
         Err(err) => {
             tracing::error!("Failed to query provider type: {}", err);
@@ -491,8 +485,7 @@ pub async fn create_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to query provider type",
-            )
-            ;
+            );
         }
     };
 
@@ -511,8 +504,7 @@ pub async fn create_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to query provider keys",
-            )
-            ;
+            );
         }
     };
 
@@ -524,8 +516,7 @@ pub async fn create_user_service_key(
                 "部分提供商API密钥不存在、不属于该用户或不属于{}类型",
                 provider_type.display_name
             ),
-        )
-        ;
+        );
     }
 
     // 生成唯一的API密钥
@@ -540,8 +531,7 @@ pub async fn create_user_service_key(
                     StatusCode::BAD_REQUEST,
                     "VALIDATION_ERROR",
                     "过期时间格式错误，请使用ISO 8601格式",
-                )
-                ;
+                );
             }
         }
     } else {
@@ -584,8 +574,7 @@ pub async fn create_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to create API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -618,8 +607,7 @@ pub async fn get_user_service_key(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -638,12 +626,7 @@ pub async fn get_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -651,8 +634,7 @@ pub async fn get_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -664,8 +646,7 @@ pub async fn get_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "PROVIDER_NOT_FOUND",
                 "Provider type not found",
-            )
-            ;
+            );
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider type: {}", err);
@@ -673,8 +654,7 @@ pub async fn get_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch provider type",
-            )
-            ;
+            );
         }
     };
 
@@ -735,8 +715,7 @@ pub async fn update_user_service_key(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -755,12 +734,7 @@ pub async fn update_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -768,8 +742,7 @@ pub async fn update_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -782,8 +755,7 @@ pub async fn update_user_service_key(
                     StatusCode::BAD_REQUEST,
                     "VALIDATION_ERROR",
                     "过期时间格式错误，请使用ISO 8601格式",
-                )
-                ;
+                );
             }
         }
     } else {
@@ -850,8 +822,7 @@ pub async fn update_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -879,8 +850,7 @@ pub async fn delete_user_service_key(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -898,12 +868,7 @@ pub async fn delete_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -911,8 +876,7 @@ pub async fn delete_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -925,8 +889,7 @@ pub async fn delete_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to delete API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -935,8 +898,7 @@ pub async fn delete_user_service_key(
             StatusCode::INTERNAL_SERVER_ERROR,
             "DELETE_FAILED",
             "Failed to delete API Key",
-        )
-        ;
+        );
     }
 
     response::success_with_message(serde_json::Value::Null, "API Key删除成功")
@@ -958,8 +920,7 @@ pub async fn get_user_service_key_usage(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -977,12 +938,7 @@ pub async fn get_user_service_key_usage(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -990,8 +946,7 @@ pub async fn get_user_service_key_usage(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -1060,8 +1015,7 @@ pub async fn get_user_service_key_usage(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch usage statistics",
-            )
-            ;
+            );
         }
     };
 
@@ -1148,8 +1102,7 @@ pub async fn regenerate_user_service_key(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -1167,12 +1120,7 @@ pub async fn regenerate_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -1180,8 +1128,7 @@ pub async fn regenerate_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -1204,8 +1151,7 @@ pub async fn regenerate_user_service_key(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to regenerate API key",
-            )
-            ;
+            );
         }
     };
 
@@ -1233,8 +1179,7 @@ pub async fn update_user_service_key_status(
             StatusCode::BAD_REQUEST,
             "VALIDATION_ERROR",
             "Invalid API ID",
-        )
-        ;
+        );
     }
 
     let db = state.database.as_ref();
@@ -1252,12 +1197,7 @@ pub async fn update_user_service_key_status(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "API_NOT_FOUND",
-                "API Key not found",
-            )
-            ;
+            return response::error(StatusCode::NOT_FOUND, "API_NOT_FOUND", "API Key not found");
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
@@ -1265,8 +1205,7 @@ pub async fn update_user_service_key_status(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch API Key",
-            )
-            ;
+            );
         }
     };
 
@@ -1286,8 +1225,7 @@ pub async fn update_user_service_key_status(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to update API key status",
-            )
-            ;
+            );
         }
     };
 

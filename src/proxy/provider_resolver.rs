@@ -160,7 +160,6 @@ impl ProviderResolver {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_provider_resolver_creation() {

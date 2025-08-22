@@ -25,12 +25,16 @@ use crate::error::Result;
 #[derive(Debug, Error)]
 pub enum AuthServiceError {
     #[error("Authentication failed")]
+    /// 认证失败
     AuthenticationFailed,
     #[error("Authorization failed")]
+    /// 授权失败
     AuthorizationFailed,
     #[error("Invalid credentials")]
+    /// 凭证无效
     InvalidCredentials,
     #[error("Service unavailable: {0}")]
+    /// 服务不可用
     ServiceUnavailable(String),
 }
 

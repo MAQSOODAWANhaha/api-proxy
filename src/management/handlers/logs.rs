@@ -5,17 +5,17 @@
 use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
+use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
+use ::entity::proxy_tracing;
 use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
 };
+use chrono::{DateTime, Utc};
 use sea_orm::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
-use ::entity::{proxy_tracing, provider_types, user_provider_keys};
-use ::entity::{ProxyTracing, ProviderTypes, UserProviderKeys};
 
 /// 日志仪表板统计响应
 #[derive(Debug, Serialize)]
@@ -166,17 +166,18 @@ pub async fn get_dashboard_stats(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DATABASE_ERROR".to_string(),
                 "获取统计数据失败".to_string(),
-            ).into_response()
+            )
+            .into_response()
         }
     }
 }
 
 /// 计算仪表板统计数据
-async fn calculate_dashboard_stats(db: &DatabaseConnection) -> Result<LogsDashboardStatsResponse, DbErr> {
+async fn calculate_dashboard_stats(
+    db: &DatabaseConnection,
+) -> Result<LogsDashboardStatsResponse, DbErr> {
     // 获取总请求数
-    let total_requests = ProxyTracing::find()
-        .count(db)
-        .await? as i64;
+    let total_requests = ProxyTracing::find().count(db).await? as i64;
 
     // 获取成功请求数
     let successful_requests = ProxyTracing::find()
@@ -252,7 +253,7 @@ pub async fn get_traces_list(
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20).min(100); // 限制最大每页100条
-    
+
     match fetch_traces_list(&state.database, &query, page, limit).await {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
@@ -261,7 +262,8 @@ pub async fn get_traces_list(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DATABASE_ERROR".to_string(),
                 "获取日志列表失败".to_string(),
-            ).into_response()
+            )
+            .into_response()
         }
     }
 }
@@ -284,7 +286,7 @@ async fn fetch_traces_list(
                 Condition::any()
                     .add(proxy_tracing::Column::RequestId.like(&search_pattern))
                     .add(proxy_tracing::Column::Path.like(&search_pattern))
-                    .add(proxy_tracing::Column::ModelUsed.like(&search_pattern))
+                    .add(proxy_tracing::Column::ModelUsed.like(&search_pattern)),
             );
         }
     }
@@ -344,7 +346,7 @@ async fn fetch_traces_list(
     let mut traces = Vec::new();
     for (trace_model, provider_types) in traces_models {
         let provider_name = provider_types.first().map(|pt| pt.display_name.clone());
-        
+
         traces.push(ProxyTraceEntry {
             id: trace_model.id,
             request_id: trace_model.request_id,
@@ -361,7 +363,9 @@ async fn fetch_traces_list(
             cache_create_tokens: trace_model.cache_create_tokens.unwrap_or(0),
             cache_read_tokens: trace_model.cache_read_tokens.unwrap_or(0),
             cost: trace_model.cost,
-            cost_currency: trace_model.cost_currency.unwrap_or_else(|| "USD".to_string()),
+            cost_currency: trace_model
+                .cost_currency
+                .unwrap_or_else(|| "USD".to_string()),
             model_used: trace_model.model_used,
             client_ip: trace_model.client_ip,
             user_agent: trace_model.user_agent,
@@ -411,14 +415,16 @@ pub async fn get_trace_detail(
             axum::http::StatusCode::NOT_FOUND,
             "RESOURCE_NOT_FOUND".to_string(),
             "日志记录不存在".to_string(),
-        ).into_response(),
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!("获取日志详情失败: {}", e);
             ApiResponse::<ProxyTraceEntry>::Error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DATABASE_ERROR".to_string(),
                 "获取日志详情失败".to_string(),
-            ).into_response()
+            )
+            .into_response()
         }
     }
 }
@@ -436,7 +442,7 @@ async fn fetch_trace_detail(
 
     if let Some((trace_model, provider_types)) = trace_with_relations.into_iter().next() {
         let provider_name = provider_types.first().map(|pt| pt.display_name.clone());
-        
+
         // 如果需要，可以额外查询用户提供商密钥信息
         let provider_key_name = if let Some(provider_key_id) = trace_model.user_provider_key_id {
             UserProviderKeys::find_by_id(provider_key_id)
@@ -446,7 +452,6 @@ async fn fetch_trace_detail(
         } else {
             None
         };
-
 
         let trace_entry = ProxyTraceEntry {
             id: trace_model.id,
@@ -464,7 +469,9 @@ async fn fetch_trace_detail(
             cache_create_tokens: trace_model.cache_create_tokens.unwrap_or(0),
             cache_read_tokens: trace_model.cache_read_tokens.unwrap_or(0),
             cost: trace_model.cost,
-            cost_currency: trace_model.cost_currency.unwrap_or_else(|| "USD".to_string()),
+            cost_currency: trace_model
+                .cost_currency
+                .unwrap_or_else(|| "USD".to_string()),
             model_used: trace_model.model_used,
             client_ip: trace_model.client_ip,
             user_agent: trace_model.user_agent,
@@ -510,7 +517,8 @@ pub async fn get_logs_analytics(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "DATABASE_ERROR".to_string(),
                 "获取统计分析失败".to_string(),
-            ).into_response()
+            )
+            .into_response()
         }
     }
 }
@@ -533,11 +541,11 @@ async fn fetch_logs_analytics(
     };
 
     // 基础查询条件
-    let base_query = ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(start_time));
+    let base_query = ProxyTracing::find().filter(proxy_tracing::Column::CreatedAt.gte(start_time));
 
     // 1. 获取模型分布统计
-    let model_stats = base_query.clone()
+    let model_stats = base_query
+        .clone()
         .filter(proxy_tracing::Column::ModelUsed.is_not_null())
         .select_only()
         .column(proxy_tracing::Column::ModelUsed)
@@ -550,7 +558,7 @@ async fn fetch_logs_analytics(
         .await?;
 
     let total_requests = base_query.clone().count(db).await? as i64;
-    
+
     let model_distribution: Vec<ModelDistribution> = model_stats
         .into_iter()
         .map(|(model, request_count, token_count, cost)| {
@@ -559,7 +567,7 @@ async fn fetch_logs_analytics(
             } else {
                 0.0
             };
-            
+
             ModelDistribution {
                 model: model.unwrap_or_else(|| "Unknown".to_string()),
                 request_count,
@@ -571,19 +579,20 @@ async fn fetch_logs_analytics(
         .collect();
 
     // 2. 获取服务商分布统计
-    let provider_stats = base_query.clone()
+    let provider_stats = base_query
+        .clone()
         .find_with_related(ProviderTypes)
         .all(db)
         .await?;
 
     let mut provider_map: HashMap<String, (i64, i64, i64)> = HashMap::new(); // (total, success, total_duration)
-    
+
     for (trace, provider_types) in provider_stats {
         let provider_name = provider_types
             .first()
             .map(|pt| pt.display_name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
-        
+
         let entry = provider_map.entry(provider_name).or_insert((0, 0, 0));
         entry.0 += 1; // total requests
         if trace.is_success {
@@ -602,12 +611,8 @@ async fn fetch_logs_analytics(
             } else {
                 0.0
             };
-            
-            let avg_response_time = if total > 0 {
-                total_duration / total
-            } else {
-                0
-            };
+
+            let avg_response_time = if total > 0 { total_duration / total } else { 0 };
 
             ProviderDistribution {
                 provider_name,
@@ -619,7 +624,8 @@ async fn fetch_logs_analytics(
         .collect();
 
     // 3. 获取状态码分布统计
-    let status_stats = base_query.clone()
+    let status_stats = base_query
+        .clone()
         .filter(proxy_tracing::Column::StatusCode.is_not_null())
         .select_only()
         .column(proxy_tracing::Column::StatusCode)
@@ -637,7 +643,7 @@ async fn fetch_logs_analytics(
             } else {
                 0.0
             };
-            
+
             StatusDistribution {
                 status_code: status_code.unwrap_or(0),
                 count,
@@ -651,15 +657,18 @@ async fn fetch_logs_analytics(
     let time_series = vec![TimeSeriesData {
         timestamp: now,
         total_requests,
-        successful_requests: base_query.clone()
+        successful_requests: base_query
+            .clone()
             .filter(proxy_tracing::Column::IsSuccess.eq(true))
             .count(db)
             .await? as i64,
-        failed_requests: base_query.clone()
+        failed_requests: base_query
+            .clone()
             .filter(proxy_tracing::Column::IsSuccess.eq(false))
             .count(db)
             .await? as i64,
-        total_tokens: base_query.clone()
+        total_tokens: base_query
+            .clone()
             .select_only()
             .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
             .into_tuple::<Option<i64>>()
@@ -667,7 +676,8 @@ async fn fetch_logs_analytics(
             .await?
             .flatten()
             .unwrap_or(0),
-        total_cost: base_query.clone()
+        total_cost: base_query
+            .clone()
             .select_only()
             .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
             .into_tuple::<Option<f64>>()
@@ -676,7 +686,8 @@ async fn fetch_logs_analytics(
             .flatten()
             .unwrap_or(0.0),
         avg_response_time: {
-            let duration_result = base_query.clone()
+            let duration_result = base_query
+                .clone()
                 .filter(proxy_tracing::Column::DurationMs.is_not_null())
                 .select_only()
                 .column_as(proxy_tracing::Column::DurationMs.sum(), "total_duration")

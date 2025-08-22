@@ -168,8 +168,7 @@ pub async fn get_today_dashboard_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch today's data",
-            )
-            ;
+            );
         }
     };
 
@@ -188,8 +187,7 @@ pub async fn get_today_dashboard_cards(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch yesterday's data",
-            )
-            ;
+            );
         }
     };
 
@@ -297,8 +295,7 @@ pub async fn get_models_usage_rate(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
-            )
-            ;
+            );
         }
     };
 
@@ -368,8 +365,7 @@ pub async fn get_models_statistics(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
-            )
-            ;
+            );
         }
     };
 
@@ -436,8 +432,7 @@ pub async fn get_tokens_trend(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
-            )
-            ;
+            );
         }
     };
 
@@ -553,8 +548,7 @@ pub async fn get_user_api_keys_request_trend(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
-            )
-            ;
+            );
         }
     };
 
@@ -645,8 +639,7 @@ pub async fn get_user_api_keys_token_trend(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "DB_ERROR",
                 "Failed to fetch data",
-            )
-            ;
+            );
         }
     };
 
@@ -739,8 +732,7 @@ fn parse_time_range(
                             StatusCode::BAD_REQUEST,
                             "INVALID_DATE",
                             "Invalid start date format. Use YYYY-MM-DD",
-                        )
-                        );
+                        ));
                     }
                 }
             } else {
@@ -748,8 +740,7 @@ fn parse_time_range(
                     StatusCode::BAD_REQUEST,
                     "MISSING_DATES",
                     "Custom range requires both start and end dates",
-                )
-                );
+                ));
             }
         }
         _ => end_time - Duration::days(7), // 默认7天

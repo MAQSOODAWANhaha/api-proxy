@@ -349,8 +349,6 @@ impl std::fmt::Debug for DynamicAdapterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::abstract_cache::UnifiedCacheManager;
-    use crate::config::{AppConfig, ProviderConfigManager};
 
     async fn create_test_manager() -> DynamicAdapterManager {
         // 这里需要真实的数据库连接和配置管理器进行测试

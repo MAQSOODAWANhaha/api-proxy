@@ -281,27 +281,45 @@ impl ProxyError {
             ProxyError::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
             ProxyError::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
             ProxyError::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
-            ProxyError::ServerInit { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR"),
-            ProxyError::ServerStart { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR"),
+            ProxyError::ServerInit { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR")
+            }
+            ProxyError::ServerStart { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR")
+            }
             ProxyError::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTHENTICATION_ERROR"),
             ProxyError::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
-            ProxyError::UpstreamNotAvailable { .. } => (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_NOT_AVAILABLE"),
+            ProxyError::UpstreamNotAvailable { .. } => {
+                (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_NOT_AVAILABLE")
+            }
             ProxyError::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_ERROR"),
             ProxyError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY_ERROR"),
-            ProxyError::ConnectionTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT"),
+            ProxyError::ConnectionTimeout { .. } => {
+                (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT")
+            }
             ProxyError::ReadTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "READ_TIMEOUT"),
             ProxyError::WriteTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "WRITE_TIMEOUT"),
-            ProxyError::LoadBalancer { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR"),
-            ProxyError::HealthCheck { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR"),
-            ProxyError::Statistics { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR"),
+            ProxyError::LoadBalancer { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR")
+            }
+            ProxyError::HealthCheck { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR")
+            }
+            ProxyError::Statistics { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR")
+            }
             ProxyError::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
             ProxyError::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
             ProxyError::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
-            ProxyError::ManagementValidation { .. } => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
+            ProxyError::ManagementValidation { .. } => {
+                (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
+            }
             ProxyError::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
             ProxyError::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
             ProxyError::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
-            ProxyError::ManagementRateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED"),
+            ProxyError::ManagementRateLimit { .. } => {
+                (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
+            }
         }
     }
 
@@ -779,7 +797,10 @@ impl ProxyError {
     }
 
     /// 创建管理模块资源未找到错误
-    pub fn management_not_found<T: Into<String>, I: Into<String>>(resource_type: T, identifier: I) -> Self {
+    pub fn management_not_found<T: Into<String>, I: Into<String>>(
+        resource_type: T,
+        identifier: I,
+    ) -> Self {
         Self::ManagementNotFound {
             resource_type: resource_type.into(),
             identifier: identifier.into(),
@@ -788,7 +809,11 @@ impl ProxyError {
     }
 
     /// 创建带来源的管理模块资源未找到错误
-    pub fn management_not_found_with_source<T: Into<String>, I: Into<String>, E: Into<anyhow::Error>>(
+    pub fn management_not_found_with_source<
+        T: Into<String>,
+        I: Into<String>,
+        E: Into<anyhow::Error>,
+    >(
         resource_type: T,
         identifier: I,
         source: E,
@@ -801,7 +826,10 @@ impl ProxyError {
     }
 
     /// 创建管理模块资源冲突错误
-    pub fn management_conflict<T: Into<String>, I: Into<String>>(resource_type: T, identifier: I) -> Self {
+    pub fn management_conflict<T: Into<String>, I: Into<String>>(
+        resource_type: T,
+        identifier: I,
+    ) -> Self {
         Self::ManagementConflict {
             resource_type: resource_type.into(),
             identifier: identifier.into(),
@@ -810,7 +838,11 @@ impl ProxyError {
     }
 
     /// 创建带来源的管理模块资源冲突错误
-    pub fn management_conflict_with_source<T: Into<String>, I: Into<String>, E: Into<anyhow::Error>>(
+    pub fn management_conflict_with_source<
+        T: Into<String>,
+        I: Into<String>,
+        E: Into<anyhow::Error>,
+    >(
         resource_type: T,
         identifier: I,
         source: E,

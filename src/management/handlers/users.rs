@@ -6,10 +6,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::Utc;
-use entity::{users, users::Entity as Users, proxy_tracing, proxy_tracing::Entity as ProxyTracing};
+use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::{Rng, distributions::Alphanumeric};
-use sea_orm::{entity::*, query::*, DatabaseConnection};
+use sea_orm::{DatabaseConnection, entity::*, query::*};
 use serde::{Deserialize, Serialize};
 // Removed unused serde_json imports
 
@@ -266,7 +266,7 @@ pub async fn list_users(
     // 排序
     let sort_field = query.sort.as_deref().unwrap_or("created_at");
     let order_desc = query.order.as_deref() == Some("asc");
-    
+
     select = match sort_field {
         "username" => {
             if order_desc {
@@ -332,7 +332,7 @@ pub async fn list_users(
 
     // 获取用户统计数据并转换为响应DTO
     let mut user_responses: Vec<UserResponse> = Vec::new();
-    
+
     for user in users {
         let stats = get_user_statistics(user.id, state.database.as_ref()).await;
         user_responses.push(UserResponse::from_user_with_stats(user, stats));
@@ -829,42 +829,26 @@ pub async fn update_user(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(status_code) => {
-            return response::error(
-                status_code,
-                "AUTHENTICATION_REQUIRED",
-                "认证失败",
-            );
+            return response::error(status_code, "AUTHENTICATION_REQUIRED", "认证失败");
         }
     };
 
     let current_user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "无效的用户ID",
-            );
+            return response::error(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", "无效的用户ID");
         }
     };
 
     // 权限检查：只有管理员可以更新其他用户，用户只能更新自己的部分信息
     let is_self = current_user_id == user_id;
     if !is_self && !claims.is_admin {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "权限不足",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "权限不足");
     }
 
     // 如果不是管理员，不能修改is_admin字段
     if !claims.is_admin && request.is_admin.is_some() {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "只有管理员可以修改权限",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "只有管理员可以修改权限");
     }
 
     // 验证输入
@@ -905,11 +889,7 @@ pub async fn update_user(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "USER_NOT_FOUND",
-                "用户不存在",
-            );
+            return response::error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
@@ -924,11 +904,11 @@ pub async fn update_user(
     // 检查用户名和邮箱是否与其他用户冲突
     if request.username.is_some() || request.email.is_some() {
         let mut check_query = Users::find().filter(users::Column::Id.ne(user_id));
-        
+
         if let Some(ref username) = request.username {
             check_query = check_query.filter(users::Column::Username.eq(username));
         }
-        
+
         if let Some(ref email) = request.email {
             check_query = check_query.filter(users::Column::Email.eq(email));
         }
@@ -945,11 +925,7 @@ pub async fn update_user(
             }
             if let Some(ref email) = request.email {
                 if existing.email == *email {
-                    return response::error(
-                        StatusCode::CONFLICT,
-                        "EMAIL_EXISTS",
-                        "邮箱已存在",
-                    );
+                    return response::error(StatusCode::CONFLICT, "EMAIL_EXISTS", "邮箱已存在");
                 }
             }
         }
@@ -957,15 +933,15 @@ pub async fn update_user(
 
     // 更新用户信息
     let mut active_model: users::ActiveModel = user.into();
-    
+
     if let Some(username) = request.username {
         active_model.username = Set(username);
     }
-    
+
     if let Some(email) = request.email {
         active_model.email = Set(email);
     }
-    
+
     if let Some(password) = request.password {
         // 生成新密码哈希
         let password_hash = match hash(&password, DEFAULT_COST) {
@@ -981,15 +957,15 @@ pub async fn update_user(
         };
         active_model.password_hash = Set(password_hash);
     }
-    
+
     if let Some(is_active) = request.is_active {
         active_model.is_active = Set(is_active);
     }
-    
+
     if let Some(is_admin) = request.is_admin {
         active_model.is_admin = Set(is_admin);
     }
-    
+
     active_model.updated_at = Set(Utc::now().naive_utc());
 
     match active_model.update(state.database.as_ref()).await {
@@ -1019,55 +995,35 @@ pub async fn delete_user(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(status_code) => {
-            return response::error(
-                status_code,
-                "AUTHENTICATION_REQUIRED",
-                "认证失败",
-            );
+            return response::error(status_code, "AUTHENTICATION_REQUIRED", "认证失败");
         }
     };
 
     // 权限检查：只有管理员可以删除用户
     if !claims.is_admin {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "权限不足",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "权限不足");
     }
 
     let current_user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "无效的用户ID",
-            );
+            return response::error(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", "无效的用户ID");
         }
     };
 
     // 不能删除自己
     if current_user_id == user_id {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "VALIDATION_ERROR",
-            "不能删除自己",
-        );
+        return response::error(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", "不能删除自己");
     }
 
     // 检查用户是否存在
-    let user = match Users::find_by_id(user_id)
+    let _user = match Users::find_by_id(user_id)
         .one(state.database.as_ref())
         .await
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "USER_NOT_FOUND",
-                "用户不存在",
-            );
+            return response::error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
@@ -1080,7 +1036,10 @@ pub async fn delete_user(
     };
 
     // 删除用户
-    match Users::delete_by_id(user_id).exec(state.database.as_ref()).await {
+    match Users::delete_by_id(user_id)
+        .exec(state.database.as_ref())
+        .await
+    {
         Ok(_) => response::success_without_data("用户删除成功"),
         Err(err) => {
             tracing::error!("删除用户失败: {}", err);
@@ -1103,31 +1062,19 @@ pub async fn batch_delete_users(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(status_code) => {
-            return response::error(
-                status_code,
-                "AUTHENTICATION_REQUIRED",
-                "认证失败",
-            );
+            return response::error(status_code, "AUTHENTICATION_REQUIRED", "认证失败");
         }
     };
 
     // 权限检查：只有管理员可以删除用户
     if !claims.is_admin {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "权限不足",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "权限不足");
     }
 
     let current_user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "无效的用户ID",
-            );
+            return response::error(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", "无效的用户ID");
         }
     };
 
@@ -1141,11 +1088,7 @@ pub async fn batch_delete_users(
 
     // 检查是否包含当前用户
     if request.ids.contains(&current_user_id) {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "VALIDATION_ERROR",
-            "不能删除自己",
-        );
+        return response::error(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", "不能删除自己");
     }
 
     // 执行批量删除
@@ -1179,21 +1122,13 @@ pub async fn toggle_user_status(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(status_code) => {
-            return response::error(
-                status_code,
-                "AUTHENTICATION_REQUIRED",
-                "认证失败",
-            );
+            return response::error(status_code, "AUTHENTICATION_REQUIRED", "认证失败");
         }
     };
 
     // 权限检查：只有管理员可以切换用户状态
     if !claims.is_admin {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "权限不足",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "权限不足");
     }
 
     // 获取现有用户
@@ -1203,11 +1138,7 @@ pub async fn toggle_user_status(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "USER_NOT_FOUND",
-                "用户不存在",
-            );
+            return response::error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
@@ -1252,21 +1183,13 @@ pub async fn reset_user_password(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(status_code) => {
-            return response::error(
-                status_code,
-                "AUTHENTICATION_REQUIRED",
-                "认证失败",
-            );
+            return response::error(status_code, "AUTHENTICATION_REQUIRED", "认证失败");
         }
     };
 
     // 权限检查：只有管理员可以重置密码
     if !claims.is_admin {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "权限不足",
-        );
+        return response::error(StatusCode::FORBIDDEN, "FORBIDDEN", "权限不足");
     }
 
     // 验证新密码强度
@@ -1285,11 +1208,7 @@ pub async fn reset_user_password(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return response::error(
-                StatusCode::NOT_FOUND,
-                "USER_NOT_FOUND",
-                "用户不存在",
-            );
+            return response::error(StatusCode::NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);

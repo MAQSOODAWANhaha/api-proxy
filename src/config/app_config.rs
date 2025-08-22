@@ -225,11 +225,10 @@ impl AppConfig {
 
         // 验证传统配置
         if let Some(server) = &self.server {
-            if server.port == 0 || server.port > 65535 {
+            if server.port == 0 {
                 return Err(format!("Invalid server port: {}", server.port));
             }
-            if server.https_port > 0
-                && (server.https_port > 65535 || server.https_port == server.port)
+            if server.https_port > 0 && server.https_port == server.port
             {
                 return Err(format!("Invalid HTTPS port: {}", server.https_port));
             }

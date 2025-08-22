@@ -13,12 +13,12 @@ use crate::providers::dynamic_manager::AdapterStats;
 use crate::scheduler::manager::LoadBalancerManager;
 use crate::statistics::service::StatisticsService;
 use anyhow::Result;
+use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Json;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -270,7 +270,8 @@ async fn root_handler() -> Response {
         "message": "AI Proxy Management API",
         "version": env!("CARGO_PKG_VERSION"),
         "timestamp": chrono::Utc::now().to_rfc3339()
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Ping处理器

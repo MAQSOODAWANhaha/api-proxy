@@ -22,6 +22,7 @@ pub struct ConfigManager {
     /// 敏感字段定义
     sensitive_fields: SensitiveFields,
     /// 环境变量覆盖映射
+    #[allow(dead_code)]
     env_overrides: HashMap<String, String>,
 }
 

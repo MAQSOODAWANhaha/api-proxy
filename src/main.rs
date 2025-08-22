@@ -111,8 +111,8 @@ fn build_cli() -> Command {
 fn init_logging_with_level(log_level: Option<&String>) {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-    let level = log_level.map(|s| s.as_str()).unwrap_or("info");
-    let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| format!("{},api_proxy=debug", level));
+    let level = log_level.map_or("info", std::string::String::as_str);
+    let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| format!("{level},api_proxy=debug"));
 
     tracing_subscriber::registry()
         .with(
@@ -132,7 +132,7 @@ fn run_config_check(matches: &ArgMatches) -> StdResult<(), Box<dyn std::error::E
 
     // 创建Tokio运行时进行异步操作
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
-        api_proxy::error::ProxyError::server_init(format!("Failed to create Tokio runtime: {}", e))
+        api_proxy::error::ProxyError::server_init(format!("Failed to create Tokio runtime: {e}"))
     })?;
 
     rt.block_on(async {
