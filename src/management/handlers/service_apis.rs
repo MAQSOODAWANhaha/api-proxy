@@ -393,7 +393,7 @@ pub async fn list_user_service_keys(
             .unwrap_or("Unknown".to_string());
 
         // API Key脱敏处理
-        let masked_api_key = if api.api_key.len() > 8 {
+        /* let masked_api_key = if api.api_key.len() > 8 {
             format!(
                 "{}****{}",
                 &api.api_key[..4],
@@ -401,7 +401,7 @@ pub async fn list_user_service_keys(
             )
         } else {
             "****".to_string()
-        };
+        }; */
 
         let response_api = UserServiceKeyResponse {
             id: api.id,
@@ -409,7 +409,7 @@ pub async fn list_user_service_keys(
             description: api.description,
             provider: provider_name,
             provider_type_id: api.provider_type_id,
-            api_key: masked_api_key,
+            api_key: api.api_key,
             usage: Some(usage),
             is_active: api.is_active,
             last_used_at,
