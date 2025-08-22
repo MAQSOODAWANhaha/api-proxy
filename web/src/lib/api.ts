@@ -8,6 +8,21 @@ const API_BASE_URL = process.env.NODE_ENV === 'production'
   ? '/api'  // 生产环境使用相对路径，由 Caddy 转发
   : 'http://172.28.190.69:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
 
+// 导入认证状态管理，用于401处理
+import { useAuthStore } from '../store/auth'
+
+// 全局401处理函数
+const handle401Unauthorized = async () => {
+  // 获取auth store实例并清除认证状态
+  const authStore = useAuthStore.getState()
+  await authStore.logout()
+  
+  // 跳转到登录页面
+  if (typeof window !== 'undefined') {
+    window.location.hash = '#/login'
+  }
+}
+
 // 请求配置接口
 export interface RequestConfig {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
@@ -625,6 +640,15 @@ class ApiClient {
         
         console.error(`[API Error] ${method} ${url}:`, errorData)
         
+        // 处理401未授权错误 - 自动跳转到登录页面
+        if (response.status === 401) {
+          console.warn('401 Unauthorized detected, redirecting to login page')
+          // 异步处理401，不阻塞当前响应
+          setTimeout(() => {
+            handle401Unauthorized()
+          }, 100)
+        }
+        
         return {
           success: false,
           error: {
@@ -640,6 +664,14 @@ class ApiClient {
       return data
     } catch (error) {
       console.error(`[API Exception] ${method} ${url}:`, error)
+      
+      // 检查是否是由于401引起的fetch异常
+      if (error instanceof Error && error.message.includes('401')) {
+        console.warn('401 error detected in exception, redirecting to login page')
+        setTimeout(() => {
+          handle401Unauthorized()
+        }, 100)
+      }
       
       return {
         success: false,

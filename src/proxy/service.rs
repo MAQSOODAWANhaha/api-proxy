@@ -90,9 +90,8 @@ impl ProxyHttp for ProxyService {
             ..Default::default()
         };
 
-        // 设置追踪启用标志（实际追踪将在 request_filter 中开始）
+        // 追踪将在 request_filter 中开始
         if let Some(_tracer) = &self.tracer {
-            ctx.trace_enabled = true;
             tracing::debug!(
                 request_id = %ctx.request_id,
                 "Trace will be started when request info is available"
@@ -383,38 +382,36 @@ impl ProxyHttp for ProxyService {
             );
 
             // 上游连接失败时立即记录到数据库
-            if ctx.trace_enabled {
-                if let Some(tracer) = &self.tracer {
-                    let error_code = match converted_error {
-                        crate::error::ProxyError::ConnectionTimeout { .. } => 504,
-                        crate::error::ProxyError::ReadTimeout { .. } => 504,
-                        crate::error::ProxyError::Network { .. } => 502,
-                        crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
-                        _ => 502,
-                    };
+            if let Some(tracer) = &self.tracer {
+                let error_code = match converted_error {
+                    crate::error::ProxyError::ConnectionTimeout { .. } => 504,
+                    crate::error::ProxyError::ReadTimeout { .. } => 504,
+                    crate::error::ProxyError::Network { .. } => 502,
+                    crate::error::ProxyError::UpstreamNotAvailable { .. } => 503,
+                    _ => 502,
+                };
 
-                    let error_type = match converted_error {
-                        crate::error::ProxyError::ConnectionTimeout { .. } => "connection_timeout",
-                        crate::error::ProxyError::ReadTimeout { .. } => "read_timeout",
-                        crate::error::ProxyError::Network { .. } => "network_error",
-                        crate::error::ProxyError::UpstreamNotAvailable { .. } => {
-                            "upstream_unavailable"
-                        }
-                        _ => "upstream_connection_failed",
-                    };
+                let error_type = match converted_error {
+                    crate::error::ProxyError::ConnectionTimeout { .. } => "connection_timeout",
+                    crate::error::ProxyError::ReadTimeout { .. } => "read_timeout",
+                    crate::error::ProxyError::Network { .. } => "network_error",
+                    crate::error::ProxyError::UpstreamNotAvailable { .. } => {
+                        "upstream_unavailable"
+                    }
+                    _ => "upstream_connection_failed",
+                };
 
-                    let _ = tracer
-                        .complete_trace(
-                            &ctx.request_id,
-                            error_code,
-                            false,
-                            None,
-                            None,
-                            Some(error_type.to_string()),
-                            Some(converted_error.to_string()),
-                        )
-                        .await;
-                }
+                let _ = tracer
+                    .complete_trace(
+                        &ctx.request_id,
+                        error_code,
+                        false,
+                        None,
+                        None,
+                        Some(error_type.to_string()),
+                        Some(converted_error.to_string()),
+                    )
+                    .await;
             }
 
             // 返回转换后的错误信息，让 Pingora 处理 HTTP 响应
@@ -434,20 +431,18 @@ impl ProxyHttp for ProxyService {
 
         // 对于其他错误，使用默认错误码并不重用连接
         // 其他类型的连接失败也记录
-        if ctx.trace_enabled {
-            if let Some(tracer) = &self.tracer {
-                let _ = tracer
-                    .complete_trace(
-                        &ctx.request_id,
-                        500,
-                        false,
-                        None,
-                        None,
-                        Some("proxy_error".to_string()),
-                        Some(format!("Pingora error: {}", e)),
-                    )
-                    .await;
-            }
+        if let Some(tracer) = &self.tracer {
+            let _ = tracer
+                .complete_trace(
+                    &ctx.request_id,
+                    500,
+                    false,
+                    None,
+                    None,
+                    Some("proxy_error".to_string()),
+                    Some(format!("Pingora error: {}", e)),
+                )
+                .await;
         }
 
         FailToProxy {
@@ -508,125 +503,69 @@ impl ProxyHttp for ProxyService {
         } else {
             // 成功请求完成，记录追踪信息
             if let Some(tracer) = &self.tracer {
-                if ctx.trace_enabled {
-                    // 从上下文获取响应信息
-                    let status_code = session
-                        .response_written()
-                        .map(|resp| resp.status.as_u16())
-                        .unwrap_or(200);
+                let status_code = session
+                    .response_written()
+                    .map(|resp| resp.status.as_u16())
+                    .unwrap_or(200);
 
-                    // 注意：响应时间在complete_trace方法内部计算
-                    // let response_time_ms = duration.as_millis() as u64;
+                ctx.response_details.finalize_body();
 
-                    // 完成响应体数据收集
-                    ctx.response_details.finalize_body();
+                // 重新从响应体JSON中提取所有统计信息
+                match self.ai_handler.extract_stats_from_response_body(ctx).await {
+                    Ok(new_stats) => {
+                        // 更新上下文中的token使用信息
+                        ctx.token_usage.prompt_tokens = new_stats.input_tokens;
+                        ctx.token_usage.completion_tokens = new_stats.output_tokens;
+                        ctx.token_usage.total_tokens = new_stats.total_tokens.unwrap_or(0);
+                        ctx.token_usage.model_used = new_stats.model_name.clone();
+                        ctx.tokens_used = ctx.token_usage.total_tokens;
 
-                    tracing::info!(
-                        request_id = %ctx.request_id,
-                        response_body_size = ctx.response_details.body_size,
-                        body_collected = ctx.response_details.body.is_some(),
-                        "Finalized response body collection"
-                    );
-
-                    // 重新从响应体JSON中提取token信息（这是关键修复）
-                    if let Ok(new_token_usage) = self.ai_handler.extract_token_usage_from_response_body(ctx).await {
-                        if new_token_usage.total_tokens != ctx.token_usage.total_tokens {
-                            tracing::info!(
+                        // 使用完整的统计信息完成追踪
+                        if let Err(e) = tracer
+                            .complete_trace_with_stats(
+                                &ctx.request_id,
+                                status_code,
+                                true, // is_success
+                                new_stats.input_tokens,
+                                new_stats.output_tokens,
+                                None, // error_type
+                                None, // error_message
+                                new_stats.cache_create_tokens,
+                                new_stats.cache_read_tokens,
+                                new_stats.cost,
+                                new_stats.cost_currency,
+                            )
+                            .await
+                        {
+                            tracing::error!(
                                 request_id = %ctx.request_id,
-                                header_based_tokens = ctx.token_usage.total_tokens,
-                                body_based_tokens = new_token_usage.total_tokens,
-                                "Updated token usage from response body JSON - this fixes the token tracking issue"
+                                error = %e,
+                                "Failed to store complete trace with stats"
                             );
-                            ctx.token_usage = new_token_usage;
-                            ctx.tokens_used = ctx.token_usage.total_tokens; // 向后兼容
                         }
-                    } else {
+                    }
+                    Err(e) => {
                         tracing::warn!(
                             request_id = %ctx.request_id,
-                            "Failed to extract token usage from response body, using header-based data"
+                            error = %e,
+                            "Failed to extract stats from response body, using header-based data"
                         );
-                    }
-
-                    // 使用更新后的详细token信息
-                    let tokens_prompt = ctx.token_usage.prompt_tokens;
-                    let tokens_completion = ctx.token_usage.completion_tokens;
-
-                    // 构建请求详情JSON
-                    let request_json = match serde_json::to_value(&ctx.request_details) {
-                        Ok(json) => {
-                            tracing::info!(
-                                request_id = %ctx.request_id,
-                                headers_count = ctx.request_details.headers.len(),
-                                "Successfully serialized request details to JSON"
-                            );
-                            Some(json)
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                "Failed to serialize request details to JSON"
-                            );
-                            None
-                        }
-                    };
-
-                    // 构建响应详情JSON (使用可序列化版本)
-                    let serializable_response =
-                        crate::proxy::ai_handler::SerializableResponseDetails::from(
-                            &ctx.response_details,
-                        );
-                    let response_json = match serde_json::to_value(&serializable_response) {
-                        Ok(json) => {
-                            tracing::info!(
-                                request_id = %ctx.request_id,
-                                response_headers_count = serializable_response.headers.len(),
-                                response_body_exists = serializable_response.body.is_some(),
-                                "Successfully serialized response details to JSON"
-                            );
-                            Some(json)
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                "Failed to serialize response details to JSON"
-                            );
-                            None
-                        }
-                    };
-
-                    match tracer
-                        .complete_trace_with_stats(
-                            &ctx.request_id,
-                            status_code,
-                            true, // 成功标志
-                            tokens_prompt,
-                            tokens_completion,
-                            None, // 无错误类型
-                            None, // 无错误消息
-                            None, // cache_create_tokens
-                            None, // cache_read_tokens
-                            None, // cost
-                            None, // cost_currency
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            tracing::info!(
-                                request_id = %ctx.request_id,
-                                has_request_json = request_json.is_some(),
-                                has_response_json = response_json.is_some(),
-                                "Successfully stored trace with detailed request/response information"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                "Failed to store trace with detailed information"
-                            );
-                        }
+                        // Fallback to header-based data
+                        let _ = tracer
+                            .complete_trace_with_stats(
+                                &ctx.request_id,
+                                status_code,
+                                true,
+                                ctx.token_usage.prompt_tokens,
+                                ctx.token_usage.completion_tokens,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )
+                            .await;
                     }
                 }
             }

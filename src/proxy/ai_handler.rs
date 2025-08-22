@@ -16,7 +16,7 @@ use crate::auth::{AuthHeaderParser, AuthParseError};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
-use crate::providers::field_extractor::TokenFieldExtractor;
+use crate::providers::field_extractor::{TokenFieldExtractor, ModelExtractor};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
@@ -181,6 +181,19 @@ impl ResponseDetails {
     }
 }
 
+/// 详细的请求统计信息
+#[derive(Debug, Clone, Default)]
+pub struct DetailedRequestStats {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub model_name: Option<String>,
+    pub cache_create_tokens: Option<u32>,
+    pub cache_read_tokens: Option<u32>,
+    pub cost: Option<f64>,
+    pub cost_currency: Option<String>,
+}
+
 /// 请求上下文
 #[derive(Debug, Clone)]
 pub struct ProxyContext {
@@ -204,8 +217,6 @@ pub struct ProxyContext {
     pub request_details: RequestDetails,
     /// 响应详情
     pub response_details: ResponseDetails,
-    /// 是否启用追踪
-    pub trace_enabled: bool,
     /// 选择的提供商名称
     pub selected_provider: Option<String>,
     /// 连接超时时间(秒)
@@ -225,7 +236,6 @@ impl Default for ProxyContext {
             token_usage: TokenUsage::default(),
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
-            trace_enabled: false,
             selected_provider: None,
             timeout_seconds: None,
         }
@@ -287,43 +297,38 @@ impl AIProxyHandler {
 
         // 开始即时追踪（认证成功后，现在有了user_service_api_id）
         if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let method = session.req_header().method.as_str().to_string();
-                let path = Some(session.req_header().uri.path().to_string());
+            let method = session.req_header().method.as_str().to_string();
+            let path = Some(session.req_header().uri.path().to_string());
 
-                // 使用增强的客户端信息收集
-                let (client_ip, user_agent, _referer) = self.collect_client_info(session);
+            // 使用增强的客户端信息收集
+            let (client_ip, user_agent, _referer) = self.collect_client_info(session);
 
-                if let Err(e) = tracer
-                    .start_trace(
-                        ctx.request_id.clone(),
-                        user_service_api.id,
-                        Some(user_service_api.user_id), // 添加user_id参数
-                        method,
-                        path,
-                        Some(client_ip.clone()),
-                        user_agent.clone(),
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        error = %e,
-                        "Failed to start immediate trace"
-                    );
-                    ctx.trace_enabled = false; // 禁用追踪
-                }
-
-                // 记录客户端信息到日志
-                tracing::info!(
+            if let Err(e) = tracer
+                .start_trace(
+                    ctx.request_id.clone(),
+                    user_service_api.id,
+                    Some(user_service_api.user_id), // 添加user_id参数
+                    method,
+                    path,
+                    Some(client_ip.clone()),
+                    user_agent.clone(),
+                )
+                .await
+            {
+                tracing::warn!(
                     request_id = %ctx.request_id,
-                    client_ip = %client_ip,
-                    user_agent = ?user_agent,
-                    "Client information collected"
+                    error = %e,
+                    "Failed to start immediate trace"
                 );
-
-                // 认证阶段追踪信息已简化移除
             }
+
+            // 记录客户端信息到日志
+            tracing::info!(
+                request_id = %ctx.request_id,
+                client_ip = %client_ip,
+                user_agent = ?user_agent,
+                "Client information collected"
+            );
         }
 
         tracing::debug!(
@@ -342,19 +347,17 @@ impl AIProxyHandler {
         if let Err(e) = rate_limit_result {
             // 速率限制失败时立即记录到数据库
             if let Some(tracer) = &self.tracer {
-                if ctx.trace_enabled {
-                    let _ = tracer
-                        .complete_trace(
-                            &ctx.request_id,
-                            429, // Rate limit exceeded
-                            false,
-                            None,
-                            None,
-                            Some("rate_limit_exceeded".to_string()),
-                            Some(e.to_string()),
-                        )
-                        .await;
-                }
+                let _ = tracer
+                    .complete_trace(
+                        &ctx.request_id,
+                        429, // Rate limit exceeded
+                        false,
+                        None,
+                        None,
+                        Some("rate_limit_exceeded".to_string()),
+                        Some(e.to_string()),
+                    )
+                    .await;
             }
             return Err(e);
         }
@@ -376,19 +379,17 @@ impl AIProxyHandler {
             Err(e) => {
                 // 提供商类型获取失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("provider_type_not_found".to_string()),
-                                Some(e.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("provider_type_not_found".to_string()),
+                            Some(e.to_string()),
+                        )
+                        .await;
                 }
                 return Err(e);
             }
@@ -440,19 +441,17 @@ impl AIProxyHandler {
             Err(e) => {
                 // 调度器获取失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("scheduler_not_found".to_string()),
-                                Some(e.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("scheduler_not_found".to_string()),
+                            Some(e.to_string()),
+                        )
+                        .await;
                 }
                 return Err(e);
             }
@@ -463,47 +462,41 @@ impl AIProxyHandler {
             Err(e) => {
                 // 后端选择失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                503, // Service unavailable
-                                false,
-                                None,
-                                None,
-                                Some("backend_selection_failed".to_string()),
-                                Some(e.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            503, // Service unavailable
+                            false,
+                            None,
+                            None,
+                            Some("backend_selection_failed".to_string()),
+                            Some(e.to_string()),
+                        )
+                        .await;
                 }
                 return Err(e);
             }
         };
         ctx.selected_backend = Some(selected_backend.clone());
 
-        // 更新追踪信息（如果启用）- 使用扩展方法记录更多信息
+        // 更新追踪信息 - 使用扩展方法记录更多信息
         if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled {
-                let _ = tracer
-                    .update_extended_trace_info(
-                        &ctx.request_id,
-                        Some(provider_type.id),    // provider_type_id
-                        None,                      // model_used将在响应处理时设置
-                        Some(selected_backend.id), // user_provider_key_id
-                    )
-                    .await;
+            let _ = tracer
+                .update_extended_trace_info(
+                    &ctx.request_id,
+                    Some(provider_type.id),    // provider_type_id
+                    None,                      // model_used将在响应处理时设置
+                    Some(selected_backend.id), // user_provider_key_id
+                )
+                .await;
 
-                tracing::info!(
-                    request_id = %ctx.request_id,
-                    provider_type_id = provider_type.id,
-                    backend_key_id = selected_backend.id,
-                    user_service_api_id = user_service_api.id,
-                    "Updated trace info with provider and backend details"
-                );
-
-                // 负载均衡阶段追踪信息记录已简化移除
-            }
+            tracing::info!(
+                request_id = %ctx.request_id,
+                provider_type_id = provider_type.id,
+                backend_key_id = selected_backend.id,
+                user_service_api_id = user_service_api.id,
+                "Updated trace info with provider and backend details"
+            );
         }
 
         let elapsed = start.elapsed();
@@ -706,19 +699,17 @@ impl AIProxyHandler {
                 let error = ProxyError::internal("Provider type not set");
                 // 上游对等体选择失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("upstream_peer_selection_failed".to_string()),
-                                Some(error.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("upstream_peer_selection_failed".to_string()),
+                            Some(error.to_string()),
+                        )
+                        .await;
                 }
                 return Err(error);
             }
@@ -825,19 +816,17 @@ impl AIProxyHandler {
                 let error = ProxyError::internal("Backend not selected");
                 // 请求转发失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("request_forwarding_failed".to_string()),
-                                Some(error.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("request_forwarding_failed".to_string()),
+                            Some(error.to_string()),
+                        )
+                        .await;
                 }
                 return Err(error);
             }
@@ -849,19 +838,17 @@ impl AIProxyHandler {
                 let error = ProxyError::internal("Provider type not set");
                 // 请求转发失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("request_forwarding_failed".to_string()),
-                                Some(error.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("request_forwarding_failed".to_string()),
+                            Some(error.to_string()),
+                        )
+                        .await;
                 }
                 return Err(error);
             }
@@ -885,19 +872,17 @@ impl AIProxyHandler {
             let error = ProxyError::internal(format!("Failed to set host header: {}", e));
             // 头部设置失败时立即记录到数据库
             if let Some(tracer) = &self.tracer {
-                if ctx.trace_enabled {
-                    let _ = tracer
-                        .complete_trace(
-                            &ctx.request_id,
-                            500, // Internal server error
-                            false,
-                            None,
-                            None,
-                            Some("header_setting_failed".to_string()),
-                            Some(error.to_string()),
-                        )
-                        .await;
-                }
+                let _ = tracer
+                    .complete_trace(
+                        &ctx.request_id,
+                        500, // Internal server error
+                        false,
+                        None,
+                        None,
+                        Some("header_setting_failed".to_string()),
+                        Some(error.to_string()),
+                    )
+                    .await;
             }
             return Err(error);
         }
@@ -925,17 +910,15 @@ impl AIProxyHandler {
                 let error = ProxyError::internal(format!("Failed to set user-agent: {}", e));
                 // 头部设置失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer.complete_trace(
-                            &ctx.request_id,
-                            500, // Internal server error
-                            false,
-                            None,
-                            None,
-                            Some("header_setting_failed".to_string()),
-                            Some(error.to_string()),
-                        ).await;
-                    }
+                    let _ = tracer.complete_trace(
+                        &ctx.request_id,
+                        500, // Internal server error
+                        false,
+                        None,
+                        None,
+                        Some("header_setting_failed".to_string()),
+                        Some(error.to_string()),
+                    ).await;
                 }
                 return Err(error);
             }
@@ -949,19 +932,17 @@ impl AIProxyHandler {
                     let error = ProxyError::internal(format!("Failed to set accept header: {}", e));
                     // 头部设置失败时立即记录到数据库
                     if let Some(tracer) = &self.tracer {
-                        if ctx.trace_enabled {
-                            let _ = tracer
-                                .complete_trace(
-                                    &ctx.request_id,
-                                    500, // Internal server error
-                                    false,
-                                    None,
-                                    None,
-                                    Some("header_setting_failed".to_string()),
-                                    Some(error.to_string()),
-                                )
-                                .await;
-                        }
+                        let _ = tracer
+                            .complete_trace(
+                                &ctx.request_id,
+                                500, // Internal server error
+                                false,
+                                None,
+                                None,
+                                Some("header_setting_failed".to_string()),
+                                Some(error.to_string()),
+                            )
+                            .await;
                     }
                     return Err(error);
                 }
@@ -987,19 +968,17 @@ impl AIProxyHandler {
                     ));
                     // 头部设置失败时立即记录到数据库
                     if let Some(tracer) = &self.tracer {
-                        if ctx.trace_enabled {
-                            let _ = tracer
-                                .complete_trace(
-                                    &ctx.request_id,
-                                    500, // Internal server error
-                                    false,
-                                    None,
-                                    None,
-                                    Some("header_setting_failed".to_string()),
-                                    Some(error.to_string()),
-                                )
-                                .await;
-                        }
+                        let _ = tracer
+                            .complete_trace(
+                                &ctx.request_id,
+                                500, // Internal server error
+                                false,
+                                None,
+                                None,
+                                Some("header_setting_failed".to_string()),
+                                Some(error.to_string()),
+                            )
+                            .await;
                     }
                     return Err(error);
                 }
@@ -1240,8 +1219,11 @@ impl AIProxyHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 提取token使用信息
-        ctx.token_usage = self.extract_detailed_token_usage(upstream_response);
+        // 使用废弃的硬编码方法进行初始token提取（仅作为fallback）
+        #[allow(deprecated)]
+        {
+            ctx.token_usage = self.extract_detailed_token_usage(upstream_response);
+        }
         ctx.tokens_used = ctx.token_usage.total_tokens; // 向后兼容
 
         // 收集响应头信息
@@ -1249,7 +1231,7 @@ impl AIProxyHandler {
 
         // 更新数据库中的model信息
         if let Some(tracer) = &self.tracer {
-            if ctx.trace_enabled && ctx.token_usage.model_used.is_some() {
+            if ctx.token_usage.model_used.is_some() {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
@@ -1382,66 +1364,32 @@ impl AIProxyHandler {
         Ok(())
     }
 
-    /// 提取详细的token使用信息
-    fn extract_detailed_token_usage(&self, response: &ResponseHeader) -> TokenUsage {
-        // 尝试提取详细的token信息
-        let prompt_tokens = self.extract_single_token_value(
-            response,
-            &[
-                "x-openai-prompt-tokens",
-                "x-anthropic-input-tokens",
-                "x-google-input-tokens",
-                "x-prompt-tokens",
-            ],
-        );
-
-        let completion_tokens = self.extract_single_token_value(
-            response,
-            &[
-                "x-openai-completion-tokens",
-                "x-anthropic-output-tokens",
-                "x-google-output-tokens",
-                "x-completion-tokens",
-            ],
-        );
-
-        let total_tokens = self
-            .extract_single_token_value(
-                response,
-                &[
-                    "x-openai-total-tokens",
-                    "x-anthropic-total-tokens",
-                    "x-google-total-tokens",
-                    "x-total-tokens",
-                ],
-            )
-            .unwrap_or_else(|| {
-                // 如果没有total_tokens头，尝试计算
-                match (prompt_tokens, completion_tokens) {
-                    (Some(p), Some(c)) => p + c,
-                    (Some(p), None) => p,
-                    (None, Some(c)) => c,
-                    (None, None) => 0,
-                }
-            });
-
-        // 尝试提取model信息
-        let model_used = self.extract_model_info(response);
-
+    /// 提取详细的token使用信息 - 已废弃的HTTP头部版本
+    /// 
+    /// 警告：此方法已被废弃，仅作为最后的fallback。所有新的提取应使用extract_token_usage_from_response_body()
+    #[deprecated(note = "Use extract_token_usage_from_response_body instead - HTTP header extraction is unreliable")]
+    fn extract_detailed_token_usage(&self, _response: &ResponseHeader) -> TokenUsage {
+        tracing::warn!("DEPRECATED: Using legacy HTTP header-based token extraction - this is unreliable and should be avoided");
+        
+        // 保持最小的fallback逻辑
         TokenUsage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            model_used,
+            prompt_tokens: None,
+            completion_tokens: None, 
+            total_tokens: 0,
+            model_used: None,
         }
     }
 
-    /// 提取单个token值
+    /// 提取单个token值 - 已废弃的硬编码方法
+    #[deprecated(note = "Use TokenFieldExtractor with database configuration instead")]
     fn extract_single_token_value(
         &self,
         response: &ResponseHeader,
         header_names: &[&str],
     ) -> Option<u32> {
+        tracing::warn!("DEPRECATED: extract_single_token_value is deprecated, use TokenFieldExtractor instead");
+        
+        // 保留最小实现用于紧急fallback
         for header_name in header_names {
             if let Some(header_value) = response.headers.get(*header_name) {
                 if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
@@ -1454,171 +1402,410 @@ impl AIProxyHandler {
         None
     }
 
-    /// 提取AI模型信息
+    /// 提取AI模型信息 - 已废弃的硬编码方法  
+    #[deprecated(note = "Use ModelExtractor with database configuration instead")]
     fn extract_model_info(&self, response: &ResponseHeader) -> Option<String> {
-        // 尝试从各种可能的响应头中提取model信息
-        let model_headers = [
-            "x-openai-model",
-            "x-anthropic-model",
-            "x-google-model",
-            "x-model",
-            "model",
-            "ai-model",
-        ];
-
-        for header_name in &model_headers {
+        tracing::warn!("DEPRECATED: extract_model_info is deprecated, use ModelExtractor instead");
+        
+        // 最小的fallback实现，仅检查最常见的头部
+        let basic_headers = ["x-openai-model", "x-model"];
+        
+        for header_name in &basic_headers {
             if let Some(header_value) = response.headers.get(*header_name) {
                 if let Ok(model_str) = std::str::from_utf8(header_value.as_bytes()) {
                     let model = model_str.trim().to_string();
                     if !model.is_empty() {
-                        tracing::info!(
-                            "Extracted model info from header '{}': '{}'",
-                            header_name,
-                            model
-                        );
                         return Some(model);
                     }
                 }
             }
         }
-
-        tracing::debug!("No model information found in response headers");
+        
         None
     }
 
-    /// 从响应体JSON重新提取详细的token使用信息
-    /// 这个方法应该在响应体收集完成后调用，以获取更准确的token数据
+    /// 从响应体JSON提取详细的token使用信息 - 完全数据驱动版本
+    /// 
+    /// 这个方法应该在响应体收集完成后调用，使用数据库配置的TokenFieldExtractor获取准确的token数据
     pub async fn extract_token_usage_from_response_body(
         &self,
         ctx: &mut ProxyContext,
     ) -> Result<TokenUsage, ProxyError> {
         // 确保响应体已经被收集和处理
         if ctx.response_details.body.is_none() {
-            return Ok(ctx.token_usage.clone()); // 返回现有的token usage作为fallback
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                "No response body available for token extraction"
+            );
+            return Ok(TokenUsage::default());
         }
 
         let response_body = ctx.response_details.body.as_ref().unwrap();
         
-        // 尝试解析响应体为JSON
-        let response_json: serde_json::Value = match serde_json::from_str(response_body) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::warn!(
-                    request_id = %ctx.request_id,
-                    error = %e,
-                    body_preview = %if response_body.len() > 100 { 
-                        format!("{}...", &response_body[..100]) 
-                    } else { 
-                        response_body.clone() 
-                    },
-                    "Failed to parse response body as JSON, using header-based token extraction"
-                );
-                return Ok(ctx.token_usage.clone());
-            }
-        };
-
         // 获取provider_type以确定使用哪种token映射
         let provider_type = match ctx.provider_type.as_ref() {
             Some(provider) => provider,
             None => {
                 tracing::warn!(
                     request_id = %ctx.request_id,
-                    "No provider type available, using header-based token extraction"
+                    "No provider type available for token extraction"
                 );
-                return Ok(ctx.token_usage.clone());
+                return Ok(TokenUsage::default());
             }
         };
 
-        // 尝试从数据库配置中获取token映射
-        if let Some(token_mappings_json) = &provider_type.token_mappings_json {
-            match TokenFieldExtractor::from_json_config(token_mappings_json) {
-                Ok(token_extractor) => {
-                    // 使用TokenFieldExtractor从响应体JSON中提取token信息
-                    let prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
-                    let completion_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
-                    let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
-                        .unwrap_or_else(|| {
-                            // 如果没有total_tokens配置，尝试计算
-                            match (prompt_tokens, completion_tokens) {
-                                (Some(p), Some(c)) => p + c,
-                                (Some(p), None) => p,
-                                (None, Some(c)) => c,
-                                (None, None) => 0,
-                            }
-                        });
+        // 检查是否配置了token映射
+        let token_mappings_json = match &provider_type.token_mappings_json {
+            Some(mappings) => mappings,
+            None => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    "No token_mappings_json configured for this provider"
+                );
+                return Ok(TokenUsage::default());
+            }
+        };
 
-                    // 提取模型信息（如果provider配置了model extraction）
-                    let mut model_used = ctx.token_usage.model_used.clone();
-                    if let Some(model_extraction_json) = &provider_type.model_extraction_json {
-                        // 这里可以实现模型提取逻辑，暂时跳过
-                        tracing::debug!(
-                            request_id = %ctx.request_id,
-                            "Model extraction from response body not yet implemented"
-                        );
-                    }
-
-                    let new_token_usage = TokenUsage {
-                        prompt_tokens,
-                        completion_tokens,
-                        total_tokens,
-                        model_used,
-                    };
-
-                    tracing::info!(
-                        request_id = %ctx.request_id,
-                        provider = %provider_type.name,
-                        old_prompt_tokens = ?ctx.token_usage.prompt_tokens,
-                        new_prompt_tokens = ?prompt_tokens,
-                        old_completion_tokens = ?ctx.token_usage.completion_tokens,
-                        new_completion_tokens = ?completion_tokens,
-                        old_total_tokens = ctx.token_usage.total_tokens,
-                        new_total_tokens = total_tokens,
-                        "Re-extracted token usage from response body JSON"
-                    );
-
-                    return Ok(new_token_usage);
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        request_id = %ctx.request_id,
-                        provider = %provider_type.name,
-                        "Failed to parse token_mappings_json"
-                    );
+        // 解析响应体为JSON - 支持流式响应
+        let response_json: serde_json::Value = {
+            // 对于流式响应，响应体可能是多个JSON对象的拼接，我们需要处理最后一个完整的JSON
+            let mut last_json = None;
+            let stream = serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
+            
+            for value_result in stream {
+                if let Ok(value) = value_result {
+                    last_json = Some(value);
                 }
             }
-        } else {
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                provider = %provider_type.name,
-                "No token_mappings_json configured, using header-based extraction"
-            );
-        }
 
-        // 如果无法从响应体提取，返回原有的token usage
-        Ok(ctx.token_usage.clone())
+            match last_json {
+                Some(json) => json,
+                None => {
+                    // 如果流式解析失败，尝试作为单个JSON解析（兼容非流式响应）
+                    match serde_json::from_str(response_body) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            tracing::warn!(
+                                request_id = %ctx.request_id,
+                                provider = %provider_type.name,
+                                error = %e,
+                                body_preview = %if response_body.len() > 200 {
+                                    format!("{}...", &response_body[..200])
+                                } else {
+                                    response_body.clone()
+                                },
+                                "Failed to parse response body as JSON for token extraction"
+                            );
+                            return Ok(TokenUsage::default());
+                        }
+                    }
+                }
+            }
+        };
+
+        // 创建TokenFieldExtractor实例
+        let token_extractor = match TokenFieldExtractor::from_json_config(token_mappings_json) {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    error = %e,
+                    "Failed to create TokenFieldExtractor from database configuration"
+                );
+                return Ok(TokenUsage::default());
+            }
+        };
+
+        // 使用TokenFieldExtractor从响应体JSON中提取token信息
+        let prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
+        let completion_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
+        let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
+            .unwrap_or_else(|| {
+                // 如果没有配置total_tokens字段，尝试通过prompt + completion计算
+                match (prompt_tokens, completion_tokens) {
+                    (Some(p), Some(c)) => p + c,
+                    (Some(p), None) => p,
+                    (None, Some(c)) => c,
+                    (None, None) => 0,
+                }
+            });
+
+        // 提取模型信息（使用数据驱动的ModelExtractor）
+        let model_used = self.extract_model_with_model_extractor(ctx).await
+            .or_else(|| ctx.token_usage.model_used.clone());
+
+        let new_token_usage = TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            model_used: model_used.clone(),
+        };
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            extracted_prompt_tokens = ?prompt_tokens,
+            extracted_completion_tokens = ?completion_tokens,
+            extracted_total_tokens = total_tokens,
+            extracted_model = ?model_used,
+            "Successfully extracted token usage using data-driven TokenFieldExtractor"
+        );
+
+        Ok(new_token_usage)
     }
 
-    /// 提取token使用信息（向后兼容方法）
-    #[allow(dead_code)]
-    fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
-        // 尝试从不同的响应头中提取token使用信息
-        let token_headers = [
-            "x-openai-total-tokens",
-            "x-anthropic-total-tokens",
-            "x-google-total-tokens",
-            "x-total-tokens",
-        ];
+    /// 从响应体JSON提取完整的统计信息（包括token、cost等）- 数据驱动版本
+    /// 
+    /// 这个方法在响应体收集完成后调用，提取所有可用的统计数据用于追踪和记录
+    pub async fn extract_stats_from_response_body(
+        &self,
+        ctx: &mut ProxyContext,
+    ) -> Result<DetailedRequestStats, ProxyError> {
 
-        for header_name in &token_headers {
-            if let Some(header_value) = response.headers.get(*header_name) {
-                if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
-                    if let Ok(tokens) = tokens_str.parse::<u32>() {
-                        return tokens;
+        // 确保响应体已经被收集和处理
+        if ctx.response_details.body.is_none() {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                "No response body available for stats extraction"
+            );
+            return Ok(DetailedRequestStats {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: Some(0),
+                model_name: None,
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+                cost: None,
+                cost_currency: None,
+            });
+        }
+
+        let response_body = ctx.response_details.body.as_ref().unwrap();
+        
+        // 获取provider_type以确定使用哪种映射
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider) => provider,
+            None => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    "No provider type available for stats extraction"
+                );
+                return Ok(DetailedRequestStats::default());
+            }
+        };
+
+        // 检查是否配置了token映射
+        let token_mappings_json = match &provider_type.token_mappings_json {
+            Some(mappings) => mappings,
+            None => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    "No token_mappings_json configured for this provider"
+                );
+                return Ok(DetailedRequestStats::default());
+            }
+        };
+
+        // 解析响应体为JSON
+        let response_json: serde_json::Value = {
+            let mut last_json = None;
+            let stream = serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
+            
+            for value_result in stream {
+                if let Ok(value) = value_result {
+                    last_json = Some(value);
+                }
+            }
+
+            match last_json {
+                Some(json) => json,
+                None => {
+                    match serde_json::from_str(response_body) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            tracing::warn!(
+                                request_id = %ctx.request_id,
+                                provider = %provider_type.name,
+                                error = %e,
+                                "Failed to parse response body as JSON for stats extraction"
+                            );
+                            return Ok(DetailedRequestStats::default());
+                        }
                     }
                 }
             }
-        }
+        };
 
+        // 创建TokenFieldExtractor实例
+        let token_extractor = match TokenFieldExtractor::from_json_config(token_mappings_json) {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    error = %e,
+                    "Failed to create TokenFieldExtractor for stats extraction"
+                );
+                return Ok(DetailedRequestStats::default());
+            }
+        };
+
+        // 提取所有统计信息
+        let input_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
+        let output_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
+        let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
+            .or_else(|| {
+                // 计算total_tokens如果没有直接配置
+                match (input_tokens, output_tokens) {
+                    (Some(input), Some(output)) => Some(input + output),
+                    (Some(input), None) => Some(input),
+                    (None, Some(output)) => Some(output),
+                    (None, None) => None,
+                }
+            });
+
+        // 提取缓存相关token
+        let cache_create_tokens = token_extractor.extract_token_u32(&response_json, "cache_creation_input_tokens");
+        let cache_read_tokens = token_extractor.extract_token_u32(&response_json, "cache_read_input_tokens");
+
+        // 提取cost信息（如果有配置）
+        // 暂时使用直接JSON路径提取，后续可以配置专门的cost映射
+        let cost = response_json.pointer("/cost").and_then(|v| v.as_f64());
+        let cost_currency = response_json.pointer("/cost_currency").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        // 提取模型信息 - 使用数据驱动的ModelExtractor
+        let model_name = self.extract_model_with_model_extractor(ctx).await;
+
+        let stats = DetailedRequestStats {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            model_name,
+            cache_create_tokens,
+            cache_read_tokens,
+            cost,
+            cost_currency,
+        };
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            input_tokens = ?stats.input_tokens,
+            output_tokens = ?stats.output_tokens,
+            total_tokens = ?stats.total_tokens,
+            cache_create_tokens = ?stats.cache_create_tokens,
+            cache_read_tokens = ?stats.cache_read_tokens,
+            cost = ?stats.cost,
+            cost_currency = ?stats.cost_currency,
+            model_name = ?stats.model_name,
+            "Successfully extracted comprehensive stats using data-driven approach"
+        );
+
+        Ok(stats)
+    }
+
+    /// 使用数据驱动的ModelExtractor提取模型名称
+    /// 
+    /// 这个方法基于数据库配置的model_extraction_json来提取AI模型名称
+    async fn extract_model_with_model_extractor(&self, ctx: &ProxyContext) -> Option<String> {
+        // 获取provider_type以确定使用哪种模型提取配置
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider) => provider,
+            None => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "No provider type available for model extraction"
+                );
+                return None;
+            }
+        };
+
+        // 检查是否配置了模型提取
+        let model_extraction_json = match &provider_type.model_extraction_json {
+            Some(extraction_config) => extraction_config,
+            None => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    "No model_extraction_json configured for this provider"
+                );
+                return None;
+            }
+        };
+
+        // 创建ModelExtractor实例
+        let model_extractor = match ModelExtractor::from_json_config(model_extraction_json) {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    error = %e,
+                    "Failed to create ModelExtractor from database configuration"
+                );
+                return None;
+            }
+        };
+
+        // 准备提取所需的数据
+        let url_path = &ctx.request_details.path;
+        
+        // 解析请求体（如果有）
+        let request_body = if let Some(body_content) = ctx.request_details.headers.get("content-type") {
+            if body_content.contains("application/json") {
+                // 暂时跳过请求体解析，因为我们通常不保存请求体
+                // TODO: 如果需要从请求体提取模型，需要在收集请求详情时保存请求体
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "Request body parsing for model extraction not yet implemented"
+                );
+                None
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // 解析查询参数（从请求路径中）
+        let query_params = std::collections::HashMap::new(); // TODO: 解析实际的查询参数
+
+        // 使用ModelExtractor提取模型名称
+        let extracted_model = model_extractor.extract_model_name(
+            url_path,
+            request_body.as_ref(),
+            &query_params,
+        );
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            url_path = %url_path,
+            extracted_model = %extracted_model,
+            "Successfully extracted model name using data-driven ModelExtractor"
+        );
+
+        Some(extracted_model)
+    }
+
+    /// 提取token使用信息 - 已废弃的向后兼容方法
+    #[deprecated(note = "Use extract_token_usage_from_response_body instead")]
+    #[allow(dead_code)]
+    fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
+        tracing::warn!("DEPRECATED: extract_token_usage is deprecated, use extract_token_usage_from_response_body instead");
+        
+        // 最小的fallback实现
+        if let Some(header_value) = response.headers.get("x-openai-total-tokens") {
+            if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
+                if let Ok(tokens) = tokens_str.parse::<u32>() {
+                    return tokens;
+                }
+            }
+        }
+        
         0
     }
 
@@ -1646,19 +1833,17 @@ impl AIProxyHandler {
                 ));
                 // 认证格式错误时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("invalid_auth_format".to_string()),
-                                Some(error.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("invalid_auth_format".to_string()),
+                            Some(error.to_string()),
+                        )
+                        .await;
                 }
                 return Err(error);
             }
@@ -1667,19 +1852,17 @@ impl AIProxyHandler {
                     ProxyError::internal(format!("Authentication header parsing failed: {}", e));
                 // 认证解析失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
-                    if ctx.trace_enabled {
-                        let _ = tracer
-                            .complete_trace(
-                                &ctx.request_id,
-                                500, // Internal server error
-                                false,
-                                None,
-                                None,
-                                Some("auth_parsing_failed".to_string()),
-                                Some(error.to_string()),
-                            )
-                            .await;
-                    }
+                    let _ = tracer
+                        .complete_trace(
+                            &ctx.request_id,
+                            500, // Internal server error
+                            false,
+                            None,
+                            None,
+                            Some("auth_parsing_failed".to_string()),
+                            Some(error.to_string()),
+                        )
+                        .await;
                 }
                 return Err(error);
             }
@@ -1700,19 +1883,17 @@ impl AIProxyHandler {
             ));
             // 头部设置失败时立即记录到数据库
             if let Some(tracer) = &self.tracer {
-                if ctx.trace_enabled {
-                    let _ = tracer
-                        .complete_trace(
-                            &ctx.request_id,
-                            500, // Internal server error
-                            false,
-                            None,
-                            None,
-                            Some("header_setting_failed".to_string()),
-                            Some(error.to_string()),
-                        )
-                        .await;
-                }
+                let _ = tracer
+                    .complete_trace(
+                        &ctx.request_id,
+                        500, // Internal server error
+                        false,
+                        None,
+                        None,
+                        Some("header_setting_failed".to_string()),
+                        Some(error.to_string()),
+                    )
+                    .await;
             }
             return Err(error);
         }
