@@ -103,15 +103,13 @@ struct DiskMetrics {
 
 /// 获取系统指标 - 匹配API文档格式
 pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::response::Response {
+    // The metrics gathering can be blocking, so it's run in a blocking task.
     let metrics = tokio::task::spawn_blocking(move || {
         let mut sys = get_sys().lock().unwrap();
 
-        // Refresh CPU twice with a delay for accurate reading
+        // Refresh CPU and memory information.
+        // Note: The first call to `global_cpu_usage` will be 0.
         sys.refresh_cpu_all();
-        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-        sys.refresh_cpu_all();
-
-        // Refresh other components
         sys.refresh_memory();
 
         // CPU
