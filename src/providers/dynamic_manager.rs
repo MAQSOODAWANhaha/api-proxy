@@ -2,7 +2,7 @@
 //!
 //! 基于数据库配置的动态适配器管理系统
 
-use super::generic_adapter::{GenericAdapter, GenericAdapterConfig};
+use super::generic_adapter::GenericAdapter;
 use super::traits::ProviderAdapter;
 use super::types::{AdapterRequest, AdapterResponse, ProviderError, ProviderResult, StreamChunk};
 use crate::config::ProviderConfigManager;
@@ -100,28 +100,16 @@ impl DynamicAdapterManager {
         provider_id: ProviderId,
         provider: &crate::config::ProviderConfig,
     ) -> ProviderResult<()> {
-        let config = GenericAdapterConfig {
+        // 使用新的from_provider_config_with_token_mappings方法创建适配器
+        let adapter = Box::new(GenericAdapter::from_provider_config_with_token_mappings(
             provider_id,
-            provider_name: provider.name.clone(),
-            display_name: provider.display_name.clone(),
-            api_format: provider.api_format.clone(),
-            request_transform_rules: provider
-                .config_json
-                .as_ref()
-                .and_then(|c| c.get("request_transform").cloned()),
-            response_transform_rules: provider
-                .config_json
-                .as_ref()
-                .and_then(|c| c.get("response_transform").cloned()),
-            streaming_config: provider
-                .config_json
-                .as_ref()
-                .and_then(|c| c.get("streaming").cloned()),
-            field_extractor: None, // TODO: 从config_json创建FieldExtractor
-        };
-
-        let adapter =
-            Box::new(GenericAdapter::new(config.clone())) as Box<dyn ProviderAdapter + Send + Sync>;
+            provider.name.clone(),
+            provider.display_name.clone(),
+            provider.api_format.clone(),
+            provider.config_json.clone(),
+            provider.token_mappings_json.clone(),
+            provider.model_extraction_json.clone(),
+        )) as Box<dyn ProviderAdapter + Send + Sync>;
 
         // 将适配器添加到缓存
         {

@@ -59,6 +59,10 @@ pub struct ProviderConfig {
     pub is_active: bool,
     /// 额外的JSON配置
     pub config_json: Option<serde_json::Value>,
+    /// Token字段映射配置JSON
+    pub token_mappings_json: Option<String>,
+    /// 模型提取规则配置JSON
+    pub model_extraction_json: Option<String>,
 }
 
 impl ProviderConfigManager {
@@ -292,6 +296,8 @@ impl ProviderConfigManager {
                 .unwrap_or_else(|| "Bearer {key}".to_string()),
             is_active: provider.is_active,
             config_json,
+            token_mappings_json: provider.token_mappings_json,
+            model_extraction_json: provider.model_extraction_json,
         })
     }
 
@@ -379,6 +385,8 @@ impl ProviderConfig {
             auth_header_format: "Bearer {key}".to_string(),
             is_active: true,
             config_json: None,
+            token_mappings_json: None,
+            model_extraction_json: None,
         }
     }
 
@@ -400,6 +408,8 @@ impl ProviderConfig {
             auth_header_format: "X-goog-api-key: {key}".to_string(),
             is_active: true,
             config_json: None,
+            token_mappings_json: None,
+            model_extraction_json: None,
         }
     }
 
@@ -421,6 +431,8 @@ impl ProviderConfig {
             auth_header_format: "Bearer {key}".to_string(),
             is_active: true,
             config_json: None,
+            token_mappings_json: None,
+            model_extraction_json: None,
         }
     }
 }

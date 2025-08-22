@@ -16,6 +16,7 @@ use crate::auth::{AuthHeaderParser, AuthParseError};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
+use crate::providers::field_extractor::TokenFieldExtractor;
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
@@ -1483,6 +1484,118 @@ impl AIProxyHandler {
 
         tracing::debug!("No model information found in response headers");
         None
+    }
+
+    /// 从响应体JSON重新提取详细的token使用信息
+    /// 这个方法应该在响应体收集完成后调用，以获取更准确的token数据
+    pub async fn extract_token_usage_from_response_body(
+        &self,
+        ctx: &mut ProxyContext,
+    ) -> Result<TokenUsage, ProxyError> {
+        // 确保响应体已经被收集和处理
+        if ctx.response_details.body.is_none() {
+            return Ok(ctx.token_usage.clone()); // 返回现有的token usage作为fallback
+        }
+
+        let response_body = ctx.response_details.body.as_ref().unwrap();
+        
+        // 尝试解析响应体为JSON
+        let response_json: serde_json::Value = match serde_json::from_str(response_body) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    body_preview = %if response_body.len() > 100 { 
+                        format!("{}...", &response_body[..100]) 
+                    } else { 
+                        response_body.clone() 
+                    },
+                    "Failed to parse response body as JSON, using header-based token extraction"
+                );
+                return Ok(ctx.token_usage.clone());
+            }
+        };
+
+        // 获取provider_type以确定使用哪种token映射
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider) => provider,
+            None => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    "No provider type available, using header-based token extraction"
+                );
+                return Ok(ctx.token_usage.clone());
+            }
+        };
+
+        // 尝试从数据库配置中获取token映射
+        if let Some(token_mappings_json) = &provider_type.token_mappings_json {
+            match TokenFieldExtractor::from_json_config(token_mappings_json) {
+                Ok(token_extractor) => {
+                    // 使用TokenFieldExtractor从响应体JSON中提取token信息
+                    let prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
+                    let completion_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
+                    let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
+                        .unwrap_or_else(|| {
+                            // 如果没有total_tokens配置，尝试计算
+                            match (prompt_tokens, completion_tokens) {
+                                (Some(p), Some(c)) => p + c,
+                                (Some(p), None) => p,
+                                (None, Some(c)) => c,
+                                (None, None) => 0,
+                            }
+                        });
+
+                    // 提取模型信息（如果provider配置了model extraction）
+                    let mut model_used = ctx.token_usage.model_used.clone();
+                    if let Some(model_extraction_json) = &provider_type.model_extraction_json {
+                        // 这里可以实现模型提取逻辑，暂时跳过
+                        tracing::debug!(
+                            request_id = %ctx.request_id,
+                            "Model extraction from response body not yet implemented"
+                        );
+                    }
+
+                    let new_token_usage = TokenUsage {
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                        model_used,
+                    };
+
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        provider = %provider_type.name,
+                        old_prompt_tokens = ?ctx.token_usage.prompt_tokens,
+                        new_prompt_tokens = ?prompt_tokens,
+                        old_completion_tokens = ?ctx.token_usage.completion_tokens,
+                        new_completion_tokens = ?completion_tokens,
+                        old_total_tokens = ctx.token_usage.total_tokens,
+                        new_total_tokens = total_tokens,
+                        "Re-extracted token usage from response body JSON"
+                    );
+
+                    return Ok(new_token_usage);
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        provider = %provider_type.name,
+                        "Failed to parse token_mappings_json"
+                    );
+                }
+            }
+        } else {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                "No token_mappings_json configured, using header-based extraction"
+            );
+        }
+
+        // 如果无法从响应体提取，返回原有的token usage
+        Ok(ctx.token_usage.clone())
     }
 
     /// 提取token使用信息（向后兼容方法）

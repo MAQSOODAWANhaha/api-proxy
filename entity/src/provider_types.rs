@@ -24,6 +24,8 @@ pub struct Model {
     pub auth_header_format: Option<String>,
     pub is_active: bool,
     pub config_json: Option<String>, // JSON 字符串
+    pub token_mappings_json: Option<String>, // Token字段映射配置
+    pub model_extraction_json: Option<String>, // 模型提取规则配置
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }
@@ -74,6 +76,8 @@ impl Default for Model {
             auth_header_format: None,
             is_active: false,
             config_json: None,
+            token_mappings_json: None,
+            model_extraction_json: None,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
         }

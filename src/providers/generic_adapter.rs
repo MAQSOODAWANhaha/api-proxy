@@ -2,7 +2,8 @@
 //!
 //! 基于数据库配置的通用AI服务适配器，支持任意提供商
 
-use super::field_extractor::FieldExtractor;
+use super::field_extractor::{FieldExtractor, TokenFieldExtractor, ModelExtractor};
+use std::sync::Arc;
 use super::traits::ProviderAdapter;
 use super::types::{
     AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
@@ -29,8 +30,12 @@ pub struct GenericAdapterConfig {
     pub response_transform_rules: Option<Value>,
     /// 流式响应处理配置
     pub streaming_config: Option<Value>,
-    /// 字段提取器 (新增)
+    /// 字段提取器 (旧版本，用于非Token字段)
     pub field_extractor: Option<FieldExtractor>,
+    /// Token字段提取器 (新增，用于Token统计)
+    pub token_field_extractor: Option<TokenFieldExtractor>,
+    /// 模型提取器 (新增，用于模型名称提取)
+    pub model_extractor: Option<Arc<ModelExtractor>>,
 }
 
 impl Default for GenericAdapterConfig {
@@ -44,6 +49,8 @@ impl Default for GenericAdapterConfig {
             response_transform_rules: None,
             streaming_config: None,
             field_extractor: None,
+            token_field_extractor: None,
+            model_extractor: None,
         }
     }
 }
@@ -67,7 +74,28 @@ impl GenericAdapter {
         api_format: String,
         config_json: Option<Value>,
     ) -> Self {
-        // 创建字段提取器
+        Self::from_provider_config_with_token_mappings(
+            provider_id, 
+            provider_name, 
+            display_name, 
+            api_format, 
+            config_json, 
+            None, // token_mappings_json
+            None, // model_extraction_json
+        )
+    }
+
+    /// 从数据库配置创建适配器（包含Token映射配置和模型提取配置）
+    pub fn from_provider_config_with_token_mappings(
+        provider_id: ProviderId,
+        provider_name: String,
+        display_name: String,
+        api_format: String,
+        config_json: Option<Value>,
+        token_mappings_json: Option<String>,
+        model_extraction_json: Option<String>,
+    ) -> Self {
+        // 创建字段提取器（用于非Token字段）
         let field_extractor = config_json
             .as_ref()
             .and_then(|config| {
@@ -109,6 +137,52 @@ impl GenericAdapter {
                 }
             });
 
+        // 创建Token字段提取器（用于Token统计）
+        let token_field_extractor = token_mappings_json
+            .as_ref()
+            .and_then(|token_config| {
+                match TokenFieldExtractor::from_json_config(token_config) {
+                    Ok(extractor) => {
+                        debug!(
+                            provider_name = %provider_name,
+                            "Successfully created token field extractor for provider"
+                        );
+                        Some(extractor)
+                    },
+                    Err(e) => {
+                        warn!(
+                            provider_name = %provider_name,
+                            error = %e,
+                            "Failed to create token field extractor, will use default behavior"
+                        );
+                        None
+                    }
+                }
+            });
+
+        // 创建模型提取器（用于模型名称提取）
+        let model_extractor = model_extraction_json
+            .as_ref()
+            .and_then(|model_config| {
+                match ModelExtractor::from_json_config(model_config) {
+                    Ok(extractor) => {
+                        debug!(
+                            provider_name = %provider_name,
+                            "Successfully created model extractor for provider"
+                        );
+                        Some(Arc::new(extractor))
+                    },
+                    Err(e) => {
+                        warn!(
+                            provider_name = %provider_name,
+                            error = %e,
+                            "Failed to create model extractor, will use default behavior"
+                        );
+                        None
+                    }
+                }
+            });
+
         let config = GenericAdapterConfig {
             provider_id,
             provider_name: provider_name.clone(),
@@ -124,6 +198,8 @@ impl GenericAdapter {
                 .as_ref()
                 .and_then(|c| c.get("streaming").cloned()),
             field_extractor,
+            token_field_extractor,
+            model_extractor,
         };
 
         Self::new(config)
@@ -201,21 +277,54 @@ impl GenericAdapter {
 
     /// 公共接口：提取统计信息供trace系统使用
     pub fn extract_trace_stats(&self, response: &Value) -> TraceStats {
-        if let Some(extractor) = &self.config.field_extractor {
-            TraceStats {
-                input_tokens: extractor.extract_u32(response, "input_tokens"),
-                output_tokens: extractor.extract_u32(response, "output_tokens"),
-                total_tokens: extractor.extract_u32(response, "total_tokens"),
-                cache_create_tokens: extractor.extract_u32(response, "cache_create_tokens"),
-                cache_read_tokens: extractor.extract_u32(response, "cache_read_tokens"),
-                cost: extractor.extract_f64(response, "cost"),
-                cost_currency: extractor.extract_string(response, "cost_currency"),
-                model_name: extractor.extract_string(response, "model_name"),
-                error_type: extractor.extract_string(response, "error_type"),
-                error_message: extractor.extract_string(response, "error_message"),
-            }
-        } else {
-            TraceStats::default()
+        // 优先使用新的TokenFieldExtractor提取Token信息
+        let (input_tokens, output_tokens, total_tokens, cache_create_tokens, cache_read_tokens) = 
+            if let Some(token_extractor) = &self.config.token_field_extractor {
+                (
+                    token_extractor.extract_token_u32(response, "tokens_prompt"),
+                    token_extractor.extract_token_u32(response, "tokens_completion"),
+                    token_extractor.extract_token_u32(response, "tokens_total"),
+                    token_extractor.extract_token_u32(response, "cache_create_tokens"),
+                    token_extractor.extract_token_u32(response, "cache_read_tokens"),
+                )
+            } else if let Some(extractor) = &self.config.field_extractor {
+                // 回退到旧的FieldExtractor（向后兼容）
+                (
+                    extractor.extract_u32(response, "input_tokens"),
+                    extractor.extract_u32(response, "output_tokens"),
+                    extractor.extract_u32(response, "total_tokens"),
+                    extractor.extract_u32(response, "cache_create_tokens"),
+                    extractor.extract_u32(response, "cache_read_tokens"),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
+
+        // 使用FieldExtractor提取非Token字段
+        let (cost, cost_currency, model_name, error_type, error_message) = 
+            if let Some(extractor) = &self.config.field_extractor {
+                (
+                    extractor.extract_f64(response, "cost"),
+                    extractor.extract_string(response, "cost_currency"),
+                    extractor.extract_string(response, "model_name"),
+                    extractor.extract_string(response, "error_type"),
+                    extractor.extract_string(response, "error_message"),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
+
+        TraceStats {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cache_create_tokens,
+            cache_read_tokens,
+            cost,
+            cost_currency,
+            model_name,
+            error_type,
+            error_message,
         }
     }
 

@@ -518,12 +518,6 @@ impl ProxyHttp for ProxyService {
                     // 注意：响应时间在complete_trace方法内部计算
                     // let response_time_ms = duration.as_millis() as u64;
 
-                    // 使用详细的token信息
-                    let tokens_prompt = ctx.token_usage.prompt_tokens;
-                    let tokens_completion = ctx.token_usage.completion_tokens;
-
-                    // Response size no longer stored in simplified trace schema
-
                     // 完成响应体数据收集
                     ctx.response_details.finalize_body();
 
@@ -533,6 +527,29 @@ impl ProxyHttp for ProxyService {
                         body_collected = ctx.response_details.body.is_some(),
                         "Finalized response body collection"
                     );
+
+                    // 重新从响应体JSON中提取token信息（这是关键修复）
+                    if let Ok(new_token_usage) = self.ai_handler.extract_token_usage_from_response_body(ctx).await {
+                        if new_token_usage.total_tokens != ctx.token_usage.total_tokens {
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                header_based_tokens = ctx.token_usage.total_tokens,
+                                body_based_tokens = new_token_usage.total_tokens,
+                                "Updated token usage from response body JSON - this fixes the token tracking issue"
+                            );
+                            ctx.token_usage = new_token_usage;
+                            ctx.tokens_used = ctx.token_usage.total_tokens; // 向后兼容
+                        }
+                    } else {
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            "Failed to extract token usage from response body, using header-based data"
+                        );
+                    }
+
+                    // 使用更新后的详细token信息
+                    let tokens_prompt = ctx.token_usage.prompt_tokens;
+                    let tokens_completion = ctx.token_usage.completion_tokens;
 
                     // 构建请求详情JSON
                     let request_json = match serde_json::to_value(&ctx.request_details) {
