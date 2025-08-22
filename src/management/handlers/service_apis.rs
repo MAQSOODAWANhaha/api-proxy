@@ -658,7 +658,7 @@ pub async fn get_user_service_key(
         }
     };
 
-    // API Key脱敏处理
+    /* // API Key脱敏处理
     let masked_api_key = if api.api_key.len() > 8 {
         format!(
             "{}****{}",
@@ -667,7 +667,7 @@ pub async fn get_user_service_key(
         )
     } else {
         "****".to_string()
-    };
+    }; */
 
     let response = UserServiceKeyDetailResponse {
         id: api.id,
@@ -675,7 +675,7 @@ pub async fn get_user_service_key(
         description: api.description,
         provider_type_id: api.provider_type_id,
         provider: provider_type.display_name,
-        api_key: masked_api_key,
+        api_key: api.api_key,
         user_provider_keys_ids: match serde_json::from_value::<Vec<i32>>(
             api.user_provider_keys_ids.clone(),
         ) {
