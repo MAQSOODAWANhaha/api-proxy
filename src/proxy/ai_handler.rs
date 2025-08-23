@@ -18,10 +18,11 @@ use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
 use crate::providers::field_extractor::{ModelExtractor, TokenFieldExtractor};
+use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
-    user_provider_keys::{self, Entity as UserProviderKeys},
+    user_provider_keys::{self},
     user_service_apis::{self, Entity as UserServiceApis},
 };
 
@@ -31,16 +32,16 @@ pub struct AIProxyHandler {
     db: Arc<DatabaseConnection>,
     /// 统一缓存管理器
     cache: Arc<UnifiedCacheManager>,
-    /// 配置
-    config: Arc<AppConfig>,
-    /// 负载均衡调度器注册表
-    schedulers: Arc<SchedulerRegistry>,
+    /// 配置 (未来使用)
+    _config: Arc<AppConfig>,
     /// 即时写入追踪器
     tracer: Option<Arc<ImmediateProxyTracer>>,
     /// 服务商配置管理器
     provider_config_manager: Arc<ProviderConfigManager>,
     /// 费用计算服务
     pricing_calculator: Arc<PricingCalculatorService>,
+    /// API密钥池管理器
+    api_key_pool: Arc<ApiKeyPoolManager>,
 }
 
 /// Token使用详情
@@ -261,21 +262,21 @@ impl AIProxyHandler {
     pub fn new(
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
-        config: Arc<AppConfig>,
-        schedulers: Arc<SchedulerRegistry>,
+        _config: Arc<AppConfig>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
+        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone()));
         
         Self {
             db,
             cache,
-            config,
-            schedulers,
+            _config,
             tracer,
             provider_config_manager,
             pricing_calculator,
+            api_key_pool,
         }
     }
 
@@ -440,33 +441,12 @@ impl AIProxyHandler {
             "Applied timeout configuration with correct priority"
         );
 
-        // 步骤4: 根据token查找数据库中配置的转发策略
-        let _load_balancing_start = std::time::Instant::now();
-        let scheduler = match self.get_scheduler(&user_service_api.scheduling_strategy) {
-            Ok(scheduler) => scheduler,
-            Err(e) => {
-                // 调度器获取失败时立即记录到数据库
-                if let Some(tracer) = &self.tracer {
-                    let _ = tracer
-                        .complete_trace(
-                            &ctx.request_id,
-                            500, // Internal server error
-                            false,
-                            None,
-                            None,
-                            Some("scheduler_not_found".to_string()),
-                            Some(e.to_string()),
-                        )
-                        .await;
-                }
-                return Err(e);
-            }
-        };
-
-        let selected_backend = match scheduler.select_backend(&user_service_api).await {
+        // 步骤4: 根据用户配置选择合适的API密钥
+        let _api_key_selection_start = std::time::Instant::now();
+        let selected_backend = match self.select_api_key(&user_service_api, &ctx.request_id).await {
             Ok(backend) => backend,
             Err(e) => {
-                // 后端选择失败时立即记录到数据库
+                // API密钥选择失败时立即记录到数据库
                 if let Some(tracer) = &self.tracer {
                     let _ = tracer
                         .complete_trace(
@@ -475,7 +455,7 @@ impl AIProxyHandler {
                             false,
                             None,
                             None,
-                            Some("backend_selection_failed".to_string()),
+                            Some("api_key_selection_failed".to_string()),
                             Some(e.to_string()),
                         )
                         .await;
@@ -782,13 +762,37 @@ impl AIProxyHandler {
         Ok(provider_type)
     }
 
-    /// 获取调度器
-    fn get_scheduler(
+    /// 根据用户API配置选择合适的API密钥
+    async fn select_api_key(
         &self,
-        strategy: &Option<String>,
-    ) -> Result<Arc<dyn LoadBalancer>, ProxyError> {
-        let strategy_name = strategy.as_deref().unwrap_or("round_robin");
-        self.schedulers.get(strategy_name)
+        user_service_api: &user_service_apis::Model,
+        request_id: &str,
+    ) -> Result<user_provider_keys::Model, ProxyError> {
+        // 创建选择上下文
+        let context = SelectionContext::new(
+            request_id.to_string(),
+            user_service_api.user_id,
+            user_service_api.id,
+            user_service_api.provider_type_id,
+        );
+
+        // 使用ApiKeyPoolManager处理密钥选择 - 正确使用user_provider_keys_ids约束
+        let result = self
+            .api_key_pool
+            .select_api_key_from_service_api(user_service_api, &context)
+            .await?;
+
+        tracing::debug!(
+            request_id = %request_id,
+            user_id = user_service_api.user_id,
+            provider_type_id = user_service_api.provider_type_id,
+            selected_key_id = result.selected_key.id,
+            strategy = %result.strategy.as_str(),
+            reason = %result.reason,
+            "API key selection completed using ApiKeyPoolManager"
+        );
+
+        Ok(result.selected_key)
     }
 
     /// 选择上游对等体
@@ -2064,249 +2068,6 @@ impl AIProxyHandler {
     }
 }
 
-/// 负载均衡器trait
-#[async_trait::async_trait]
-pub trait LoadBalancer: Send + Sync {
-    /// 选择后端API密钥
-    async fn select_backend(
-        &self,
-        user_service_api: &user_service_apis::Model,
-    ) -> Result<user_provider_keys::Model, ProxyError>;
-}
-
-/// 调度器注册表
-pub struct SchedulerRegistry {
-    schedulers: std::collections::HashMap<String, Arc<dyn LoadBalancer>>,
-}
-
-impl SchedulerRegistry {
-    /// 创建新的调度器注册表
-    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<UnifiedCacheManager>) -> Self {
-        let mut schedulers: std::collections::HashMap<String, Arc<dyn LoadBalancer>> =
-            std::collections::HashMap::new();
-
-        // 注册轮询调度器
-        schedulers.insert(
-            "round_robin".to_string(),
-            Arc::new(RoundRobinScheduler::new(db.clone(), cache.clone())),
-        );
-
-        // 注册权重调度器
-        schedulers.insert(
-            "weighted".to_string(),
-            Arc::new(WeightedScheduler::new(db.clone(), cache.clone())),
-        );
-
-        // 注册健康度最佳调度器
-        schedulers.insert(
-            "health_best".to_string(),
-            Arc::new(HealthBestScheduler::new(db.clone(), cache.clone())),
-        );
-
-        Self { schedulers }
-    }
-
-    /// 获取调度器
-    pub fn get(&self, strategy: &str) -> Result<Arc<dyn LoadBalancer>, ProxyError> {
-        self.schedulers.get(strategy).cloned().ok_or_else(|| {
-            ProxyError::internal(format!("Unknown scheduling strategy: {}", strategy))
-        })
-    }
-}
-
-/// 轮询调度器
-pub struct RoundRobinScheduler {
-    db: Arc<DatabaseConnection>,
-    cache: Arc<UnifiedCacheManager>,
-}
-
-impl RoundRobinScheduler {
-    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<UnifiedCacheManager>) -> Self {
-        Self { db, cache }
-    }
-}
-
-#[async_trait::async_trait]
-impl LoadBalancer for RoundRobinScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &user_service_apis::Model,
-    ) -> Result<user_provider_keys::Model, ProxyError> {
-        use sea_orm::QueryOrder;
-
-        // 获取该用户该服务商的所有活跃API密钥
-        let available_keys = UserProviderKeys::find()
-            .filter(user_provider_keys::Column::UserId.eq(user_service_api.user_id))
-            .filter(
-                user_provider_keys::Column::ProviderTypeId.eq(user_service_api.provider_type_id),
-            )
-            .filter(user_provider_keys::Column::IsActive.eq(true))
-            .order_by_asc(user_provider_keys::Column::Id)
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?;
-
-        if available_keys.is_empty() {
-            return Err(ProxyError::bad_gateway("No available API keys"));
-        }
-
-        // 从缓存获取当前轮询位置
-        let cache_key = format!(
-            "round_robin:{}:{}",
-            user_service_api.user_id, user_service_api.provider_type_id
-        );
-        let current_index = if let Ok(index) = self.cache.provider().incr(&cache_key, 1).await {
-            let _ = self
-                .cache
-                .provider()
-                .expire(&cache_key, Duration::from_secs(3600))
-                .await; // 1小时过期
-            (index as usize) % available_keys.len()
-        } else {
-            0 // 缓存操作失败时使用第一个
-        };
-
-        let selected_key = available_keys[current_index].clone();
-
-        tracing::debug!(
-            user_id = user_service_api.user_id,
-            provider_type_id = user_service_api.provider_type_id,
-            selected_key_id = selected_key.id,
-            selected_index = current_index,
-            total_keys = available_keys.len(),
-            "Round robin selection completed"
-        );
-
-        Ok(selected_key)
-    }
-}
-
-/// 权重调度器
-pub struct WeightedScheduler {
-    db: Arc<DatabaseConnection>,
-    cache: Arc<UnifiedCacheManager>,
-}
-
-impl WeightedScheduler {
-    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<UnifiedCacheManager>) -> Self {
-        Self { db, cache }
-    }
-}
-
-#[async_trait::async_trait]
-impl LoadBalancer for WeightedScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &user_service_apis::Model,
-    ) -> Result<user_provider_keys::Model, ProxyError> {
-        use sea_orm::QueryOrder;
-
-        // 获取该用户该服务商的所有活跃API密钥
-        let available_keys = UserProviderKeys::find()
-            .filter(user_provider_keys::Column::UserId.eq(user_service_api.user_id))
-            .filter(
-                user_provider_keys::Column::ProviderTypeId.eq(user_service_api.provider_type_id),
-            )
-            .filter(user_provider_keys::Column::IsActive.eq(true))
-            .order_by_asc(user_provider_keys::Column::Id)
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?;
-
-        if available_keys.is_empty() {
-            return Err(ProxyError::bad_gateway("No available API keys"));
-        }
-
-        // 计算权重总和
-        let total_weight: i32 = available_keys
-            .iter()
-            .map(|key| key.weight.unwrap_or(1))
-            .sum();
-
-        if total_weight <= 0 {
-            return Ok(available_keys[0].clone()); // 如果所有权重都是0，返回第一个
-        }
-
-        // 生成随机数
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let random_weight = rng.gen_range(1..=total_weight);
-
-        // 根据权重选择
-        let mut current_weight = 0;
-        for key in available_keys {
-            current_weight += key.weight.unwrap_or(1);
-            if current_weight >= random_weight {
-                tracing::debug!(
-                    user_id = user_service_api.user_id,
-                    provider_type_id = user_service_api.provider_type_id,
-                    selected_key_id = key.id,
-                    key_weight = key.weight.unwrap_or(1),
-                    total_weight = total_weight,
-                    random_weight = random_weight,
-                    "Weighted selection completed"
-                );
-                return Ok(key);
-            }
-        }
-
-        Err(ProxyError::internal("Weight selection failed"))
-    }
-}
-
-/// 健康度最佳调度器
-pub struct HealthBestScheduler {
-    db: Arc<DatabaseConnection>,
-    cache: Arc<UnifiedCacheManager>,
-}
-
-impl HealthBestScheduler {
-    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<UnifiedCacheManager>) -> Self {
-        Self { db, cache }
-    }
-}
-
-#[async_trait::async_trait]
-impl LoadBalancer for HealthBestScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &user_service_apis::Model,
-    ) -> Result<user_provider_keys::Model, ProxyError> {
-        use sea_orm::QueryOrder;
-
-        // 获取该用户该服务商的所有活跃API密钥
-        let available_keys = UserProviderKeys::find()
-            .filter(user_provider_keys::Column::UserId.eq(user_service_api.user_id))
-            .filter(
-                user_provider_keys::Column::ProviderTypeId.eq(user_service_api.provider_type_id),
-            )
-            .filter(user_provider_keys::Column::IsActive.eq(true))
-            .order_by_asc(user_provider_keys::Column::Id)
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?;
-
-        if available_keys.is_empty() {
-            return Err(ProxyError::bad_gateway("No available API keys"));
-        }
-
-        // 简化实现：选择权重最高的密钥（假设权重高的更健康）
-        let best_key = available_keys
-            .into_iter()
-            .max_by_key(|key| key.weight.unwrap_or(1))
-            .unwrap();
-
-        tracing::debug!(
-            user_id = user_service_api.user_id,
-            provider_type_id = user_service_api.provider_type_id,
-            selected_key_id = best_key.id,
-            weight = best_key.weight,
-            "Health best selection completed"
-        );
-
-        Ok(best_key)
-    }
-}
 
 /// 将动态header name映射为静态字符串引用，解决Rust生命周期问题
 ///

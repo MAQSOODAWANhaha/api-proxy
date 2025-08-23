@@ -6,7 +6,7 @@ use super::generic_adapter::GenericAdapter;
 use super::traits::ProviderAdapter;
 use super::types::{AdapterRequest, AdapterResponse, ProviderError, ProviderResult, StreamChunk};
 use crate::config::ProviderConfigManager;
-use crate::proxy::upstream::ProviderId;
+use crate::proxy::types::ProviderId;
 use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +32,15 @@ pub struct AdapterStats {
     pub api_format: String,
     pub is_active: bool,
     pub last_loaded: chrono::DateTime<chrono::Utc>,
+}
+
+/// 适配器基本信息 - 用于安全访问适配器信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AdapterInfo {
+    pub provider_id: ProviderId,
+    pub name: String,
+    pub api_format: String,
+    pub is_active: bool,
 }
 
 impl DynamicAdapterManager {
@@ -133,17 +142,54 @@ impl DynamicAdapterManager {
         Ok(())
     }
 
-    /// 获取指定提供商的适配器
-    pub async fn get_adapter(
+    /// 获取指定提供商的适配器引用进行操作
+    /// 使用回调模式避免所有权问题
+    pub async fn with_adapter<F, R>(
         &self,
-        _provider_id: &ProviderId,
-    ) -> Option<Box<dyn ProviderAdapter + Send + Sync>> {
-        let _adapters = self.adapters.read().await;
+        provider_id: &ProviderId,
+        operation: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&dyn ProviderAdapter) -> R + Send,
+        R: Send,
+    {
+        let adapters = self.adapters.read().await;
+        
+        if let Some(adapter) = adapters.get(provider_id) {
+            Some(operation(adapter.as_ref()))
+        } else {
+            None
+        }
+    }
 
-        // 这里有一个问题：我们不能直接克隆Box<dyn ProviderAdapter>
-        // 需要重新设计这个接口
-        // 暂时返回None，实际实现需要不同的方法
-        None
+    /// 获取适配器的基本信息，而不是适配器本身
+    /// 这是一种更安全的访问方式
+    pub async fn get_adapter_info(&self, provider_id: &ProviderId) -> Option<AdapterInfo> {
+        let adapters = self.adapters.read().await;
+        let stats = self.stats.read().await;
+        
+        if let Some(_adapter) = adapters.get(provider_id) {
+            // 从统计信息中获取适配器基本信息
+            let provider_id_str = format!("{:?}", provider_id);
+            let adapter_stat = stats.values()
+                .find(|stat| stat.provider_id == provider_id_str)
+                .cloned();
+                
+            Some(AdapterInfo {
+                provider_id: *provider_id,
+                name: adapter_stat.as_ref()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                api_format: adapter_stat.as_ref()
+                    .map(|s| s.api_format.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                is_active: adapter_stat
+                    .map(|s| s.is_active)
+                    .unwrap_or(false),
+            })
+        } else {
+            None
+        }
     }
 
     /// 检查是否有指定提供商的适配器
@@ -158,16 +204,14 @@ impl DynamicAdapterManager {
         provider_id: &ProviderId,
         request: &AdapterRequest,
     ) -> ProviderResult<AdapterRequest> {
-        let adapters = self.adapters.read().await;
-
-        let adapter = adapters.get(provider_id).ok_or_else(|| {
+        self.with_adapter(provider_id, |adapter| {
+            adapter.transform_request(request)
+        }).await.ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
             ))
-        })?;
-
-        adapter.transform_request(request)
+        })?
     }
 
     /// 处理响应
@@ -177,16 +221,14 @@ impl DynamicAdapterManager {
         response: &AdapterResponse,
         original_request: &AdapterRequest,
     ) -> ProviderResult<AdapterResponse> {
-        let adapters = self.adapters.read().await;
-
-        let adapter = adapters.get(provider_id).ok_or_else(|| {
+        self.with_adapter(provider_id, |adapter| {
+            adapter.transform_response(response, original_request)
+        }).await.ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
             ))
-        })?;
-
-        adapter.transform_response(response, original_request)
+        })?
     }
 
     /// 处理流式响应
@@ -196,16 +238,14 @@ impl DynamicAdapterManager {
         chunk: &[u8],
         request: &AdapterRequest,
     ) -> ProviderResult<Option<StreamChunk>> {
-        let adapters = self.adapters.read().await;
-
-        let adapter = adapters.get(provider_id).ok_or_else(|| {
+        self.with_adapter(provider_id, |adapter| {
+            adapter.handle_streaming_chunk(chunk, request)
+        }).await.ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
             ))
-        })?;
-
-        adapter.handle_streaming_chunk(chunk, request)
+        })?
     }
 
     /// 验证请求
@@ -214,16 +254,14 @@ impl DynamicAdapterManager {
         provider_id: &ProviderId,
         request: &AdapterRequest,
     ) -> ProviderResult<()> {
-        let adapters = self.adapters.read().await;
-
-        let adapter = adapters.get(provider_id).ok_or_else(|| {
+        self.with_adapter(provider_id, |adapter| {
+            adapter.validate_request(request)
+        }).await.ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
             ))
-        })?;
-
-        adapter.validate_request(request)
+        })?
     }
 
     /// 获取所有支持的提供商ID

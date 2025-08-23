@@ -1,15 +1,15 @@
-//! # 负载均衡调度器模块
+//! # API密钥池调度器模块
 //!
-//! 实现多种负载均衡算法，包括轮询、权重和健康度最佳调度
+//! 实现API密钥选择算法，从用户的多个API密钥中选择合适的密钥
 
 pub mod algorithms;
-pub mod balancer;
-pub mod manager;
+pub mod pool_manager;
 pub mod types;
 
 pub use algorithms::{
-    HealthBasedScheduler, RoundRobinScheduler, SchedulingAlgorithm, WeightedScheduler,
+    ApiKeySelector, ApiKeySelectionResult, SelectionContext,
+    RoundRobinApiKeySelector, HealthBasedApiKeySelector,
+    create_api_key_selector,
 };
-pub use balancer::LoadBalancer;
-pub use manager::LoadBalancerManager;
-pub use types::{SchedulingStrategy, ServerMetrics};
+pub use pool_manager::{ApiKeyPoolManager, PoolStats};
+pub use types::SchedulingStrategy;

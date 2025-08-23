@@ -10,7 +10,6 @@ use crate::health::service::HealthCheckStatistics;
 use crate::management::response::{self};
 use crate::providers::DynamicAdapterManager;
 use crate::providers::dynamic_manager::AdapterStats;
-use crate::scheduler::manager::LoadBalancerManager;
 use crate::statistics::service::StatisticsService;
 use anyhow::Result;
 use axum::Json;
@@ -84,7 +83,6 @@ pub struct AppState {
     /// 适配器管理器
     pub adapter_manager: Arc<DynamicAdapterManager>,
     /// 负载均衡管理器
-    pub load_balancer_manager: Arc<LoadBalancerManager>,
     /// 统计服务
     pub statistics_service: Arc<StatisticsService>,
     /// 提供商解析服务
@@ -110,7 +108,6 @@ impl ManagementServer {
         auth_service: Arc<AuthService>,
         health_service: Arc<HealthService>,
         adapter_manager: Arc<DynamicAdapterManager>,
-        load_balancer_manager: Arc<LoadBalancerManager>,
         statistics_service: Arc<StatisticsService>,
         provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
     ) -> Result<Self> {
@@ -120,7 +117,6 @@ impl ManagementServer {
             auth_service,
             health_service,
             adapter_manager,
-            load_balancer_manager,
             statistics_service,
             provider_resolver,
         };

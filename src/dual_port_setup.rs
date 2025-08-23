@@ -8,7 +8,6 @@ use crate::{
     management::server::{ManagementConfig, ManagementServer},
     providers::DynamicAdapterManager,
     proxy::PingoraProxyServer,
-    scheduler::manager::LoadBalancerManager,
     statistics::service::StatisticsService,
 };
 use clap::ArgMatches;
@@ -22,7 +21,6 @@ pub struct SharedServices {
     pub unified_auth_manager: Arc<UnifiedAuthManager>,
     pub health_service: Arc<HealthCheckService>,
     pub adapter_manager: Arc<DynamicAdapterManager>,
-    pub load_balancer_manager: Arc<LoadBalancerManager>,
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
@@ -76,7 +74,6 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
         shared_services.auth_service.clone(),
         shared_services.health_service.clone(),
         shared_services.adapter_manager.clone(),
-        shared_services.load_balancer_manager.clone(),
         shared_services.statistics_service.clone(),
         shared_services.provider_resolver.clone(),
     )
@@ -240,7 +237,7 @@ pub async fn initialize_shared_services(
 
     for provider in providers {
         // 使用数据库中的提供商ID而不是硬编码映射
-        let provider_id = crate::proxy::upstream::ProviderId::from_database_id(provider.id);
+        let provider_id = crate::proxy::types::ProviderId::from_database_id(provider.id);
 
         if let Err(e) = health_service
             .add_server(provider.upstream_address.clone(), provider_id, None)
@@ -274,10 +271,6 @@ pub async fn initialize_shared_services(
         db.clone(),
     ));
 
-    let load_balancer_manager = Arc::new(
-        LoadBalancerManager::new(config_arc.clone(), provider_resolver.clone())
-            .map_err(|e| ProxyError::server_init(format!("Load balancer init failed: {}", e)))?,
-    );
 
     // 创建统一认证管理器
     let unified_auth_manager = create_unified_auth_manager(
@@ -313,7 +306,6 @@ pub async fn initialize_shared_services(
         unified_auth_manager,
         health_service,
         adapter_manager,
-        load_balancer_manager,
         statistics_service,
         provider_config_manager,
         provider_resolver,

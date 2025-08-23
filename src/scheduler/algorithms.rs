@@ -1,32 +1,100 @@
-//! # 负载均衡调度算法实现
+//! # API密钥池选择算法实现
+//!
+//! 专注于从用户的多个API密钥中选择合适的密钥进行请求
 
-use super::types::{SchedulingResult, SchedulingStrategy, ServerMetrics};
+use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::UpstreamServer;
+use entity::user_provider_keys;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-/// 调度算法特质
-pub trait SchedulingAlgorithm: Send + Sync {
-    /// 选择服务器
-    fn select_server(
+/// 选择上下文
+#[derive(Debug, Clone)]
+pub struct SelectionContext {
+    /// 请求ID
+    pub request_id: String,
+    /// 用户ID
+    pub user_id: i32,
+    /// 用户服务API ID
+    pub user_service_api_id: i32,
+    /// 提供商类型ID
+    pub provider_type_id: i32,
+    /// 额外提示信息
+    pub hints: std::collections::HashMap<String, String>,
+}
+
+impl SelectionContext {
+    pub fn new(
+        request_id: String,
+        user_id: i32,
+        user_service_api_id: i32,
+        provider_type_id: i32,
+    ) -> Self {
+        Self {
+            request_id,
+            user_id,
+            user_service_api_id,
+            provider_type_id,
+            hints: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// API密钥选择结果
+#[derive(Debug, Clone)]
+pub struct ApiKeySelectionResult {
+    /// 选中API密钥的索引
+    pub selected_index: usize,
+    /// 选中的API密钥
+    pub selected_key: user_provider_keys::Model,
+    /// 选择原因
+    pub reason: String,
+    /// 选择策略
+    pub strategy: SchedulingStrategy,
+    /// 选择时间戳
+    pub timestamp: std::time::Instant,
+}
+
+impl ApiKeySelectionResult {
+    pub fn new(
+        selected_index: usize,
+        selected_key: user_provider_keys::Model,
+        reason: String,
+        strategy: SchedulingStrategy,
+    ) -> Self {
+        Self {
+            selected_index,
+            selected_key,
+            reason,
+            strategy,
+            timestamp: std::time::Instant::now(),
+        }
+    }
+}
+
+/// API密钥选择器特质
+#[async_trait::async_trait]
+pub trait ApiKeySelector: Send + Sync {
+    /// 从用户的API密钥池中选择一个密钥
+    async fn select_key(
         &self,
-        servers: &[UpstreamServer],
-        metrics: &[ServerMetrics],
-    ) -> Result<SchedulingResult>;
+        keys: &[user_provider_keys::Model],
+        context: &SelectionContext,
+    ) -> Result<ApiKeySelectionResult>;
 
-    /// 获取算法名称
+    /// 获取选择器名称
     fn name(&self) -> &'static str;
 
     /// 重置内部状态
-    fn reset(&self);
+    async fn reset(&self);
 }
 
-/// 轮询调度器
-pub struct RoundRobinScheduler {
+/// 轮询API密钥选择器
+pub struct RoundRobinApiKeySelector {
     counter: AtomicUsize,
 }
 
-impl RoundRobinScheduler {
+impl RoundRobinApiKeySelector {
     pub fn new() -> Self {
         Self {
             counter: AtomicUsize::new(0),
@@ -34,419 +102,163 @@ impl RoundRobinScheduler {
     }
 }
 
-impl Default for RoundRobinScheduler {
+impl Default for RoundRobinApiKeySelector {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SchedulingAlgorithm for RoundRobinScheduler {
-    fn select_server(
+#[async_trait::async_trait]
+impl ApiKeySelector for RoundRobinApiKeySelector {
+    async fn select_key(
         &self,
-        servers: &[UpstreamServer],
-        metrics: &[ServerMetrics],
-    ) -> Result<SchedulingResult> {
-        if servers.is_empty() {
+        keys: &[user_provider_keys::Model],
+        context: &SelectionContext,
+    ) -> Result<ApiKeySelectionResult> {
+        if keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
-                "No servers available".to_string(),
+                "No API keys available for selection".to_string(),
             ));
         }
 
-        // 过滤健康的服务器
-        let healthy_indices: Vec<usize> = metrics
+        // 过滤活跃的密钥
+        let active_keys: Vec<&user_provider_keys::Model> = keys
             .iter()
-            .enumerate()
-            .filter(|(_, m)| m.is_healthy)
-            .map(|(i, _)| i)
+            .filter(|key| key.is_active)
             .collect();
 
-        if healthy_indices.is_empty() {
+        if active_keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
-                "No healthy servers available".to_string(),
+                "No active API keys available for selection".to_string(),
             ));
         }
 
         // 轮询选择
         let counter = self.counter.fetch_add(1, Ordering::SeqCst);
-        let selected_index = healthy_indices[counter % healthy_indices.len()];
+        let selected_relative_index = counter % active_keys.len();
+        let selected_key = active_keys[selected_relative_index];
 
-        Ok(SchedulingResult::new(
+        // 找到在原始数组中的索引
+        let selected_index = keys
+            .iter()
+            .position(|key| key.id == selected_key.id)
+            .unwrap();
+
+        let reason = format!(
+            "Round robin selection: counter={}, active_keys={}, selected_key_id={}",
+            counter,
+            active_keys.len(),
+            selected_key.id
+        );
+
+        tracing::debug!(
+            request_id = %context.request_id,
+            selected_key_id = selected_key.id,
+            reason = %reason,
+            "Selected API key using round robin strategy"
+        );
+
+        Ok(ApiKeySelectionResult::new(
             selected_index,
-            format!("Round robin selection (counter: {})", counter),
+            selected_key.clone(),
+            reason,
             SchedulingStrategy::RoundRobin,
         ))
     }
 
     fn name(&self) -> &'static str {
-        "RoundRobin"
+        "RoundRobinApiKeySelector"
     }
 
-    fn reset(&self) {
+    async fn reset(&self) {
         self.counter.store(0, Ordering::SeqCst);
     }
 }
 
-/// 权重调度器
-pub struct WeightedScheduler {
-    /// 当前权重值
-    current_weights: std::sync::Mutex<Vec<i32>>,
-}
+/// 基于健康度的API密钥选择器
+pub struct HealthBasedApiKeySelector;
 
-impl WeightedScheduler {
+impl HealthBasedApiKeySelector {
     pub fn new() -> Self {
-        Self {
-            current_weights: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-
-    /// 初始化权重
-    fn initialize_weights(&self, server_count: usize, servers: &[UpstreamServer]) {
-        let mut weights = self.current_weights.lock().unwrap();
-        if weights.len() != server_count {
-            weights.clear();
-            weights.extend(servers.iter().map(|_s| 0));
-        }
+        Self
     }
 }
 
-impl Default for WeightedScheduler {
+impl Default for HealthBasedApiKeySelector {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SchedulingAlgorithm for WeightedScheduler {
-    fn select_server(
+#[async_trait::async_trait]
+impl ApiKeySelector for HealthBasedApiKeySelector {
+    async fn select_key(
         &self,
-        servers: &[UpstreamServer],
-        metrics: &[ServerMetrics],
-    ) -> Result<SchedulingResult> {
-        if servers.is_empty() {
+        keys: &[user_provider_keys::Model],
+        context: &SelectionContext,
+    ) -> Result<ApiKeySelectionResult> {
+        if keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
-                "No servers available".to_string(),
+                "No API keys available for selection".to_string(),
             ));
         }
 
-        // 过滤健康的服务器及其权重
-        let healthy_servers: Vec<(usize, u32)> = servers
+        // 过滤活跃的密钥，优先选择最近创建的（假设更健康）
+        let mut active_keys: Vec<(usize, &user_provider_keys::Model)> = keys
             .iter()
             .enumerate()
-            .filter(|(i, _)| metrics[*i].is_healthy)
-            .map(|(i, s)| (i, s.weight))
+            .filter(|(_, key)| key.is_active)
             .collect();
 
-        if healthy_servers.is_empty() {
+        if active_keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
-                "No healthy servers available".to_string(),
+                "No active API keys available for selection".to_string(),
             ));
         }
 
-        // 初始化权重
-        self.initialize_weights(servers.len(), servers);
+        // 按创建时间排序，最新的排在前面（简单的健康度判断）
+        active_keys.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
 
-        let mut current_weights = self.current_weights.lock().unwrap();
+        let (selected_index, selected_key) = active_keys[0];
+        
+        let reason = format!(
+            "Health-based selection: newest key created at {}, key_id={}",
+            selected_key.created_at,
+            selected_key.id
+        );
 
-        // 计算总权重
-        let total_weight: u32 = healthy_servers.iter().map(|(_, w)| *w).sum();
+        tracing::debug!(
+            request_id = %context.request_id,
+            selected_key_id = selected_key.id,
+            reason = %reason,
+            "Selected API key using health-based strategy"
+        );
 
-        if total_weight == 0 {
-            // 如果所有权重都是0，退化为轮询
-            let selected_index = healthy_servers[0].0;
-            return Ok(SchedulingResult::new(
-                selected_index,
-                "All weights are zero, fallback to first server".to_string(),
-                SchedulingStrategy::Weighted,
-            ));
-        }
-
-        // 平滑加权轮询算法（Nginx的算法）
-        let mut selected_index = 0;
-        let mut max_current_weight = i32::MIN;
-
-        // 为所有健康服务器增加权重
-        for &(index, weight) in &healthy_servers {
-            current_weights[index] += weight as i32;
-
-            // 找到当前权重最大的服务器
-            if current_weights[index] > max_current_weight {
-                max_current_weight = current_weights[index];
-                selected_index = index;
-            }
-        }
-
-        // 减少选中服务器的权重
-        current_weights[selected_index] -= total_weight as i32;
-
-        Ok(SchedulingResult::new(
+        Ok(ApiKeySelectionResult::new(
             selected_index,
-            format!(
-                "Weighted selection (weight: {}, current: {})",
-                servers[selected_index].weight, max_current_weight
-            ),
-            SchedulingStrategy::Weighted,
+            selected_key.clone(),
+            reason,
+            SchedulingStrategy::HealthBased,
         ))
     }
 
     fn name(&self) -> &'static str {
-        "Weighted"
+        "HealthBasedApiKeySelector"
     }
 
-    fn reset(&self) {
-        let mut weights = self.current_weights.lock().unwrap();
-        weights.clear();
-    }
-}
-
-/// 健康度最佳调度器
-pub struct HealthBasedScheduler;
-
-impl HealthBasedScheduler {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// 计算服务器的综合分数
-    fn calculate_score(&self, server: &UpstreamServer, metrics: &ServerMetrics) -> f32 {
-        if !metrics.is_healthy {
-            return 0.0;
-        }
-
-        let mut score = metrics.health_score();
-
-        // 权重加成（权重越高，分数加成越多）
-        let weight_bonus = (server.weight as f32 / 100.0) * 10.0; // 标准权重100得到10分加成
-        score += weight_bonus;
-
-        // 连接负载惩罚
-        let connection_ratio = metrics.active_connections as f32 / metrics.max_connections as f32;
-        let load_penalty = connection_ratio * 20.0; // 满负载减20分
-        score -= load_penalty;
-
-        score.max(0.0)
+    async fn reset(&self) {
+        // 无状态，无需重置
     }
 }
 
-impl Default for HealthBasedScheduler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SchedulingAlgorithm for HealthBasedScheduler {
-    fn select_server(
-        &self,
-        servers: &[UpstreamServer],
-        metrics: &[ServerMetrics],
-    ) -> Result<SchedulingResult> {
-        if servers.is_empty() {
-            return Err(ProxyError::upstream_not_available(
-                "No servers available".to_string(),
-            ));
-        }
-
-        // 计算所有健康服务器的分数
-        let scored_servers: Vec<(usize, f32)> = servers
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| metrics[*i].is_healthy)
-            .map(|(i, server)| (i, self.calculate_score(server, &metrics[i])))
-            .collect();
-
-        if scored_servers.is_empty() {
-            return Err(ProxyError::upstream_not_available(
-                "No healthy servers available".to_string(),
-            ));
-        }
-
-        // 选择分数最高的服务器
-        let (selected_index, best_score) = scored_servers
-            .iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .copied()
-            .unwrap();
-
-        Ok(SchedulingResult::new(
-            selected_index,
-            format!("Health-based selection (score: {:.2})", best_score),
-            SchedulingStrategy::HealthBased,
-        )
-        .with_health_score(best_score))
-    }
-
-    fn name(&self) -> &'static str {
-        "HealthBased"
-    }
-
-    fn reset(&self) {
-        // 无状态算法，无需重置
-    }
-}
-
-/// 创建调度算法实例
-pub fn create_scheduler(strategy: SchedulingStrategy) -> Box<dyn SchedulingAlgorithm> {
+/// 创建API密钥选择器
+pub fn create_api_key_selector(strategy: SchedulingStrategy) -> Arc<dyn ApiKeySelector> {
     match strategy {
-        SchedulingStrategy::RoundRobin => Box::new(RoundRobinScheduler::new()),
-        SchedulingStrategy::Weighted => Box::new(WeightedScheduler::new()),
-        SchedulingStrategy::HealthBased => Box::new(HealthBasedScheduler::new()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proxy::upstream::UpstreamServer;
-
-    fn create_test_servers() -> Vec<UpstreamServer> {
-        vec![
-            UpstreamServer {
-                host: "server1.example.com".to_string(),
-                port: 443,
-                use_tls: true,
-                weight: 100,
-                max_connections: Some(1000),
-                timeout_ms: 30000,
-                health_check_interval: 30000,
-                is_healthy: true,
-            },
-            UpstreamServer {
-                host: "server2.example.com".to_string(),
-                port: 443,
-                use_tls: true,
-                weight: 200,
-                max_connections: Some(1000),
-                timeout_ms: 30000,
-                health_check_interval: 30000,
-                is_healthy: true,
-            },
-            UpstreamServer {
-                host: "server3.example.com".to_string(),
-                port: 443,
-                use_tls: true,
-                weight: 50,
-                max_connections: Some(1000),
-                timeout_ms: 30000,
-                health_check_interval: 30000,
-                is_healthy: true,
-            },
-        ]
-    }
-
-    fn create_test_metrics() -> Vec<ServerMetrics> {
-        vec![
-            ServerMetrics {
-                is_healthy: true,
-                avg_response_time: 100.0,
-                active_connections: 100,
-                max_connections: 1000,
-                ..ServerMetrics::default()
-            },
-            ServerMetrics {
-                is_healthy: true,
-                avg_response_time: 150.0,
-                active_connections: 200,
-                max_connections: 1000,
-                ..ServerMetrics::default()
-            },
-            ServerMetrics {
-                is_healthy: false, // 不健康的服务器
-                avg_response_time: 50.0,
-                active_connections: 50,
-                max_connections: 1000,
-                ..ServerMetrics::default()
-            },
-        ]
-    }
-
-    #[test]
-    fn test_round_robin_scheduler() {
-        let scheduler = RoundRobinScheduler::new();
-        let servers = create_test_servers();
-        let metrics = create_test_metrics();
-
-        // 测试多次选择，应该轮询健康的服务器
-        let result1 = scheduler.select_server(&servers, &metrics).unwrap();
-        let result2 = scheduler.select_server(&servers, &metrics).unwrap();
-
-        assert!(result1.server_index < servers.len());
-        assert!(result2.server_index < servers.len());
-
-        // 确保不会选择不健康的服务器（索引2）
-        assert_ne!(result1.server_index, 2);
-        assert_ne!(result2.server_index, 2);
-    }
-
-    #[test]
-    fn test_weighted_scheduler() {
-        let scheduler = WeightedScheduler::new();
-        let servers = create_test_servers();
-        let metrics = create_test_metrics();
-
-        // 测试多次选择
-        let mut selections = std::collections::HashMap::new();
-        for _ in 0..100 {
-            let result = scheduler.select_server(&servers, &metrics).unwrap();
-            *selections.entry(result.server_index).or_insert(0) += 1;
+        SchedulingStrategy::RoundRobin => Arc::new(RoundRobinApiKeySelector::new()),
+        SchedulingStrategy::HealthBased => Arc::new(HealthBasedApiKeySelector::new()),
+        SchedulingStrategy::Weighted => {
+            // 权重选择暂时回退到轮询，可以以后实现
+            Arc::new(RoundRobinApiKeySelector::new())
         }
-
-        // 确保不会选择不健康的服务器
-        assert!(!selections.contains_key(&2));
-
-        // 权重高的服务器应该被选择更多次（但由于算法复杂性，不做严格检查）
-        assert!(selections.len() <= 2); // 最多选择2个健康服务器
-    }
-
-    #[test]
-    fn test_health_based_scheduler() {
-        let scheduler = HealthBasedScheduler::new();
-        let servers = create_test_servers();
-        let mut metrics = create_test_metrics();
-
-        // 让第一个服务器表现更好
-        metrics[0].avg_response_time = 50.0;
-        metrics[1].avg_response_time = 200.0;
-
-        let result = scheduler.select_server(&servers, &metrics).unwrap();
-
-        // 应该选择健康且表现好的服务器
-        assert_ne!(result.server_index, 2); // 不会选择不健康的
-        assert!(result.health_score.is_some());
-        assert!(result.health_score.unwrap() > 0.0);
-    }
-
-    #[test]
-    fn test_no_healthy_servers() {
-        let scheduler = RoundRobinScheduler::new();
-        let servers = create_test_servers();
-        let mut metrics = create_test_metrics();
-
-        // 让所有服务器都不健康
-        for metric in &mut metrics {
-            metric.is_healthy = false;
-        }
-
-        let result = scheduler.select_server(&servers, &metrics);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_empty_servers() {
-        let scheduler = RoundRobinScheduler::new();
-        let servers = vec![];
-        let metrics = vec![];
-
-        let result = scheduler.select_server(&servers, &metrics);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_scheduler_creation() {
-        let rr_scheduler = create_scheduler(SchedulingStrategy::RoundRobin);
-        assert_eq!(rr_scheduler.name(), "RoundRobin");
-
-        let weighted_scheduler = create_scheduler(SchedulingStrategy::Weighted);
-        assert_eq!(weighted_scheduler.name(), "Weighted");
-
-        let health_scheduler = create_scheduler(SchedulingStrategy::HealthBased);
-        assert_eq!(health_scheduler.name(), "HealthBased");
     }
 }

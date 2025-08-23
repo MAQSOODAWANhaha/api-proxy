@@ -13,8 +13,6 @@ pub fn create_routes(state: AppState) -> Router {
         .nest("/health", health_routes())
         // 系统信息路由
         .nest("/system", system_routes())
-        // 负载均衡管理路由
-        .nest("/loadbalancer", loadbalancer_routes())
         // 统计查询路由
         .nest("/statistics", statistics_routes())
         .nest("/user-service", user_service_routes())
@@ -56,27 +54,6 @@ fn system_routes() -> Router<AppState> {
         )
 }
 
-/// 负载均衡管理路由
-fn loadbalancer_routes() -> Router<AppState> {
-    use axum::routing::patch;
-    Router::new()
-        .route(
-            "/servers",
-            post(crate::management::handlers::loadbalancer::add_server),
-        )
-        .route(
-            "/servers/action",
-            post(crate::management::handlers::loadbalancer::server_action),
-        )
-        .route(
-            "/strategy",
-            patch(crate::management::handlers::loadbalancer::change_strategy),
-        )
-        .route(
-            "/metrics",
-            get(crate::management::handlers::loadbalancer::get_lb_metrics),
-        )
-}
 
 /// 统计查询路由
 fn statistics_routes() -> Router<AppState> {

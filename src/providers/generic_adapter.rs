@@ -8,7 +8,7 @@ use super::types::{
     AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
     ChatMessage, MessageRole, ProviderError, ProviderResult, StreamChunk, TraceStats, Usage,
 };
-use crate::proxy::upstream::ProviderId;
+use crate::proxy::types::ProviderId;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{debug, warn};

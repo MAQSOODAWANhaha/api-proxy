@@ -2,7 +2,7 @@
 //!
 //! 收集和分析代理请求的详细统计信息
 
-use super::forwarding::{ForwardingContext, ForwardingResult};
+use super::types::{ForwardingContext, ForwardingResult};
 use crate::error::{ProxyError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -277,7 +277,7 @@ impl StatisticsCollector {
         stats.update_response_time(result.response_time);
 
         // 更新上游统计
-        let upstream_key = format!("{:?}", context.upstream_type);
+        let upstream_key = format!("{:?}", context.provider_id);
         let upstream_stats = stats
             .by_upstream
             .entry(upstream_key)
@@ -285,9 +285,7 @@ impl StatisticsCollector {
         upstream_stats.update(result, window_duration);
 
         // 更新状态码统计
-        if let Some(status_code) = result.status_code {
-            *stats.by_status_code.entry(status_code).or_insert(0) += 1;
-        }
+        *stats.by_status_code.entry(result.status_code).or_insert(0) += 1;
 
         // 更新错误统计
         if !result.success {
@@ -600,7 +598,7 @@ impl DailyStats {
         self.avg_response_time = total_time / self.total_requests as u32;
 
         // 更新上游统计
-        let upstream_key = format!("{:?}", context.upstream_type);
+        let upstream_key = format!("{:?}", context.provider_id);
         let upstream_stats = self
             .by_upstream
             .entry(upstream_key)
@@ -747,7 +745,6 @@ fn parse_hour(hour_str: &str) -> Result<SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::upstream::ProviderId;
 
     #[tokio::test]
     async fn test_statistics_collector_creation() {

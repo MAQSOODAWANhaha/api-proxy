@@ -3,7 +3,7 @@
 //! 负责解析提供商名称到ProviderId的映射，替换所有硬编码逻辑
 
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::ProviderId;
+use crate::proxy::types::ProviderId;
 use entity::provider_types::{self, Entity as ProviderTypes};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;

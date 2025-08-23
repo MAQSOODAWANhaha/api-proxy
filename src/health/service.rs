@@ -5,7 +5,7 @@ use super::types::{
     HealthCheckConfig, HealthCheckResult, HealthCheckTask, ServerHealthStatus, TaskStatus,
 };
 use crate::error::{ProxyError, Result};
-use crate::proxy::upstream::ProviderId;
+use crate::proxy::types::ProviderId;
 use serde::Serialize;
 use serde_with::{DurationMilliSeconds, serde_as};
 use std::collections::HashMap;

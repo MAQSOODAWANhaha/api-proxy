@@ -1,6 +1,6 @@
 //! # 健康检查类型定义
 
-use crate::proxy::upstream::ProviderId;
+use crate::proxy::types::ProviderId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime};

@@ -1,6 +1,6 @@
-//! # Pingora AI 代理服务
+//! # 简化的 Pingora AI 代理服务
 //!
-//! 基于设计文档实现的透明AI代理服务，专注身份验证、速率限制和转发策略
+//! 使用新的简化组件实现透明AI代理服务
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -18,18 +18,16 @@ use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
 use crate::trace::{UnifiedTraceSystem, immediate::ImmediateProxyTracer};
 use sea_orm::DatabaseConnection;
 
-/// AI 代理服务 - 透明代理设计
+/// 简化的AI代理服务 - 保持完整业务逻辑
 pub struct ProxyService {
-    /// 配置
-    config: Arc<AppConfig>,
-    /// AI代理处理器
+    /// AI代理处理器 - 保持原有完整功能
     ai_handler: Arc<AIProxyHandler>,
     /// 即时写入追踪器
     tracer: Option<Arc<ImmediateProxyTracer>>,
 }
 
 impl ProxyService {
-    /// 创建新的代理服务实例
+    /// 创建新的代理服务实例 - 保持原有完整功能
     pub fn new(
         config: Arc<AppConfig>,
         db: Arc<DatabaseConnection>,
@@ -37,21 +35,14 @@ impl ProxyService {
         provider_config_manager: Arc<ProviderConfigManager>,
         trace_system: Option<Arc<UnifiedTraceSystem>>,
     ) -> pingora_core::Result<Self> {
-        // 创建调度器注册表
-        let schedulers = Arc::new(crate::proxy::ai_handler::SchedulerRegistry::new(
-            db.clone(),
-            cache.clone(),
-        ));
-
         // 获取即时写入追踪器
         let tracer = trace_system.as_ref().and_then(|ts| ts.immediate_tracer());
 
-        // 创建AI代理处理器
+        // 创建AI代理处理器 - 保持原有完整功能
         let ai_handler = Arc::new(AIProxyHandler::new(
             db,
             cache,
             config.clone(),
-            schedulers,
             tracer.clone(),
             provider_config_manager,
         ));
@@ -60,7 +51,6 @@ impl ProxyService {
         let tracer = trace_system.and_then(|ts| ts.immediate_tracer());
 
         Ok(Self {
-            config,
             ai_handler,
             tracer,
         })
