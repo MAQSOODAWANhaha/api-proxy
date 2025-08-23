@@ -2,14 +2,13 @@
 //!
 //! 企业级 AI 服务代理平台 - 基于 Pingora 的高性能代理服务
 
-use api_proxy::{config::ConfigManager, dual_port_setup};
+use api_proxy::{config::ConfigManager, dual_port_setup, error::ErrorContext};
 use clap::{Arg, ArgMatches, Command};
 use std::env;
-use std::process;
-use std::result::Result as StdResult;
-use tracing::{error, info};
+use tracing::info;
 
-fn main() -> StdResult<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let matches = build_cli().get_matches();
 
     // 初始化日志系统
@@ -20,14 +19,16 @@ fn main() -> StdResult<(), Box<dyn std::error::Error>> {
 
     // 处理配置检查命令
     if matches.get_flag("check") {
-        return run_config_check(&matches);
+        return run_config_check(&matches).await.map_err(anyhow::Error::from);
     }
 
+    // 执行数据初始化（如果需要）
+    run_data_initialization(&matches).await
+        .map_err(anyhow::Error::from)?;
+
     // 启动双端口分离架构服务器
-    if let Err(e) = dual_port_setup::run_dual_port_servers(&matches) {
-        error!("Failed to start servers: {}", e);
-        process::exit(1);
-    }
+    dual_port_setup::run_dual_port_servers(&matches).await
+        .map_err(anyhow::Error::from)?;
 
     Ok(())
 }
@@ -105,6 +106,14 @@ fn build_cli() -> Command {
             .help("Set tracing sampling rate (0.0-1.0)")
             .value_name("RATE")
             .value_parser(clap::value_parser!(f64)))
+        .arg(Arg::new("init_data")
+            .long("init-data")
+            .help("Force initialize model pricing data from JSON file")
+            .action(clap::ArgAction::SetTrue))
+        .arg(Arg::new("skip_data_check")
+            .long("skip-data-check")
+            .help("Skip data integrity check on startup")
+            .action(clap::ArgAction::SetTrue))
 }
 
 /// 带日志级别的初始化函数
@@ -124,47 +133,80 @@ fn init_logging_with_level(log_level: Option<&String>) {
 }
 
 /// 配置检查函数
-fn run_config_check(matches: &ArgMatches) -> StdResult<(), Box<dyn std::error::Error>> {
+async fn run_config_check(matches: &ArgMatches) -> api_proxy::Result<()> {
     info!("Checking configuration...");
 
     let config_path = matches.get_one::<String>("config").unwrap();
     info!("Using configuration file: {}", config_path);
 
-    // 创建Tokio运行时进行异步操作
-    let rt = tokio::runtime::Runtime::new().map_err(|e| {
-        api_proxy::error::ProxyError::server_init(format!("Failed to create Tokio runtime: {e}"))
-    })?;
-
-    rt.block_on(async {
-        // 验证配置文件
-        let config_manager = ConfigManager::new().await?;
-        let config = config_manager.get_config().await;
-        info!("✓ Configuration file is valid");
-        info!(
-            "  Server: {}:{}",
-            config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            config.server.as_ref().map_or(8080, |s| s.port)
-        );
-        if let Some(server) = &config.server {
-            if server.https_port > 0 {
-                info!("  HTTPS: {}:{}", server.host, server.https_port);
-            }
+    // 验证配置文件
+    let config_manager = ConfigManager::new().await
+        .with_config_context(|| "Failed to initialize configuration manager".to_string())?;
+    let config = config_manager.get_config().await;
+    info!("✓ Configuration file is valid");
+    info!(
+        "  Server: {}:{}",
+        config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
+        config.server.as_ref().map_or(8080, |s| s.port)
+    );
+    if let Some(server) = &config.server {
+        if server.https_port > 0 {
+            info!("  HTTPS: {}:{}", server.host, server.https_port);
         }
-        info!("  Database: {}", config.database.url);
-        info!("  Redis: {}", config.redis.url);
-        info!(
-            "  Workers: {}",
-            config.server.as_ref().map_or(1, |s| s.workers)
-        );
+    }
+    info!("  Database: {}", config.database.url);
+    info!("  Redis: {}", config.redis.url);
+    info!(
+        "  Workers: {}",
+        config.server.as_ref().map_or(1, |s| s.workers)
+    );
 
-        // 测试数据库连接
-        info!("Testing database connection...");
-        let _db = api_proxy::database::init_database(&config.database.url).await?;
-        info!("✓ Database connection successful");
+    // 测试数据库连接
+    info!("Testing database connection...");
+    let _db = api_proxy::database::init_database(&config.database.url).await
+        .with_database_context(|| "Database connection test failed".to_string())?;
+    info!("✓ Database connection successful");
 
-        info!("✓ All configuration checks passed");
-        Ok::<_, api_proxy::error::ProxyError>(())
-    })?;
+    info!("✓ All configuration checks passed");
 
+    Ok(())
+}
+
+/// 数据初始化函数
+async fn run_data_initialization(matches: &ArgMatches) -> api_proxy::Result<()> {
+    let skip_data_check = matches.get_flag("skip_data_check");
+    let force_init = matches.get_flag("init_data");
+    
+    if skip_data_check && !force_init {
+        info!("跳过数据完整性检查 (--skip-data-check)");
+        return Ok(());
+    }
+    
+    info!("🚀 开始数据初始化过程...");
+    
+    // 获取配置并初始化数据库连接
+    let config_manager = ConfigManager::new().await
+        .with_config_context(|| "配置管理器初始化失败".to_string())?;
+    let config = config_manager.get_config().await;
+    
+    let db = api_proxy::database::init_database(&config.database.url).await
+        .with_database_context(|| "数据库连接失败".to_string())?;
+    
+    // 首先运行数据库迁移，确保表结构存在
+    info!("📋 执行数据库迁移...");
+    api_proxy::database::run_migrations(&db).await
+        .with_database_context(|| "数据库迁移失败".to_string())?;
+    
+    if force_init {
+        info!("🔄 强制重新初始化模型定价数据 (--init-data)");
+        api_proxy::database::force_initialize_model_pricing_data(&db).await
+            .with_database_context(|| "强制数据初始化失败".to_string())?;
+    } else {
+        info!("🔍 检查数据完整性并按需初始化...");
+        api_proxy::database::ensure_model_pricing_data(&db).await
+            .with_database_context(|| "数据完整性检查失败".to_string())?;
+    }
+    
+    info!("✅ 数据初始化过程完成");
     Ok(())
 }

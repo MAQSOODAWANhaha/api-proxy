@@ -6,6 +6,8 @@ mod m20240101_000005_create_user_provider_keys_table;
 mod m20240101_000006_create_user_service_apis_table;
 mod m20240101_000007_create_api_health_status_table;
 mod m20240101_000008_create_proxy_tracing_table;
+mod m20240101_000009_create_model_pricing_table;
+mod m20240101_000010_create_model_pricing_tiers_table;
 
 pub struct Migrator;
 
@@ -19,6 +21,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240101_000006_create_user_service_apis_table::Migration),
             Box::new(m20240101_000007_create_api_health_status_table::Migration),
             Box::new(m20240101_000008_create_proxy_tracing_table::Migration),
+            Box::new(m20240101_000009_create_model_pricing_table::Migration),
+            Box::new(m20240101_000010_create_model_pricing_tiers_table::Migration),
         ]
     }
 }

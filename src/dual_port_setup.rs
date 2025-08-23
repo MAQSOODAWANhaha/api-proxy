@@ -29,101 +29,95 @@ pub struct SharedServices {
 }
 
 /// 双端口服务器启动函数
-pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
+pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
     info!("🚀 Starting dual-port architecture servers...");
 
-    // 创建Tokio运行时
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| ProxyError::server_init(format!("Failed to create Tokio runtime: {}", e)))?;
+    // 初始化共享资源
+    let (config, db, shared_services, trace_system) =
+        initialize_shared_services(matches).await?;
 
-    rt.block_on(async {
-        // 初始化共享资源
-        let (config, db, shared_services, trace_system) =
-            initialize_shared_services(matches).await?;
-
-        // 创建管理服务器配置 - 使用dual_port配置或默认值
-        let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
-            (
-                dual_port.management.http.host.clone(),
-                dual_port.management.http.port,
-            )
-        } else {
-            ("127.0.0.1".to_string(), 9090)
-        };
-
-        let management_config = ManagementConfig {
-            bind_address: management_host.clone(),
-            port: management_port,
-            enable_cors: true,
-            cors_origins: vec!["*".to_string()],
-            allowed_ips: vec!["0.0.0.0/0".to_string()], // 默认允许所有IP
-            denied_ips: vec![],
-            api_prefix: "/api".to_string(),
-            max_request_size: 16 * 1024 * 1024, // 16MB
-            request_timeout: 30,
-        };
-
-        info!(
-            "📊 Management server will listen on {}:{}",
-            management_config.bind_address, management_config.port
-        );
-        info!(
-            "🔗 Proxy server will listen on {}:{}",
-            config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            config.server.as_ref().map_or(8080, |s| s.port)
-        );
-
-        // 创建管理服务器
-        let management_server = ManagementServer::new(
-            management_config,
-            config.clone(),
-            db.clone(),
-            shared_services.auth_service.clone(),
-            shared_services.health_service.clone(),
-            shared_services.adapter_manager.clone(),
-            shared_services.load_balancer_manager.clone(),
-            shared_services.statistics_service.clone(),
-            shared_services.provider_resolver.clone(),
+    // 创建管理服务器配置 - 使用dual_port配置或默认值
+    let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
+        (
+            dual_port.management.http.host.clone(),
+            dual_port.management.http.port,
         )
-        .map_err(|e| {
-            ProxyError::server_init(format!("Failed to create management server: {}", e))
-        })?;
+    } else {
+        ("127.0.0.1".to_string(), 9090)
+    };
 
-        // 创建代理服务器，传递数据库连接和追踪系统
-        let proxy_server =
-            PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
+    let management_config = ManagementConfig {
+        bind_address: management_host.clone(),
+        port: management_port,
+        enable_cors: true,
+        cors_origins: vec!["*".to_string()],
+        allowed_ips: vec!["0.0.0.0/0".to_string()], // 默认允许所有IP
+        denied_ips: vec![],
+        api_prefix: "/api".to_string(),
+        max_request_size: 16 * 1024 * 1024, // 16MB
+        request_timeout: 30,
+    };
 
-        info!("🎯 Starting both servers concurrently...");
+    info!(
+        "📊 Management server will listen on {}:{}",
+        management_config.bind_address, management_config.port
+    );
+    info!(
+        "🔗 Proxy server will listen on {}:{}",
+        config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
+        config.server.as_ref().map_or(8080, |s| s.port)
+    );
 
-        // 并发启动两个服务器
-        tokio::select! {
-            // 启动 Axum 管理服务器
-            result = management_server.serve() => {
-                error!("Management server exited unexpectedly: {:?}", result);
-                                        Err(ProxyError::server_start("Management server failed"))
-            }
-            // 启动 Pingora 代理服务器
-            result = tokio::task::spawn(async move {
-                proxy_server.start().await
-            }) => {
-                match result {
-                    Ok(proxy_result) => {
-                        if let Err(e) = proxy_result {
-                            error!("Proxy server failed: {:?}", e);
-                            Err(e)
-                        } else {
-                            error!("Proxy server exited unexpectedly");
-                            Err(ProxyError::server_start("Proxy server failed"))
-                        }
+    // 创建管理服务器
+    let management_server = ManagementServer::new(
+        management_config,
+        config.clone(),
+        db.clone(),
+        shared_services.auth_service.clone(),
+        shared_services.health_service.clone(),
+        shared_services.adapter_manager.clone(),
+        shared_services.load_balancer_manager.clone(),
+        shared_services.statistics_service.clone(),
+        shared_services.provider_resolver.clone(),
+    )
+    .map_err(|e| {
+        ProxyError::server_init(format!("Failed to create management server: {}", e))
+    })?;
+
+    // 创建代理服务器，传递数据库连接和追踪系统
+    let proxy_server =
+        PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
+
+    info!("🎯 Starting both servers concurrently...");
+
+    // 并发启动两个服务器
+    tokio::select! {
+        // 启动 Axum 管理服务器
+        result = management_server.serve() => {
+            error!("Management server exited unexpectedly: {:?}", result);
+            Err(ProxyError::server_start("Management server failed"))
+        }
+        // 启动 Pingora 代理服务器
+        result = tokio::task::spawn(async move {
+            proxy_server.start().await
+        }) => {
+            match result {
+                Ok(proxy_result) => {
+                    if let Err(e) = proxy_result {
+                        error!("Proxy server failed: {:?}", e);
+                        Err(e)
+                    } else {
+                        error!("Proxy server exited unexpectedly");
+                        Err(ProxyError::server_start("Proxy server failed"))
                     }
-                    Err(e) => {
-                        error!("Failed to spawn proxy server task: {:?}", e);
-                        Err(ProxyError::server_start("Failed to spawn proxy server"))
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to spawn proxy server task: {:?}", e);
+                    Err(ProxyError::server_start("Failed to spawn proxy server"))
                 }
             }
         }
-    })
+    }
 }
 
 /// 初始化共享服务资源
