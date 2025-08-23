@@ -96,6 +96,32 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // 插入默认管理员用户
+        // 密码: admin (bcrypt hash)
+        manager
+            .exec_stmt(
+                Query::insert()
+                    .into_table(Users::Table)
+                    .columns([
+                        Users::Username,
+                        Users::Email,
+                        Users::PasswordHash,
+                        Users::Salt,
+                        Users::IsActive,
+                        Users::IsAdmin,
+                    ])
+                    .values_panic([
+                        "admin".into(),
+                        "admin@api-proxy.local".into(),
+                        "$2b$12$LMURIch2lHkm1y1uhuh1HOJ/RDlGjddn6NCiAOCuvsjjmHMXiGTn2".into(),
+                        "default_salt_32_chars_long_12345".into(),
+                        true.into(),
+                        true.into(),
+                    ])
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 

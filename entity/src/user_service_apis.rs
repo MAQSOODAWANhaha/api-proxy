@@ -53,8 +53,6 @@ pub enum Relation {
     ProviderType,
     #[sea_orm(has_many = "super::proxy_tracing::Entity")]
     ProxyTracing,
-    #[sea_orm(has_many = "super::daily_statistics::Entity")]
-    DailyStatistics,
 }
 
 impl Related<super::users::Entity> for Entity {
@@ -75,10 +73,5 @@ impl Related<super::proxy_tracing::Entity> for Entity {
     }
 }
 
-impl Related<super::daily_statistics::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::DailyStatistics.def()
-    }
-}
 
 impl ActiveModelBehavior for ActiveModel {}

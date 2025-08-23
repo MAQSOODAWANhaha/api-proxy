@@ -36,8 +36,6 @@ pub enum Relation {
     UserProviderKeys,
     #[sea_orm(has_many = "super::user_service_apis::Entity")]
     UserServiceApis,
-    #[sea_orm(has_many = "super::daily_statistics::Entity")]
-    DailyStatistics,
 }
 
 impl Related<super::user_provider_keys::Entity> for Entity {
@@ -52,11 +50,6 @@ impl Related<super::user_service_apis::Entity> for Entity {
     }
 }
 
-impl Related<super::daily_statistics::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::DailyStatistics.def()
-    }
-}
 
 impl ActiveModelBehavior for ActiveModel {}
 
