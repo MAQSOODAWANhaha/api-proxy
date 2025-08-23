@@ -1,6 +1,6 @@
 {
   "rust-analyzer.cargo.buildScripts.enable": true,
-  "rust-analyzer.cargo.extraArgs": ["--workspace", "--all-targets", "--locked"],
+  "rust-analyzer.cargo.extraArgs": ["--locked"],
   "rust-analyzer.procMacro.enable": true,
   "rust-analyzer.linkedProjects": [
     "${workspaceFolder}/Cargo.toml",
