@@ -9,8 +9,8 @@ services:
     container_name: api-proxy-service
     restart: unless-stopped
     ports:
-      - "9090:9090" # 统一服务端口（API + 静态文件）
-      - "8080:8080" # 重定向端口（可选）
+      - "127.0.0.1:9090:9090" # 统一服务端口（API + 静态文件）
+      - "127.0.0.1:8080:8080" # 重定向端口（可选）
     volumes:
       # 数据持久化
       - proxy_data:/app/data
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80" # HTTP
-      - "9443:443" # HTTPS (避免与k8s Traefik冲突)
+      - "443:443" # HTTPS (避免与k8s Traefik冲突)
       - "8443:8443" # HTTPS (8443端口)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
