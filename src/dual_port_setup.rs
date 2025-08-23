@@ -4,7 +4,6 @@ use crate::{
     auth::{UnifiedAuthManager, create_unified_auth_manager, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
-    health::service::HealthCheckService,
     management::server::{ManagementConfig, ManagementServer},
     providers::DynamicAdapterManager,
     proxy::PingoraProxyServer,
@@ -13,13 +12,12 @@ use crate::{
 use clap::ArgMatches;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// 共享服务结构体
 pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
     pub unified_auth_manager: Arc<UnifiedAuthManager>,
-    pub health_service: Arc<HealthCheckService>,
     pub adapter_manager: Arc<DynamicAdapterManager>,
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
@@ -72,7 +70,6 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
         config.clone(),
         db.clone(),
         shared_services.auth_service.clone(),
-        shared_services.health_service.clone(),
         shared_services.adapter_manager.clone(),
         shared_services.statistics_service.clone(),
         shared_services.provider_resolver.clone(),
@@ -220,45 +217,8 @@ pub async fn initialize_shared_services(
         unified_cache_manager.clone(),
     ));
 
-    let health_service = Arc::new(HealthCheckService::new(None));
-
-    // 使用动态配置添加服务器到健康检查服务
-    info!("🏥 Adding dynamic provider servers to health check service...");
-    let providers = provider_config_manager
-        .get_active_providers()
-        .await
-        .map_err(|e| {
-            error!(
-                "❌ Failed to load provider configurations for health check: {}",
-                e
-            );
-            ProxyError::server_init("Failed to load provider configurations")
-        })?;
-
-    for provider in providers {
-        // 使用数据库中的提供商ID而不是硬编码映射
-        let provider_id = crate::proxy::types::ProviderId::from_database_id(provider.id);
-
-        if let Err(e) = health_service
-            .add_server(provider.upstream_address.clone(), provider_id, None)
-            .await
-        {
-            warn!(
-                "Failed to add {} server ({}) to health check: {}",
-                provider.display_name, provider.upstream_address, e
-            );
-        } else {
-            info!(
-                "✅ Added {} server ({}) to health check",
-                provider.display_name, provider.upstream_address
-            );
-        }
-    }
-
-    // 启动健康检查服务
-    if let Err(e) = health_service.start().await {
-        warn!("Failed to start health check service: {}", e);
-    }
+    // Note: 旧的服务器健康检查已移除，现在使用API密钥健康检查系统
+    // 参见: src/scheduler/api_key_health.rs
 
     let adapter_manager = Arc::new(DynamicAdapterManager::new(
         db.clone(),
@@ -304,7 +264,6 @@ pub async fn initialize_shared_services(
     let shared_services = SharedServices {
         auth_service,
         unified_auth_manager,
-        health_service,
         adapter_manager,
         statistics_service,
         provider_config_manager,

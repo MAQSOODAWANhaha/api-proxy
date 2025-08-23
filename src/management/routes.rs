@@ -36,8 +36,20 @@ fn health_routes() -> Router<AppState> {
             get(crate::management::server::detailed_health_check),
         )
         .route(
-            "/servers",
-            get(crate::management::handlers::health::get_health_servers),
+            "/api-keys",
+            get(crate::management::handlers::health::get_api_keys_health),
+        )
+        .route(
+            "/stats",
+            get(crate::management::handlers::health::get_health_stats),
+        )
+        .route(
+            "/check/{key_id}",
+            post(crate::management::handlers::health::trigger_key_health_check),
+        )
+        .route(
+            "/mark-unhealthy/{key_id}",
+            post(crate::management::handlers::health::mark_key_unhealthy),
         )
 }
 

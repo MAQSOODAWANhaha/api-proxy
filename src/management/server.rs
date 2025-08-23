@@ -5,8 +5,7 @@
 use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;
 use crate::config::AppConfig;
-use crate::health::service::HealthCheckService as HealthService;
-use crate::health::service::HealthCheckStatistics;
+// Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
 use crate::management::response::{self};
 use crate::providers::DynamicAdapterManager;
 use crate::providers::dynamic_manager::AdapterStats;
@@ -18,7 +17,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -78,11 +77,8 @@ pub struct AppState {
     pub database: Arc<DatabaseConnection>,
     /// 认证服务
     pub auth_service: Arc<AuthService>,
-    /// 健康检查服务
-    pub health_service: Arc<HealthService>,
     /// 适配器管理器
     pub adapter_manager: Arc<DynamicAdapterManager>,
-    /// 负载均衡管理器
     /// 统计服务
     pub statistics_service: Arc<StatisticsService>,
     /// 提供商解析服务
@@ -106,7 +102,6 @@ impl ManagementServer {
         app_config: Arc<AppConfig>,
         database: Arc<DatabaseConnection>,
         auth_service: Arc<AuthService>,
-        health_service: Arc<HealthService>,
         adapter_manager: Arc<DynamicAdapterManager>,
         statistics_service: Arc<StatisticsService>,
         provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
@@ -115,7 +110,6 @@ impl ManagementServer {
             config: app_config,
             database,
             auth_service,
-            health_service,
             adapter_manager,
             statistics_service,
             provider_resolver,
@@ -275,49 +269,65 @@ async fn ping_handler() -> &'static str {
     "pong"
 }
 
-/// 健康检查处理器
+/// 简单健康检查处理器（系统存活检查）
 pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
-    match state.health_service.get_overall_health().await {
-        Ok(health_status) => response::success(health_status),
+    // 简单的数据库连接检查
+    match state.database.ping().await {
+        Ok(_) => response::success(serde_json::json!({
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        })),
         Err(e) => {
-            warn!("Health check failed: {}", e);
+            warn!("Database ping failed: {}", e);
             response::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "HEALTH_CHECK_FAILED",
-                "执行健康检查失败",
+                "DATABASE_UNAVAILABLE", 
+                "数据库连接失败",
             )
         }
     }
 }
 
-/// 详细健康检查处理器
+/// 详细健康检查处理器（系统详细状态）
 #[derive(Serialize)]
 struct DetailedHealthStatus {
-    system: HealthCheckStatistics,
+    database: String,
     adapters: HashMap<String, AdapterStats>,
-    load_balancers: String, // TODO: 添加负载均衡器状态
+    system_info: SystemInfo,
+    api_key_health: String,
+}
+
+#[derive(Serialize)]
+struct SystemInfo {
+    uptime: String,
+    timestamp: String,
+    version: String,
 }
 
 pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
-    let health_status = match state.health_service.get_overall_health().await {
-        Ok(status) => status,
+    // 检查数据库连接
+    let database_status = match state.database.ping().await {
+        Ok(_) => "connected".to_string(),
         Err(e) => {
-            warn!("Detailed health check failed: {}", e);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "HEALTH_CHECK_FAILED",
-                "执行详细健康检查失败",
-            );
+            warn!("Database ping failed: {}", e);
+            "disconnected".to_string()
         }
     };
 
-    let adapters_stats = state.adapter_manager.get_adapter_stats().await;
+    // 获取适配器统计信息
+    let adapter_stats = state.adapter_manager.get_adapter_stats().await;
 
-    let response_data = DetailedHealthStatus {
-        system: health_status,
-        adapters: adapters_stats,
-        load_balancers: "TODO: 添加负载均衡器状态".to_string(),
+    let detailed_status = DetailedHealthStatus {
+        database: database_status,
+        adapters: adapter_stats,
+        system_info: SystemInfo {
+            uptime: "unknown".to_string(), // TODO: 实现真实的运行时间
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        api_key_health: "Available via /api/health/api-keys endpoint".to_string(),
     };
 
-    response::success(response_data)
+    response::success(detailed_status)
 }

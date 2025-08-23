@@ -70,7 +70,8 @@ impl RequestHandler {
         provider_config_manager: Arc<ProviderConfigManager>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
     ) -> Self {
-        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone()));
+        let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(db.clone(), None));
+        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
         
         Self {
             db,
