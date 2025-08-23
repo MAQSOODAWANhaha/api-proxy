@@ -3,11 +3,11 @@
 //! 基于数据库配置的通用字段提取器，支持JSONPath查询、数学表达式和条件判断
 
 use anyhow::{Result, anyhow};
+use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tracing::{debug, warn};
-use regex::Regex;
 
 /// Token字段映射类型
 #[derive(Debug, Clone, PartialEq)]
@@ -15,11 +15,18 @@ pub enum TokenMapping {
     /// 直接映射字段路径
     Direct { path: String },
     /// 数学表达式计算
-    Expression { formula: String, fallback: Option<String> },
+    Expression {
+        formula: String,
+        fallback: Option<String>,
+    },
     /// 固定默认值
     Default { value: Value },
     /// 条件判断映射
-    Conditional { condition: String, true_value: String, false_value: Value },
+    Conditional {
+        condition: String,
+        true_value: String,
+        false_value: Value,
+    },
     /// Fallback路径列表
     Fallback { paths: Vec<String> },
 }
@@ -27,57 +34,81 @@ pub enum TokenMapping {
 impl TokenMapping {
     /// 从JSON配置解析Token映射
     pub fn from_json(config: &Value) -> Result<Self> {
-        let mapping_type = config.get("type")
+        let mapping_type = config
+            .get("type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing or invalid 'type' field"))?;
 
         match mapping_type {
             "direct" => {
-                let path = config.get("path")
+                let path = config
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' field for direct mapping"))?;
-                Ok(TokenMapping::Direct { path: path.to_string() })
-            },
+                Ok(TokenMapping::Direct {
+                    path: path.to_string(),
+                })
+            }
             "expression" => {
-                let formula = config.get("formula")
+                let formula = config
+                    .get("formula")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'formula' field for expression mapping"))?;
-                let fallback = config.get("fallback").and_then(|v| v.as_str()).map(|s| s.to_string());
-                Ok(TokenMapping::Expression { 
-                    formula: formula.to_string(), 
-                    fallback 
+                let fallback = config
+                    .get("fallback")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                Ok(TokenMapping::Expression {
+                    formula: formula.to_string(),
+                    fallback,
                 })
-            },
+            }
             "default" => {
-                let value = config.get("value")
+                let value = config
+                    .get("value")
                     .ok_or_else(|| anyhow!("Missing 'value' field for default mapping"))?;
-                Ok(TokenMapping::Default { value: value.clone() })
-            },
+                Ok(TokenMapping::Default {
+                    value: value.clone(),
+                })
+            }
             "conditional" => {
-                let condition = config.get("condition")
+                let condition = config
+                    .get("condition")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'condition' field for conditional mapping"))?;
-                let true_value = config.get("true_value")
+                let true_value = config
+                    .get("true_value")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'true_value' field for conditional mapping"))?;
-                let false_value = config.get("false_value")
-                    .ok_or_else(|| anyhow!("Missing 'false_value' field for conditional mapping"))?;
+                let false_value = config.get("false_value").ok_or_else(|| {
+                    anyhow!("Missing 'false_value' field for conditional mapping")
+                })?;
                 Ok(TokenMapping::Conditional {
                     condition: condition.to_string(),
                     true_value: true_value.to_string(),
                     false_value: false_value.clone(),
                 })
-            },
+            }
             "fallback" => {
-                let paths = config.get("paths")
+                let paths = config
+                    .get("paths")
                     .and_then(|v| v.as_array())
-                    .ok_or_else(|| anyhow!("Missing or invalid 'paths' field for fallback mapping"))?;
-                let path_strings: Result<Vec<String>> = paths.iter()
-                    .map(|v| v.as_str().ok_or_else(|| anyhow!("Invalid path in fallback list")).map(|s| s.to_string()))
+                    .ok_or_else(|| {
+                        anyhow!("Missing or invalid 'paths' field for fallback mapping")
+                    })?;
+                let path_strings: Result<Vec<String>> = paths
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .ok_or_else(|| anyhow!("Invalid path in fallback list"))
+                            .map(|s| s.to_string())
+                    })
                     .collect();
-                Ok(TokenMapping::Fallback { paths: path_strings? })
-            },
-            _ => Err(anyhow!("Unknown mapping type: {}", mapping_type))
+                Ok(TokenMapping::Fallback {
+                    paths: path_strings?,
+                })
+            }
+            _ => Err(anyhow!("Unknown mapping type: {}", mapping_type)),
         }
     }
 }
@@ -176,8 +207,10 @@ impl TokenMappingConfig {
         let mut token_mappings = HashMap::new();
 
         // 解析每个token字段映射
-        for (field_name, mapping_config) in config_value.as_object()
-            .ok_or_else(|| anyhow!("Invalid token mappings JSON format"))? {
+        for (field_name, mapping_config) in config_value
+            .as_object()
+            .ok_or_else(|| anyhow!("Invalid token mappings JSON format"))?
+        {
             let mapping = TokenMapping::from_json(mapping_config)?;
             token_mappings.insert(field_name.clone(), mapping);
         }
@@ -305,9 +338,7 @@ impl TokenFieldExtractor {
     /// 根据映射规则提取值
     fn extract_by_mapping(&self, response: &Value, mapping: &TokenMapping) -> Option<Value> {
         match mapping {
-            TokenMapping::Direct { path } => {
-                self.extract_by_path(response, path)
-            },
+            TokenMapping::Direct { path } => self.extract_by_path(response, path),
             TokenMapping::Expression { formula, fallback } => {
                 // 尝试计算表达式
                 if let Some(result) = self.evaluate_expression(response, formula) {
@@ -318,17 +349,19 @@ impl TokenFieldExtractor {
                 } else {
                     None
                 }
-            },
-            TokenMapping::Default { value } => {
-                Some(value.clone())
-            },
-            TokenMapping::Conditional { condition, true_value, false_value } => {
+            }
+            TokenMapping::Default { value } => Some(value.clone()),
+            TokenMapping::Conditional {
+                condition,
+                true_value,
+                false_value,
+            } => {
                 if self.evaluate_condition(response, condition) {
                     self.extract_by_path(response, true_value)
                 } else {
                     Some(false_value.clone())
                 }
-            },
+            }
             TokenMapping::Fallback { paths } => {
                 // 按顺序尝试每个路径
                 for path in paths {
@@ -356,18 +389,18 @@ impl TokenFieldExtractor {
         let parts: Vec<&str> = formula.split('+').map(|s| s.trim()).collect();
         if parts.len() == 2 {
             debug!("Evaluating expression: {} + {}", parts[0], parts[1]);
-            
+
             let left_val = self.extract_by_path(response, parts[0]);
             let right_val = self.extract_by_path(response, parts[1]);
-            
+
             debug!("Left value: {:?}, Right value: {:?}", left_val, right_val);
-            
+
             if let (Some(left_val), Some(right_val)) = (left_val, right_val) {
                 let left_num = to_number(&left_val);
                 let right_num = to_number(&right_val);
-                
+
                 debug!("Left number: {:?}, Right number: {:?}", left_num, right_num);
-                
+
                 if let (Some(left_num), Some(right_num)) = (left_num, right_num) {
                     let result = left_num + right_num;
                     debug!("Expression result: {}", result);
@@ -381,10 +414,10 @@ impl TokenFieldExtractor {
         if parts.len() == 2 {
             let left_val = self.extract_by_path(response, parts[0])?;
             let right_val = self.extract_by_path(response, parts[1])?;
-            
+
             let left_num = to_number(&left_val)?;
             let right_num = to_number(&right_val)?;
-            
+
             let result = left_num - right_num;
             return serde_json::Number::from_f64(result).map(Value::Number);
         }
@@ -394,10 +427,10 @@ impl TokenFieldExtractor {
         if parts.len() == 2 {
             let left_val = self.extract_by_path(response, parts[0])?;
             let right_val = self.extract_by_path(response, parts[1])?;
-            
+
             let left_num = to_number(&left_val)?;
             let right_num = to_number(&right_val)?;
-            
+
             let result = left_num * right_num;
             return serde_json::Number::from_f64(result).map(Value::Number);
         }
@@ -407,10 +440,10 @@ impl TokenFieldExtractor {
         if parts.len() == 2 {
             let left_val = self.extract_by_path(response, parts[0])?;
             let right_val = self.extract_by_path(response, parts[1])?;
-            
+
             let left_num = to_number(&left_val)?;
             let right_num = to_number(&right_val)?;
-            
+
             if right_num != 0.0 {
                 let result = left_num / right_num;
                 return serde_json::Number::from_f64(result).map(Value::Number);
@@ -652,13 +685,21 @@ mod tests {
     fn test_token_direct_mapping() {
         let config = TokenMappingConfig {
             token_mappings: [
-                ("tokens_prompt".to_string(), TokenMapping::Direct {
-                    path: "usageMetadata.promptTokenCount".to_string()
-                }),
-                ("tokens_completion".to_string(), TokenMapping::Direct {
-                    path: "usageMetadata.candidatesTokenCount".to_string()
-                }),
-            ].into_iter().collect(),
+                (
+                    "tokens_prompt".to_string(),
+                    TokenMapping::Direct {
+                        path: "usageMetadata.promptTokenCount".to_string(),
+                    },
+                ),
+                (
+                    "tokens_completion".to_string(),
+                    TokenMapping::Direct {
+                        path: "usageMetadata.candidatesTokenCount".to_string(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
@@ -671,19 +712,29 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_prompt"), Some(4));
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_completion"), Some(1548));
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            Some(4)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_completion"),
+            Some(1548)
+        );
     }
 
     #[test]
     fn test_token_expression_mapping() {
         let config = TokenMappingConfig {
-            token_mappings: [
-                ("tokens_total".to_string(), TokenMapping::Expression {
-                    formula: "usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount".to_string(),
-                    fallback: Some("usageMetadata.totalTokenCount".to_string())
-                }),
-            ].into_iter().collect(),
+            token_mappings: [(
+                "tokens_total".to_string(),
+                TokenMapping::Expression {
+                    formula: "usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount"
+                        .to_string(),
+                    fallback: Some("usageMetadata.totalTokenCount".to_string()),
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
@@ -697,18 +748,25 @@ mod tests {
         });
 
         // 表达式计算应该得到4 + 1548 = 1552
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_total"), Some(1552));
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_total"),
+            Some(1552)
+        );
     }
 
     #[test]
     fn test_token_expression_fallback() {
         let config = TokenMappingConfig {
-            token_mappings: [
-                ("tokens_total".to_string(), TokenMapping::Expression {
-                    formula: "usageMetadata.missingField + usageMetadata.anotherMissingField".to_string(),
-                    fallback: Some("usageMetadata.totalTokenCount".to_string())
-                }),
-            ].into_iter().collect(),
+            token_mappings: [(
+                "tokens_total".to_string(),
+                TokenMapping::Expression {
+                    formula: "usageMetadata.missingField + usageMetadata.anotherMissingField"
+                        .to_string(),
+                    fallback: Some("usageMetadata.totalTokenCount".to_string()),
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
@@ -722,36 +780,46 @@ mod tests {
         });
 
         // 表达式失败，应该使用fallback值
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_total"), Some(3256));
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_total"),
+            Some(3256)
+        );
     }
 
     #[test]
     fn test_token_default_mapping() {
         let config = TokenMappingConfig {
-            token_mappings: [
-                ("cache_create_tokens".to_string(), TokenMapping::Default {
-                    value: json!(0)
-                }),
-            ].into_iter().collect(),
+            token_mappings: [(
+                "cache_create_tokens".to_string(),
+                TokenMapping::Default { value: json!(0) },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
 
         let response = json!({});
 
-        assert_eq!(extractor.extract_token_u32(&response, "cache_create_tokens"), Some(0));
+        assert_eq!(
+            extractor.extract_token_u32(&response, "cache_create_tokens"),
+            Some(0)
+        );
     }
 
     #[test]
     fn test_token_conditional_mapping() {
         let config = TokenMappingConfig {
-            token_mappings: [
-                ("cache_read_tokens".to_string(), TokenMapping::Conditional {
+            token_mappings: [(
+                "cache_read_tokens".to_string(),
+                TokenMapping::Conditional {
                     condition: "exists(usageMetadata.thoughtsTokenCount)".to_string(),
                     true_value: "usageMetadata.thoughtsTokenCount".to_string(),
-                    false_value: json!(0)
-                }),
-            ].into_iter().collect(),
+                    false_value: json!(0),
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
@@ -763,7 +831,10 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response_with_thoughts, "cache_read_tokens"), Some(1704));
+        assert_eq!(
+            extractor.extract_token_u32(&response_with_thoughts, "cache_read_tokens"),
+            Some(1704)
+        );
 
         // 测试条件为假的情况
         let response_without_thoughts = json!({
@@ -772,21 +843,27 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response_without_thoughts, "cache_read_tokens"), Some(0));
+        assert_eq!(
+            extractor.extract_token_u32(&response_without_thoughts, "cache_read_tokens"),
+            Some(0)
+        );
     }
 
     #[test]
     fn test_token_fallback_mapping() {
         let config = TokenMappingConfig {
-            token_mappings: [
-                ("cache_create_tokens".to_string(), TokenMapping::Fallback {
+            token_mappings: [(
+                "cache_create_tokens".to_string(),
+                TokenMapping::Fallback {
                     paths: vec![
                         "usage.prompt_tokens_details.cached_tokens".to_string(),
                         "usage.cached_tokens".to_string(),
-                        "0".to_string()
-                    ]
-                }),
-            ].into_iter().collect(),
+                        "0".to_string(),
+                    ],
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let extractor = TokenFieldExtractor::new(config);
@@ -800,7 +877,10 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response1, "cache_create_tokens"), Some(42));
+        assert_eq!(
+            extractor.extract_token_u32(&response1, "cache_create_tokens"),
+            Some(42)
+        );
 
         // 测试第二个路径存在的情况
         let response2 = json!({
@@ -809,7 +889,10 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response2, "cache_create_tokens"), Some(24));
+        assert_eq!(
+            extractor.extract_token_u32(&response2, "cache_create_tokens"),
+            Some(24)
+        );
     }
 
     #[test]
@@ -841,9 +924,18 @@ mod tests {
             }
         });
 
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_prompt"), Some(4));
-        assert_eq!(extractor.extract_token_u32(&response, "tokens_total"), Some(1552)); // 4 + 1548
-        assert_eq!(extractor.extract_token_u32(&response, "cache_create_tokens"), Some(0));
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            Some(4)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_total"),
+            Some(1552)
+        ); // 4 + 1548
+        assert_eq!(
+            extractor.extract_token_u32(&response, "cache_create_tokens"),
+            Some(0)
+        );
     }
 
     #[test]
@@ -1001,21 +1093,20 @@ impl ModelExtractionConfig {
     /// 从JSON字符串解析配置
     pub fn from_json(json_str: &str) -> Result<Self> {
         let json: Value = serde_json::from_str(json_str)?;
-        
-        let fallback_model = json.get("fallback_model")
+
+        let fallback_model = json
+            .get("fallback_model")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
 
         let mut extraction_rules = Vec::new();
-        
+
         if let Some(rules) = json.get("extraction_rules").and_then(|r| r.as_array()) {
             for rule in rules {
                 if let Some(rule_type) = rule.get("type").and_then(|t| t.as_str()) {
-                    let priority = rule.get("priority")
-                        .and_then(|p| p.as_u64())
-                        .unwrap_or(0) as u8;
-                    
+                    let priority = rule.get("priority").and_then(|p| p.as_u64()).unwrap_or(0) as u8;
+
                     match rule_type {
                         "url_regex" => {
                             if let Some(pattern) = rule.get("pattern").and_then(|p| p.as_str()) {
@@ -1034,7 +1125,8 @@ impl ModelExtractionConfig {
                             }
                         }
                         "query_param" => {
-                            if let Some(parameter) = rule.get("parameter").and_then(|p| p.as_str()) {
+                            if let Some(parameter) = rule.get("parameter").and_then(|p| p.as_str())
+                            {
                                 extraction_rules.push(ModelExtractionRule::QueryParam {
                                     parameter: parameter.to_string(),
                                     priority,
@@ -1122,7 +1214,8 @@ impl ModelExtractor {
         {
             let cache = self.regex_cache.lock().ok()?;
             if let Some(regex) = cache.get(pattern) {
-                return regex.captures(url_path)
+                return regex
+                    .captures(url_path)
                     .and_then(|captures| captures.get(1))
                     .map(|m| m.as_str().to_string());
             }
@@ -1131,10 +1224,11 @@ impl ModelExtractor {
         // 如果缓存中没有，创建新的regex并缓存
         match Regex::new(pattern) {
             Ok(new_regex) => {
-                let result = new_regex.captures(url_path)
+                let result = new_regex
+                    .captures(url_path)
                     .and_then(|captures| captures.get(1))
                     .map(|m| m.as_str().to_string());
-                
+
                 // 将新regex存入缓存
                 if let Ok(mut cache) = self.regex_cache.lock() {
                     cache.insert(pattern.to_string(), new_regex);
@@ -1165,7 +1259,7 @@ impl ModelExtractor {
 mod model_extractor_tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_model_extraction_from_url() {
         let config_json = r#"
@@ -1210,11 +1304,8 @@ mod model_extractor_tests {
 
         let extractor = ModelExtractor::from_json_config(config_json).unwrap();
         let body = json!({"model": "gpt-4", "messages": []});
-        let model = extractor.extract_model_name(
-            "/v1/chat/completions",
-            Some(&body),
-            &HashMap::new(),
-        );
+        let model =
+            extractor.extract_model_name("/v1/chat/completions", Some(&body), &HashMap::new());
 
         assert_eq!(model, "gpt-4");
     }
@@ -1238,12 +1329,8 @@ mod model_extractor_tests {
         let extractor = ModelExtractor::from_json_config(config_json).unwrap();
         let mut query_params = HashMap::new();
         query_params.insert("model".to_string(), "claude-3-sonnet".to_string());
-        
-        let model = extractor.extract_model_name(
-            "/v1/messages",
-            None,
-            &query_params,
-        );
+
+        let model = extractor.extract_model_name("/v1/messages", None, &query_params);
 
         assert_eq!(model, "claude-3-sonnet");
     }
@@ -1280,7 +1367,7 @@ mod model_extractor_tests {
         let body = json!({"model": "gpt-4"});
         let mut query_params = HashMap::new();
         query_params.insert("model".to_string(), "claude-3".to_string());
-        
+
         // URL优先级最高，应该返回URL中的模型
         let model = extractor.extract_model_name(
             "/v1beta/models/gemini-pro:generateContent",
@@ -1309,12 +1396,9 @@ mod model_extractor_tests {
 
         let extractor = ModelExtractor::from_json_config(config_json).unwrap();
         let body = json!({"messages": []}); // 没有model字段
-        
-        let model = extractor.extract_model_name(
-            "/v1/chat/completions",
-            Some(&body),
-            &HashMap::new(),
-        );
+
+        let model =
+            extractor.extract_model_name("/v1/chat/completions", Some(&body), &HashMap::new());
 
         assert_eq!(model, "fallback-model");
     }

@@ -38,7 +38,8 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
 
     rt.block_on(async {
         // 初始化共享资源
-        let (config, db, shared_services) = initialize_shared_services(matches).await?;
+        let (config, db, shared_services, trace_system) =
+            initialize_shared_services(matches).await?;
 
         // 创建管理服务器配置 - 使用dual_port配置或默认值
         let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
@@ -88,8 +89,9 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
             ProxyError::server_init(format!("Failed to create management server: {}", e))
         })?;
 
-        // 创建代理服务器，传递数据库连接
-        let proxy_server = PingoraProxyServer::new_with_db((*config).clone(), db.clone());
+        // 创建代理服务器，传递数据库连接和追踪系统
+        let proxy_server =
+            PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
 
         info!("🎯 Starting both servers concurrently...");
 
@@ -127,7 +129,12 @@ pub fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
 /// 初始化共享服务资源
 pub async fn initialize_shared_services(
     matches: &ArgMatches,
-) -> Result<(Arc<AppConfig>, Arc<DatabaseConnection>, SharedServices)> {
+) -> Result<(
+    Arc<AppConfig>,
+    Arc<DatabaseConnection>,
+    SharedServices,
+    Arc<crate::trace::UnifiedTraceSystem>,
+)> {
     // 加载配置
     info!("📋 Loading configuration...");
     let config_manager = ConfigManager::new().await?;
@@ -296,6 +303,15 @@ pub async fn initialize_shared_services(
         unified_cache_manager.clone(),
     ));
 
+    // 初始化统一追踪系统 - 这是关键的缺失组件!
+    info!("🔍 Initializing unified trace system...");
+    let tracer_config = crate::trace::immediate::ImmediateTracerConfig::default();
+    let trace_system = Arc::new(crate::trace::UnifiedTraceSystem::new_immediate(
+        db.clone(),
+        tracer_config,
+    ));
+    info!("✅ Unified trace system initialized successfully");
+
     info!("✅ All shared services initialized successfully");
 
     let shared_services = SharedServices {
@@ -309,5 +325,5 @@ pub async fn initialize_shared_services(
         provider_resolver,
     };
 
-    Ok((config_arc, db, shared_services))
+    Ok((config_arc, db, shared_services, trace_system))
 }

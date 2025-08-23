@@ -5,8 +5,8 @@
 use crate::management::handlers::auth_utils::extract_user_id_from_headers;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
-use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
 use ::entity::proxy_tracing;
+use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
 use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,

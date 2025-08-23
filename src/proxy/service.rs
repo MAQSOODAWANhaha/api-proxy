@@ -84,7 +84,7 @@ impl ProxyHttp for ProxyService {
     type CTX = ProxyContext;
 
     fn new_ctx(&self) -> Self::CTX {
-        let mut ctx = ProxyContext {
+        let ctx = ProxyContext {
             request_id: Uuid::new_v4().to_string(),
             start_time: Instant::now(),
             ..Default::default()
@@ -395,9 +395,7 @@ impl ProxyHttp for ProxyService {
                     crate::error::ProxyError::ConnectionTimeout { .. } => "connection_timeout",
                     crate::error::ProxyError::ReadTimeout { .. } => "read_timeout",
                     crate::error::ProxyError::Network { .. } => "network_error",
-                    crate::error::ProxyError::UpstreamNotAvailable { .. } => {
-                        "upstream_unavailable"
-                    }
+                    crate::error::ProxyError::UpstreamNotAvailable { .. } => "upstream_unavailable",
                     _ => "upstream_connection_failed",
                 };
 

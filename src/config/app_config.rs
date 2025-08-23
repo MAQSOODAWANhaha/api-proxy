@@ -228,8 +228,7 @@ impl AppConfig {
             if server.port == 0 {
                 return Err(format!("Invalid server port: {}", server.port));
             }
-            if server.https_port > 0 && server.https_port == server.port
-            {
+            if server.https_port > 0 && server.https_port == server.port {
                 return Err(format!("Invalid HTTPS port: {}", server.https_port));
             }
             if server.workers == 0 {

@@ -12,7 +12,6 @@ use serde_json::json;
 use tracing::info;
 use tracing::warn;
 
-
 /// 服务器查询参数
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServerQuery {
@@ -124,7 +123,6 @@ pub async fn add_server(
         }
     }
 }
-
 
 /// 更改调度策略请求
 #[derive(Debug, Deserialize)]

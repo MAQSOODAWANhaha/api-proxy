@@ -2,8 +2,7 @@
 //!
 //! 基于数据库配置的通用AI服务适配器，支持任意提供商
 
-use super::field_extractor::{FieldExtractor, TokenFieldExtractor, ModelExtractor};
-use std::sync::Arc;
+use super::field_extractor::{FieldExtractor, ModelExtractor, TokenFieldExtractor};
 use super::traits::ProviderAdapter;
 use super::types::{
     AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
@@ -11,6 +10,7 @@ use super::types::{
 };
 use crate::proxy::upstream::ProviderId;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// 通用适配器配置
@@ -75,11 +75,11 @@ impl GenericAdapter {
         config_json: Option<Value>,
     ) -> Self {
         Self::from_provider_config_with_token_mappings(
-            provider_id, 
-            provider_name, 
-            display_name, 
-            api_format, 
-            config_json, 
+            provider_id,
+            provider_name,
+            display_name,
+            api_format,
+            config_json,
             None, // token_mappings_json
             None, // model_extraction_json
         )
@@ -138,50 +138,46 @@ impl GenericAdapter {
             });
 
         // 创建Token字段提取器（用于Token统计）
-        let token_field_extractor = token_mappings_json
-            .as_ref()
-            .and_then(|token_config| {
-                match TokenFieldExtractor::from_json_config(token_config) {
-                    Ok(extractor) => {
-                        debug!(
-                            provider_name = %provider_name,
-                            "Successfully created token field extractor for provider"
-                        );
-                        Some(extractor)
-                    },
-                    Err(e) => {
-                        warn!(
-                            provider_name = %provider_name,
-                            error = %e,
-                            "Failed to create token field extractor, will use default behavior"
-                        );
-                        None
-                    }
+        let token_field_extractor = token_mappings_json.as_ref().and_then(|token_config| {
+            match TokenFieldExtractor::from_json_config(token_config) {
+                Ok(extractor) => {
+                    debug!(
+                        provider_name = %provider_name,
+                        "Successfully created token field extractor for provider"
+                    );
+                    Some(extractor)
                 }
-            });
+                Err(e) => {
+                    warn!(
+                        provider_name = %provider_name,
+                        error = %e,
+                        "Failed to create token field extractor, will use default behavior"
+                    );
+                    None
+                }
+            }
+        });
 
         // 创建模型提取器（用于模型名称提取）
-        let model_extractor = model_extraction_json
-            .as_ref()
-            .and_then(|model_config| {
-                match ModelExtractor::from_json_config(model_config) {
-                    Ok(extractor) => {
-                        debug!(
-                            provider_name = %provider_name,
-                            "Successfully created model extractor for provider"
-                        );
-                        Some(Arc::new(extractor))
-                    },
-                    Err(e) => {
-                        warn!(
-                            provider_name = %provider_name,
-                            error = %e,
-                            "Failed to create model extractor, will use default behavior"
-                        );
-                        None
-                    }
+        let model_extractor = model_extraction_json.as_ref().and_then(|model_config| {
+            match ModelExtractor::from_json_config(model_config) {
+                Ok(extractor) => {
+                    debug!(
+                        provider_name = %provider_name,
+                        "Successfully created model extractor for provider"
+                    );
+                    Some(Arc::new(extractor))
                 }
-            });
+                Err(e) => {
+                    warn!(
+                        provider_name = %provider_name,
+                        error = %e,
+                        "Failed to create model extractor, will use default behavior"
+                    );
+                    None
+                }
+            }
+        });
 
         let config = GenericAdapterConfig {
             provider_id,
@@ -278,7 +274,7 @@ impl GenericAdapter {
     /// 公共接口：提取统计信息供trace系统使用
     pub fn extract_trace_stats(&self, response: &Value) -> TraceStats {
         // 优先使用新的TokenFieldExtractor提取Token信息
-        let (input_tokens, output_tokens, total_tokens, cache_create_tokens, cache_read_tokens) = 
+        let (input_tokens, output_tokens, total_tokens, cache_create_tokens, cache_read_tokens) =
             if let Some(token_extractor) = &self.config.token_field_extractor {
                 (
                     token_extractor.extract_token_u32(response, "tokens_prompt"),
@@ -301,7 +297,7 @@ impl GenericAdapter {
             };
 
         // 使用FieldExtractor提取非Token字段
-        let (cost, cost_currency, model_name, error_type, error_message) = 
+        let (cost, cost_currency, model_name, error_type, error_message) =
             if let Some(extractor) = &self.config.field_extractor {
                 (
                     extractor.extract_f64(response, "cost"),

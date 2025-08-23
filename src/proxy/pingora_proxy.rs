@@ -74,6 +74,16 @@ impl PingoraProxyServer {
             builder = builder.with_database(shared_db.clone());
         }
 
+        // 关键修复：如果有trace_system，传递给builder
+        if let Some(trace_system) = &self.trace_system {
+            builder = builder.with_trace_system(trace_system.clone());
+            tracing::info!("🔍 Using provided trace system in Pingora proxy builder");
+        } else {
+            tracing::warn!(
+                "⚠️  No trace system provided to Pingora proxy - tracing will be disabled"
+            );
+        }
+
         let components = builder.build_components().await?;
 
         // 创建 HTTP 代理服务

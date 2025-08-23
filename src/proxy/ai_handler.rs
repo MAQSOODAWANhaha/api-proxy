@@ -16,7 +16,7 @@ use crate::auth::{AuthHeaderParser, AuthParseError};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
-use crate::providers::field_extractor::{TokenFieldExtractor, ModelExtractor};
+use crate::providers::field_extractor::{ModelExtractor, TokenFieldExtractor};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     provider_types::{self, Entity as ProviderTypes},
@@ -1219,12 +1219,10 @@ impl AIProxyHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 使用废弃的硬编码方法进行初始token提取（仅作为fallback）
-        #[allow(deprecated)]
-        {
-            ctx.token_usage = self.extract_detailed_token_usage(upstream_response);
-        }
-        ctx.tokens_used = ctx.token_usage.total_tokens; // 向后兼容
+        // 使用新的数据驱动方法提取token使用信息
+        // 注意：这里我们设置默认值，实际提取将在响应体收集完成后进行
+        ctx.token_usage = TokenUsage::default();
+        ctx.tokens_used = 0;
 
         // 收集响应头信息
         self.collect_response_headers(upstream_response, ctx);
@@ -1364,68 +1362,8 @@ impl AIProxyHandler {
         Ok(())
     }
 
-    /// 提取详细的token使用信息 - 已废弃的HTTP头部版本
-    /// 
-    /// 警告：此方法已被废弃，仅作为最后的fallback。所有新的提取应使用extract_token_usage_from_response_body()
-    #[deprecated(note = "Use extract_token_usage_from_response_body instead - HTTP header extraction is unreliable")]
-    fn extract_detailed_token_usage(&self, _response: &ResponseHeader) -> TokenUsage {
-        tracing::warn!("DEPRECATED: Using legacy HTTP header-based token extraction - this is unreliable and should be avoided");
-        
-        // 保持最小的fallback逻辑
-        TokenUsage {
-            prompt_tokens: None,
-            completion_tokens: None, 
-            total_tokens: 0,
-            model_used: None,
-        }
-    }
-
-    /// 提取单个token值 - 已废弃的硬编码方法
-    #[deprecated(note = "Use TokenFieldExtractor with database configuration instead")]
-    fn extract_single_token_value(
-        &self,
-        response: &ResponseHeader,
-        header_names: &[&str],
-    ) -> Option<u32> {
-        tracing::warn!("DEPRECATED: extract_single_token_value is deprecated, use TokenFieldExtractor instead");
-        
-        // 保留最小实现用于紧急fallback
-        for header_name in header_names {
-            if let Some(header_value) = response.headers.get(*header_name) {
-                if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
-                    if let Ok(tokens) = tokens_str.parse::<u32>() {
-                        return Some(tokens);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// 提取AI模型信息 - 已废弃的硬编码方法  
-    #[deprecated(note = "Use ModelExtractor with database configuration instead")]
-    fn extract_model_info(&self, response: &ResponseHeader) -> Option<String> {
-        tracing::warn!("DEPRECATED: extract_model_info is deprecated, use ModelExtractor instead");
-        
-        // 最小的fallback实现，仅检查最常见的头部
-        let basic_headers = ["x-openai-model", "x-model"];
-        
-        for header_name in &basic_headers {
-            if let Some(header_value) = response.headers.get(*header_name) {
-                if let Ok(model_str) = std::str::from_utf8(header_value.as_bytes()) {
-                    let model = model_str.trim().to_string();
-                    if !model.is_empty() {
-                        return Some(model);
-                    }
-                }
-            }
-        }
-        
-        None
-    }
-
     /// 从响应体JSON提取详细的token使用信息 - 完全数据驱动版本
-    /// 
+    ///
     /// 这个方法应该在响应体收集完成后调用，使用数据库配置的TokenFieldExtractor获取准确的token数据
     pub async fn extract_token_usage_from_response_body(
         &self,
@@ -1441,7 +1379,7 @@ impl AIProxyHandler {
         }
 
         let response_body = ctx.response_details.body.as_ref().unwrap();
-        
+
         // 获取provider_type以确定使用哪种token映射
         let provider_type = match ctx.provider_type.as_ref() {
             Some(provider) => provider,
@@ -1471,8 +1409,9 @@ impl AIProxyHandler {
         let response_json: serde_json::Value = {
             // 对于流式响应，响应体可能是多个JSON对象的拼接，我们需要处理最后一个完整的JSON
             let mut last_json = None;
-            let stream = serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
-            
+            let stream =
+                serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
+
             for value_result in stream {
                 if let Ok(value) = value_result {
                     last_json = Some(value);
@@ -1520,8 +1459,10 @@ impl AIProxyHandler {
 
         // 使用TokenFieldExtractor从响应体JSON中提取token信息
         let prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
-        let completion_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
-        let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
+        let completion_tokens =
+            token_extractor.extract_token_u32(&response_json, "tokens_completion");
+        let total_tokens = token_extractor
+            .extract_token_u32(&response_json, "tokens_total")
             .unwrap_or_else(|| {
                 // 如果没有配置total_tokens字段，尝试通过prompt + completion计算
                 match (prompt_tokens, completion_tokens) {
@@ -1533,7 +1474,9 @@ impl AIProxyHandler {
             });
 
         // 提取模型信息（使用数据驱动的ModelExtractor）
-        let model_used = self.extract_model_with_model_extractor(ctx).await
+        let model_used = self
+            .extract_model_with_model_extractor(ctx)
+            .await
             .or_else(|| ctx.token_usage.model_used.clone());
 
         let new_token_usage = TokenUsage {
@@ -1557,13 +1500,12 @@ impl AIProxyHandler {
     }
 
     /// 从响应体JSON提取完整的统计信息（包括token、cost等）- 数据驱动版本
-    /// 
+    ///
     /// 这个方法在响应体收集完成后调用，提取所有可用的统计数据用于追踪和记录
     pub async fn extract_stats_from_response_body(
         &self,
         ctx: &mut ProxyContext,
     ) -> Result<DetailedRequestStats, ProxyError> {
-
         // 确保响应体已经被收集和处理
         if ctx.response_details.body.is_none() {
             tracing::debug!(
@@ -1583,7 +1525,7 @@ impl AIProxyHandler {
         }
 
         let response_body = ctx.response_details.body.as_ref().unwrap();
-        
+
         // 获取provider_type以确定使用哪种映射
         let provider_type = match ctx.provider_type.as_ref() {
             Some(provider) => provider,
@@ -1612,8 +1554,9 @@ impl AIProxyHandler {
         // 解析响应体为JSON
         let response_json: serde_json::Value = {
             let mut last_json = None;
-            let stream = serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
-            
+            let stream =
+                serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
+
             for value_result in stream {
                 if let Ok(value) = value_result {
                     last_json = Some(value);
@@ -1622,20 +1565,18 @@ impl AIProxyHandler {
 
             match last_json {
                 Some(json) => json,
-                None => {
-                    match serde_json::from_str(response_body) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            tracing::warn!(
-                                request_id = %ctx.request_id,
-                                provider = %provider_type.name,
-                                error = %e,
-                                "Failed to parse response body as JSON for stats extraction"
-                            );
-                            return Ok(DetailedRequestStats::default());
-                        }
+                None => match serde_json::from_str(response_body) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            provider = %provider_type.name,
+                            error = %e,
+                            "Failed to parse response body as JSON for stats extraction"
+                        );
+                        return Ok(DetailedRequestStats::default());
                     }
-                }
+                },
             }
         };
 
@@ -1656,7 +1597,8 @@ impl AIProxyHandler {
         // 提取所有统计信息
         let input_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
         let output_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
-        let total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total")
+        let total_tokens = token_extractor
+            .extract_token_u32(&response_json, "tokens_total")
             .or_else(|| {
                 // 计算total_tokens如果没有直接配置
                 match (input_tokens, output_tokens) {
@@ -1668,13 +1610,18 @@ impl AIProxyHandler {
             });
 
         // 提取缓存相关token
-        let cache_create_tokens = token_extractor.extract_token_u32(&response_json, "cache_creation_input_tokens");
-        let cache_read_tokens = token_extractor.extract_token_u32(&response_json, "cache_read_input_tokens");
+        let cache_create_tokens =
+            token_extractor.extract_token_u32(&response_json, "cache_creation_input_tokens");
+        let cache_read_tokens =
+            token_extractor.extract_token_u32(&response_json, "cache_read_input_tokens");
 
         // 提取cost信息（如果有配置）
         // 暂时使用直接JSON路径提取，后续可以配置专门的cost映射
         let cost = response_json.pointer("/cost").and_then(|v| v.as_f64());
-        let cost_currency = response_json.pointer("/cost_currency").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let cost_currency = response_json
+            .pointer("/cost_currency")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         // 提取模型信息 - 使用数据驱动的ModelExtractor
         let model_name = self.extract_model_with_model_extractor(ctx).await;
@@ -1708,7 +1655,7 @@ impl AIProxyHandler {
     }
 
     /// 使用数据驱动的ModelExtractor提取模型名称
-    /// 
+    ///
     /// 这个方法基于数据库配置的model_extraction_json来提取AI模型名称
     async fn extract_model_with_model_extractor(&self, ctx: &ProxyContext) -> Option<String> {
         // 获取provider_type以确定使用哪种模型提取配置
@@ -1752,33 +1699,31 @@ impl AIProxyHandler {
 
         // 准备提取所需的数据
         let url_path = &ctx.request_details.path;
-        
+
         // 解析请求体（如果有）
-        let request_body = if let Some(body_content) = ctx.request_details.headers.get("content-type") {
-            if body_content.contains("application/json") {
-                // 暂时跳过请求体解析，因为我们通常不保存请求体
-                // TODO: 如果需要从请求体提取模型，需要在收集请求详情时保存请求体
-                tracing::debug!(
-                    request_id = %ctx.request_id,
-                    "Request body parsing for model extraction not yet implemented"
-                );
-                None
+        let request_body =
+            if let Some(body_content) = ctx.request_details.headers.get("content-type") {
+                if body_content.contains("application/json") {
+                    // 暂时跳过请求体解析，因为我们通常不保存请求体
+                    // TODO: 如果需要从请求体提取模型，需要在收集请求详情时保存请求体
+                    tracing::debug!(
+                        request_id = %ctx.request_id,
+                        "Request body parsing for model extraction not yet implemented"
+                    );
+                    None
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         // 解析查询参数（从请求路径中）
         let query_params = std::collections::HashMap::new(); // TODO: 解析实际的查询参数
 
         // 使用ModelExtractor提取模型名称
-        let extracted_model = model_extractor.extract_model_name(
-            url_path,
-            request_body.as_ref(),
-            &query_params,
-        );
+        let extracted_model =
+            model_extractor.extract_model_name(url_path, request_body.as_ref(), &query_params);
 
         tracing::info!(
             request_id = %ctx.request_id,
@@ -1789,24 +1734,6 @@ impl AIProxyHandler {
         );
 
         Some(extracted_model)
-    }
-
-    /// 提取token使用信息 - 已废弃的向后兼容方法
-    #[deprecated(note = "Use extract_token_usage_from_response_body instead")]
-    #[allow(dead_code)]
-    fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
-        tracing::warn!("DEPRECATED: extract_token_usage is deprecated, use extract_token_usage_from_response_body instead");
-        
-        // 最小的fallback实现
-        if let Some(header_value) = response.headers.get("x-openai-total-tokens") {
-            if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
-                if let Ok(tokens) = tokens_str.parse::<u32>() {
-                    return tokens;
-                }
-            }
-        }
-        
-        0
     }
 
     /// 统一的认证头处理方法 - 完全基于数据库配置

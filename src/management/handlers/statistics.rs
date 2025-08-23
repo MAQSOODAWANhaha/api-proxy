@@ -207,14 +207,14 @@ pub async fn get_today_dashboard_cards(
 
     let tokens_today: i64 = today_traces
         .iter()
-        .map(|t| t.tokens_total.unwrap_or(0) as i64)
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
     let response_times: Vec<i64> = today_traces.iter().filter_map(|t| t.duration_ms).collect();
-    let avg_response_time_today = if !response_times.is_empty() {
-        response_times.iter().sum::<i64>() / response_times.len() as i64
-    } else {
+    let avg_response_time_today = if response_times.is_empty() {
         0
+    } else {
+        response_times.iter().sum::<i64>() / response_times.len() as i64
     };
 
     // 计算昨天的统计数据用于比较
@@ -232,17 +232,17 @@ pub async fn get_today_dashboard_cards(
 
     let tokens_yesterday: i64 = yesterday_traces
         .iter()
-        .map(|t| t.tokens_total.unwrap_or(0) as i64)
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
     let response_times_yesterday: Vec<i64> = yesterday_traces
         .iter()
         .filter_map(|t| t.duration_ms)
         .collect();
-    let avg_response_time_yesterday = if !response_times_yesterday.is_empty() {
-        response_times_yesterday.iter().sum::<i64>() / response_times_yesterday.len() as i64
-    } else {
+    let avg_response_time_yesterday = if response_times_yesterday.is_empty() {
         0
+    } else {
+        response_times_yesterday.iter().sum::<i64>() / response_times_yesterday.len() as i64
     };
 
     // 计算增长率

@@ -356,18 +356,15 @@ pub async fn list_user_service_keys(
 
     for (api, provider_type) in apis {
         // 获取使用统计
-        let (success_count, failure_count) = match ProxyTracing::find()
+        let (success_count, failure_count) = (ProxyTracing::find()
             .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
             .all(db)
-            .await
-        {
-            Ok(tracings) => {
+            .await)
+            .map_or((0, 0), |tracings| {
                 let success = tracings.iter().filter(|t| t.is_success).count();
                 let failure = tracings.len() - success;
                 (success as i32, failure as i32)
-            }
-            Err(_) => (0, 0),
-        };
+            });
 
         // 获取最后使用时间
         let last_used_at = match ProxyTracing::find()
@@ -676,12 +673,10 @@ pub async fn get_user_service_key(
         provider_type_id: api.provider_type_id,
         provider: provider_type.display_name,
         api_key: api.api_key,
-        user_provider_keys_ids: match serde_json::from_value::<Vec<i32>>(
+        user_provider_keys_ids: serde_json::from_value::<Vec<i32>>(
             api.user_provider_keys_ids.clone(),
-        ) {
-            Ok(ids) => ids,
-            Err(_) => vec![],
-        },
+        )
+        .map_or_else(|_| vec![], |ids| ids),
         scheduling_strategy: api.scheduling_strategy,
         retry_count: api.retry_count,
         timeout_seconds: api.timeout_seconds,
@@ -979,21 +974,22 @@ pub async fn get_user_service_key_usage(
         None => {
             // 使用自定义日期范围
             if let (Some(start_str), Some(end_str)) = (&query.start_date, &query.end_date) {
-                match (
+                if let (Ok(start_time), Ok(end_time)) = (
                     NaiveDate::parse_from_str(start_str, "%Y-%m-%d"),
                     NaiveDate::parse_from_str(end_str, "%Y-%m-%d"),
                 ) {
-                    (Ok(start_date), Ok(end_date)) => (
-                        start_date.and_hms_opt(0, 0, 0).unwrap(),
-                        end_date.and_hms_opt(23, 59, 59).unwrap(),
-                    ),
-                    _ => {
-                        let end = Utc::now().naive_utc();
-                        let start = end - chrono::Duration::days(30);
-                        (start, end)
-                    }
+                    (
+                        start_time.and_hms_opt(0, 0, 0).unwrap(),
+                        end_time.and_hms_opt(23, 59, 59).unwrap(),
+                    )
+                } else {
+                    // 自定义日期解析失败，使用默认30天
+                    let end = Utc::now().naive_utc();
+                    let start = end - chrono::Duration::days(30);
+                    (start, end)
                 }
             } else {
+                // 没有提供自定义日期，使用默认30天
                 let end = Utc::now().naive_utc();
                 let start = end - chrono::Duration::days(30);
                 (start, end)
@@ -1052,14 +1048,14 @@ pub async fn get_user_service_key_usage(
 
     let total_cost = tracings.iter().map(|t| t.cost.unwrap_or(0.0)).sum::<f64>();
 
-    let avg_response_time = if !tracings.is_empty() {
+    let avg_response_time = if tracings.is_empty() {
+        0
+    } else {
         tracings
             .iter()
             .map(|t| t.duration_ms.unwrap_or(0))
             .sum::<i64>()
             / tracings.len() as i64
-    } else {
-        0
     };
 
     let last_used = tracings
