@@ -11,6 +11,7 @@ pub mod dual_port_setup;
 pub mod error;
 pub mod health;
 pub mod management;
+pub mod pricing;
 pub mod providers;
 pub mod proxy;
 pub mod scheduler;

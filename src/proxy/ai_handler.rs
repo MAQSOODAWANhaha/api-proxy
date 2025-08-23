@@ -16,6 +16,7 @@ use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
+use crate::pricing::PricingCalculatorService;
 use crate::providers::field_extractor::{ModelExtractor, TokenFieldExtractor};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
@@ -38,6 +39,8 @@ pub struct AIProxyHandler {
     tracer: Option<Arc<ImmediateProxyTracer>>,
     /// 服务商配置管理器
     provider_config_manager: Arc<ProviderConfigManager>,
+    /// 费用计算服务
+    pricing_calculator: Arc<PricingCalculatorService>,
 }
 
 /// Token使用详情
@@ -263,6 +266,8 @@ impl AIProxyHandler {
         tracer: Option<Arc<ImmediateProxyTracer>>,
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
+        let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
+        
         Self {
             db,
             cache,
@@ -270,6 +275,7 @@ impl AIProxyHandler {
             schedulers,
             tracer,
             provider_config_manager,
+            pricing_calculator,
         }
     }
 
@@ -1679,6 +1685,60 @@ impl AIProxyHandler {
         // 提取模型信息 - 使用数据驱动的ModelExtractor
         let model_name = self.extract_model_with_model_extractor(ctx).await;
 
+        // 计算费用（如果有模型名称和provider_type_id）
+        let (calculated_cost, calculated_currency) = if let Some(ref model_name) = model_name {
+            // 构建TokenUsage结构
+            let pricing_token_usage = crate::pricing::TokenUsage {
+                prompt_tokens: input_tokens,
+                completion_tokens: output_tokens,
+                cache_create_tokens,
+                cache_read_tokens,
+            };
+
+            // 调用费用计算服务
+            match self
+                .pricing_calculator
+                .calculate_cost(
+                    model_name,
+                    provider_type.id,
+                    &pricing_token_usage,
+                    &ctx.request_id,
+                )
+                .await
+            {
+                Ok(cost_result) => {
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        model = %model_name,
+                        provider_type_id = provider_type.id,
+                        calculated_cost = cost_result.total_cost,
+                        currency = %cost_result.currency,
+                        used_fallback = cost_result.used_fallback,
+                        cost_breakdown = ?cost_result.cost_breakdown,
+                        "Successfully calculated request cost"
+                    );
+                    (Some(cost_result.total_cost), Some(cost_result.currency))
+                }
+                Err(e) => {
+                    tracing::error!(
+                        request_id = %ctx.request_id,
+                        model = %model_name,
+                        provider_type_id = provider_type.id,
+                        error = %e,
+                        "Failed to calculate request cost, using extracted cost from response"
+                    );
+                    (cost, cost_currency)
+                }
+            }
+        } else {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                "No model name available for cost calculation, using extracted cost from response"
+            );
+            (cost, cost_currency)
+        };
+
         let stats = DetailedRequestStats {
             input_tokens,
             output_tokens,
@@ -1686,8 +1746,8 @@ impl AIProxyHandler {
             model_name,
             cache_create_tokens,
             cache_read_tokens,
-            cost,
-            cost_currency,
+            cost: calculated_cost,
+            cost_currency: calculated_currency,
         };
 
         tracing::info!(
@@ -1701,7 +1761,7 @@ impl AIProxyHandler {
             cost = ?stats.cost,
             cost_currency = ?stats.cost_currency,
             model_name = ?stats.model_name,
-            "Successfully extracted comprehensive stats using data-driven approach"
+            "Successfully extracted comprehensive stats with calculated cost"
         );
 
         Ok(stats)
