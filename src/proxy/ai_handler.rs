@@ -12,7 +12,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::{AuthHeaderParser, AuthParseError};
+use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
@@ -335,7 +335,7 @@ impl AIProxyHandler {
             request_id = %ctx.request_id,
             user_id = user_service_api.user_id,
             provider_type_id = user_service_api.provider_type_id,
-            api_key_preview = %self.sanitize_api_key(&api_key),
+            api_key_preview = %AuthUtils::sanitize_api_key(&api_key),
             "Authentication successful"
         );
 
@@ -529,7 +529,7 @@ impl AIProxyHandler {
                 tracing::debug!(
                     provider = %provider_type.name,
                     auth_format = ?provider_type.auth_header_format,
-                    api_key_preview = %self.sanitize_api_key(&api_key),
+                    api_key_preview = %AuthUtils::sanitize_api_key(&api_key),
                     "Successfully extracted API key using provider configuration"
                 );
                 return Ok(api_key);
@@ -598,7 +598,7 @@ impl AIProxyHandler {
                 
                 // 也检查查询参数（某些provider可能支持）
                 if let Some(query) = session.req_header().uri.query() {
-                    let params = self.parse_query_string(query);
+                    let params = AuthUtils::parse_query_string(query);
                     if let Some(api_key) = params.get("api_key").or(params.get("key")) {
                         return Some(api_key.clone());
                     }
@@ -650,7 +650,7 @@ impl AIProxyHandler {
             .get::<user_service_apis::Model>(&cache_key)
             .await
         {
-            tracing::debug!("Found API key in cache: {}", self.sanitize_api_key(api_key));
+            tracing::debug!("Found API key in cache: {}", AuthUtils::sanitize_api_key(api_key));
             return Ok(user_api);
         }
 
@@ -678,7 +678,7 @@ impl AIProxyHandler {
             .await;
 
         tracing::debug!(
-            api_key_preview = %self.sanitize_api_key(api_key),
+            api_key_preview = %AuthUtils::sanitize_api_key(api_key),
             user_id = user_api.user_id,
             provider_type_id = user_api.provider_type_id,
             "API key authenticated from database"
@@ -1121,84 +1121,33 @@ impl AIProxyHandler {
             headers = ?pingora_headers,
             backend_key_id = selected_backend.id,
             provider = %provider_type.name,
-            auth_preview = %self.sanitize_api_key(&selected_backend.api_key),
+            auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
             "PINGORA HTTP REQUEST HEADERS"
         );
 
         Ok(())
     }
 
-    /// 获取真实客户端IP地址（考虑代理情况）
-    fn get_real_client_ip(&self, session: &Session) -> String {
-        let req_header = session.req_header();
 
-        // 1. 优先检查 X-Forwarded-For 头
-        if let Some(forwarded_for) = req_header
-            .headers
-            .get("x-forwarded-for")
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-        {
-            // X-Forwarded-For 可能包含多个IP，取第一个（最原始的客户端IP）
-            if let Some(first_ip) = forwarded_for.split(',').next() {
-                let ip = first_ip.trim();
-                if !ip.is_empty() && ip != "unknown" {
-                    return ip.to_string();
+    /// 收集完整的客户端信息
+    fn collect_client_info(&self, session: &Session) -> (String, Option<String>, Option<String>) {
+        // 将Pingora headers转换为标准HeaderMap以便使用AuthUtils
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in session.req_header().headers.iter() {
+            if let Ok(header_name) = axum::http::HeaderName::from_bytes(name.as_str().as_bytes()) {
+                if let Ok(header_value) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                    headers.insert(header_name, header_value);
                 }
             }
         }
 
-        // 2. 检查 X-Real-IP 头
-        if let Some(real_ip) = req_header
-            .headers
-            .get("x-real-ip")
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-        {
-            let ip = real_ip.trim();
-            if !ip.is_empty() && ip != "unknown" {
-                return ip.to_string();
-            }
-        }
-
-        // 3. 检查 CF-Connecting-IP (Cloudflare)
-        if let Some(cf_ip) = req_header
-            .headers
-            .get("cf-connecting-ip")
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-        {
-            let ip = cf_ip.trim();
-            if !ip.is_empty() && ip != "unknown" {
-                return ip.to_string();
-            }
-        }
-
-        // 4. 最后使用直接连接的客户端地址
-        session
-            .client_addr()
-            .map(|addr| addr.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    }
-
-    /// 收集完整的客户端信息
-    fn collect_client_info(&self, session: &Session) -> (String, Option<String>, Option<String>) {
-        let req_header = session.req_header();
-
-        // 获取真实客户端IP
-        let client_ip = self.get_real_client_ip(session);
-
-        // 获取User-Agent
-        let user_agent = req_header
-            .headers
-            .get("user-agent")
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-            .map(|s| s.to_string());
-
-        // 获取Referer
-        let referer = req_header
-            .headers
-            .get("referer")
-            .or_else(|| req_header.headers.get("referrer")) // 支持两种拼写
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-            .map(|s| s.to_string());
+        // 使用AuthUtils提取客户端信息
+        let client_ip = AuthUtils::extract_real_client_ip(
+            &headers, 
+            session.client_addr().map(|addr| addr.to_string())
+        );
+        let user_agent = AuthUtils::extract_user_agent(&headers);
+        let referer = AuthUtils::extract_referer(&headers);
 
         (client_ip, user_agent, referer)
     }
@@ -1823,7 +1772,7 @@ impl AIProxyHandler {
             };
 
         // 解析查询参数（从请求路径中）
-        let query_params = self.parse_query_params(&ctx.request_details.path);
+        let query_params = AuthUtils::extract_query_params_from_path(&ctx.request_details.path);
 
         // 使用ModelExtractor提取模型名称
         let extracted_model =
@@ -1935,56 +1884,14 @@ impl AIProxyHandler {
             provider_id = provider_type.id,
             auth_header = %auth_name,
             auth_format = %auth_format,
-            api_key_preview = %self.sanitize_api_key(api_key),
+            api_key_preview = %AuthUtils::sanitize_api_key(api_key),
             "Applied database-driven authentication"
         );
 
         Ok(())
     }
 
-    /// 解析URL查询参数
-    fn parse_query_params(&self, path: &str) -> std::collections::HashMap<String, String> {
-        let mut query_params = std::collections::HashMap::new();
-        
-        if let Some(query_start) = path.find('?') {
-            let query = &path[query_start + 1..];
-            for param in query.split('&') {
-                if let Some((key, value)) = param.split_once('=') {
-                    // URL解码
-                    let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
-                    let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
-                    query_params.insert(decoded_key.to_string(), decoded_value.to_string());
-                }
-            }
-        }
-        
-        query_params
-    }
 
-    /// 解析查询字符串
-    fn parse_query_string(&self, query: &str) -> std::collections::HashMap<String, String> {
-        let mut query_params = std::collections::HashMap::new();
-        
-        for param in query.split('&') {
-            if let Some((key, value)) = param.split_once('=') {
-                // URL解码
-                let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
-                let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
-                query_params.insert(decoded_key.to_string(), decoded_value.to_string());
-            }
-        }
-        
-        query_params
-    }
-
-    /// 净化API密钥用于日志记录
-    fn sanitize_api_key(&self, api_key: &str) -> String {
-        if api_key.len() > 10 {
-            format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
-        } else {
-            "***".to_string()
-        }
-    }
 
     /// 检测并转换Pingora错误为ProxyError
     pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {

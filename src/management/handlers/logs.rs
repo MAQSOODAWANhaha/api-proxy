@@ -2,7 +2,7 @@
 //!
 //! 基于 proxy_tracing 表的日志查询、统计和分析功能
 
-use crate::management::handlers::auth_utils::extract_user_id_from_headers;
+use crate::auth::extract_user_id_from_headers;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
 use ::entity::proxy_tracing;

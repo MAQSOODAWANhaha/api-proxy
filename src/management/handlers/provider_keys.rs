@@ -2,7 +2,7 @@
 //!
 //! 处理上游AI服务商的API密钥管理相关请求
 
-use crate::management::handlers::auth_utils::extract_user_id_from_headers;
+use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};

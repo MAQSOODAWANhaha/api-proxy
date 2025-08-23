@@ -2,7 +2,7 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
-use crate::management::handlers::auth_utils::extract_user_id_from_headers;
+use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::Json;
 use axum::extract::{Path, Query, State};

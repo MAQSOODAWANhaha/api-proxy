@@ -1,6 +1,5 @@
 // pub mod adapters; // temporarily disabled: module file missing
 pub mod auth;
-pub mod auth_utils;
 pub mod health;
 pub mod loadbalancer;
 pub mod logs;

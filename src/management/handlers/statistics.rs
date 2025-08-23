@@ -1,7 +1,7 @@
 //! # 统一统计信息处理器
 //!
 //! 基于proxy_tracing表的统一统计查询API
-use crate::management::handlers::auth_utils::extract_user_id_from_headers;
+use crate::auth::extract_user_id_from_headers;
 use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::{Query, State};

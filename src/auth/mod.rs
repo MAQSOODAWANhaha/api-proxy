@@ -5,20 +5,24 @@
 pub mod api_key;
 pub mod header_parser;
 pub mod jwt;
+pub mod management;
 pub mod middleware;
 pub mod permissions;
 pub mod service;
 pub mod types;
 pub mod unified;
+pub mod utils;
 
 pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
+pub use management::{Claims, extract_user_id_from_headers};
 pub use middleware::AuthMiddleware;
 pub use permissions::{Permission, Role};
 pub use service::AuthService;
 pub use types::*;
 pub use unified::{AuthRequest, CacheStats, UnifiedAuthManager, create_unified_auth_manager};
+pub use utils::AuthUtils;
 
 /// 认证结果
 #[derive(Debug, Clone)]

@@ -1,11 +1,13 @@
-//! # 认证工具模块
+//! # 管理端认证工具模块
 //!
-//! 提供统一的认证相关工具函数
+//! 提供管理端专用的认证工具函数，使用共享的AuthUtils基础组件
 
+use crate::auth::AuthUtils;
 use crate::management::response;
 use axum::http::HeaderMap;
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
+
 /// JWT Claims 结构体
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -24,19 +26,9 @@ pub struct Claims {
 /// 从请求头中提取用户ID
 /// 解析JWT token并返回当前认证用户的ID
 pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::response::Response> {
-    // 提取Authorization头
-    let auth_header = match headers.get("Authorization") {
-        Some(header) => match header.to_str() {
-            Ok(header_str) => header_str,
-            Err(_) => {
-                tracing::warn!("Invalid Authorization header format");
-                return Err(response::error(
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "AUTH_ERROR",
-                    "Invalid Authorization header format",
-                ));
-            }
-        },
+    // 使用共享的AuthUtils提取Authorization头
+    let auth_header = match AuthUtils::extract_authorization_header(headers) {
+        Some(header) => header,
         None => {
             tracing::warn!("Missing Authorization header");
             return Err(response::error(
@@ -47,16 +39,18 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         }
     };
 
-    // 检查Bearer前缀
-    if !auth_header.starts_with("Bearer ") {
-        return Err(response::error(
-            axum::http::StatusCode::UNAUTHORIZED,
-            "AUTH_ERROR",
-            "Invalid Authorization header format",
-        ));
-    }
-
-    let token = &auth_header[7..]; // 移除"Bearer "前缀
+    // 使用共享的AuthUtils提取Bearer token
+    let token = match AuthUtils::extract_bearer_token(&auth_header) {
+        Some(token) => token,
+        None => {
+            tracing::warn!("Invalid Authorization header format - not a Bearer token");
+            return Err(response::error(
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AUTH_ERROR",
+                "Invalid Authorization header format - Bearer token required",
+            ));
+        }
+    };
 
     // 从环境变量获取JWT密钥
     let jwt_secret = std::env::var("JWT_SECRET")
@@ -65,7 +59,7 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
     // 验证并解码JWT token
     let validation = Validation::default();
     let token_data = match decode::<Claims>(
-        token,
+        &token,
         &DecodingKey::from_secret(jwt_secret.as_ref()),
         &validation,
     ) {
