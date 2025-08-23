@@ -153,7 +153,7 @@ impl MigrationTrait for Migration {
                     ])
                     // Claude配置 - Anthropic API格式，使用最新Claude 3.5 Sonnet
                     .values_panic([
-                        "claude".into(),
+                        "anthropic".into(),
                         "Anthropic Claude".into(),
                         "api.anthropic.com".into(),
                         "anthropic".into(),
