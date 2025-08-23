@@ -84,6 +84,7 @@ num_cpus = "1.0"
 sysinfo = "0.37.0"
 ipnetwork = "0.20"
 serde_with = { version = "3.8.1", features = ["chrono"] }
+urlencoding = "2.1"
 
 # 测试框架依赖（条件编译）
 tempfile = { version = "3.0", optional = true }

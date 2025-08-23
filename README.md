@@ -8,7 +8,7 @@
 
 ## 📋 项目概述
 
-AI代理平台为企业提供统一、安全、高性能的AI服务访问网关，支持多个主流AI服务提供商（OpenAI、Google Gemini、Anthropic Claude）。采用独创的**双端口分离架构**，实现代理服务与管理功能的完全分离，确保高性能和高可用性。
+AI代理平台为企业提供统一、安全、高性能的AI服务访问网关，支持多个主流AI服务提供商（OpenAI、Google Gemini、Anthropic Claude）。采用独创的**双端口分离架构**和**完全数据驱动设计**，实现代理服务与管理功能的完全分离，确保高性能和高可用性。所有配置均存储在数据库中，支持动态更新无需重启。
 
 ### 🏗️ 双端口分离架构
 
@@ -44,12 +44,12 @@ AI代理平台为企业提供统一、安全、高性能的AI服务访问网关�
 - **📊 实时健康检查**: 后台监控服务状态，自动故障检测
 - **💾 统一数据管理**: SQLite + Sea-ORM + Redis缓存优化
 
-### 🚀 开发中功能
+### 🚀 已实现功能(续)
 
 - **⚖️ 智能负载均衡**: 轮询、权重、健康度最佳三种调度策略
 - **🔌 AI服务商适配器**: OpenAI、Gemini、Claude完整API适配
 - **📈 监控统计系统**: 实时指标收集、使用量分析、成本控制
-- **🎨 Web管理界面**: Vue 3 + TypeScript响应式管理面板
+- **🎨 Web管理界面**: React 18 + TypeScript + shadcn/ui 响应式管理面板
 
 ## 🚀 快速开始
 
@@ -133,10 +133,19 @@ curl -X POST http://localhost:8080/v1/chat/completions \
     "max_tokens": 50
   }'
 
-# Google Gemini API代理
+# Google Gemini API代理 (支持多种认证格式)
+# 使用 Authorization: Bearer 格式
 curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "contents": [{"parts": [{"text": "Hello!"}]}]
+  }'
+
+# 或使用 X-goog-api-key 格式 (基于数据库配置)
+curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
+  -H "Content-Type: application/json" \
+  -H "X-goog-api-key: your-api-key" \
   -d '{
     "contents": [{"parts": [{"text": "Hello!"}]}]
   }'
@@ -159,7 +168,7 @@ curl -X POST http://localhost:8080/v1/messages \
 |------|------|----------|
 | **[API.md](docs/API.md)** | API接口完整参考 | 所有管理API的详细说明和curl示例 |
 | **[DESIGN.md](docs/DESIGN.md)** | 系统架构设计 | 完整技术方案+任务管理与实施跟踪 |
-| **[FRONTEND_DESIGN.md](docs/FRONTEND_DESIGN.md)** | 前端设计方案 | Vue 3技术栈+开发者角色定义 |
+| **[FRONTEND_DESIGN.md](docs/FRONTEND_DESIGN.md)** | 前端设计方案 | React 18技术栈+开发者角色定义 |
 | **[GOAL.md](docs/GOAL.md)** | 项目目标规划 | 分阶段实施计划和成功标准 |
 
 ## 📊 当前开发状态
@@ -170,19 +179,21 @@ curl -X POST http://localhost:8080/v1/messages \
 - ✅ **Phase 1**: 基础设施搭建完成 (数据库、缓存、配置管理)
 - ✅ **认证系统**: JWT + API Key + RBAC权限控制完整实现
 - ✅ **动态配置**: ProviderConfigManager替代所有硬编码地址
-- 🔄 **Phase 2**: 核心代理功能 (负载均衡器、AI适配器开发中)
-- 📋 **Phase 3**: 管理功能与监控 (统计分析、用户管理)
-- 📋 **Phase 4**: 安全与TLS (证书管理、安全防护)
-- 📋 **Phase 5**: 前端界面 (Vue 3管理面板)
+- ✅ **Phase 2**: 核心代理功能 (负载均衡器、AI适配器已完成)
+- ✅ **Phase 3**: 管理功能与监控 (统计分析、用户管理已完成)
+- 🔄 **Phase 4**: 安全与TLS (证书管理、安全防护开发中)
+- ✅ **Phase 5**: 前端界面 (React 18管理面板已完成)
 
 ### 🔧 技术债务和改进
 
 - [x] 消除硬编码API地址，实现动态配置
 - [x] 完善认证授权机制
 - [x] 建立错误处理框架
-- [ ] 实现负载均衡调度器
-- [ ] 完成AI服务商适配器
-- [ ] 增加性能监控和告警
+- [x] 实现负载均衡调度器
+- [x] 完成AI服务商适配器
+- [x] 增加性能监控和告警
+- [x] 数据驱动的模型名称记录
+- [x] 完全数据驱动的认证系统
 
 ## 🛠️ 开发环境
 
@@ -218,7 +229,7 @@ api-proxy/
 │   └── error/             # 错误处理框架
 ├── entity/                # 数据库实体定义
 ├── migration/             # 数据库迁移脚本
-├── frontend/              # Vue 3前端应用 (规划中)
+├── web/                   # React 18前端应用 (已完成)
 ├── docs/                  # 完整项目文档
 └── CLAUDE.md              # 开发指南和说明
 ```
@@ -235,7 +246,7 @@ api-proxy/
 
 - **技术栈**: [Rust](https://www.rust-lang.org/) + [Pingora](https://github.com/cloudflare/pingora) + [Axum](https://github.com/tokio-rs/axum)
 - **数据库**: [Sea-ORM](https://www.sea-ql.org/SeaORM/) + [SQLite](https://www.sqlite.org/)
-- **前端**: [Vue 3](https://vuejs.org/) + [TypeScript](https://www.typescriptlang.org/) + [Element Plus](https://element-plus.org/)
+- **前端**: [React 18](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) + [shadcn/ui](https://ui.shadcn.com/)
 
 ## 📄 许可证
 
@@ -243,10 +254,10 @@ api-proxy/
 
 ## 🏷️ 版本信息
 
-- **当前版本**: v0.2.0-dev (双端口分离架构)
+- **当前版本**: v1.0.0 (生产就绪版本)
 - **Rust版本要求**: 1.75+
-- **最后更新**: 2025年1月
+- **最后更新**: 2025年8月
 
 ---
 
-> 💡 **提示**: 项目正在积极开发中，欢迎贡献代码或提出建议！如有问题请查看文档或提交Issue。
+> 💡 **提示**: 项目已达到生产就绪状态，完整实现企业级AI代理功能。欢迎贡献代码或提出建议！如有问题请查看文档或提交Issue。

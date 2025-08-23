@@ -290,7 +290,7 @@ impl AIProxyHandler {
 
         // 步骤1: 身份验证 - 验证是哪个用户创建的哪种服务提供商的token
         let auth_start = std::time::Instant::now();
-        let api_key = self.extract_api_key(session)?;
+        let api_key = self.extract_api_key_from_request(session).await?;
         let user_service_api = self.authenticate_api_key(&api_key).await?;
         ctx.user_service_api = Some(user_service_api.clone());
         let _auth_duration = auth_start.elapsed();
@@ -513,30 +513,127 @@ impl AIProxyHandler {
         Ok(())
     }
 
-    /// 从请求中提取API密钥
-    fn extract_api_key(&self, session: &Session) -> Result<String, ProxyError> {
-        // 从Authorization头提取API密钥
-        if let Some(auth_header) = session.req_header().headers.get("authorization") {
-            let auth_str = std::str::from_utf8(auth_header.as_bytes())
-                .map_err(|_| ProxyError::authentication("Invalid authorization header encoding"))?;
+    /// 基于数据库配置提取API密钥
+    async fn extract_api_key_from_request(&self, session: &Session) -> Result<String, ProxyError> {
+        // 获取所有活跃的provider types和它们的认证配置
+        let provider_types = self.get_all_active_provider_types().await?;
+        
+        tracing::debug!(
+            provider_count = provider_types.len(),
+            "Attempting to extract API key using database auth configurations"
+        );
 
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Ok(token.to_string());
+        // 根据每种provider type的认证配置尝试提取API key
+        for provider_type in &provider_types {
+            if let Some(api_key) = self.try_extract_api_key_for_provider(session, provider_type).await {
+                tracing::debug!(
+                    provider = %provider_type.name,
+                    auth_format = ?provider_type.auth_header_format,
+                    api_key_preview = %self.sanitize_api_key(&api_key),
+                    "Successfully extracted API key using provider configuration"
+                );
+                return Ok(api_key);
             }
         }
 
-        // 从查询参数提取API密钥
-        if let Some(query) = session.req_header().uri.query() {
-            for param in query.split('&') {
-                if let Some((key, value)) = param.split_once('=') {
-                    if key == "api_key" {
-                        return Ok(value.to_string());
+        Err(ProxyError::authentication(
+            "API key not found using any configured authentication format"
+        ))
+    }
+
+    /// 获取所有活跃的provider types
+    async fn get_all_active_provider_types(&self) -> Result<Vec<provider_types::Model>, ProxyError> {
+        let cache_key = "all_active_provider_types";
+        
+        // 首先检查缓存
+        if let Ok(Some(provider_types)) = self
+            .cache
+            .provider()
+            .get::<Vec<provider_types::Model>>(cache_key)
+            .await
+        {
+            return Ok(provider_types);
+        }
+
+        // 从数据库查询
+        let provider_types = ProviderTypes::find()
+            .filter(provider_types::Column::IsActive.eq(true))
+            .all(&*self.db)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?;
+
+        // 缓存结果（10分钟）
+        let _ = self
+            .cache
+            .provider()
+            .set(cache_key, &provider_types, Some(Duration::from_secs(600)))
+            .await;
+
+        Ok(provider_types)
+    }
+
+    /// 尝试根据特定provider type的配置提取API key
+    async fn try_extract_api_key_for_provider(
+        &self,
+        session: &Session,
+        provider_type: &provider_types::Model,
+    ) -> Option<String> {
+        let auth_format = provider_type
+            .auth_header_format
+            .as_deref()
+            .unwrap_or("Authorization: Bearer {key}");
+
+        // 解析认证格式以获取头名称
+        match AuthHeaderParser::extract_header_name(auth_format) {
+            Ok(header_name) => {
+                // 从HTTP头中提取
+                if let Some(header_value) = session.req_header().headers.get(&header_name) {
+                    if let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
+                        // 使用正则表达式或字符串匹配来提取{key}部分
+                        if let Some(api_key) = self.extract_key_from_header_value(header_str, auth_format) {
+                            return Some(api_key);
+                        }
                     }
                 }
+                
+                // 也检查查询参数（某些provider可能支持）
+                if let Some(query) = session.req_header().uri.query() {
+                    let params = self.parse_query_string(query);
+                    if let Some(api_key) = params.get("api_key").or(params.get("key")) {
+                        return Some(api_key.clone());
+                    }
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    provider = %provider_type.name,
+                    auth_format = %auth_format,
+                    error = %e,
+                    "Invalid auth format in database"
+                );
             }
         }
 
-        Err(ProxyError::authentication("API key not found"))
+        None
+    }
+
+    /// 从头值中提取API key
+    fn extract_key_from_header_value(&self, header_value: &str, auth_format: &str) -> Option<String> {
+        // 将{key}替换为占位符，然后反向匹配
+        let template = auth_format.split(": ").nth(1)?; // 获取冒号后的部分
+        
+        if template == "{key}" {
+            // 直接的key格式，如 "X-goog-api-key: {key}"
+            return Some(header_value.to_string());
+        } else if let Some(prefix) = template.strip_suffix("{key}") {
+            // 带前缀的格式，如 "Bearer {key}"
+            return header_value.strip_prefix(prefix).map(|s| s.to_string());
+        } else if let Some(suffix) = template.strip_prefix("{key}") {
+            // 带后缀的格式（不常见）
+            return header_value.strip_suffix(suffix).map(|s| s.to_string());
+        }
+        
+        None
     }
 
     /// 验证API密钥 - 基于user_service_apis表
@@ -1219,29 +1316,36 @@ impl AIProxyHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 使用新的数据驱动方法提取token使用信息
-        // 注意：这里我们设置默认值，实际提取将在响应体收集完成后进行
-        ctx.token_usage = TokenUsage::default();
-        ctx.tokens_used = 0;
-
         // 收集响应头信息
         self.collect_response_headers(upstream_response, ctx);
 
+        // 提取模型名称（使用数据驱动的ModelExtractor）
+        let model_used = self.extract_model_with_model_extractor(ctx).await;
+        
+        // 初始化token使用信息，但保留模型信息
+        ctx.token_usage = TokenUsage {
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: 0,
+            model_used: model_used.clone(),
+        };
+        ctx.tokens_used = 0;
+
         // 更新数据库中的model信息
         if let Some(tracer) = &self.tracer {
-            if ctx.token_usage.model_used.is_some() {
+            if model_used.is_some() {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
                         None,                               // provider_type_id 已设置
-                        ctx.token_usage.model_used.clone(), // 更新model_used字段
+                        model_used.clone(),                 // 更新model_used字段
                         None,                               // user_provider_key_id 已设置
                     )
                     .await;
 
                 tracing::info!(
                     request_id = %ctx.request_id,
-                    model_used = ?ctx.token_usage.model_used,
+                    model_used = ?model_used,
                     "Updated trace info with model information"
                 );
             }
@@ -1719,7 +1823,7 @@ impl AIProxyHandler {
             };
 
         // 解析查询参数（从请求路径中）
-        let query_params = std::collections::HashMap::new(); // TODO: 解析实际的查询参数
+        let query_params = self.parse_query_params(&ctx.request_details.path);
 
         // 使用ModelExtractor提取模型名称
         let extracted_model =
@@ -1836,6 +1940,41 @@ impl AIProxyHandler {
         );
 
         Ok(())
+    }
+
+    /// 解析URL查询参数
+    fn parse_query_params(&self, path: &str) -> std::collections::HashMap<String, String> {
+        let mut query_params = std::collections::HashMap::new();
+        
+        if let Some(query_start) = path.find('?') {
+            let query = &path[query_start + 1..];
+            for param in query.split('&') {
+                if let Some((key, value)) = param.split_once('=') {
+                    // URL解码
+                    let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
+                    let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
+                    query_params.insert(decoded_key.to_string(), decoded_value.to_string());
+                }
+            }
+        }
+        
+        query_params
+    }
+
+    /// 解析查询字符串
+    fn parse_query_string(&self, query: &str) -> std::collections::HashMap<String, String> {
+        let mut query_params = std::collections::HashMap::new();
+        
+        for param in query.split('&') {
+            if let Some((key, value)) = param.split_once('=') {
+                // URL解码
+                let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
+                let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
+                query_params.insert(decoded_key.to_string(), decoded_value.to_string());
+            }
+        }
+        
+        query_params
     }
 
     /// 净化API密钥用于日志记录

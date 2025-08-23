@@ -11,9 +11,6 @@
   - [1.4 数据库配置](#14-数据库配置-database)
   - [1.5 缓存配置](#15-缓存配置-cache)
   - [1.6 Redis配置](#16-redis配置-redis)
-  - [1.7 请求追踪配置](#17-请求追踪配置-trace)
-  - [1.8 全局服务配置](#18-全局服务配置-services)
-  - [1.9 TLS/SSL配置](#19-tlsssl配置-tls)
 - [2. 前端配置](#2-前端配置)
   - [2.1 构建配置](#21-构建配置-viteconfigts)
   - [2.2 运行时配置](#22-运行时配置-publicconfigjs)
@@ -237,91 +234,21 @@ max_connections = 20
 - 有密码: `redis://:password@localhost:6379/0`
 - 用户认证: `redis://username:password@localhost:6379/0`
 
-### 1.7 请求追踪配置 `[trace]`
+### 1.7 说明
 
-请求追踪系统用于收集详细的请求统计数据、性能指标和健康状态。
+**注意:** 旧版本配置中的 `[trace]`、`[services]` 和 `[tls]` 配置段已被移除。
 
-```toml
-[trace]
-enabled = true
-default_trace_level = 2        # 追踪级别：0=基础, 1=详细, 2=完整
-sampling_rate = 1.0            # 采样率
-max_batch_size = 100           # 批量处理大小
-flush_interval = 10            # 刷新间隔
-timeout_seconds = 30           # 超时时间
-async_write = true             # 异步写入
-enable_phases = true           # 启用阶段追踪
-enable_health_metrics = true   # 启用健康指标
-enable_performance_metrics = true  # 启用性能指标
-```
-
-**参数详解:**
-
-| 参数 | 类型 | 默认值 | 范围/可选值 | 说明 |
-|------|------|--------|-------------|------|
-| `enabled` | `bool` | `true` | - | 是否启用请求追踪系统 |
-| `default_trace_level` | `i32` | `2` | 0, 1, 2 | 默认追踪级别 |
-| `sampling_rate` | `f64` | `1.0` | 0.0-1.0 | 请求采样率（1.0=100%，0.1=10%） |
-| `max_batch_size` | `usize` | `100` | 10-1000 | 批量写入数据库的最大记录数 |
-| `flush_interval` | `u64` | `10` | 1-300 | 数据刷新到数据库的间隔（秒） |
-| `timeout_seconds` | `u64` | `30` | 10-300 | 追踪操作超时时间（秒） |
-| `async_write` | `bool` | `true` | - | 是否使用异步写入（提高性能） |
-| `enable_phases` | `bool` | `true` | - | 是否追踪请求处理各阶段（认证、限流、转发等） |
-| `enable_health_metrics` | `bool` | `true` | - | 是否收集健康状态指标 |
-| `enable_performance_metrics` | `bool` | `true` | - | 是否收集详细性能指标 |
-
-**追踪级别说明:**
-- `0 (基础)`: 只记录基本请求信息（状态码、响应时间、token使用）
-- `1 (详细)`: 记录详细请求信息（包含请求头、响应头、错误信息）
-- `2 (完整)`: 记录完整请求信息（包含请求体、响应体、所有阶段数据）
-
-### 1.8 全局服务配置 `[services]`
-
-控制各个功能模块的启用状态。
-
-```toml
-[services]
-management = true    # 启用管理服务
-proxy = true         # 启用代理服务
-health_check = true  # 启用健康检查
-monitoring = true    # 启用监控统计
-```
-
-**参数详解:**
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `management` | `bool` | `true` | 是否启用管理API服务 |
-| `proxy` | `bool` | `true` | 是否启用AI代理服务 |
-| `health_check` | `bool` | `true` | 是否启用上游服务健康检查 |
-| `monitoring` | `bool` | `true` | 是否启用统计监控功能 |
-
-### 1.9 TLS/SSL配置 `[tls]`
-
-用于配置HTTPS支持和自动证书管理。
-
-```toml
-[tls]
-cert_path = "./certs"                    # 证书存储路径
-acme_email = "admin@yourdomain.com"      # ACME邮箱
-domains = ["yourdomain.com"]             # 域名列表
-```
-
-**参数详解:**
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `cert_path` | `String` | `"./certs"` | TLS证书存储目录路径 |
-| `acme_email` | `String` | `""` | Let's Encrypt ACME协议用邮箱 |
-| `domains` | `Vec<String>` | `[]` | 需要申请证书的域名列表 |
+- **请求追踪功能** 现在通过 UnifiedTraceSystem 自动启用，无需额外配置
+- **服务控制** 现在通过 `dual_port.enabled_services` 配置段管理
+- **TLS配置** 计划在后续版本中重新设计实现
 
 ---
 
 ## 2. 前端配置
 
-前端基于Vue 3 + TypeScript + Vite构建，支持多种配置方式。
+前端基于React 18 + TypeScript + ESBuild构建，支持多种配置方式。
 
-### 2.1 构建配置 (vite.config.ts)
+### 2.1 构建配置 (scripts/build.mjs)
 
 ```typescript
 export default defineConfig({
@@ -418,7 +345,7 @@ window.APP_CONFIG = {
 
 ### 2.3 环境变量配置
 
-前端支持通过环境变量覆盖配置，变量名以 `VITE_` 开头。
+前端支持通过环境变量覆盖配置，构建时自动注入到应用中。
 
 **.env 文件示例:**
 ```bash
@@ -438,11 +365,11 @@ VITE_WS_URL=wss://ws.yourdomain.com
 
 | 变量名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `VITE_API_BASE_URL` | `string` | `"/api"` | API基础URL，生产环境通常为完整域名 |
-| `VITE_WS_URL` | `string` | `"/ws"` | WebSocket URL |
-| `VITE_APP_VERSION` | `string` | `"1.0.0"` | 应用版本号 |
-| `VITE_LOG_LEVEL` | `string` | `"info"` | 前端日志级别 |
-| `VITE_DEBUG` | `boolean` | `false` | 调试模式开关 |
+| `API_BASE_URL` | `string` | `"/api"` | API基础URL，生产环境通常为完整域名 |
+| `WS_URL` | `string` | `"/ws"` | WebSocket URL |
+| `APP_VERSION` | `string` | `"1.0.0"` | 应用版本号 |
+| `REACT_APP_LOG_LEVEL` | `string` | `"info"` | 前端日志级别 |
+| `DEBUG` | `boolean` | `false` | 调试模式开关 |
 
 ---
 

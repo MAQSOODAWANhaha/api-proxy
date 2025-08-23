@@ -39,26 +39,3 @@ connection_timeout = 5
 default_ttl = 3600
 max_connections = 20
 
-[tls]
-cert_path = "./certs"
-acme_email = "admin@yourdomain.com"
-domains = ["yourdomain.com"]
-
-[services]
-management_api = true    # 启用管理API
-ai_proxy = true         # 启用AI代理
-health_check = true     # 启用健康检查
-metrics = true          # 启用指标收集
-
-# 请求追踪配置 - 启用完整追踪收集所有数据
-[trace]
-enabled = true
-default_trace_level = 2  # 0=基础, 1=详细, 2=完整追踪（收集最详细数据）
-sampling_rate = 1.0      # 100%采样率，确保收集所有数据
-max_batch_size = 100     # 批量处理大小
-flush_interval = 10      # 刷新间隔（秒）
-timeout_seconds = 30     # 超时时间
-async_write = true       # 异步写入
-enable_phases = true     # 启用阶段追踪以收集完整数据
-enable_health_metrics = true  # 启用健康指标
-enable_performance_metrics = true  # 启用详细性能指标以收集完整数据
