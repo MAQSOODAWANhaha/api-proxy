@@ -297,7 +297,7 @@ EOF
     log_info "证书有效期: 365天"
 }
 
-# 生成基于IP的自签名证书（增强版）
+# 生成基于IP的自签名证书（简化版）
 generate_ip_self_signed_cert() {
     log_step "生成基于IP的自签名TLS证书"
     
@@ -318,128 +318,53 @@ generate_ip_self_signed_cert() {
     # 确保证书目录存在
     mkdir -p "$cert_dir"
     
-    # 收集所有可能的IP地址
-    log_info "检测可用IP地址..."
-    local all_ips=""
-    local ip_count=1
+    # 简化的证书生成 - 使用OpenSSL直接生成
+    log_info "生成简化自签名证书..."
     
-    # 添加本地回环地址
-    all_ips="IP.${ip_count}:127.0.0.1"
-    ((ip_count++))
+    # 创建Subject Alternative Name扩展
+    local san_ext=""
+    san_ext="DNS:localhost,DNS:*.localhost,IP:127.0.0.1"
     
-    # 添加主要IP（LOCAL_IP）
+    # 添加主要IP
     if [[ -n "$LOCAL_IP" ]]; then
-        all_ips="$all_ips,IP.${ip_count}:$LOCAL_IP"
-        ((ip_count++))
+        san_ext="$san_ext,IP:$LOCAL_IP"
         log_info "  添加主要IP: $LOCAL_IP"
     fi
     
     # 检测内网IP地址
     local internal_ips
-    internal_ips=$(hostname -I 2>/dev/null | xargs -n1 | grep -E '^(10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)' | head -3)
+    internal_ips=$(hostname -I 2>/dev/null | xargs -n1 | grep -E '^(10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)' | head -2)
     for ip in $internal_ips; do
         if [[ "$ip" != "$LOCAL_IP" ]]; then
-            all_ips="$all_ips,IP.${ip_count}:$ip"
-            ((ip_count++))
+            san_ext="$san_ext,IP:$ip"
             log_info "  添加内网IP: $ip"
         fi
     done
     
-    # 尝试检测外网IP（通过多个服务）
-    log_info "尝试检测外网IP..."
-    local external_ip=""
-    
-    # 方法1: 通过ifconfig.me (最常用)
-    external_ip=$(timeout 5 curl -s -4 ifconfig.me 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
-    if [[ -z "$external_ip" ]]; then
-        # 方法2: 通过ipinfo.io
-        external_ip=$(timeout 5 curl -s -4 ipinfo.io/ip 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
-    fi
-    if [[ -z "$external_ip" ]]; then
-        # 方法3: 通过icanhazip.com  
-        external_ip=$(timeout 5 curl -s -4 icanhazip.com 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
-    fi
-    
-    # 添加检测到的外网IP
-    if [[ -n "$external_ip" && "$external_ip" != "$LOCAL_IP" ]]; then
-        all_ips="$all_ips,IP.${ip_count}:$external_ip"
-        ((ip_count++))
-        log_success "  检测到外网IP: $external_ip"
-    else
-        log_warning "  未能检测到外网IP，请手动添加"
-    fi
-    
-    # 添加用户指定的额外IP（如果有）
-    if [[ -n "$EXTRA_IPS" ]]; then
-        IFS=',' read -ra EXTRA_IP_ARRAY <<< "$EXTRA_IPS"
-        for extra_ip in "${EXTRA_IP_ARRAY[@]}"; do
-            if [[ "$extra_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-                all_ips="$all_ips,IP.${ip_count}:$extra_ip"
-                ((ip_count++))
-                log_info "  添加额外IP: $extra_ip"
-            fi
-        done
-    fi
-    
-    # 生成证书配置文件
-    local cert_conf="$cert_dir/cert.conf"
-    cat > "$cert_conf" << EOF
-[req]
-distinguished_name = req_distinguished_name
-req_extensions = v3_req
-prompt = no
-
-[req_distinguished_name]
-C = CN
-ST = Cloud
-L = Internet
-O = AI Proxy Platform
-OU = Development
-CN = ${LOCAL_IP}
-
-[v3_req]
-keyUsage = keyEncipherment, dataEncipherment, digitalSignature
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-DNS.2 = *.localhost
-DNS.3 = proxy
-DNS.4 = api-proxy
-${all_ips}
-EOF
-    
-    log_info "生成增强自签名证书..."
     log_info "证书将支持以下访问方式:"
     log_info "  - https://localhost:8443"
     if [[ -n "$LOCAL_IP" ]]; then
         log_info "  - https://$LOCAL_IP:8443"
     fi
-    if [[ -n "$external_ip" ]]; then
-        log_info "  - https://$external_ip:8443"
-    fi
     
-    # 生成私钥和证书
-    openssl genrsa -out "$key_file" 2048
-    openssl req -new -key "$key_file" -out "$cert_dir/server.csr" -config "$cert_conf"
-    openssl x509 -req -in "$cert_dir/server.csr" -signkey "$key_file" -out "$cert_file" \
-        -days 365 -extensions v3_req -extfile "$cert_conf"
+    # 使用OpenSSL一步生成自签名证书
+    openssl req -x509 -newkey rsa:2048 -keyout "$key_file" -out "$cert_file" \
+        -days 365 -nodes \
+        -subj "/C=CN/ST=Cloud/L=Internet/O=AI Proxy Platform/OU=Development/CN=${LOCAL_IP:-localhost}" \
+        -addext "subjectAltName=$san_ext" \
+        -addext "keyUsage=keyEncipherment,dataEncipherment,digitalSignature" \
+        -addext "extendedKeyUsage=serverAuth"
     
     # 设置权限
     chmod 600 "$key_file"
     chmod 644 "$cert_file"
     
-    # 清理临时文件
-    rm -f "$cert_dir/server.csr" "$cert_conf"
-    
-    log_success "增强自签名证书生成完成: $cert_file"
+    log_success "简化自签名证书生成完成: $cert_file"
     log_info "证书有效期: 365天"
-    log_info "包含IP数量: $((ip_count-1))"
     
     # 显示证书详情
     log_info "证书详情:"
-    openssl x509 -in "$cert_file" -text -noout | grep -A 10 "Subject Alternative Name" || log_warning "无法读取SAN信息"
+    openssl x509 -in "$cert_file" -text -noout | grep -A 5 "Subject Alternative Name" 2>/dev/null || log_warning "无法读取SAN信息"
 }
 
 # 检查域名证书状态
@@ -1156,11 +1081,11 @@ show_access_info() {
     
     if [[ "$TLS_MODE" == "selfsigned" ]]; then
         echo -e "${BLUE}🌍 自签名证书模式 (测试环境):${NC}"
-        echo -e "  📱 主要入口:  ${GREEN}https://$LOCAL_IP:9443${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理面板:  ${GREEN}https://$LOCAL_IP:9443/dashboard${NC}"
-        echo -e "  🤖 API接口:   ${GREEN}https://$LOCAL_IP:9443/api${NC}"
-        echo -e "  🔐 备用端口:  ${GREEN}https://$LOCAL_IP:8443${NC}"
-        echo -e "  🏠 本地访问:  ${GREEN}https://localhost:9443${NC}"
+        echo -e "  📱 管理面板:  ${GREEN}https://$LOCAL_IP${NC} ${YELLOW}← 主要访问入口 (443端口)${NC}"
+        echo -e "  🔧 管理面板:  ${GREEN}https://$LOCAL_IP/dashboard${NC}"
+        echo -e "  🤖 API接口:   ${GREEN}https://$LOCAL_IP/api${NC}"
+        echo -e "  🚀 AI代理服务: ${GREEN}https://$LOCAL_IP:8443${NC} ${YELLOW}← AI代理专用端口${NC}"
+        echo -e "  🏠 本地访问:  ${GREEN}https://localhost${NC}"
         echo ""
         echo -e "${YELLOW}⚠️  注意事项:${NC}"
         echo "  • 浏览器会提示证书不受信任，点击"高级"→"继续访问"即可"
@@ -1170,7 +1095,7 @@ show_access_info() {
         echo -e "  📱 主域名:    ${GREEN}https://$DOMAIN_NAME${NC} ${YELLOW}← 主要访问入口${NC}"
         echo -e "  🔧 管理面板:  ${GREEN}https://$DOMAIN_NAME/dashboard${NC}"
         echo -e "  🤖 API接口:   ${GREEN}https://$DOMAIN_NAME/api${NC}"
-        echo -e "  🔐 备用端口:  ${GREEN}https://$DOMAIN_NAME:8443${NC}"
+        echo -e "  🚀 AI代理服务: ${GREEN}https://$DOMAIN_NAME:8443${NC}"
         echo ""
         echo -e "${YELLOW}📌 证书信息:${NC}"
         echo "  • 域名: $DOMAIN_NAME"
@@ -1181,9 +1106,9 @@ show_access_info() {
     echo ""
     echo -e "${YELLOW}📌 服务架构特点:${NC}"
     echo "  • 统一后端服务：9090端口（前端静态文件 + API）"
-    echo "  • 8080端口重定向到根路径"
-    echo "  • Caddy自动HTTPS和SSL证书管理"
-    echo "  • 避免Kubernetes端口冲突：使用9443端口"
+    echo "  • AI代理服务：8080端口（专用AI代理转发）"
+    echo "  • Caddy反向代理：443端口(管理) + 8443端口(AI代理)"
+    echo "  • 自动HTTPS和SSL证书管理"
     echo ""
     echo -e "${BLUE}🔧 直接访问（调试用）:${NC}"
     echo "  • 统一服务: http://localhost:9090"
