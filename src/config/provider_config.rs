@@ -131,6 +131,59 @@ impl ProviderConfigManager {
         Ok(configs)
     }
 
+    /// 根据提供商名称解析为ProviderId（整合ProviderResolver功能）
+    pub async fn resolve_provider(&self, provider_name: &str) -> Result<crate::proxy::types::ProviderId> {
+        use crate::proxy::types::ProviderId;
+        use entity::provider_types::{self, Entity as ProviderTypes};
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        
+        let normalized_name = provider_name.to_lowercase();
+
+        // 尝试从数据库查询活跃的提供商
+        if let Some(provider) = ProviderTypes::find()
+            .filter(provider_types::Column::Name.eq(&normalized_name))
+            .filter(provider_types::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| crate::error::ProxyError::internal(format!("Database query error: {}", e)))?
+        {
+            return Ok(ProviderId::from_database_id(provider.id));
+        }
+
+        // 获取所有活跃提供商进行灵活匹配
+        let providers = ProviderTypes::find()
+            .filter(provider_types::Column::IsActive.eq(true))
+            .all(self.db.as_ref())
+            .await
+            .map_err(|e| crate::error::ProxyError::internal(format!("Database query error: {}", e)))?;
+
+        // 尝试多种匹配策略
+        for provider in &providers {
+            // 1. display_name精确匹配（不区分大小写）
+            if provider.display_name.to_lowercase() == normalized_name {
+                return Ok(ProviderId::from_database_id(provider.id));
+            }
+
+            // 2. display_name中包含查询词
+            let display_lower = provider.display_name.to_lowercase();
+            if display_lower.contains(&normalized_name) && normalized_name.len() >= 3 {
+                return Ok(ProviderId::from_database_id(provider.id));
+            }
+        }
+
+        // 获取所有活跃提供商的名称用于错误消息
+        let available_providers = providers
+            .iter()
+            .map(|p| format!("{} ({})", p.display_name, p.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Err(crate::error::ProxyError::config(format!(
+            "Unknown or inactive provider: '{}'. Available providers: {}",
+            normalized_name, available_providers
+        )))
+    }
+
     /// 根据名称获取服务商配置
     pub async fn get_provider_by_name(&self, name: &str) -> Result<Option<ProviderConfig>> {
         let cache_key = format!("provider_config:{}", name);

@@ -142,9 +142,11 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
 
     let mut health_infos = Vec::new();
 
-    // 为了演示，我们这里创建一个临时的健康检查器
-    // 在实际实现中，这应该从AppState中获取
-    let health_checker = Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None));
+    // 使用共享的健康检查器，如果不存在则创建临时的
+    let health_checker = match &state.api_key_health_checker {
+        Some(checker) => checker.clone(),
+        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
+    };
 
     for key in active_keys {
         let provider_info = provider_types_map.get(&key.provider_type_id);
@@ -232,11 +234,14 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
         })
         .collect();
     
+    // 检查健康检查服务是否运行中
+    let health_check_running = state.api_key_health_checker.is_some();
+
     Ok(HealthCheckStats {
         total_keys,
         healthy_keys,
         unhealthy_keys,
-        health_check_running: true, // 假设健康检查总是运行的
+        health_check_running,
         provider_stats,
     })
 }
@@ -251,8 +256,11 @@ async fn trigger_key_health_check_internal(
         .await?
         .ok_or_else(|| anyhow::anyhow!("API key not found: {}", key_id))?;
 
-    // 创建健康检查器并执行检查
-    let health_checker = Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None));
+    // 使用共享的健康检查器，如果不存在则创建临时的
+    let health_checker = match &state.api_key_health_checker {
+        Some(checker) => checker.clone(),
+        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
+    };
     health_checker.check_api_key(&key).await
 }
 
@@ -261,7 +269,10 @@ async fn mark_key_unhealthy_internal(
     key_id: i32,
     reason: String,
 ) -> anyhow::Result<()> {
-    // 创建健康检查器并标记密钥为不健康
-    let health_checker = Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None));
+    // 使用共享的健康检查器，如果不存在则创建临时的
+    let health_checker = match &state.api_key_health_checker {
+        Some(checker) => checker.clone(),
+        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
+    };
     health_checker.mark_key_unhealthy(key_id, reason).await
 }

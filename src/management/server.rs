@@ -4,7 +4,7 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ProviderConfigManager};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
 use crate::management::response::{self};
 use crate::providers::DynamicAdapterManager;
@@ -17,7 +17,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use sea_orm::{ConnectionTrait, DatabaseConnection};
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -81,8 +81,10 @@ pub struct AppState {
     pub adapter_manager: Arc<DynamicAdapterManager>,
     /// 统计服务
     pub statistics_service: Arc<StatisticsService>,
-    /// 提供商解析服务
-    pub provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
+    /// 提供商配置管理器
+    pub provider_config_manager: Arc<ProviderConfigManager>,
+    /// API密钥健康检查器
+    pub api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
 }
 
 /// 管理服务器
@@ -90,6 +92,7 @@ pub struct ManagementServer {
     /// 配置
     config: ManagementConfig,
     /// 应用状态
+    #[allow(dead_code)]
     state: AppState,
     /// 路由器
     router: Router,
@@ -104,7 +107,8 @@ impl ManagementServer {
         auth_service: Arc<AuthService>,
         adapter_manager: Arc<DynamicAdapterManager>,
         statistics_service: Arc<StatisticsService>,
-        provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
+        provider_config_manager: Arc<ProviderConfigManager>,
+        api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
     ) -> Result<Self> {
         let state = AppState {
             config: app_config,
@@ -112,7 +116,8 @@ impl ManagementServer {
             auth_service,
             adapter_manager,
             statistics_service,
-            provider_resolver,
+            provider_config_manager,
+            api_key_health_checker,
         };
 
         let router = Self::create_router(state.clone(), &config)?;

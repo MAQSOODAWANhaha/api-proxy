@@ -132,8 +132,25 @@ impl ProxyHttp for ProxyService {
         }
 
         // 使用AI代理处理器进行身份验证、速率限制和转发策略
+        // 这会设置 ctx.timeout_seconds 从数据库配置
         match self.ai_handler.prepare_proxy_request(session, ctx).await {
             Ok(_) => {
+                // 使用数据库配置的超时时间设置下游超时
+                let timeout_seconds = ctx.timeout_seconds.unwrap_or(30) as u64;
+                // 下游超时设置为配置时间的2倍，确保有足够时间处理AI请求
+                let downstream_timeout_secs = timeout_seconds * 2;
+                
+                use std::time::Duration;
+                session.set_read_timeout(Some(Duration::from_secs(downstream_timeout_secs)));
+                session.set_write_timeout(Some(Duration::from_secs(downstream_timeout_secs)));
+                
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    configured_timeout_s = timeout_seconds,
+                    downstream_timeout_s = downstream_timeout_secs,
+                    "Set downstream timeouts from database configuration"
+                );
+
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     "AI proxy request preparation completed successfully - using Pingora native proxy"

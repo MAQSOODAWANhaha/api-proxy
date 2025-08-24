@@ -28,6 +28,7 @@ impl Default for ImmediateTracerConfig {
 #[derive(Debug)]
 pub struct ImmediateProxyTracer {
     /// 配置
+    #[allow(dead_code)]
     config: ImmediateTracerConfig,
     /// 数据库连接
     db: Arc<DatabaseConnection>,

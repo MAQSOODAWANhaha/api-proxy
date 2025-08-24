@@ -21,7 +21,7 @@ pub struct SharedServices {
     pub adapter_manager: Arc<DynamicAdapterManager>,
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
-    pub provider_resolver: Arc<crate::proxy::provider_resolver::ProviderResolver>,
+    pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
 }
 
 /// 双端口服务器启动函数
@@ -72,7 +72,8 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
         shared_services.auth_service.clone(),
         shared_services.adapter_manager.clone(),
         shared_services.statistics_service.clone(),
-        shared_services.provider_resolver.clone(),
+        shared_services.provider_config_manager.clone(),
+        Some(shared_services.api_key_health_checker.clone()),
     )
     .map_err(|e| {
         ProxyError::server_init(format!("Failed to create management server: {}", e))
@@ -225,13 +226,6 @@ pub async fn initialize_shared_services(
         provider_config_manager.clone(),
     ));
 
-    // 创建提供商解析服务
-    info!("🔍 Initializing provider resolver...");
-    let provider_resolver = Arc::new(crate::proxy::provider_resolver::ProviderResolver::new(
-        db.clone(),
-    ));
-
-
     // 创建统一认证管理器
     let unified_auth_manager = create_unified_auth_manager(
         jwt_manager,
@@ -259,6 +253,14 @@ pub async fn initialize_shared_services(
     ));
     info!("✅ Unified trace system initialized successfully");
 
+    // 初始化API密钥健康检查器
+    info!("🏥 Initializing API key health checker...");
+    let api_key_health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
+        db.clone(),
+        None, // 使用默认配置
+    ));
+    info!("✅ API key health checker initialized successfully");
+
     info!("✅ All shared services initialized successfully");
 
     let shared_services = SharedServices {
@@ -267,7 +269,7 @@ pub async fn initialize_shared_services(
         adapter_manager,
         statistics_service,
         provider_config_manager,
-        provider_resolver,
+        api_key_health_checker,
     };
 
     Ok((config_arc, db, shared_services, trace_system))

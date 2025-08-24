@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 /// 动态适配器管理器
 pub struct DynamicAdapterManager {
     /// 数据库连接
+    #[allow(dead_code)]
     db: Arc<DatabaseConnection>,
     /// 提供商配置管理器
     provider_config_manager: Arc<ProviderConfigManager>,

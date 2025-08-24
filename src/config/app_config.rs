@@ -31,7 +31,10 @@ pub struct ServerConfig {
     pub https_port: u16,
     /// 工作线程数
     pub workers: usize,
+    // Pingora配置已移除，超时配置现在从数据库获取
 }
+
+// PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
 
 /// 缓存类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

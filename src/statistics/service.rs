@@ -16,6 +16,7 @@ use tracing::{debug, error, warn};
 /// 统计服务
 pub struct StatisticsService {
     /// 应用配置
+    #[allow(dead_code)]
     config: Arc<AppConfig>,
     /// 缓存管理器
     cache_manager: Arc<UnifiedCacheManager>,
@@ -42,6 +43,7 @@ struct ResponseTimeRecord {
     /// 响应时间（毫秒）
     duration_ms: u64,
     /// 端点
+    #[allow(dead_code)]
     endpoint: String,
     /// 上游类型
     upstream_type: String,

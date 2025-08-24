@@ -51,6 +51,18 @@ impl PingoraProxyServer {
         server
     }
 
+    /// 创建Pingora服务器选项（基本配置）
+    fn create_pingora_options(&self) -> Result<Opt> {
+        let opt = Opt::default();
+        
+        tracing::info!("📋 创建Pingora基础配置选项");
+        
+        Ok(opt)
+    }
+
+    // 超时配置现在从数据库 user_service_apis.timeout_seconds 动态获取
+    // 不再需要全局的超时配置方法
+
     /// 启动服务器
     pub async fn start(self) -> Result<()> {
         // 跳过env_logger初始化，因为我们已经使用tracing了
@@ -58,13 +70,15 @@ impl PingoraProxyServer {
 
         // 创建服务器配置
         tracing::info!("Creating Pingora server configuration...");
-        let opt = Opt::default();
+        let opt = self.create_pingora_options()?;
         let mut server = Server::new(Some(opt)).map_err(|e| {
             ProxyError::server_init(format!("Failed to create Pingora server: {}", e))
         })?;
 
         tracing::info!("Bootstrapping Pingora server...");
         server.bootstrap();
+
+        tracing::info!("⏰ 超时配置现在从数据库动态获取 (user_service_apis.timeout_seconds)");
 
         // 使用构建器创建所有组件
         let mut builder = ProxyServerBuilder::new(self.config.clone());
