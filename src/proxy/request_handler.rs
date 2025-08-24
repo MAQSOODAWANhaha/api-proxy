@@ -2,18 +2,18 @@
 //!
 //! 简化后的AI代理请求处理器，专注于核心请求处理流程
 
-use pingora_core::upstreams::peer::HttpPeer;
 use pingora_core::Error as PingoraError;
+use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 
 use crate::auth::{AuthMethod, AuthResult, AuthUtils};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::providers::DynamicAdapterManager;
-use crate::proxy::types::{ProviderId, ForwardingContext, ForwardingResult};
+use crate::proxy::types::{ForwardingContext, ForwardingResult, ProviderId};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
 
@@ -60,6 +60,15 @@ pub struct RequestContext {
     pub forwarding_context: Option<ForwardingContext>,
 }
 
+/// 从URL路径中提取provider名称
+///
+/// 解析格式: /{provider_name}/{api_path}
+/// 例如: /gemini/v1beta/models/gemini-2.5-flash:generateContent -> "gemini"
+fn extract_provider_name_from_path(path: &str) -> Option<&str> {
+    // 去掉开头的 '/' 然后获取第一个路径段
+    path.strip_prefix('/').and_then(|s| s.split('/').next())
+}
+
 impl RequestHandler {
     /// 创建新的请求处理器
     pub fn new(
@@ -70,9 +79,12 @@ impl RequestHandler {
         provider_config_manager: Arc<ProviderConfigManager>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
     ) -> Self {
-        let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(db.clone(), None));
+        let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
+            db.clone(),
+            None,
+        ));
         let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
-        
+
         Self {
             db,
             _cache: cache,
@@ -91,24 +103,27 @@ impl RequestHandler {
         ctx: &mut RequestContext,
     ) -> Result<(), PingoraError> {
         // 1. 身份验证 - 返回认证结果和service_api配置
-        let (auth_result, service_api_config) = self.authenticate_request(session.req_header(), ctx).await?;
-        
+        let (auth_result, service_api_config) =
+            self.authenticate_request(session.req_header(), ctx).await?;
+
         // 2. 使用service_api配置选择API密钥
-        let selected_key = self.select_api_key(&auth_result, &service_api_config, ctx).await?;
-        
+        let selected_key = self
+            .select_api_key(&auth_result, &service_api_config, ctx)
+            .await?;
+
         // 3. 创建上游连接
         let _peer = self.create_upstream_peer(&selected_key, ctx).await?;
-        
+
         // 4. 设置上游
         session.set_keepalive(None);
         ctx.forwarding_context = Some(ForwardingContext::new(
             ctx.request_id.clone(),
             ctx.provider_id.unwrap_or(ProviderId::from_database_id(1)),
         ));
-        
+
         // 5. 连接到上游（简化实现）
         session.set_keepalive(None);
-        
+
         Ok(())
     }
 
@@ -141,35 +156,91 @@ impl RequestHandler {
         };
 
         ctx.user_id = Some(auth_result.user_id);
-        
+
         Ok((auth_result, user_service_api))
     }
 
-    /// 从请求头中提取API密钥 - 支持多种认证格式
+    /// 根据provider名称获取provider配置（使用缓存优化）
+    async fn get_provider_by_name(
+        &self,
+        provider_name: &str,
+    ) -> Result<entity::provider_types::Model, PingoraError> {
+        let cache_key = format!("provider_by_name:{}", provider_name);
+
+        // 首先检查缓存
+        if let Ok(Some(provider)) = self
+            ._cache
+            .provider()
+            .get::<entity::provider_types::Model>(&cache_key)
+            .await
+        {
+            return Ok(provider);
+        }
+
+        // 从数据库查询特定的provider
+        let provider = entity::provider_types::Entity::find()
+            .filter(entity::provider_types::Column::Name.eq(provider_name))
+            .filter(entity::provider_types::Column::IsActive.eq(true))
+            .one(&*self.db)
+            .await
+            .map_err(|_| *PingoraError::new_str("Database error"))?
+            .ok_or_else(|| *PingoraError::new_str("Unknown provider"))?;
+
+        // 缓存结果（30分钟）
+        let _ = self
+            ._cache
+            .provider()
+            .set(
+                &cache_key,
+                &provider,
+                Some(std::time::Duration::from_secs(1800)),
+            )
+            .await;
+
+        Ok(provider)
+    }
+
+    /// 从请求头中提取API密钥 - 基于URL前缀优化版本
     async fn extract_api_key_from_headers(
         &self,
         req_header: &RequestHeader,
     ) -> Result<String, PingoraError> {
-        // 获取所有活跃的provider类型及其认证格式
-        let provider_types = entity::provider_types::Entity::find()
-            .filter(entity::provider_types::Column::IsActive.eq(true))
-            .all(&*self.db)
-            .await
-            .map_err(|_| *PingoraError::new_str("Failed to query provider types"))?;
+        let path = req_header.uri.path();
 
-        // 遍历每种认证格式，尝试解析
-        for provider_type in &provider_types {
-            if let Some(auth_format) = &provider_type.auth_header_format {
-                if let Ok(api_key) = self.parse_auth_header_with_format(req_header, auth_format) {
-                    if !api_key.is_empty() {
-                        return Ok(api_key);
-                    }
-                }
-            }
+        // 1. 从URL路径中提取provider名称
+        let provider_name = extract_provider_name_from_path(path).ok_or_else(|| {
+            *PingoraError::new_str("Invalid URL format. Expected: /{provider_name}/{api_path}")
+        })?;
+
+        // 2. 从缓存获取特定provider的配置 (O(1) 查找)
+        let provider = self.get_provider_by_name(provider_name).await?;
+
+        // 3. 使用该provider的认证格式直接解析API密钥
+        let auth_format = provider
+            .auth_header_format
+            .as_deref()
+            .unwrap_or("Authorization: Bearer {key}");
+
+        let api_key = self
+            .parse_auth_header_with_format(req_header, auth_format)
+            .map_err(|_| {
+                *PingoraError::new_str(
+                    "Failed to extract API key with configured authentication format",
+                )
+            })?;
+
+        if api_key.is_empty() {
+            return Err(*PingoraError::new_str("Empty API key found"));
         }
 
-        // 如果所有格式都失败，返回错误
-        Err(*PingoraError::new_str("No valid authentication header found"))
+        tracing::debug!(
+            provider = %provider_name,
+            auth_format = %auth_format,
+            api_key_preview = %crate::auth::AuthUtils::sanitize_api_key(&api_key),
+            "Successfully extracted API key using URL prefix optimization"
+        );
+
+        Ok(api_key)
     }
 
     /// 根据指定格式解析认证头
@@ -179,9 +250,9 @@ impl RequestHandler {
         auth_format: &str,
     ) -> Result<String, PingoraError> {
         // 解析认证格式，例如：
-        // "Authorization: Bearer {key}" 
+        // "Authorization: Bearer {key}"
         // "X-goog-api-key: {key}"
-        
+
         if let Some((header_name, value_format)) = auth_format.split_once(": ") {
             // 从请求头中获取对应的header值
             let header_value = req_header
@@ -230,7 +301,7 @@ impl RequestHandler {
             service_api_config.id,
             service_api_config.provider_type_id,
         );
-        
+
         // 使用ApiKeyPoolManager执行密钥选择
         let selection_result = self
             .api_key_pool
@@ -246,7 +317,9 @@ impl RequestHandler {
             })?;
 
         // 更新请求上下文
-        ctx.provider_id = Some(ProviderId::from_database_id(selection_result.selected_key.provider_type_id));
+        ctx.provider_id = Some(ProviderId::from_database_id(
+            selection_result.selected_key.provider_type_id,
+        ));
         ctx.api_key_id = Some(selection_result.selected_key.id);
 
         tracing::debug!(
@@ -284,14 +357,18 @@ impl RequestHandler {
         if let Some(ref forwarding_ctx) = ctx.forwarding_context {
             // 简化响应处理 - 假设成功状态（避免session.resp_header()方法不存在的问题）
             let status_code = 200u16;
-            
+
             // 创建转发结果用于统计
             let result = ForwardingResult {
                 success: status_code >= 200 && status_code < 400,
                 status_code,
                 response_time: forwarding_ctx.start_time.elapsed(),
                 provider_id: forwarding_ctx.provider_id,
-                error_message: if status_code >= 400 { Some(format!("HTTP {}", status_code)) } else { None },
+                error_message: if status_code >= 400 {
+                    Some(format!("HTTP {}", status_code))
+                } else {
+                    None
+                },
                 bytes_transferred: 0, // TODO: 从响应中获取实际字节数
             };
 

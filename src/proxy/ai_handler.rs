@@ -26,6 +26,15 @@ use entity::{
     user_service_apis::{self, Entity as UserServiceApis},
 };
 
+/// 从URL路径中提取provider名称
+///
+/// 解析格式: /{provider_name}/{api_path}
+/// 例如: /gemini/v1beta/models/gemini-2.5-flash:generateContent -> "gemini"
+fn extract_provider_name_from_path(path: &str) -> Option<&str> {
+    // 去掉开头的 '/' 然后获取第一个路径段
+    path.strip_prefix('/').and_then(|s| s.split('/').next())
+}
+
 /// AI代理处理器
 pub struct AIProxyHandler {
     /// 数据库连接
@@ -267,9 +276,12 @@ impl AIProxyHandler {
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> Self {
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
-        let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(db.clone(), None));
+        let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
+            db.clone(),
+            None,
+        ));
         let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
-        
+
         Self {
             db,
             cache,
@@ -444,7 +456,10 @@ impl AIProxyHandler {
 
         // 步骤4: 根据用户配置选择合适的API密钥
         let _api_key_selection_start = std::time::Instant::now();
-        let selected_backend = match self.select_api_key(&user_service_api, &ctx.request_id).await {
+        let selected_backend = match self
+            .select_api_key(&user_service_api, &ctx.request_id)
+            .await
+        {
             Ok(backend) => backend,
             Err(e) => {
                 // API密钥选择失败时立即记录到数据库
@@ -500,72 +515,56 @@ impl AIProxyHandler {
         Ok(())
     }
 
-    /// 基于数据库配置提取API密钥
-    async fn extract_api_key_from_request(&self, session: &Session) -> Result<String, ProxyError> {
-        // 获取所有活跃的provider types和它们的认证配置
-        let provider_types = self.get_all_active_provider_types().await?;
-        
-        tracing::debug!(
-            provider_count = provider_types.len(),
-            "Attempting to extract API key using database auth configurations"
-        );
+    /// 根据provider名称获取provider配置（使用缓存优化）
+    async fn get_provider_by_name(
+        &self,
+        provider_name: &str,
+    ) -> Result<provider_types::Model, ProxyError> {
+        let cache_key = format!("provider_by_name:{}", provider_name);
 
-        // 根据每种provider type的认证配置尝试提取API key
-        for provider_type in &provider_types {
-            if let Some(api_key) = self.try_extract_api_key_for_provider(session, provider_type).await {
-                tracing::debug!(
-                    provider = %provider_type.name,
-                    auth_format = ?provider_type.auth_header_format,
-                    api_key_preview = %AuthUtils::sanitize_api_key(&api_key),
-                    "Successfully extracted API key using provider configuration"
-                );
-                return Ok(api_key);
-            }
-        }
-
-        Err(ProxyError::authentication(
-            "API key not found using any configured authentication format"
-        ))
-    }
-
-    /// 获取所有活跃的provider types
-    async fn get_all_active_provider_types(&self) -> Result<Vec<provider_types::Model>, ProxyError> {
-        let cache_key = "all_active_provider_types";
-        
         // 首先检查缓存
-        if let Ok(Some(provider_types)) = self
+        if let Ok(Some(provider)) = self
             .cache
             .provider()
-            .get::<Vec<provider_types::Model>>(cache_key)
+            .get::<provider_types::Model>(&cache_key)
             .await
         {
-            return Ok(provider_types);
+            return Ok(provider);
         }
 
-        // 从数据库查询
-        let provider_types = ProviderTypes::find()
+        // 从数据库查询特定的provider
+        let provider = ProviderTypes::find()
+            .filter(provider_types::Column::Name.eq(provider_name))
             .filter(provider_types::Column::IsActive.eq(true))
-            .all(&*self.db)
+            .one(&*self.db)
             .await
-            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?;
+            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?
+            .ok_or_else(|| ProxyError::config(format!("Unknown provider: {}", provider_name)))?;
 
-        // 缓存结果（10分钟）
+        // 缓存结果（30分钟）
         let _ = self
             .cache
             .provider()
-            .set(cache_key, &provider_types, Some(Duration::from_secs(600)))
+            .set(&cache_key, &provider, Some(Duration::from_secs(1800)))
             .await;
 
-        Ok(provider_types)
+        Ok(provider)
     }
 
-    /// 尝试根据特定provider type的配置提取API key
-    async fn try_extract_api_key_for_provider(
-        &self,
-        session: &Session,
-        provider_type: &provider_types::Model,
-    ) -> Option<String> {
-        let auth_format = provider_type
+    /// 基于URL前缀优化的API密钥提取
+    async fn extract_api_key_from_request(&self, session: &Session) -> Result<String, ProxyError> {
+        let path = session.req_header().uri.path();
+
+        // 1. 从URL路径中提取provider名称
+        let provider_name = extract_provider_name_from_path(path).ok_or_else(|| {
+            ProxyError::authentication("Invalid URL format. Expected: /{provider_name}/{api_path}")
+        })?;
+
+        // 2. 从缓存获取特定provider的配置 (O(1) 查找)
+        let provider = self.get_provider_by_name(provider_name).await?;
+
+        // 3. 使用该provider的认证格式直接解析API密钥
+        let auth_format = provider
             .auth_header_format
             .as_deref()
             .unwrap_or("Authorization: Bearer {key}");
@@ -576,39 +575,55 @@ impl AIProxyHandler {
                 // 从HTTP头中提取
                 if let Some(header_value) = session.req_header().headers.get(&header_name) {
                     if let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
-                        // 使用正则表达式或字符串匹配来提取{key}部分
-                        if let Some(api_key) = self.extract_key_from_header_value(header_str, auth_format) {
-                            return Some(api_key);
+                        if let Some(api_key) =
+                            self.extract_key_from_header_value(header_str, auth_format)
+                        {
+                            tracing::debug!(
+                                provider = %provider_name,
+                                auth_format = %auth_format,
+                                api_key_preview = %AuthUtils::sanitize_api_key(&api_key),
+                                "Successfully extracted API key using URL prefix optimization"
+                            );
+                            return Ok(api_key);
                         }
                     }
                 }
-                
+
                 // 也检查查询参数（某些provider可能支持）
                 if let Some(query) = session.req_header().uri.query() {
                     let params = AuthUtils::parse_query_string(query);
                     if let Some(api_key) = params.get("api_key").or(params.get("key")) {
-                        return Some(api_key.clone());
+                        tracing::debug!(
+                            provider = %provider_name,
+                            "Successfully extracted API key from query parameters"
+                        );
+                        return Ok(api_key.clone());
                     }
                 }
-            },
+            }
             Err(e) => {
-                tracing::warn!(
-                    provider = %provider_type.name,
-                    auth_format = %auth_format,
-                    error = %e,
-                    "Invalid auth format in database"
-                );
+                return Err(ProxyError::internal(format!(
+                    "Invalid auth format in database for provider '{}': {}",
+                    provider_name, e
+                )));
             }
         }
 
-        None
+        Err(ProxyError::authentication(&format!(
+            "Failed to extract API key using {} authentication format for provider '{}'",
+            auth_format, provider_name
+        )))
     }
 
     /// 从头值中提取API key
-    fn extract_key_from_header_value(&self, header_value: &str, auth_format: &str) -> Option<String> {
+    fn extract_key_from_header_value(
+        &self,
+        header_value: &str,
+        auth_format: &str,
+    ) -> Option<String> {
         // 将{key}替换为占位符，然后反向匹配
         let template = auth_format.split(": ").nth(1)?; // 获取冒号后的部分
-        
+
         if template == "{key}" {
             // 直接的key格式，如 "X-goog-api-key: {key}"
             return Some(header_value.to_string());
@@ -619,7 +634,7 @@ impl AIProxyHandler {
             // 带后缀的格式（不常见）
             return header_value.strip_suffix(suffix).map(|s| s.to_string());
         }
-        
+
         None
     }
 
@@ -637,7 +652,10 @@ impl AIProxyHandler {
             .get::<user_service_apis::Model>(&cache_key)
             .await
         {
-            tracing::debug!("Found API key in cache: {}", AuthUtils::sanitize_api_key(api_key));
+            tracing::debug!(
+                "Found API key in cache: {}",
+                AuthUtils::sanitize_api_key(api_key)
+            );
             return Ok(user_api);
         }
 
@@ -906,6 +924,35 @@ impl AIProxyHandler {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 重要: 从URI中去除provider前缀，恢复原始API路径
+        let original_path = session.req_header().uri.path();
+        if let Some(provider_name) = extract_provider_name_from_path(original_path) {
+            let api_path = original_path
+                .strip_prefix(&format!("/{}", provider_name))
+                .unwrap_or(original_path);
+
+            // 重建URI，只保留API路径部分
+            let new_uri = if let Some(query) = session.req_header().uri.query() {
+                format!("{}?{}", api_path, query)
+            } else {
+                api_path.to_string()
+            };
+
+            // 更新上游请求的URI
+            upstream_request.set_uri(new_uri.parse().map_err(|e| {
+                ProxyError::internal(format!("Failed to parse new URI '{}': {}", new_uri, e))
+            })?);
+
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                original_path = %original_path,
+                provider_name = %provider_name,
+                api_path = %api_path,
+                new_uri = %new_uri,
+                "Stripped provider prefix from upstream request URI"
+            );
+        }
+
         // 收集请求头信息
         self.collect_request_details(session, ctx);
 
@@ -1139,7 +1186,6 @@ impl AIProxyHandler {
         Ok(())
     }
 
-
     /// 收集完整的客户端信息
     fn collect_client_info(&self, session: &Session) -> (String, Option<String>, Option<String>) {
         // 将Pingora headers转换为标准HeaderMap以便使用AuthUtils
@@ -1154,8 +1200,8 @@ impl AIProxyHandler {
 
         // 使用AuthUtils提取客户端信息
         let client_ip = AuthUtils::extract_real_client_ip(
-            &headers, 
-            session.client_addr().map(|addr| addr.to_string())
+            &headers,
+            session.client_addr().map(|addr| addr.to_string()),
         );
         let user_agent = AuthUtils::extract_user_agent(&headers);
         let referer = AuthUtils::extract_referer(&headers);
@@ -1281,7 +1327,7 @@ impl AIProxyHandler {
 
         // 提取模型名称（使用数据驱动的ModelExtractor）
         let model_used = self.extract_model_with_model_extractor(ctx).await;
-        
+
         // 初始化token使用信息，但保留模型信息
         ctx.token_usage = TokenUsage {
             prompt_tokens: None,
@@ -1297,9 +1343,9 @@ impl AIProxyHandler {
                 let _ = tracer
                     .update_extended_trace_info(
                         &ctx.request_id,
-                        None,                               // provider_type_id 已设置
-                        model_used.clone(),                 // 更新model_used字段
-                        None,                               // user_provider_key_id 已设置
+                        None,               // provider_type_id 已设置
+                        model_used.clone(), // 更新model_used字段
+                        None,               // user_provider_key_id 已设置
                     )
                     .await;
 
@@ -1956,8 +2002,6 @@ impl AIProxyHandler {
         Ok(())
     }
 
-
-
     /// 检测并转换Pingora错误为ProxyError
     pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {
         let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64; // 使用配置的超时或30秒fallback
@@ -2068,7 +2112,6 @@ impl AIProxyHandler {
         }
     }
 }
-
 
 /// 将动态header name映射为静态字符串引用，解决Rust生命周期问题
 ///
