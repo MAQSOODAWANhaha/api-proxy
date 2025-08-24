@@ -276,24 +276,27 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
                 .iter()
                 .find(|(json_provider, _)| litellm_provider == json_provider)
             {
+                // 标准化模型名称：去除提供商前缀
+                let normalized_model_name = normalize_model_name(model_name, litellm_provider);
+                
                 // 生成描述信息
                 let description = match litellm_provider.as_str() {
-                    "gemini" => format!("Google Gemini 模型 ({})", model_name),
-                    "anthropic" => format!("Anthropic Claude 模型 ({})", model_name),
-                    "openai" => format!("OpenAI 模型 ({})", model_name),
-                    _ => format!("AI 模型 ({})", model_name),
+                    "gemini" => format!("Google Gemini 模型 ({})", normalized_model_name),
+                    "anthropic" => format!("Anthropic Claude 模型 ({})", normalized_model_name),
+                    "openai" => format!("OpenAI 模型 ({})", normalized_model_name),
+                    _ => format!("AI 模型 ({})", normalized_model_name),
                 };
 
                 filtered_models.push(FilteredModel {
-                    name: model_name.clone(),
+                    name: normalized_model_name.clone(),
                     description,
                     provider_name: db_provider_name.to_string(),
                     price_info: price_info.clone(),
                 });
 
                 info!(
-                    "🎯 选择模型: {} (litellm_provider: {} -> db_provider: {})",
-                    model_name, litellm_provider, db_provider_name
+                    "🎯 选择模型: {} -> {} (litellm_provider: {} -> db_provider: {})",
+                    model_name, normalized_model_name, litellm_provider, db_provider_name
                 );
             }
         }
@@ -306,6 +309,36 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
     );
 
     filtered_models
+}
+
+/// 标准化模型名称，去除提供商前缀
+/// 
+/// 根据litellm_provider字段动态确定前缀，如果模型名称以"provider/"开头则去除
+/// # 示例
+/// - `"gemini/gemini-2.5-flash"` (litellm_provider="gemini") -> `"gemini-2.5-flash"`
+/// - `"anthropic/claude-3.5-sonnet"` (litellm_provider="anthropic") -> `"claude-3.5-sonnet"`
+/// - `"openai/gpt-4"` (litellm_provider="openai") -> `"gpt-4"`
+/// - `"gemini-2.5-flash"` (litellm_provider="gemini") -> `"gemini-2.5-flash"` (无前缀保持不变)
+fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
+    // 构建基于litellm_provider的前缀
+    let provider_prefix = format!("{}/", litellm_provider);
+    
+    // 检查模型名称是否以该provider前缀开头
+    if model_name.starts_with(&provider_prefix) {
+        let normalized = model_name.strip_prefix(&provider_prefix).unwrap_or(model_name);
+        debug!(
+            "标准化模型名称: {} -> {} (移除前缀: {} 基于litellm_provider: {})",
+            model_name, normalized, provider_prefix, litellm_provider
+        );
+        return normalized.to_string();
+    }
+    
+    // 无匹配前缀，保持原名称
+    debug!(
+        "模型名称无需标准化: {} (litellm_provider: {})",
+        model_name, litellm_provider
+    );
+    model_name.to_string()
 }
 
 /// 动态获取provider映射关系
