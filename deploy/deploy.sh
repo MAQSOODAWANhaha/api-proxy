@@ -83,7 +83,7 @@ check_docker() {
     log_success "Docker环境检查通过"
 }
 
-# 交互式选择TLS配置
+# 交互式选择TLS配置 (简化版)
 interactive_tls_setup() {
     log_step "TLS证书配置选择"
     
@@ -122,9 +122,19 @@ interactive_tls_setup() {
                             log_error "IP地址格式无效，请重新输入"
                         fi
                     done
+                else
+                    # 只有当使用自动检测的IP时，才询问是否需要额外IP
+                    echo ""
+                    echo -e "${YELLOW}提示：如果需要外网访问，建议添加外网IP到证书中${NC}"
+                    echo "例如：如果您的外网IP是 3.92.178.170，请在下面输入"
+                    read -p "需要添加额外IP吗？(多个IP用逗号分隔，回车跳过): " extra_ips
+                    if [[ -n "$extra_ips" ]]; then
+                        EXTRA_IPS="$extra_ips"
+                        log_info "额外IP: $EXTRA_IPS"
+                    fi
                 fi
                 
-                log_success "将使用自签名证书，IP: $LOCAL_IP"
+                log_success "将使用自签名证书，主IP: $LOCAL_IP"
                 break
                 ;;
             2)
@@ -287,7 +297,7 @@ EOF
     log_info "证书有效期: 365天"
 }
 
-# 生成基于IP的自签名证书（简化版）
+# 生成基于IP的自签名证书（增强版）
 generate_ip_self_signed_cert() {
     log_step "生成基于IP的自签名TLS证书"
     
@@ -295,7 +305,7 @@ generate_ip_self_signed_cert() {
     local cert_file="$cert_dir/server.crt"
     local key_file="$cert_dir/server.key"
     
-    log_info "使用IP地址: $LOCAL_IP"
+    log_info "主要IP地址: $LOCAL_IP"
     
     # 检查是否已存在有效证书
     if [[ -f "$cert_file" && -f "$key_file" ]]; then
@@ -308,26 +318,128 @@ generate_ip_self_signed_cert() {
     # 确保证书目录存在
     mkdir -p "$cert_dir"
     
-    # 简化的证书生成：直接使用openssl一步生成
-    log_info "生成自签名证书..."
+    # 收集所有可能的IP地址
+    log_info "检测可用IP地址..."
+    local all_ips=""
+    local ip_count=1
     
-    openssl req -x509 -newkey rsa:2048 -keyout "$key_file" -out "$cert_file" \
-        -days 365 -nodes -subj "/CN=$LOCAL_IP" \
-        -addext "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:$LOCAL_IP" \
-        -addext "keyUsage=digitalSignature,keyEncipherment" \
-        -addext "extendedKeyUsage=serverAuth"
+    # 添加本地回环地址
+    all_ips="IP.${ip_count}:127.0.0.1"
+    ((ip_count++))
+    
+    # 添加主要IP（LOCAL_IP）
+    if [[ -n "$LOCAL_IP" ]]; then
+        all_ips="$all_ips,IP.${ip_count}:$LOCAL_IP"
+        ((ip_count++))
+        log_info "  添加主要IP: $LOCAL_IP"
+    fi
+    
+    # 检测内网IP地址
+    local internal_ips
+    internal_ips=$(hostname -I 2>/dev/null | xargs -n1 | grep -E '^(10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.)' | head -3)
+    for ip in $internal_ips; do
+        if [[ "$ip" != "$LOCAL_IP" ]]; then
+            all_ips="$all_ips,IP.${ip_count}:$ip"
+            ((ip_count++))
+            log_info "  添加内网IP: $ip"
+        fi
+    done
+    
+    # 尝试检测外网IP（通过多个服务）
+    log_info "尝试检测外网IP..."
+    local external_ip=""
+    
+    # 方法1: 通过ifconfig.me (最常用)
+    external_ip=$(timeout 5 curl -s -4 ifconfig.me 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
+    if [[ -z "$external_ip" ]]; then
+        # 方法2: 通过ipinfo.io
+        external_ip=$(timeout 5 curl -s -4 ipinfo.io/ip 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
+    fi
+    if [[ -z "$external_ip" ]]; then
+        # 方法3: 通过icanhazip.com  
+        external_ip=$(timeout 5 curl -s -4 icanhazip.com 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | head -1)
+    fi
+    
+    # 添加检测到的外网IP
+    if [[ -n "$external_ip" && "$external_ip" != "$LOCAL_IP" ]]; then
+        all_ips="$all_ips,IP.${ip_count}:$external_ip"
+        ((ip_count++))
+        log_success "  检测到外网IP: $external_ip"
+    else
+        log_warning "  未能检测到外网IP，请手动添加"
+    fi
+    
+    # 添加用户指定的额外IP（如果有）
+    if [[ -n "$EXTRA_IPS" ]]; then
+        IFS=',' read -ra EXTRA_IP_ARRAY <<< "$EXTRA_IPS"
+        for extra_ip in "${EXTRA_IP_ARRAY[@]}"; do
+            if [[ "$extra_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                all_ips="$all_ips,IP.${ip_count}:$extra_ip"
+                ((ip_count++))
+                log_info "  添加额外IP: $extra_ip"
+            fi
+        done
+    fi
+    
+    # 生成证书配置文件
+    local cert_conf="$cert_dir/cert.conf"
+    cat > "$cert_conf" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = CN
+ST = Cloud
+L = Internet
+O = AI Proxy Platform
+OU = Development
+CN = ${LOCAL_IP}
+
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment, digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = *.localhost
+DNS.3 = proxy
+DNS.4 = api-proxy
+${all_ips}
+EOF
+    
+    log_info "生成增强自签名证书..."
+    log_info "证书将支持以下访问方式:"
+    log_info "  - https://localhost:8443"
+    if [[ -n "$LOCAL_IP" ]]; then
+        log_info "  - https://$LOCAL_IP:8443"
+    fi
+    if [[ -n "$external_ip" ]]; then
+        log_info "  - https://$external_ip:8443"
+    fi
+    
+    # 生成私钥和证书
+    openssl genrsa -out "$key_file" 2048
+    openssl req -new -key "$key_file" -out "$cert_dir/server.csr" -config "$cert_conf"
+    openssl x509 -req -in "$cert_dir/server.csr" -signkey "$key_file" -out "$cert_file" \
+        -days 365 -extensions v3_req -extfile "$cert_conf"
     
     # 设置权限
     chmod 600 "$key_file"
     chmod 644 "$cert_file"
     
-    log_success "基于IP的自签名证书生成完成: $cert_file"
-    log_info "证书主要IP: $LOCAL_IP"
+    # 清理临时文件
+    rm -f "$cert_dir/server.csr" "$cert_conf"
+    
+    log_success "增强自签名证书生成完成: $cert_file"
     log_info "证书有效期: 365天"
-    log_info "支持的访问方式:"
-    log_info "  - https://$LOCAL_IP:9443"
-    log_info "  - https://localhost:9443"
-    log_info "  - https://127.0.0.1:9443"
+    log_info "包含IP数量: $((ip_count-1))"
+    
+    # 显示证书详情
+    log_info "证书详情:"
+    openssl x509 -in "$cert_file" -text -noout | grep -A 10 "Subject Alternative Name" || log_warning "无法读取SAN信息"
 }
 
 # 检查域名证书状态
@@ -895,7 +1007,9 @@ build_images() {
         
         # 根据TLS模式显示不同信息
         if [[ "$TLS_MODE" == "selfsigned" ]]; then
-            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=自签名证书, IP=${LOCAL_IP}"
+            # 从环境文件读取IP或使用当前变量
+            ENV_LOCAL_IP="${LOCAL_IP:-$(grep '^LOCAL_IP=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)}"
+            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=自签名证书, IP=${ENV_LOCAL_IP}"
         else
             log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=域名证书, DOMAIN=${DOMAIN_NAME}"
         fi
@@ -1147,7 +1261,10 @@ TLS证书管理示例:
   ./deploy.sh cert-mode selfsigned # 切换到自签名证书（开发环境）
   ./deploy.sh cert-mode auto       # 切换到自动证书（生产环境）
   ./deploy.sh cert-renew           # 手动更新证书
-  TLS_MODE=selfsigned ./deploy.sh install  # 使用自签名证书安装
+  
+智能安装特性:
+  ./deploy.sh install              # 智能检测内网+外网IP，自动生成证书
+  # 无需手动设置环境变量，脚本会自动检测和配置所有IP地址
 
 访问地址:
   • https://[本机IP]               # IP地址访问（自签名证书模式，需要设置LOCAL_IP环境变量）
