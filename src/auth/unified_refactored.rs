@@ -135,22 +135,6 @@ impl RefactoredUnifiedAuthManager {
         context
     }
 
-    /// 检查是否为管理端路径
-    fn is_management_path(&self, path: &str) -> bool {
-        // 管理端路径模式
-        let management_patterns = [
-            "/api/admin", 
-            "/api/management", 
-            "/api/users", 
-            "/api/system",
-            "/api/auth",
-            "/api/oauth",
-        ];
-
-        management_patterns
-            .iter()
-            .any(|pattern| path.starts_with(pattern))
-    }
 
     /// 检查是否为公开路径
     fn is_public_path(&self, path: &str) -> bool {
@@ -336,30 +320,6 @@ pub async fn create_refactored_unified_auth_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_management_path() {
-        let _config = Arc::new(AuthConfig::development());
-        
-        // 创建一个简单的测试实例需要mock所有依赖
-        // 这里只测试静态方法
-        let _management_paths = vec![
-            "/api/admin/users",
-            "/api/management/config",
-            "/api/users/profile",
-            "/api/system/health",
-        ];
-
-        let _non_management_paths = vec![
-            "/proxy/openai",
-            "/health",
-            "/metrics",
-            "/api/v1/chat",
-        ];
-
-        // 在实际测试中需要创建完整的实例
-        // 这里提供测试框架
-    }
 
     #[test]
     fn test_is_public_path() {

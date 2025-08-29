@@ -6,123 +6,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // 1. 扩展 provider_types 表支持多认证类型 - SQLite需要分开添加字段
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(ProviderTypes::Table)
-                    .add_column(ColumnDef::new(ProviderTypes::SupportedAuthTypes).json())
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(ProviderTypes::Table)
-                    .add_column(ColumnDef::new(ProviderTypes::AuthConfigJson).json())
-                    .to_owned(),
-            )
-            .await?;
-
-        // 创建索引支持 JSON 查询
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_provider_types_supported_auth")
-                    .table(ProviderTypes::Table)
-                    .col(ProviderTypes::SupportedAuthTypes)
-                    .to_owned(),
-            )
-            .await?;
-
-        // 2. 扩展 user_provider_keys 表支持多认证 - SQLite需要分开添加字段
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column(
-                        ColumnDef::new(UserProviderKeys::AuthType)
-                            .string_len(30)
-                            .not_null()
-                            .default("api_key"),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column(ColumnDef::new(UserProviderKeys::AuthConfigJson).json())
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column(
-                        ColumnDef::new(UserProviderKeys::AuthStatus)
-                            .string_len(20)
-                            .default("pending"),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column(ColumnDef::new(UserProviderKeys::ExpiresAt).timestamp())
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column(ColumnDef::new(UserProviderKeys::LastAuthCheck).timestamp())
-                    .to_owned(),
-            )
-            .await?;
-
-        // 创建认证相关索引
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_user_provider_keys_auth_type")
-                    .table(UserProviderKeys::Table)
-                    .col(UserProviderKeys::AuthType)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_user_provider_keys_auth_status")
-                    .table(UserProviderKeys::Table)
-                    .col(UserProviderKeys::AuthStatus)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_user_provider_keys_expires_at")
-                    .table(UserProviderKeys::Table)
-                    .col(UserProviderKeys::ExpiresAt)
-                    .to_owned(),
-            )
-            .await?;
-
-        // 3. 创建 oauth_sessions 表
+        // 创建 oauth_sessions 表 - user_provider_keys的OAuth字段已在原始创建文件中定义
         manager
             .create_table(
                 Table::create()
@@ -190,7 +74,7 @@ impl MigrationTrait for Migration {
                         ForeignKey::create()
                             .name("fk_oauth_sessions_provider_type_id")
                             .from(OAuthSessions::Table, OAuthSessions::ProviderTypeId)
-                            .to(ProviderTypes::Table, ProviderTypes::Id)
+                            .to(ProviderTypesTable::Table, ProviderTypesTable::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -234,97 +118,14 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // 删除 OAuth sessions 表
+        // 删除 OAuth sessions 表 - user_provider_keys的OAuth字段由原始创建文件管理
         manager
             .drop_table(Table::drop().table(OAuthSessions::Table).to_owned())
-            .await?;
-
-        // 删除 user_provider_keys 表的新字段 - SQLite需要分开删除
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::LastAuthCheck)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::ExpiresAt)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::AuthStatus)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::AuthConfigJson)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::AuthType)
-                    .to_owned(),
-            )
-            .await?;
-
-        // 删除 provider_types 表的新字段 - SQLite需要分开删除
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(ProviderTypes::Table)
-                    .drop_column(ProviderTypes::AuthConfigJson)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(ProviderTypes::Table)
-                    .drop_column(ProviderTypes::SupportedAuthTypes)
-                    .to_owned(),
-            )
-            .await?;
-
-        Ok(())
+            .await
     }
 }
 
-#[derive(DeriveIden)]
-enum ProviderTypes {
-    Table,
-    Id,
-    SupportedAuthTypes,
-    AuthConfigJson,
-}
-
-#[derive(DeriveIden)]
-enum UserProviderKeys {
-    Table,
-    AuthType,
-    AuthConfigJson,
-    AuthStatus,
-    ExpiresAt,
-    LastAuthCheck,
-}
+// user_provider_keys的OAuth字段已合并到原始创建文件中
 
 #[derive(DeriveIden)]
 enum OAuthSessions {
@@ -347,6 +148,12 @@ enum OAuthSessions {
 
 #[derive(DeriveIden)]
 enum Users {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+enum ProviderTypesTable {
     Table,
     Id,
 }

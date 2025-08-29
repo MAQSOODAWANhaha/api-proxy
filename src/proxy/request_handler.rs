@@ -16,7 +16,7 @@ use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
-use crate::proxy::{AuthenticationService, StatisticsService, TracingService};
+use crate::proxy::{AuthenticationService, ProviderResolver, StatisticsService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
@@ -54,6 +54,8 @@ pub struct RequestHandler {
     provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥池管理器
     api_key_pool: Arc<ApiKeyPoolManager>,
+    /// 服务商解析器 - 负责从URL路径识别provider类型
+    provider_resolver: Arc<ProviderResolver>,
     /// 认证服务 - 负责API密钥验证和提取
     auth_service: Arc<AuthenticationService>,
     /// 统计服务 - 负责请求/响应数据收集和分析
@@ -298,7 +300,12 @@ impl RequestHandler {
         ));
         let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
 
-        // 创建三个专门的服务
+        // 创建四个专门的服务
+        let provider_resolver = Arc::new(ProviderResolver::new(
+            db.clone(),
+            cache.clone(), // 直接使用UnifiedCacheManager
+        ));
+        
         let auth_service = Arc::new(AuthenticationService::new(
             auth_manager.clone(),
         ));
@@ -316,6 +323,7 @@ impl RequestHandler {
             _config,
             provider_config_manager,
             api_key_pool,
+            provider_resolver,
             auth_service,
             statistics_service,
             tracing_service,
@@ -335,9 +343,27 @@ impl RequestHandler {
             "Starting AI proxy request preparation using coordinator pattern"
         );
 
-        // 步骤1: 身份验证 - 委托给AuthenticationService
+        // 步骤0: Provider解析 - 从请求路径识别服务商类型
+        let provider_start = std::time::Instant::now();
+        let provider = self.provider_resolver.resolve_from_request(session).await?;
+        let _provider_duration = provider_start.elapsed();
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            provider_name = %provider.name,
+            provider_id = provider.id,
+            auth_type = %provider.auth_type,
+            auth_header_format = %provider.auth_header_format,
+            "Provider resolved from request path"
+        );
+        
+        // 将provider信息存储到上下文中
+        ctx.provider_type = Some(provider.clone());
+        ctx.timeout_seconds = provider.timeout_seconds;
+
+        // 步骤1: 身份验证 - 委托给AuthenticationService使用provider配置
         let auth_start = std::time::Instant::now();
-        let auth_result = self.auth_service.authenticate(session, &ctx.request_id).await?;
+        let auth_result = self.auth_service.authenticate(session, &ctx.request_id, &provider).await?;
         let _auth_duration = auth_start.elapsed();
 
         // 应用认证结果到上下文

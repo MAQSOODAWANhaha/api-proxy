@@ -82,6 +82,15 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
+                    // OAuth认证支持字段
+                    .col(ColumnDef::new(UserProviderKeys::AuthConfigJson).json())
+                    .col(
+                        ColumnDef::new(UserProviderKeys::AuthStatus)
+                            .string_len(20)
+                            .default("pending"),
+                    )
+                    .col(ColumnDef::new(UserProviderKeys::ExpiresAt).timestamp())
+                    .col(ColumnDef::new(UserProviderKeys::LastAuthCheck).timestamp())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_user_provider_keys_user_id")
@@ -139,6 +148,27 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // OAuth认证相关索引
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_auth_status")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::AuthStatus)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_expires_at")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::ExpiresAt)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -165,6 +195,11 @@ enum UserProviderKeys {
     HealthStatus,
     CreatedAt,
     UpdatedAt,
+    // OAuth认证支持字段
+    AuthConfigJson,
+    AuthStatus,
+    ExpiresAt,
+    LastAuthCheck,
 }
 
 #[derive(DeriveIden)]

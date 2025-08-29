@@ -9,6 +9,7 @@ pub mod statistics;
 // 中间件功能已集成到RequestHandler中
 pub mod request_handler;
 pub mod provider_adapter;
+pub mod provider_resolver;
 pub mod request_forwarder;
 pub mod builder;
 pub mod pingora_proxy;
@@ -17,6 +18,7 @@ pub mod statistics_service;
 pub mod tracing_service;
 pub use request_handler::{RequestHandler, ProxyContext};
 pub use provider_adapter::ProviderAdapter;
+pub use provider_resolver::ProviderResolver;
 pub use request_forwarder::RequestForwarder;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use types::{ProviderId, ForwardingContext, ForwardingResult};
