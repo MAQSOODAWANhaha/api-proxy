@@ -305,15 +305,11 @@ impl RequestHandler {
             db.clone(),
             cache.clone(), // 直接使用UnifiedCacheManager
         ));
-        
-        let auth_service = Arc::new(AuthenticationService::new(
-            auth_manager.clone(),
-        ));
+
+        let auth_service = Arc::new(AuthenticationService::new(auth_manager.clone()));
 
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
-        let statistics_service = Arc::new(StatisticsService::new(
-            pricing_calculator.clone(),
-        ));
+        let statistics_service = Arc::new(StatisticsService::new(pricing_calculator.clone()));
 
         let tracing_service = Arc::new(TracingService::new(tracer.clone()));
 
@@ -347,7 +343,7 @@ impl RequestHandler {
         let provider_start = std::time::Instant::now();
         let provider = self.provider_resolver.resolve_from_request(session).await?;
         let _provider_duration = provider_start.elapsed();
-        
+
         tracing::debug!(
             request_id = %ctx.request_id,
             provider_name = %provider.name,
@@ -356,18 +352,22 @@ impl RequestHandler {
             auth_header_format = %provider.auth_header_format,
             "Provider resolved from request path"
         );
-        
+
         // 将provider信息存储到上下文中
         ctx.provider_type = Some(provider.clone());
         ctx.timeout_seconds = provider.timeout_seconds;
 
         // 步骤1: 身份验证 - 委托给AuthenticationService使用provider配置
         let auth_start = std::time::Instant::now();
-        let auth_result = self.auth_service.authenticate(session, &ctx.request_id, &provider).await?;
+        let auth_result = self
+            .auth_service
+            .authenticate(session, &ctx.request_id, &provider)
+            .await?;
         let _auth_duration = auth_start.elapsed();
 
         // 应用认证结果到上下文
-        self.auth_service.apply_auth_result_to_context(ctx, &auth_result);
+        self.auth_service
+            .apply_auth_result_to_context(ctx, &auth_result);
         let user_service_api = ctx.user_service_api.as_ref().unwrap();
 
         tracing::debug!(
@@ -384,15 +384,17 @@ impl RequestHandler {
         let client_ip = request_stats.client_ip.clone();
         let user_agent = request_stats.user_agent.clone();
 
-        self.tracing_service.start_trace(
-            &ctx.request_id,
-            user_service_api.id,
-            Some(user_service_api.user_id),
-            method,
-            path,
-            Some(client_ip),
-            user_agent,
-        ).await?;
+        self.tracing_service
+            .start_trace(
+                &ctx.request_id,
+                user_service_api.id,
+                Some(user_service_api.user_id),
+                method,
+                path,
+                Some(client_ip),
+                user_agent,
+            )
+            .await?;
 
         // 步骤3: 速率验证 - 仍由RequestHandler处理（业务逻辑）
         let rate_limit_start = std::time::Instant::now();
@@ -401,10 +403,9 @@ impl RequestHandler {
 
         if let Err(e) = rate_limit_result {
             // 速率限制失败时立即记录到数据库
-            self.tracing_service.complete_trace_rate_limit(
-                &ctx.request_id,
-                &e.to_string(),
-            ).await?;
+            self.tracing_service
+                .complete_trace_rate_limit(&ctx.request_id, &e.to_string())
+                .await?;
             return Err(e);
         }
 
@@ -422,10 +423,9 @@ impl RequestHandler {
             Ok(provider_type) => provider_type,
             Err(e) => {
                 // 提供商类型获取失败时立即记录到数据库
-                self.tracing_service.complete_trace_config_error(
-                    &ctx.request_id,
-                    &e.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_config_error(&ctx.request_id, &e.to_string())
+                    .await?;
                 return Err(e);
             }
         };
@@ -471,29 +471,27 @@ impl RequestHandler {
 
         // 步骤5: 根据用户配置选择合适的API密钥
         let _api_key_selection_start = std::time::Instant::now();
-        let selected_backend = match self
-            .select_api_key(user_service_api, &ctx.request_id)
-            .await
-        {
+        let selected_backend = match self.select_api_key(user_service_api, &ctx.request_id).await {
             Ok(backend) => backend,
             Err(e) => {
                 // API密钥选择失败时立即记录到数据库
-                self.tracing_service.complete_trace_api_key_selection_failed(
-                    &ctx.request_id,
-                    &e.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_api_key_selection_failed(&ctx.request_id, &e.to_string())
+                    .await?;
                 return Err(e);
             }
         };
         ctx.selected_backend = Some(selected_backend.clone());
 
         // 更新追踪信息 - 使用TracingService记录更多信息
-        self.tracing_service.update_extended_trace_info(
-            &ctx.request_id,
-            Some(provider_type.id),    // provider_type_id
-            None,                      // model_used将在响应处理时设置
-            Some(selected_backend.id), // user_provider_key_id
-        ).await?;
+        self.tracing_service
+            .update_extended_trace_info(
+                &ctx.request_id,
+                Some(provider_type.id),    // provider_type_id
+                None,                      // model_used将在响应处理时设置
+                Some(selected_backend.id), // user_provider_key_id
+            )
+            .await?;
 
         let elapsed = start.elapsed();
         tracing::info!(
@@ -508,9 +506,6 @@ impl RequestHandler {
 
         Ok(())
     }
-
-
-
 
     /// 检查速率限制 - 基于统一缓存的滑动窗口算法
     async fn check_rate_limit(
@@ -644,10 +639,9 @@ impl RequestHandler {
             None => {
                 let error = ProxyError::internal("Provider type not set");
                 // 上游对等体选择失败时立即记录到数据库
-                self.tracing_service.complete_trace_upstream_error(
-                    &ctx.request_id,
-                    &error.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_upstream_error(&ctx.request_id, &error.to_string())
+                    .await?;
                 return Err(error);
             }
         };
@@ -766,7 +760,9 @@ impl RequestHandler {
 
         // 收集请求详情 - 委托给StatisticsService
         let request_stats_for_details = self.statistics_service.collect_request_stats(session);
-        let request_details = self.statistics_service.collect_request_details(session, &request_stats_for_details);
+        let request_details = self
+            .statistics_service
+            .collect_request_details(session, &request_stats_for_details);
         ctx.request_details = request_details;
 
         // Request size no longer stored in simplified trace schema
@@ -783,10 +779,9 @@ impl RequestHandler {
             None => {
                 let error = ProxyError::internal("Backend not selected");
                 // 请求转发失败时立即记录到数据库
-                self.tracing_service.complete_trace_upstream_error(
-                    &ctx.request_id,
-                    &error.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_upstream_error(&ctx.request_id, &error.to_string())
+                    .await?;
                 return Err(error);
             }
         };
@@ -796,10 +791,9 @@ impl RequestHandler {
             None => {
                 let error = ProxyError::internal("Provider type not set");
                 // 请求转发失败时立即记录到数据库
-                self.tracing_service.complete_trace_config_error(
-                    &ctx.request_id,
-                    &error.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                    .await?;
                 return Err(error);
             }
         };
@@ -821,10 +815,9 @@ impl RequestHandler {
         if let Err(e) = upstream_request.insert_header("host", &host_name) {
             let error = ProxyError::internal(format!("Failed to set host header: {}", e));
             // 头部设置失败时立即记录到数据库
-            self.tracing_service.complete_trace_config_error(
-                &ctx.request_id,
-                &error.to_string(),
-            ).await?;
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
             return Err(error);
         }
 
@@ -865,10 +858,9 @@ impl RequestHandler {
                 if let Err(e) = upstream_request.insert_header("accept", "application/json") {
                     let error = ProxyError::internal(format!("Failed to set accept header: {}", e));
                     // 头部设置失败时立即记录到数据库
-                    self.tracing_service.complete_trace_config_error(
-                        &ctx.request_id,
-                        &error.to_string(),
-                    ).await?;
+                    self.tracing_service
+                        .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                        .await?;
                     return Err(error);
                 }
             }
@@ -892,10 +884,9 @@ impl RequestHandler {
                         e
                     ));
                     // 头部设置失败时立即记录到数据库
-                    self.tracing_service.complete_trace_config_error(
-                        &ctx.request_id,
-                        &error.to_string(),
-                    ).await?;
+                    self.tracing_service
+                        .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                        .await?;
                     return Err(error);
                 }
 
@@ -947,9 +938,6 @@ impl RequestHandler {
         Ok(())
     }
 
-
-
-
     /// 过滤上游响应 - 协调器模式：委托给专门服务
     pub async fn filter_upstream_response(
         &self,
@@ -957,7 +945,8 @@ impl RequestHandler {
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
         // 收集响应详情 - 委托给StatisticsService
-        self.statistics_service.collect_response_details(upstream_response, ctx);
+        self.statistics_service
+            .collect_response_details(upstream_response, ctx);
 
         // 初始化token使用信息 - 委托给StatisticsService
         let token_usage = self.statistics_service.initialize_token_usage(ctx).await?;
@@ -965,12 +954,14 @@ impl RequestHandler {
 
         // 更新数据库中的model信息 - 委托给TracingService
         if let Some(model_used) = &ctx.token_usage.model_used {
-            self.tracing_service.update_extended_trace_info(
-                &ctx.request_id,
-                None,                        // provider_type_id 已设置
-                Some(model_used.clone()),    // 更新model_used字段
-                None,                        // user_provider_key_id 已设置
-            ).await?;
+            self.tracing_service
+                .update_extended_trace_info(
+                    &ctx.request_id,
+                    None,                     // provider_type_id 已设置
+                    Some(model_used.clone()), // 更新model_used字段
+                    None,                     // user_provider_key_id 已设置
+                )
+                .await?;
 
             tracing::info!(
                 request_id = %ctx.request_id,
@@ -1094,9 +1085,6 @@ impl RequestHandler {
         Ok(())
     }
 
-
-
-
     /// 统一的认证头处理方法 - 完全基于数据库配置
     async fn apply_authentication(
         &self,
@@ -1106,10 +1094,7 @@ impl RequestHandler {
         api_key: &str,
     ) -> Result<(), ProxyError> {
         // 直接使用数据库auth_header_format字段（修复Bug）
-        let auth_format = provider_type.auth_header_format
-            .as_deref()
-            .unwrap_or("Authorization: Bearer {key}")
-            .to_string();
+        let auth_format = provider_type.auth_header_format.clone();
 
         // 使用通用认证头解析器并提取字符串以避免生命周期问题
         let (auth_name, auth_value) = match AuthHeaderParser::parse(&auth_format, api_key) {
@@ -1120,20 +1105,18 @@ impl RequestHandler {
                     format
                 ));
                 // 认证格式错误时立即记录到数据库
-                self.tracing_service.complete_trace_config_error(
-                    &ctx.request_id,
-                    &error.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                    .await?;
                 return Err(error);
             }
             Err(e) => {
                 let error =
                     ProxyError::internal(format!("Authentication header parsing failed: {}", e));
                 // 认证解析失败时立即记录到数据库
-                self.tracing_service.complete_trace_config_error(
-                    &ctx.request_id,
-                    &error.to_string(),
-                ).await?;
+                self.tracing_service
+                    .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                    .await?;
                 return Err(error);
             }
         };
@@ -1152,10 +1135,9 @@ impl RequestHandler {
                 auth_name, e
             ));
             // 头部设置失败时立即记录到数据库
-            self.tracing_service.complete_trace_config_error(
-                &ctx.request_id,
-                &error.to_string(),
-            ).await?;
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
             return Err(error);
         }
 
