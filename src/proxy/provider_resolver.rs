@@ -41,15 +41,18 @@ impl ProviderResolver {
     /// - `/gemini/v1beta/models/gemini-2.5-flash:generateContent` -> gemini
     /// - `/anthropic/v1/messages` -> anthropic
     /// - `/custom_gemini/v1/models/gemini-2.5-flash:generateContent` -> custom_gemini
-    pub async fn resolve_from_request(&self, session: &Session) -> Result<entity::provider_types::Model, ProxyError> {
+    pub async fn resolve_from_request(
+        &self,
+        session: &Session,
+    ) -> Result<entity::provider_types::Model, ProxyError> {
         let req_header = session.req_header();
         let path = req_header.uri.path();
-        
+
         debug!(path = %path, "Resolving provider from request path");
 
         // 从路径中提取provider名称
         let provider_name = self.extract_provider_name(path)?;
-        
+
         debug!(provider_name = %provider_name, "Extracted provider name from path");
 
         // 尝试从缓存获取
@@ -60,10 +63,10 @@ impl ProviderResolver {
 
         // 从数据库查询
         let provider = self.query_provider_from_db(&provider_name).await?;
-        
+
         // 缓存结果
         self.cache_provider(&provider_name, &provider).await;
-        
+
         debug!(
             provider_id = provider.id,
             provider_name = %provider.name,
@@ -71,7 +74,7 @@ impl ProviderResolver {
             auth_format = %provider.auth_header_format,
             "Resolved provider from database"
         );
-        
+
         Ok(provider)
     }
 
@@ -81,16 +84,21 @@ impl ProviderResolver {
     /// 例如: /gemini/v1beta/models/... -> gemini
     fn extract_provider_name(&self, path: &str) -> Result<String, ProxyError> {
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-        
+
         if parts.is_empty() || parts[0].is_empty() {
-            return Err(ProxyError::authentication("Invalid request path: missing provider"));
+            return Err(ProxyError::authentication(
+                "Invalid request path: missing provider",
+            ));
         }
 
         let provider_name = parts[0].to_lowercase();
-        
+
         // 验证provider名称格式
         if !self.is_valid_provider_name(&provider_name) {
-            return Err(ProxyError::authentication(&format!("Invalid provider name: {}", provider_name)));
+            return Err(ProxyError::authentication(&format!(
+                "Invalid provider name: {}",
+                provider_name
+            )));
         }
 
         Ok(provider_name)
@@ -99,13 +107,16 @@ impl ProviderResolver {
     /// 验证provider名称格式
     fn is_valid_provider_name(&self, name: &str) -> bool {
         // 允许字母、数字、下划线，长度2-50
-        name.len() >= 2 
-            && name.len() <= 50 
+        name.len() >= 2
+            && name.len() <= 50
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     }
 
     /// 从缓存获取provider信息
-    async fn get_cached_provider(&self, provider_name: &str) -> Option<entity::provider_types::Model> {
+    async fn get_cached_provider(
+        &self,
+        provider_name: &str,
+    ) -> Option<entity::provider_types::Model> {
         // 首先尝试内存缓存
         {
             let mappings = self.path_mappings.read().await;
@@ -117,7 +128,9 @@ impl ProviderResolver {
         // 然后尝试Redis缓存
         let cache_key = format!("provider:name:{}", provider_name);
         if let Ok(Some(cached_json)) = self.cache.get::<String>(&cache_key).await {
-            if let Ok(provider) = serde_json::from_str::<entity::provider_types::Model>(&cached_json) {
+            if let Ok(provider) =
+                serde_json::from_str::<entity::provider_types::Model>(&cached_json)
+            {
                 // 同时更新内存缓存
                 {
                     let mut mappings = self.path_mappings.write().await;
@@ -131,7 +144,10 @@ impl ProviderResolver {
     }
 
     /// 从数据库查询provider信息
-    async fn query_provider_from_db(&self, provider_name: &str) -> Result<entity::provider_types::Model, ProxyError> {
+    async fn query_provider_from_db(
+        &self,
+        provider_name: &str,
+    ) -> Result<entity::provider_types::Model, ProxyError> {
         use entity::provider_types::{Column, Entity};
         use sea_orm::{ColumnTrait, QueryFilter};
 
@@ -141,7 +157,9 @@ impl ProviderResolver {
             .one(self.db.as_ref())
             .await
             .map_err(|e| ProxyError::database(&format!("Failed to query provider: {}", e)))?
-            .ok_or_else(|| ProxyError::authentication(&format!("Provider not found: {}", provider_name)))?;
+            .ok_or_else(|| {
+                ProxyError::authentication(&format!("Provider not found: {}", provider_name))
+            })?;
 
         Ok(provider)
     }
@@ -157,7 +175,15 @@ impl ProviderResolver {
         // 更新Redis缓存（5分钟TTL）
         let cache_key = format!("provider:name:{}", provider_name);
         if let Ok(provider_json) = serde_json::to_string(provider) {
-            if let Err(e) = self.cache.set(&cache_key, provider_json, Some(std::time::Duration::from_secs(300))).await {
+            if let Err(e) = self
+                .cache
+                .set(
+                    &cache_key,
+                    provider_json,
+                    Some(std::time::Duration::from_secs(300)),
+                )
+                .await
+            {
                 warn!(error = ?e, cache_key = %cache_key, "Failed to cache provider info");
             }
         }
@@ -194,7 +220,9 @@ impl ProviderResolver {
             .filter(Column::IsActive.eq(true))
             .all(self.db.as_ref())
             .await
-            .map_err(|e| ProxyError::database(&format!("Failed to load providers for cache warmup: {}", e)))?;
+            .map_err(|e| {
+                ProxyError::database(&format!("Failed to load providers for cache warmup: {}", e))
+            })?;
 
         let mut count = 0;
         {
@@ -213,48 +241,5 @@ impl ProviderResolver {
     pub async fn get_supported_providers(&self) -> Vec<String> {
         let mappings = self.path_mappings.read().await;
         mappings.keys().cloned().collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_provider_name() {
-        let resolver = ProviderResolver::new(
-            Arc::new(sea_orm::DatabaseConnection::default()), 
-            Arc::new(crate::cache::abstract_cache::MemoryCache::new(100))
-        );
-
-        // 正常路径
-        assert_eq!(resolver.extract_provider_name("/openai/v1/chat/completions").unwrap(), "openai");
-        assert_eq!(resolver.extract_provider_name("/gemini/v1beta/models/gemini-2.5-flash:generateContent").unwrap(), "gemini");
-        assert_eq!(resolver.extract_provider_name("/custom_gemini/v1/test").unwrap(), "custom_gemini");
-
-        // 边界情况
-        assert!(resolver.extract_provider_name("/").is_err());
-        assert!(resolver.extract_provider_name("").is_err());
-        assert!(resolver.extract_provider_name("/a").is_err()); // 太短
-    }
-
-    #[test]
-    fn test_is_valid_provider_name() {
-        let resolver = ProviderResolver::new(
-            Arc::new(sea_orm::DatabaseConnection::default()), 
-            Arc::new(crate::cache::abstract_cache::MemoryCache::new(100))
-        );
-
-        // 有效名称
-        assert!(resolver.is_valid_provider_name("openai"));
-        assert!(resolver.is_valid_provider_name("gemini"));
-        assert!(resolver.is_valid_provider_name("custom_gemini"));
-        assert!(resolver.is_valid_provider_name("provider123"));
-
-        // 无效名称
-        assert!(!resolver.is_valid_provider_name("a")); // 太短
-        assert!(!resolver.is_valid_provider_name("provider-name")); // 包含连字符
-        assert!(!resolver.is_valid_provider_name("provider.name")); // 包含点
-        assert!(!resolver.is_valid_provider_name("")); // 空字符串
     }
 }

@@ -1105,18 +1105,11 @@ impl RequestHandler {
         provider_type: &provider_types::Model,
         api_key: &str,
     ) -> Result<(), ProxyError> {
-        // 从config_json中获取认证格式
-        let auth_format = provider_type
-            .config_json
+        // 直接使用数据库auth_header_format字段（修复Bug）
+        let auth_format = provider_type.auth_header_format
             .as_deref()
-            .and_then(|json_str| serde_json::from_str::<serde_json::Value>(json_str).ok())
-            .and_then(|config| {
-                config
-                    .get("auth_header_format")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "Authorization: Bearer {key}".to_string());
+            .unwrap_or("Authorization: Bearer {key}")
+            .to_string();
 
         // 使用通用认证头解析器并提取字符串以避免生命周期问题
         let (auth_name, auth_value) = match AuthHeaderParser::parse(&auth_format, api_key) {
