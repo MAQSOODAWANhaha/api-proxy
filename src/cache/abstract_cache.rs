@@ -282,12 +282,14 @@ impl CacheProvider for RedisCache {
                 .arg(key)
                 .arg(ttl.as_secs())
                 .arg(&serialized)
-                .execute(&mut conn);
+                .exec(&mut conn)
+                .unwrap();
         } else {
             redis::cmd("SET")
                 .arg(key)
                 .arg(&serialized)
-                .execute(&mut conn);
+                .exec(&mut conn)
+                .unwrap();
         }
 
         Ok(())
@@ -324,7 +326,7 @@ impl CacheProvider for RedisCache {
             .get_connection()
             .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
 
-        redis::cmd("DEL").arg(key).execute(&mut conn);
+        redis::cmd("DEL").arg(key).exec(&mut conn).unwrap();
 
         Ok(())
     }
@@ -352,7 +354,8 @@ impl CacheProvider for RedisCache {
         redis::cmd("EXPIRE")
             .arg(key)
             .arg(ttl.as_secs())
-            .execute(&mut conn);
+            .exec(&mut conn)
+            .unwrap();
 
         Ok(())
     }
@@ -378,7 +381,7 @@ impl CacheProvider for RedisCache {
             .get_connection()
             .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
 
-        redis::cmd("FLUSHDB").execute(&mut conn);
+        redis::cmd("FLUSHDB").exec(&mut conn).unwrap();
 
         Ok(())
     }
@@ -515,6 +518,13 @@ impl UnifiedCacheManager {
         };
 
         Ok(Self { provider })
+    }
+
+    /// 创建仅内存缓存管理器（用于测试）
+    pub fn memory_only() -> Self {
+        Self {
+            provider: CacheProviderType::Memory(MemoryCache::new(1000))
+        }
     }
 
     /// 获取缓存提供者的引用

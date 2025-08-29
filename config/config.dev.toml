@@ -30,7 +30,7 @@ origins = ["*"]
 # 代理服务配置
 [dual_port.proxy]
 enabled = true
-route_prefixes = ["/v1", "/proxy"]
+route_prefixes = ["/v1", "/proxy", "/gemini"]
 
 [dual_port.proxy.http]
 host = "0.0.0.0"

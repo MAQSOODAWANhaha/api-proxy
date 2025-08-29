@@ -1,7 +1,7 @@
 /// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
 use crate::{
     ProxyError,
-    auth::{UnifiedAuthManager, create_unified_auth_manager, service::AuthService},
+    auth::{RefactoredUnifiedAuthManager, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
     management::server::{ManagementConfig, ManagementServer},
@@ -17,7 +17,7 @@ use tracing::{error, info};
 /// 共享服务结构体
 pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
-    pub unified_auth_manager: Arc<UnifiedAuthManager>,
+    pub unified_auth_manager: Arc<RefactoredUnifiedAuthManager>,
     pub adapter_manager: Arc<DynamicAdapterManager>,
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
@@ -226,18 +226,23 @@ pub async fn initialize_shared_services(
         provider_config_manager.clone(),
     ));
 
-    // 创建统一认证管理器
-    let unified_auth_manager = create_unified_auth_manager(
+    // 创建认证服务
+    let _auth_service = Arc::new(AuthService::new(
         jwt_manager,
         api_key_manager,
         db.clone(),
+        auth_config.clone(),
+    ));
+
+    // 创建统一认证管理器
+    let unified_auth_manager = Arc::new(RefactoredUnifiedAuthManager::new(
+        auth_service.clone(),
         auth_config,
-        Some(unified_cache_manager.clone()),
-    )
-    .await
-    .map_err(|e| {
-        crate::error::ProxyError::server_init(format!("Unified auth manager init failed: {}", e))
-    })?;
+        db.clone(),
+        unified_cache_manager.clone(),
+    ).await?);
+
+    // unified_auth_manager已经是Arc类型
 
     let statistics_service = Arc::new(StatisticsService::new(
         config_arc.clone(),

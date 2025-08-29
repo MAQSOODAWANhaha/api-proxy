@@ -12,16 +12,17 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
+use crate::auth::RefactoredUnifiedAuthManager;
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
-use crate::proxy::ai_handler::{AIProxyHandler, ProxyContext};
+use crate::proxy::request_handler::{RequestHandler, ProxyContext};
 use crate::trace::{UnifiedTraceSystem, immediate::ImmediateProxyTracer};
 use sea_orm::DatabaseConnection;
 
 /// 简化的AI代理服务 - 保持完整业务逻辑
 pub struct ProxyService {
     /// AI代理处理器 - 保持原有完整功能
-    ai_handler: Arc<AIProxyHandler>,
+    ai_handler: Arc<RequestHandler>,
     /// 即时写入追踪器
     tracer: Option<Arc<ImmediateProxyTracer>>,
 }
@@ -34,17 +35,19 @@ impl ProxyService {
         cache: Arc<UnifiedCacheManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
         trace_system: Option<Arc<UnifiedTraceSystem>>,
+        auth_manager: Arc<RefactoredUnifiedAuthManager>,
     ) -> pingora_core::Result<Self> {
         // 获取即时写入追踪器
         let tracer = trace_system.as_ref().and_then(|ts| ts.immediate_tracer());
 
         // 创建AI代理处理器 - 保持原有完整功能
-        let ai_handler = Arc::new(AIProxyHandler::new(
+        let ai_handler = Arc::new(RequestHandler::new(
             db,
             cache,
             config.clone(),
             tracer.clone(),
             provider_config_manager,
+            auth_manager,
         ));
 
         // 保留trace_system引用获取的即时写入tracer
@@ -515,8 +518,8 @@ impl ProxyHttp for ProxyService {
 
                 ctx.response_details.finalize_body();
 
-                // 重新从响应体JSON中提取所有统计信息
-                match self.ai_handler.extract_stats_from_response_body(ctx).await {
+                // 从响应体JSON中提取所有统计信息 - 使用StatisticsService
+                match self.ai_handler.statistics_service().extract_stats_from_response_body(ctx).await {
                     Ok(new_stats) => {
                         // 更新上下文中的token使用信息
                         ctx.token_usage.prompt_tokens = new_stats.input_tokens;

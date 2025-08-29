@@ -2,6 +2,7 @@
 //!
 //! 提供统一的服务器初始化逻辑，避免代码重复
 
+use crate::auth::{AuthService, RefactoredUnifiedAuthManager};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
@@ -107,8 +108,44 @@ impl ProxyServerBuilder {
         manager
     }
 
+    /// 创建统一认证管理器
+    async fn create_auth_manager(
+        &self,
+        db: Arc<DatabaseConnection>,
+        cache: Arc<UnifiedCacheManager>,
+    ) -> Result<Arc<RefactoredUnifiedAuthManager>> {
+        // 创建认证配置 - 使用默认配置
+        let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
+        
+        // 创建JWT和API密钥管理器
+        let jwt_manager = Arc::new(
+            crate::auth::JwtManager::new(auth_config.clone())
+                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {}", e)))?
+        );
+        let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(db.clone(), auth_config.clone()));
+        
+        // 创建认证服务
+        let auth_service = Arc::new(AuthService::new(
+            jwt_manager,
+            api_key_manager,
+            db.clone(),
+            auth_config.clone(),
+        ));
+        
+        // 创建统一认证管理器
+        let auth_manager = RefactoredUnifiedAuthManager::new(
+            auth_service,
+            auth_config,
+            db,
+            cache,
+        ).await?;
+
+        tracing::info!("统一认证管理器创建完成");
+        Ok(Arc::new(auth_manager))
+    }
+
     /// 创建代理服务实例
-    pub fn create_proxy_service(
+    pub async fn create_proxy_service(
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
@@ -116,12 +153,18 @@ impl ProxyServerBuilder {
     ) -> pingora_core::Result<ProxyService> {
         tracing::info!("创建AI代理服务");
 
+        // 创建统一认证管理器
+        let auth_manager = self.create_auth_manager(db.clone(), cache.clone())
+            .await
+            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
+
         ProxyService::new(
             self.config.clone(),
             db,
             cache,
             provider_config_manager,
             self.trace_system.clone(),
+            auth_manager,
         )
     }
 
@@ -142,6 +185,7 @@ impl ProxyServerBuilder {
         // 4. 创建代理服务
         let proxy_service = self
             .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
+            .await
             .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {}", e)))?;
 
         Ok(ProxyServerComponents {

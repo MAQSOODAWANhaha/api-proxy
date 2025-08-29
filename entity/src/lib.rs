@@ -5,6 +5,7 @@
 pub mod api_health_status;
 pub mod model_pricing;
 pub mod model_pricing_tiers;
+pub mod oauth_sessions;
 pub mod provider_types;
 pub mod proxy_tracing;
 pub mod user_provider_keys;

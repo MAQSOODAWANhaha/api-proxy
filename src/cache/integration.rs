@@ -27,7 +27,6 @@ pub struct ProviderConfig {
     pub rate_limit: Option<i32>,
     pub timeout_seconds: i32,
     pub health_check_path: Option<String>,
-    pub auth_header_format: Option<String>,
     pub config_json: Option<String>,
 }
 
@@ -246,7 +245,6 @@ impl CacheManager {
                 rate_limit: provider.rate_limit,
                 timeout_seconds: provider.timeout_seconds.unwrap_or(30),
                 health_check_path: provider.health_check_path,
-                auth_header_format: provider.auth_header_format,
                 config_json: provider.config_json,
             };
 

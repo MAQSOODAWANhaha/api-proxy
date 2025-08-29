@@ -79,6 +79,7 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
 }
 
 /// 获取健康检查统计信息
+#[allow(clippy::similar_names)]
 pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::Response {
     match get_health_stats_internal(&state).await {
         Ok(stats) => response::success(stats),

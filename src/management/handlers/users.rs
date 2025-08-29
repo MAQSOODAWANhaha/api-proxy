@@ -334,8 +334,8 @@ pub async fn list_users(
     let mut user_responses: Vec<UserResponse> = Vec::new();
 
     for user in users {
-        let stats = get_user_statistics(user.id, state.database.as_ref()).await;
-        user_responses.push(UserResponse::from_user_with_stats(user, stats));
+        let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
+        user_responses.push(UserResponse::from_user_with_stats(user, user_stats));
     }
 
     let pagination = response::Pagination {
@@ -396,13 +396,12 @@ pub async fn create_user(
                     "USERNAME_EXISTS",
                     "用户名已存在",
                 );
-            } else {
-                return response::error(
-                    axum::http::StatusCode::CONFLICT,
-                    "EMAIL_EXISTS",
-                    "邮箱已存在",
-                );
             }
+            return response::error(
+                axum::http::StatusCode::CONFLICT,
+                "EMAIL_EXISTS",
+                "邮箱已存在",
+            );
         }
         Err(err) => {
             tracing::error!("Failed to check existing user: {}", err);
@@ -489,8 +488,8 @@ pub async fn create_user(
         }
     };
 
-    let stats = get_user_statistics(created_user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(created_user, stats);
+    let created_user_stats = get_user_statistics(created_user.id, state.database.as_ref()).await;
+    let user_response = UserResponse::from_user_with_stats(created_user, created_user_stats);
 
     response::success_with_message(user_response, "用户创建成功")
 }
@@ -532,8 +531,8 @@ pub async fn get_user(
     };
 
     // 获取用户统计数据
-    let stats = get_user_statistics(user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(user, stats);
+    let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
+    let user_response = UserResponse::from_user_with_stats(user, user_stats);
     response::success(user_response)
 }
 
@@ -970,8 +969,8 @@ pub async fn update_user(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
-            let stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response = UserResponse::from_user_with_stats(updated_user, stats);
+            let updated_stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
+            let user_response = UserResponse::from_user_with_stats(updated_user, updated_stats);
             response::success_with_message(user_response, "用户更新成功")
         }
         Err(err) => {
@@ -1157,8 +1156,8 @@ pub async fn toggle_user_status(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
-            let stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response = UserResponse::from_user_with_stats(updated_user, stats);
+            let user_status_stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
+            let user_response = UserResponse::from_user_with_stats(updated_user, user_status_stats);
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {

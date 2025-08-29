@@ -160,6 +160,9 @@ impl AuthService {
             permissions,
             auth_method: AuthMethod::Jwt,
             token_preview: self.sanitize_token(token),
+            token_info: None, // JWT认证不需要OAuth token信息
+            expires_at: Some(chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(chrono::Utc::now)),
+            session_info: None,
         })
     }
 
@@ -178,7 +181,37 @@ impl AuthService {
             permissions: validation_result.permissions,
             auth_method: AuthMethod::ApiKey,
             token_preview: validation_result.api_key_info.api_key,
+            token_info: None, // API key认证不需要OAuth token信息
+            expires_at: None, // API密钥通常无过期时间
+            session_info: Some(serde_json::json!({
+                "api_key_id": validation_result.api_key_info.id,
+                "provider_type": "unknown"
+            })),
         })
+    }
+
+    /// Authenticate user service API key - 直接返回user_service_apis模型
+    pub async fn authenticate_user_service_api(
+        &self,
+        api_key: &str,
+    ) -> Result<entity::user_service_apis::Model> {
+        // 从数据库查询user_service_apis
+        let user_api = entity::user_service_apis::Entity::find()
+            .filter(entity::user_service_apis::Column::ApiKey.eq(api_key))
+            .filter(entity::user_service_apis::Column::IsActive.eq(true))
+            .one(&*self.db)
+            .await
+            .map_err(|e| AuthServiceError::ServiceUnavailable(format!("Database error: {}", e)))?
+            .ok_or(AuthServiceError::InvalidCredentials)?;
+
+        // 检查API密钥是否过期
+        if let Some(expires_at) = user_api.expires_at {
+            if expires_at < chrono::Utc::now().naive_utc() {
+                return Err(AuthServiceError::InvalidCredentials.into());
+            }
+        }
+
+        Ok(user_api)
     }
 
     /// Authenticate using basic authentication
@@ -221,6 +254,12 @@ impl AuthService {
             permissions,
             auth_method: AuthMethod::BasicAuth,
             token_preview: self.sanitize_token(&format!("{}:{}", username, "***")),
+            token_info: None, // Basic认证不需要OAuth token信息
+            expires_at: None, // Basic认证通常无过期时间
+            session_info: Some(serde_json::json!({
+                "username": username,
+                "auth_type": "basic"
+            })),
         })
     }
 
@@ -573,7 +612,6 @@ impl AuthService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_token_sanitization() {

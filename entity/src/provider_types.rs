@@ -21,11 +21,13 @@ pub struct Model {
     pub rate_limit: Option<i32>,
     pub timeout_seconds: Option<i32>,
     pub health_check_path: Option<String>,
-    pub auth_header_format: Option<String>,
     pub is_active: bool,
     pub config_json: Option<String>,           // JSON 字符串
     pub token_mappings_json: Option<String>,   // Token字段映射配置
     pub model_extraction_json: Option<String>, // 模型提取规则配置
+    // 多认证支持字段
+    pub supported_auth_types: Option<String>,  // 支持的认证类型JSON数组
+    pub auth_config_json: Option<String>,      // 认证配置JSON
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }
@@ -66,11 +68,12 @@ impl Default for Model {
             rate_limit: None,
             timeout_seconds: None,
             health_check_path: None,
-            auth_header_format: None,
             is_active: false,
             config_json: None,
             token_mappings_json: None,
             model_extraction_json: None,
+            supported_auth_types: None,
+            auth_config_json: None,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
         }

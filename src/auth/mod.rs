@@ -3,29 +3,54 @@
 //! 提供完整的身份验证和权限控制功能
 
 pub mod api_key;
+pub mod cache_strategy; // 统一缓存策略
+pub mod dual_auth_boundary; // 双认证机制边界控制
 pub mod header_parser;
 pub mod jwt;
 pub mod management;
-pub mod middleware;
+pub mod oauth;
 pub mod permissions;
+pub mod proxy;
 pub mod service;
+pub mod strategies;
+pub mod strategy_manager;
 pub mod types;
-pub mod unified;
+// pub mod unified; // 已删除，使用services架构替代
+pub mod unified_refactored; // 重构后的统一认证管理器
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
 pub use management::{Claims, extract_user_id_from_headers};
-pub use middleware::AuthMiddleware;
+pub use strategies::{AuthStrategy, OAuthTokenResult};
+pub use oauth::{
+    OAuthSessionManager, CreateSessionRequest, CompleteSessionRequest, SessionInfo
+};
 pub use permissions::{Permission, Role};
+pub use proxy::{ProxyAuthenticator, ProxyAuthResult};
 pub use service::AuthService;
 pub use types::*;
-pub use unified::{AuthRequest, CacheStats, UnifiedAuthManager, create_unified_auth_manager};
+// 注意：RefactoredUnifiedAuthManager已被删除，请使用新的服务化架构  
+pub use unified_refactored::{AuthRequest, RefactoredUnifiedAuthManager};
 pub use utils::AuthUtils;
 
-/// 认证结果
-#[derive(Debug, Clone)]
+
+// 统一缓存策略
+pub use cache_strategy::{
+    UnifiedAuthCacheManager, AuthCacheKey, AuthCacheStats, CacheStrategyConfig,
+    hash_token, hash_credentials,
+};
+
+// 双认证边界控制
+pub use dual_auth_boundary::{
+    DualAuthBoundaryController, AuthBoundaryRule, PortType, AuthRequestContext,
+    BoundaryViolationStats, validate_auth_boundary, get_violation_stats,
+};
+
+/// 统一认证结果
+/// 表示用户认证成功后的完整信息，包括用户身份、权限和可选的令牌信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuthResult {
     /// 用户ID
     pub user_id: i32,
@@ -39,19 +64,33 @@ pub struct AuthResult {
     pub auth_method: AuthMethod,
     /// 原始令牌（脱敏）
     pub token_preview: String,
+    /// OAuth令牌信息（可选，仅当通过OAuth认证时包含）
+    pub token_info: Option<TokenInfo>,
+    /// 令牌过期时间（可选）
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 会话信息（可选，主要用于OAuth会话）
+    pub session_info: Option<serde_json::Value>,
 }
 
-/// 认证方式
-#[derive(Debug, Clone, PartialEq)]
+/// 认证方式 - 表示已完成认证的方式（认证结果状态）
+/// 
+/// 注意：与 `AuthType` 的区别：
+/// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
+/// - `AuthType` 表示认证策略的具体类型（配置输入）
+/// 
+/// 例如：`AuthType::GoogleOAuth` 策略完成认证后，结果可能是 `AuthMethod::Jwt`
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AuthMethod {
-    /// API 密钥
+    /// 通过API密钥认证
     ApiKey,
-    /// JWT 令牌
+    /// 通过JWT令牌认证
     Jwt,
-    /// 基础认证 (用户名/密码)
+    /// 通过基础认证（用户名/密码）
     BasicAuth,
-    /// 内部服务调用
+    /// 内部服务调用认证
     Internal,
+    /// 通过OAuth流程完成认证
+    OAuth,
 }
 
 /// 认证上下文
@@ -115,5 +154,33 @@ impl AuthContext {
     /// 获取用户名
     pub fn get_username(&self) -> Option<&str> {
         self.auth_result.as_ref().map(|r| r.username.as_str())
+    }
+}
+
+/// OAuth令牌信息
+/// 包含在AuthResult中的令牌相关信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TokenInfo {
+    /// 访问令牌
+    pub access_token: String,
+    /// 刷新令牌（可选）
+    pub refresh_token: Option<String>,
+    /// 令牌类型
+    pub token_type: String,
+    /// 过期时间（秒）
+    pub expires_in: Option<i64>,
+    /// 作用域
+    pub scope: Option<String>,
+}
+
+impl From<OAuthTokenResult> for TokenInfo {
+    fn from(oauth_result: OAuthTokenResult) -> Self {
+        Self {
+            access_token: oauth_result.access_token,
+            refresh_token: oauth_result.refresh_token,
+            token_type: oauth_result.token_type,
+            expires_in: oauth_result.expires_in,
+            scope: oauth_result.scope,
+        }
     }
 }

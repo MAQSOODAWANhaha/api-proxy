@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// 用户信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +216,35 @@ pub struct AuthConfig {
     pub login_lockout_duration: i64,
     /// 认证缓存TTL（分钟）
     pub cache_ttl_minutes: u32,
+    /// 最大失败尝试次数（可选）
+    pub max_failed_attempts: Option<u32>,
+}
+
+impl AuthConfig {
+    /// 开发环境配置
+    pub fn development() -> Self {
+        Self::default()
+    }
+
+    /// 测试配置
+    pub fn test() -> Self {
+        Self {
+            jwt_secret: "test-secret-key".to_string(),
+            jwt_expires_in: 3600,
+            refresh_expires_in: 604_800,
+            enable_rate_limiting: false, // 测试时禁用速率限制
+            default_request_rate_limit: 1000,
+            default_token_rate_limit: 1_000_000,
+            min_password_length: 4, // 测试时放宽密码要求
+            require_password_numbers: false,
+            require_password_special_chars: false,
+            session_timeout: 3600,
+            max_login_attempts: 10,
+            login_lockout_duration: 60, // 较短的锁定时间
+            cache_ttl_minutes: 1, // 短缓存时间便于测试
+            max_failed_attempts: Some(10),
+        }
+    }
 }
 
 impl Default for AuthConfig {
@@ -222,10 +252,10 @@ impl Default for AuthConfig {
         Self {
             jwt_secret: "your-secret-key".to_string(),
             jwt_expires_in: 3600,       // 1 小时
-            refresh_expires_in: 604800, // 7 天
+            refresh_expires_in: 604_800, // 7 天
             enable_rate_limiting: true,
             default_request_rate_limit: 100,  // 每分钟 100 请求
-            default_token_rate_limit: 100000, // 每日 100k tokens
+            default_token_rate_limit: 100_000, // 每日 100k tokens
             min_password_length: 8,
             require_password_numbers: true,
             require_password_special_chars: true,
@@ -233,59 +263,291 @@ impl Default for AuthConfig {
             max_login_attempts: 5,
             login_lockout_duration: 900, // 15 分钟
             cache_ttl_minutes: 10,       // 10 分钟缓存
+            max_failed_attempts: Some(5),
         }
     }
 }
 
-/// 认证错误类型
-#[derive(Debug, Clone, PartialEq)]
+/// 统一认证错误类型
+#[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     /// 无效令牌
+    #[error("无效的认证令牌")]
     InvalidToken,
     /// 令牌过期
+    #[error("认证令牌已过期")]
     TokenExpired,
+    /// 认证过期（别名，用于兼容）
+    #[error("认证已过期")]
+    Expired,
+    /// 令牌已被撤销
+    #[error("认证令牌已被撤销")]
+    TokenRevoked,
+    /// 认证被撤销（别名，用于兼容）
+    #[error("认证被撤销")]
+    Revoked,
     /// 权限不足
+    #[error("权限不足")]
     InsufficientPermissions,
     /// 用户未找到
+    #[error("用户不存在")]
     UserNotFound,
     /// 密码错误
+    #[error("密码错误")]
     InvalidPassword,
     /// 账户被锁定
+    #[error("账户已被锁定")]
     AccountLocked,
     /// 账户未激活
+    #[error("账户未激活")]
     AccountInactive,
     /// 速率限制超出
+    #[error("请求频率超出限制")]
     RateLimitExceeded,
     /// 缺少认证凭据
+    #[error("缺少认证凭据")]
     MissingCredentials,
     /// 无效的认证凭据
+    #[error("无效的认证凭据")]
     InvalidCredentials,
     /// 令牌已被加入黑名单
+    #[error("令牌已被加入黑名单")]
     TokenBlacklisted,
+    /// 无效的认证类型
+    #[error("无效的认证类型: {0}")]
+    InvalidAuthType(String),
+    /// 认证配置错误
+    #[error("认证配置错误: {0}")]
+    ConfigError(String),
+    /// OAuth2错误
+    #[error("OAuth2错误: {0}")]
+    OAuth2Error(String),
+    /// 网络请求失败
+    #[error("网络请求失败: {0}")]
+    NetworkError(String),
+    /// JSON解析错误
+    #[error("JSON解析错误: {0}")]
+    JsonError(#[from] serde_json::Error),
     /// 内部错误
+    #[error("内部错误: {0}")]
     InternalError(String),
+    /// 不支持的认证方法
+    #[error("端口 {port} 不支持认证方法: {method}")]
+    AuthMethodNotSupported {
+        method: String,
+        port: String,
+    },
+    /// 无效的认证格式
+    #[error("无效的认证格式: {0}")]
+    InvalidAuthFormat(String),
 }
 
-impl std::fmt::Display for AuthError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+// Display和Error trait现在由thiserror自动实现
+
+/// 支持的认证类型 - 表示具体的认证策略类型（配置输入）
+/// 
+/// 注意：与 `AuthMethod` 的区别：
+/// - `AuthType` 表示认证策略的具体类型，用于配置和策略选择
+/// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
+/// 
+/// 例如：`AuthType::GoogleOAuth` 策略执行后，可能产生 `AuthMethod::OAuth` 结果
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthType {
+    /// API密钥认证策略
+    ApiKey,
+    /// 标准OAuth2认证策略
+    OAuth2,
+    /// Google专用OAuth认证策略
+    GoogleOAuth,
+    /// Google服务账户认证策略
+    ServiceAccount,
+    /// Google应用默认凭据策略
+    ApplicationDefaultCredentials,
+    /// Bearer Token验证策略
+    BearerToken,
+}
+
+impl fmt::Display for AuthType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AuthError::InvalidToken => write!(f, "无效的认证令牌"),
-            AuthError::TokenExpired => write!(f, "认证令牌已过期"),
-            AuthError::InsufficientPermissions => write!(f, "权限不足"),
-            AuthError::UserNotFound => write!(f, "用户不存在"),
-            AuthError::InvalidPassword => write!(f, "密码错误"),
-            AuthError::AccountLocked => write!(f, "账户已被锁定"),
-            AuthError::AccountInactive => write!(f, "账户未激活"),
-            AuthError::RateLimitExceeded => write!(f, "请求频率超出限制"),
-            AuthError::MissingCredentials => write!(f, "缺少认证凭据"),
-            AuthError::InvalidCredentials => write!(f, "无效的认证凭据"),
-            AuthError::TokenBlacklisted => write!(f, "令牌已被加入黑名单"),
-            AuthError::InternalError(msg) => write!(f, "内部错误: {}", msg),
+            AuthType::ApiKey => write!(f, "api_key"),
+            AuthType::OAuth2 => write!(f, "oauth2"),
+            AuthType::GoogleOAuth => write!(f, "google_oauth"),
+            AuthType::ServiceAccount => write!(f, "service_account"),
+            AuthType::ApplicationDefaultCredentials => write!(f, "application_default_credentials"),
+            AuthType::BearerToken => write!(f, "bearer_token"),
         }
     }
 }
 
-impl std::error::Error for AuthError {}
+impl From<&str> for AuthType {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "api_key" => AuthType::ApiKey,
+            "oauth2" => AuthType::OAuth2,
+            "google_oauth" => AuthType::GoogleOAuth,
+            "service_account" => AuthType::ServiceAccount,
+            "adc" | "application_default_credentials" => AuthType::ApplicationDefaultCredentials,
+            "bearer_token" => AuthType::BearerToken,
+            _ => AuthType::ApiKey, // 默认使用API密钥认证
+        }
+    }
+}
+
+/// 认证状态
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStatus {
+    /// 待认证
+    Pending,
+    /// 已授权
+    Authorized,
+    /// 已过期
+    Expired,
+    /// 错误状态
+    Error,
+    /// 已撤销
+    Revoked,
+}
+
+impl fmt::Display for AuthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthStatus::Pending => write!(f, "pending"),
+            AuthStatus::Authorized => write!(f, "authorized"),
+            AuthStatus::Expired => write!(f, "expired"),
+            AuthStatus::Error => write!(f, "error"),
+            AuthStatus::Revoked => write!(f, "revoked"),
+        }
+    }
+}
+
+impl From<&str> for AuthStatus {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "pending" => AuthStatus::Pending,
+            "authorized" => AuthStatus::Authorized,
+            "expired" => AuthStatus::Expired,
+            "error" => AuthStatus::Error,
+            "revoked" => AuthStatus::Revoked,
+            _ => AuthStatus::Pending,
+        }
+    }
+}
+
+/// OAuth2授权类型
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuth2GrantType {
+    /// 授权码模式
+    AuthorizationCode,
+    /// 客户端凭据模式
+    ClientCredentials,
+    /// 刷新令牌
+    RefreshToken,
+}
+
+impl fmt::Display for OAuth2GrantType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OAuth2GrantType::AuthorizationCode => write!(f, "authorization_code"),
+            OAuth2GrantType::ClientCredentials => write!(f, "client_credentials"),
+            OAuth2GrantType::RefreshToken => write!(f, "refresh_token"),
+        }
+    }
+}
+
+/// PKCE代码挑战方法
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PkceMethod {
+    /// 纯文本
+    Plain,
+    /// SHA256哈希
+    S256,
+}
+
+impl fmt::Display for PkceMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PkceMethod::Plain => write!(f, "plain"),
+            PkceMethod::S256 => write!(f, "S256"),
+        }
+    }
+}
+
+/// 认证头格式
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthHeaderFormat {
+    /// 头名称
+    pub header_name: String,
+    /// 值格式模板，使用{key}占位符
+    pub value_format: String,
+}
+
+impl Default for AuthHeaderFormat {
+    fn default() -> Self {
+        Self {
+            header_name: "Authorization".to_string(),
+            value_format: "Bearer {key}".to_string(),
+        }
+    }
+}
+
+impl AuthHeaderFormat {
+    /// 创建新的认证头格式
+    pub fn new(header_name: &str, value_format: &str) -> Self {
+        Self {
+            header_name: header_name.to_string(),
+            value_format: value_format.to_string(),
+        }
+    }
+
+    /// 格式化认证头值
+    pub fn format(&self, key: &str) -> String {
+        self.value_format.replace("{key}", key)
+    }
+}
+
+/// 多认证配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiAuthConfig {
+    /// 认证类型
+    pub auth_type: AuthType,
+    /// 认证头格式
+    #[serde(default)]
+    pub header_format: AuthHeaderFormat,
+    /// 额外配置（JSON格式）
+    #[serde(default)]
+    pub extra_config: Option<serde_json::Value>,
+}
+
+impl MultiAuthConfig {
+    /// 创建API密钥认证配置
+    pub fn api_key(header_name: &str, value_format: &str) -> Self {
+        Self {
+            auth_type: AuthType::ApiKey,
+            header_format: AuthHeaderFormat::new(header_name, value_format),
+            extra_config: None,
+        }
+    }
+
+    /// 创建OAuth2认证配置
+    pub fn oauth2(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
+        let mut config = serde_json::Map::new();
+        config.insert("client_id".to_string(), serde_json::Value::String(client_id.to_string()));
+        config.insert("client_secret".to_string(), serde_json::Value::String(client_secret.to_string()));
+        config.insert("auth_url".to_string(), serde_json::Value::String(auth_url.to_string()));
+        config.insert("token_url".to_string(), serde_json::Value::String(token_url.to_string()));
+
+        Self {
+            auth_type: AuthType::OAuth2,
+            header_format: AuthHeaderFormat::default(),
+            extra_config: Some(serde_json::Value::Object(config)),
+        }
+    }
+}
 
 /// 审计日志条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,5 +657,52 @@ mod tests {
         assert_eq!(claims.username, "testuser");
         assert!(!claims.is_admin);
         assert!(!claims.is_expired());
+    }
+
+    #[test]
+    fn test_auth_type_display() {
+        assert_eq!(AuthType::ApiKey.to_string(), "api_key");
+        assert_eq!(AuthType::OAuth2.to_string(), "oauth2");
+        assert_eq!(AuthType::GoogleOAuth.to_string(), "google_oauth");
+        assert_eq!(AuthType::ServiceAccount.to_string(), "service_account");
+        assert_eq!(AuthType::ApplicationDefaultCredentials.to_string(), "application_default_credentials");
+        assert_eq!(AuthType::BearerToken.to_string(), "bearer_token");
+    }
+
+    #[test]
+    fn test_auth_type_from_str() {
+        assert_eq!(AuthType::from("api_key"), AuthType::ApiKey);
+        assert_eq!(AuthType::from("OAuth2"), AuthType::OAuth2);
+        assert_eq!(AuthType::from("GOOGLE_OAUTH"), AuthType::GoogleOAuth);
+        assert_eq!(AuthType::from("unknown"), AuthType::ApiKey); // 默认值
+    }
+
+    #[test]
+    fn test_auth_status_display() {
+        assert_eq!(AuthStatus::Pending.to_string(), "pending");
+        assert_eq!(AuthStatus::Authorized.to_string(), "authorized");
+        assert_eq!(AuthStatus::Expired.to_string(), "expired");
+        assert_eq!(AuthStatus::Error.to_string(), "error");
+        assert_eq!(AuthStatus::Revoked.to_string(), "revoked");
+    }
+
+    #[test]
+    fn test_auth_header_format() {
+        let format = AuthHeaderFormat::new("X-API-Key", "{key}");
+        assert_eq!(format.format("test123"), "test123");
+
+        let format = AuthHeaderFormat::default();
+        assert_eq!(format.format("token123"), "Bearer token123");
+    }
+
+    #[test]
+    fn test_multi_auth_config_creation() {
+        let api_config = MultiAuthConfig::api_key("X-API-Key", "{key}");
+        assert_eq!(api_config.auth_type, AuthType::ApiKey);
+        assert_eq!(api_config.header_format.header_name, "X-API-Key");
+
+        let oauth_config = MultiAuthConfig::oauth2("client123", "secret456", "https://auth.example.com", "https://token.example.com");
+        assert_eq!(oauth_config.auth_type, AuthType::OAuth2);
+        assert!(oauth_config.extra_config.is_some());
     }
 }

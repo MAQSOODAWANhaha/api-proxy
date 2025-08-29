@@ -376,7 +376,7 @@ CREATE TABLE provider_types (
     rate_limit INTEGER DEFAULT 100,      -- 每分钟请求限制
     timeout_seconds INTEGER DEFAULT 30,   -- 超时时间
     health_check_path VARCHAR(255) DEFAULT '/models', -- 健康检查路径
-    auth_header_format VARCHAR(100) DEFAULT 'Bearer {key}', -- 认证头格式
+    -- auth_header_format功能已合并到config_json中
     is_active BOOLEAN DEFAULT TRUE,
     config_json JSON,                     -- 额外配置信息
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1210,7 +1210,7 @@ impl AIProxyHandler {
 
         // 替换Authorization头
         upstream_request.remove_header("authorization");
-        let auth_value = self.build_auth_header(&provider_type.auth_header_format, &selected_backend.api_key);
+        let auth_value = self.build_auth_header_from_config(&provider_type.config_json, &selected_backend.api_key);
         upstream_request.insert_header("authorization", &auth_value)
             .map_err(|e| ProxyError::Internal(format!("Failed to set auth header: {}", e)))?;
 
@@ -1750,7 +1750,7 @@ impl HealthChecker {
             .map_err(|e| ProxyError::Internal(format!("Failed to create HTTP client: {}", e)))?;
 
         // 构建请求
-        let auth_header = provider_type.auth_header_format.replace("{key}", &key.api_key);
+        let auth_header = extract_auth_header_from_config(&provider_type.config_json, &key.api_key);
         let request = client
             .get(&health_check_url)
             .header("Authorization", &auth_header)

@@ -53,8 +53,6 @@ pub struct ProviderConfig {
     pub timeout_seconds: Option<i32>,
     /// 健康检查路径
     pub health_check_path: String,
-    /// 认证头格式
-    pub auth_header_format: String,
     /// 是否启用
     pub is_active: bool,
     /// 额外的JSON配置
@@ -112,7 +110,6 @@ impl ProviderConfigManager {
                         "Failed to parse provider config for {}: {}",
                         provider_name, e
                     );
-                    continue;
                 }
             }
         }
@@ -344,9 +341,6 @@ impl ProviderConfigManager {
             health_check_path: provider
                 .health_check_path
                 .unwrap_or_else(|| "/models".to_string()),
-            auth_header_format: provider
-                .auth_header_format
-                .unwrap_or_else(|| "Bearer {key}".to_string()),
             is_active: provider.is_active,
             config_json,
             token_mappings_json: provider.token_mappings_json,
@@ -389,10 +383,16 @@ impl ProviderConfigManager {
             return true;
         }
 
-        // 检查认证头格式配置
-        let auth_format_lower = config.auth_header_format.to_lowercase();
-        if auth_format_lower.contains("x-goog-api-key") {
-            return true;
+        // 从config_json中检查认证头格式配置
+        if let Some(config_json) = &config.config_json {
+            if let Some(auth_format) = config_json.get("auth_header_format") {
+                if let Some(auth_format_str) = auth_format.as_str() {
+                    let auth_format_lower = auth_format_str.to_lowercase();
+                    if auth_format_lower.contains("x-goog-api-key") {
+                        return true;
+                    }
+                }
+            }
         }
 
         // 检查base_url
@@ -435,7 +435,6 @@ impl ProviderConfig {
             rate_limit: Some(100),
             timeout_seconds: Some(30),
             health_check_path: "/models".to_string(),
-            auth_header_format: "Bearer {key}".to_string(),
             is_active: true,
             config_json: None,
             token_mappings_json: None,
@@ -458,7 +457,6 @@ impl ProviderConfig {
             rate_limit: Some(100),
             timeout_seconds: Some(30),
             health_check_path: "/v1beta/models".to_string(),
-            auth_header_format: "X-goog-api-key: {key}".to_string(),
             is_active: true,
             config_json: None,
             token_mappings_json: None,
@@ -481,7 +479,6 @@ impl ProviderConfig {
             rate_limit: Some(100),
             timeout_seconds: Some(30),
             health_check_path: "/v1/models".to_string(),
-            auth_header_format: "Bearer {key}".to_string(),
             is_active: true,
             config_json: None,
             token_mappings_json: None,

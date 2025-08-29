@@ -95,9 +95,12 @@ impl AuthHeaderParser {
 
     /// 分割头格式为名称和值模板
     fn split_header_format(format: &str) -> Result<(&str, &str), AuthParseError> {
-        format
-            .split_once(": ")
-            .ok_or_else(|| AuthParseError::InvalidFormat(format.to_string()))
+        let trimmed_format = format.trim();
+        if let Some((name, value)) = trimmed_format.split_once(": ") {
+            Ok((name.trim(), value))
+        } else {
+            Err(AuthParseError::InvalidFormat(format.to_string()))
+        }
     }
 
     /// 验证认证头格式是否有效（不替换密钥）

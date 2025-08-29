@@ -303,11 +303,19 @@ impl ApiKeyHealthChecker {
             "Performing API key health check"
         );
 
-        // 解析认证头格式
+        // 从config_json中获取认证头格式
         let auth_header_format = provider_info
-            .auth_header_format
+            .config_json
             .as_deref()
-            .unwrap_or("Bearer {key}");
+            .and_then(|json_str| {
+                serde_json::from_str::<serde_json::Value>(json_str).ok()
+            })
+            .and_then(|config| {
+                config.get("auth_header_format")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "Authorization: Bearer {key}".to_string());
 
         // 构建请求
         let mut request = if provider_info.name == "anthropic" && health_check_path.contains("/messages") {

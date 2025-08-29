@@ -377,6 +377,7 @@ impl std::fmt::Debug for DynamicAdapterManager {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     async fn create_test_manager() -> DynamicAdapterManager {
         // 这里需要真实的数据库连接和配置管理器进行测试
         // 实际测试需要设置测试数据库

@@ -1,6 +1,7 @@
-//! API key management
+//! # API密钥数据库操作与缓存工具
 //!
-//! Provides API key validation, management and caching functionality
+//! 提供统一的API密钥数据库查询、缓存管理和格式验证功能
+//! 供代理端认证和管理端认证共同使用
 
 use chrono::{DateTime, Timelike, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
@@ -275,7 +276,7 @@ impl ApiKeyManager {
     }
 
     /// Check if API key format is valid
-    fn is_valid_api_key_format(&self, api_key: &str) -> bool {
+    pub fn is_valid_api_key_format(&self, api_key: &str) -> bool {
         // Basic format check: starts with sk- and at least 20 characters
         api_key.starts_with("sk-") && api_key.len() >= 20
     }
@@ -569,6 +570,95 @@ impl ApiKeyManager {
         }
 
         stats
+    }
+
+    // ==================== 共享数据库操作方法 ====================
+
+    /// 根据API密钥查询数据库记录（不包含认证逻辑）
+    /// 
+    /// 返回原始的数据库记录，供不同认证场景使用
+    pub async fn find_api_key_record(&self, api_key: &str) -> Result<Option<user_provider_keys::Model>> {
+        user_provider_keys::Entity::find()
+            .filter(user_provider_keys::Column::ApiKey.eq(api_key))
+            .filter(user_provider_keys::Column::IsActive.eq(true))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| ApiKeyError::Database(e.to_string()).into())
+    }
+
+    /// 验证API密钥格式（共享方法）
+    pub fn validate_api_key_format(&self, api_key: &str) -> bool {
+        self.is_valid_api_key_format(api_key)
+    }
+
+    /// 清理指定API密钥的缓存（供外部调用）
+    pub async fn invalidate_api_key_cache(&self, api_key: &str) {
+        self.remove_from_cache(api_key).await;
+    }
+
+    /// 获取API密钥基本信息（不含权限和速率限制）
+    /// 
+    /// 用于代理端轻量级认证
+    pub async fn get_api_key_info(&self, api_key: &str) -> Result<Option<ApiKeyInfo>> {
+        // 检查缓存
+        if let Some(cached) = self.get_from_cache(api_key).await {
+            if !cached.is_expired() {
+                return Ok(Some(cached.api_key_info));
+            }
+            self.remove_from_cache(api_key).await;
+        }
+
+        // 查询数据库
+        if let Some(record) = self.find_api_key_record(api_key).await? {
+            let api_key_info = ApiKeyInfo {
+                id: record.id,
+                user_id: record.user_id,
+                provider_type_id: record.provider_type_id,
+                name: record.name,
+                api_key: self.sanitize_api_key(&record.api_key),
+                weight: record.weight,
+                max_requests_per_minute: record.max_requests_per_minute,
+                max_tokens_prompt_per_minute: record.max_tokens_prompt_per_minute,
+                max_requests_per_day: record.max_requests_per_day,
+                is_active: record.is_active,
+                created_at: record.created_at.and_utc(),
+                updated_at: record.updated_at.and_utc(),
+            };
+
+            // 简单缓存（不含权限信息）
+            self.cache_api_key(api_key, &api_key_info, &[]).await;
+            Ok(Some(api_key_info))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 代理端轻量级API密钥验证
+    /// 
+    /// 只验证密钥存在性和激活状态，不包含权限检查
+    pub async fn validate_for_proxy(&self, api_key: &str) -> Result<ApiKeyInfo> {
+        if !self.is_valid_api_key_format(api_key) {
+            return Err(ApiKeyError::InvalidFormat.into());
+        }
+
+        match self.get_api_key_info(api_key).await? {
+            Some(info) => {
+                if info.is_active {
+                    Ok(info)
+                } else {
+                    Err(ApiKeyError::Inactive.into())
+                }
+            },
+            None => Err(ApiKeyError::NotFound.into()),
+        }
+    }
+
+    /// 管理端完整API密钥验证（保留原有逻辑）
+    /// 
+    /// 包含权限检查、速率限制等完整功能
+    pub async fn validate_for_management(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
+        // 使用原有的validate_api_key方法
+        self.validate_api_key(api_key).await
     }
 }
 

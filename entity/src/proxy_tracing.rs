@@ -172,7 +172,7 @@ pub struct QualityMetrics {
 impl Model {
     /// 判断是否为成功请求
     pub fn is_successful(&self) -> bool {
-        self.is_success && self.status_code.map_or(true, |code| code < 400)
+        self.is_success && self.status_code.is_none_or(|code| code < 400)
     }
 
     /// 计算实际响应时间

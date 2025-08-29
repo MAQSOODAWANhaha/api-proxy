@@ -1,0 +1,33 @@
+### 远程环境
+POST http://3.92.178.170:8080/v1/models/gemini-2.5-flash:generateContent
+Content-Type: application/json
+Authorization: Bearer sk-api-c1f152827f494779923846d0e1bb62c9
+
+{
+  "contents": [{
+	"parts": [{
+	  "text": "给我输出一篇Go的详细教程."
+	}]
+  }]
+}
+
+### 本地环境
+POST http://localhost:8080/v1beta/models/gemini-2.5-flash:generateContent
+Content-Type: application/json
+Authorization: Bearer sk-api-c3038fee36b04ba6a09be03f62590a6f
+
+{
+  "contents": [
+	{
+	  "parts": [
+		{
+		  "text": "给我输出一篇rust的详细教程"
+		}
+	  ]
+	}
+  ]
+}
+
+
+### Token
+GET https://his.ppchat.vip/api/token-logs?token_key=sk-HaajioybG3CJKHvlUCtkpPJQdWzlpFMOfPyJjb45PF0VkqFo&page=1&page_size=1000

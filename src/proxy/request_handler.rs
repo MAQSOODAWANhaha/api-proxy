@@ -1,64 +1,29 @@
-//! # 请求处理器
+//! # AI代理请求处理器
 //!
-//! 简化后的AI代理请求处理器，专注于核心请求处理流程
+//! 基于设计文档实现的AI代理处理器，负责身份验证、速率限制和转发策略
 
-use pingora_core::Error as PingoraError;
-use pingora_core::upstreams::peer::HttpPeer;
-use pingora_http::RequestHeader;
+use anyhow::Result;
+use pingora_core::upstreams::peer::{HttpPeer, Peer};
+use pingora_core::{Error as PingoraError, ErrorType};
+use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{DatabaseConnection, EntityTrait};
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::auth::{AuthMethod, AuthResult, AuthUtils};
+use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils, RefactoredUnifiedAuthManager};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
-use crate::providers::DynamicAdapterManager;
-use crate::proxy::types::{ForwardingContext, ForwardingResult, ProviderId};
+use crate::error::ProxyError;
+use crate::pricing::PricingCalculatorService;
+use crate::proxy::{AuthenticationService, StatisticsService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
-
-/// 简化的请求处理器
-///
-/// 职责：
-/// 1. 身份验证和API密钥验证
-/// 2. 提供商选择和API密钥选择
-/// 3. 请求转发到上游服务器
-/// 4. 响应处理和统计收集
-pub struct RequestHandler {
-    /// 数据库连接
-    db: Arc<DatabaseConnection>,
-    /// 统一缓存管理器 (未来使用)
-    _cache: Arc<UnifiedCacheManager>,
-    /// 配置 (未来使用)
-    _config: Arc<AppConfig>,
-    /// 适配器管理器 (未来使用)
-    _adapter_manager: Arc<DynamicAdapterManager>,
-    /// 服务商配置管理器 (未来使用)
-    _provider_config_manager: Arc<ProviderConfigManager>,
-    /// API密钥池管理器
-    api_key_pool: Arc<ApiKeyPoolManager>,
-    /// 追踪器
-    tracer: Option<Arc<ImmediateProxyTracer>>,
-}
-
-/// 请求上下文
-#[derive(Debug, Clone)]
-pub struct RequestContext {
-    /// 请求ID
-    pub request_id: String,
-    /// 用户ID
-    pub user_id: Option<i32>,
-    /// 使用的提供商ID
-    pub provider_id: Option<ProviderId>,
-    /// 使用的API密钥ID
-    pub api_key_id: Option<i32>,
-    /// 请求方法
-    pub method: String,
-    /// 请求路径
-    pub path: String,
-    /// 转发上下文
-    pub forwarding_context: Option<ForwardingContext>,
-}
+use entity::{
+    provider_types::{self, Entity as ProviderTypes},
+    user_provider_keys::{self},
+    user_service_apis::{self},
+};
 
 /// 从URL路径中提取provider名称
 ///
@@ -69,15 +34,263 @@ fn extract_provider_name_from_path(path: &str) -> Option<&str> {
     path.strip_prefix('/').and_then(|s| s.split('/').next())
 }
 
+/// 请求处理器 - 负责AI代理请求的完整处理流程
+///
+/// 职责重构后专注于：
+/// - 请求解析和验证
+/// - 上游服务选择和负载均衡
+/// - 请求转发和响应处理
+/// - 追踪和统计记录
+///
+/// 认证职责已迁移到RefactoredUnifiedAuthManager
+pub struct RequestHandler {
+    /// 数据库连接
+    db: Arc<DatabaseConnection>,
+    /// 统一缓存管理器
+    cache: Arc<UnifiedCacheManager>,
+    /// 配置 (未来使用)
+    _config: Arc<AppConfig>,
+    /// 服务商配置管理器
+    provider_config_manager: Arc<ProviderConfigManager>,
+    /// API密钥池管理器
+    api_key_pool: Arc<ApiKeyPoolManager>,
+    /// 认证服务 - 负责API密钥验证和提取
+    auth_service: Arc<AuthenticationService>,
+    /// 统计服务 - 负责请求/响应数据收集和分析
+    statistics_service: Arc<StatisticsService>,
+    /// 追踪服务 - 负责请求追踪的完整生命周期管理
+    tracing_service: Arc<TracingService>,
+}
+
+/// Token使用详情
+#[derive(Clone, Debug, Default)]
+pub struct TokenUsage {
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: u32,
+    pub model_used: Option<String>,
+}
+
+/// 请求详情
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct RequestDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    /// 真实客户端IP地址（考虑代理情况）
+    pub client_ip: String,
+    /// 用户代理字符串
+    pub user_agent: Option<String>,
+    /// 来源页面
+    pub referer: Option<String>,
+    /// 请求方法
+    pub method: String,
+    /// 请求路径
+    pub path: String,
+    /// 请求协议版本
+    pub protocol_version: Option<String>,
+}
+
+/// 响应详情
+#[derive(Clone, Debug, Default)]
+pub struct ResponseDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    pub content_encoding: Option<String>,
+    /// 响应体数据块累积(用于收集响应体数据)
+    pub body_chunks: Vec<u8>,
+}
+
+/// 响应详情的序列化版本(不包含body_chunks)
+#[derive(serde::Serialize)]
+pub struct SerializableResponseDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Option<String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    pub content_encoding: Option<String>,
+}
+
+impl From<&ResponseDetails> for SerializableResponseDetails {
+    fn from(details: &ResponseDetails) -> Self {
+        Self {
+            headers: details.headers.clone(),
+            body: details.body.clone(),
+            body_size: details.body_size,
+            content_type: details.content_type.clone(),
+            content_encoding: details.content_encoding.clone(),
+        }
+    }
+}
+
+impl ResponseDetails {
+    /// 添加响应体数据块
+    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
+        let prev_size = self.body_chunks.len();
+        self.body_chunks.extend_from_slice(chunk);
+
+        // 只在累积大小达到特定阈值时记录日志（避免过多日志）
+        let new_size = self.body_chunks.len();
+        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
+            tracing::debug!(
+                chunk_size = chunk.len(),
+                total_size = new_size,
+                "Response body chunk added (milestone reached)"
+            );
+        }
+    }
+
+    /// 完成响应体收集，将累积的数据转换为字符串
+    pub fn finalize_body(&mut self) {
+        let original_chunks_len = self.body_chunks.len();
+
+        if !self.body_chunks.is_empty() {
+            tracing::debug!(
+                raw_body_size = original_chunks_len,
+                "Starting response body finalization"
+            );
+
+            // 尝试将响应体转换为UTF-8字符串
+            match String::from_utf8(self.body_chunks.clone()) {
+                Ok(body_str) => {
+                    let original_str_len = body_str.len();
+
+                    // 对于大的响应体，只保留前64KB
+                    if body_str.len() > 65536 {
+                        self.body = Some(format!(
+                            "{}...[truncated {} bytes]",
+                            &body_str[..65536],
+                            body_str.len() - 65536
+                        ));
+                        tracing::info!(
+                            original_size = original_str_len,
+                            stored_size = 65536,
+                            truncated_bytes = original_str_len - 65536,
+                            "Response body finalized as UTF-8 string (truncated)"
+                        );
+                    } else {
+                        self.body = Some(body_str);
+                        tracing::info!(
+                            body_size = original_str_len,
+                            "Response body finalized as UTF-8 string (complete)"
+                        );
+                    }
+                }
+                Err(utf8_error) => {
+                    // 如果不是有效的UTF-8，保存为十六进制字符串（仅前1KB）
+                    let truncated_chunks = if self.body_chunks.len() > 1024 {
+                        &self.body_chunks[..1024]
+                    } else {
+                        &self.body_chunks
+                    };
+                    self.body = Some(format!("binary-data:{}", hex::encode(truncated_chunks)));
+
+                    tracing::info!(
+                        raw_size = original_chunks_len,
+                        encoded_size = truncated_chunks.len(),
+                        utf8_error = %utf8_error,
+                        "Response body finalized as hex-encoded binary data"
+                    );
+                }
+            }
+            // 更新实际的body_size
+            self.body_size = Some(self.body_chunks.len() as u64);
+        } else {
+            tracing::debug!("No response body chunks to finalize (empty response)");
+        }
+    }
+}
+
+/// 详细的请求统计信息
+#[derive(Debug, Clone, Default)]
+pub struct DetailedRequestStats {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub model_name: Option<String>,
+    pub cache_create_tokens: Option<u32>,
+    pub cache_read_tokens: Option<u32>,
+    pub cost: Option<f64>,
+    pub cost_currency: Option<String>,
+}
+
+/// 请求上下文
+#[derive(Debug, Clone)]
+pub struct ProxyContext {
+    /// 请求ID
+    pub request_id: String,
+    /// 用户对外API配置
+    pub user_service_api: Option<user_service_apis::Model>,
+    /// 选择的后端API密钥
+    pub selected_backend: Option<user_provider_keys::Model>,
+    /// 提供商类型配置
+    pub provider_type: Option<provider_types::Model>,
+    /// 开始时间
+    pub start_time: std::time::Instant,
+    /// 重试次数
+    pub retry_count: u32,
+    /// 使用的tokens（向后兼容）
+    pub tokens_used: u32,
+    /// 详细的Token使用信息
+    pub token_usage: TokenUsage,
+    /// 请求详情
+    pub request_details: RequestDetails,
+    /// 响应详情
+    pub response_details: ResponseDetails,
+    /// 选择的提供商名称
+    pub selected_provider: Option<String>,
+    /// 连接超时时间(秒)
+    pub timeout_seconds: Option<i32>,
+}
+
+impl Default for ProxyContext {
+    fn default() -> Self {
+        Self {
+            request_id: String::new(),
+            user_service_api: None,
+            selected_backend: None,
+            provider_type: None,
+            start_time: std::time::Instant::now(),
+            retry_count: 0,
+            tokens_used: 0,
+            token_usage: TokenUsage::default(),
+            request_details: RequestDetails::default(),
+            response_details: ResponseDetails::default(),
+            selected_provider: None,
+            timeout_seconds: None,
+        }
+    }
+}
+
+/// 认证结果
+#[derive(Debug, Clone)]
+pub struct AuthResult {
+    /// 用户对外API配置
+    pub user_service_api: user_service_apis::Model,
+    /// 选择的后端API密钥
+    pub selected_backend: user_provider_keys::Model,
+    /// 提供商类型配置
+    pub provider_type: provider_types::Model,
+}
+
 impl RequestHandler {
-    /// 创建新的请求处理器
+    /// 获取统计服务的引用 - 用于外部访问
+    pub fn statistics_service(&self) -> &Arc<StatisticsService> {
+        &self.statistics_service
+    }
+
+    /// 创建新的AI代理处理器 - 协调器模式
+    ///
+    /// 现在RequestHandler作为协调器，将认证、统计和追踪职责委托给专门的服务
     pub fn new(
         db: Arc<DatabaseConnection>,
         cache: Arc<UnifiedCacheManager>,
-        config: Arc<AppConfig>,
-        adapter_manager: Arc<DynamicAdapterManager>,
-        provider_config_manager: Arc<ProviderConfigManager>,
+        _config: Arc<AppConfig>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
+        provider_config_manager: Arc<ProviderConfigManager>,
+        auth_manager: Arc<RefactoredUnifiedAuthManager>,
     ) -> Self {
         let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
             db.clone(),
@@ -85,324 +298,991 @@ impl RequestHandler {
         ));
         let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
 
+        // 创建三个专门的服务
+        let auth_service = Arc::new(AuthenticationService::new(
+            auth_manager.clone(),
+        ));
+
+        let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
+        let statistics_service = Arc::new(StatisticsService::new(
+            pricing_calculator.clone(),
+        ));
+
+        let tracing_service = Arc::new(TracingService::new(tracer.clone()));
+
         Self {
             db,
-            _cache: cache,
-            _config: config,
-            _adapter_manager: adapter_manager,
-            _provider_config_manager: provider_config_manager,
+            cache,
+            _config,
+            provider_config_manager,
             api_key_pool,
-            tracer,
+            auth_service,
+            statistics_service,
+            tracing_service,
         }
     }
 
-    /// 处理请求的主要入口点
-    pub async fn handle_request(
+    /// 准备代理请求 - 协调器模式：委托给专门服务
+    pub async fn prepare_proxy_request(
         &self,
-        session: &mut Session,
-        ctx: &mut RequestContext,
-    ) -> Result<(), PingoraError> {
-        // 1. 身份验证 - 返回认证结果和service_api配置
-        let (auth_result, service_api_config) =
-            self.authenticate_request(session.req_header(), ctx).await?;
-
-        // 2. 使用service_api配置选择API密钥
-        let selected_key = self
-            .select_api_key(&auth_result, &service_api_config, ctx)
-            .await?;
-
-        // 3. 创建上游连接
-        let _peer = self.create_upstream_peer(&selected_key, ctx).await?;
-
-        // 4. 设置上游
-        session.set_keepalive(None);
-        ctx.forwarding_context = Some(ForwardingContext::new(
-            ctx.request_id.clone(),
-            ctx.provider_id.unwrap_or(ProviderId::from_database_id(1)),
-        ));
-
-        // 5. 连接到上游（简化实现）
-        session.set_keepalive(None);
-
-        Ok(())
-    }
-
-    /// 身份验证 - 根据provider的AuthHeaderFormat动态解析认证头
-    async fn authenticate_request(
-        &self,
-        req_header: &RequestHeader,
-        ctx: &mut RequestContext,
-    ) -> Result<(AuthResult, entity::user_service_apis::Model), PingoraError> {
-        // 尝试从各种可能的认证头中解析API密钥
-        let extracted_api_key = self.extract_api_key_from_headers(req_header).await?;
-
-        // 从数据库中验证API密钥并获取完整的user_service_apis配置
-        let user_service_api = entity::user_service_apis::Entity::find()
-            .filter(entity::user_service_apis::Column::ApiKey.eq(&extracted_api_key))
-            .filter(entity::user_service_apis::Column::IsActive.eq(true))
-            .one(&*self.db)
-            .await
-            .map_err(|_| *PingoraError::new_str("Database error"))?
-            .ok_or_else(|| *PingoraError::new_str("Invalid API key"))?;
-
-        // 创建认证结果 - 使用从数据库获取的用户ID
-        let auth_result = AuthResult {
-            user_id: user_service_api.user_id,
-            username: format!("user_{}", user_service_api.user_id), // 简化用户名
-            is_admin: false,
-            permissions: vec![], // 实际应该从数据库查询
-            auth_method: AuthMethod::ApiKey,
-            token_preview: AuthUtils::sanitize_api_key(&extracted_api_key),
-        };
-
-        ctx.user_id = Some(auth_result.user_id);
-
-        Ok((auth_result, user_service_api))
-    }
-
-    /// 根据provider名称获取provider配置（使用缓存优化）
-    async fn get_provider_by_name(
-        &self,
-        provider_name: &str,
-    ) -> Result<entity::provider_types::Model, PingoraError> {
-        let cache_key = format!("provider_by_name:{}", provider_name);
-
-        // 首先检查缓存
-        if let Ok(Some(provider)) = self
-            ._cache
-            .provider()
-            .get::<entity::provider_types::Model>(&cache_key)
-            .await
-        {
-            return Ok(provider);
-        }
-
-        // 从数据库查询特定的provider
-        let provider = entity::provider_types::Entity::find()
-            .filter(entity::provider_types::Column::Name.eq(provider_name))
-            .filter(entity::provider_types::Column::IsActive.eq(true))
-            .one(&*self.db)
-            .await
-            .map_err(|_| *PingoraError::new_str("Database error"))?
-            .ok_or_else(|| *PingoraError::new_str("Unknown provider"))?;
-
-        // 缓存结果（30分钟）
-        let _ = self
-            ._cache
-            .provider()
-            .set(
-                &cache_key,
-                &provider,
-                Some(std::time::Duration::from_secs(1800)),
-            )
-            .await;
-
-        Ok(provider)
-    }
-
-    /// 从请求头中提取API密钥 - 基于URL前缀优化版本
-    async fn extract_api_key_from_headers(
-        &self,
-        req_header: &RequestHeader,
-    ) -> Result<String, PingoraError> {
-        let path = req_header.uri.path();
-
-        // 1. 从URL路径中提取provider名称
-        let provider_name = extract_provider_name_from_path(path).ok_or_else(|| {
-            *PingoraError::new_str("Invalid URL format. Expected: /{provider_name}/{api_path}")
-        })?;
-
-        // 2. 从缓存获取特定provider的配置 (O(1) 查找)
-        let provider = self.get_provider_by_name(provider_name).await?;
-
-        // 3. 使用该provider的认证格式直接解析API密钥
-        let auth_format = provider
-            .auth_header_format
-            .as_deref()
-            .unwrap_or("Authorization: Bearer {key}");
-
-        let api_key = self
-            .parse_auth_header_with_format(req_header, auth_format)
-            .map_err(|_| {
-                *PingoraError::new_str(
-                    "Failed to extract API key with configured authentication format",
-                )
-            })?;
-
-        if api_key.is_empty() {
-            return Err(*PingoraError::new_str("Empty API key found"));
-        }
-
-        tracing::debug!(
-            provider = %provider_name,
-            auth_format = %auth_format,
-            api_key_preview = %crate::auth::AuthUtils::sanitize_api_key(&api_key),
-            "Successfully extracted API key using URL prefix optimization"
-        );
-
-        Ok(api_key)
-    }
-
-    /// 根据指定格式解析认证头
-    fn parse_auth_header_with_format(
-        &self,
-        req_header: &RequestHeader,
-        auth_format: &str,
-    ) -> Result<String, PingoraError> {
-        // 解析认证格式，例如：
-        // "Authorization: Bearer {key}"
-        // "X-goog-api-key: {key}"
-
-        if let Some((header_name, value_format)) = auth_format.split_once(": ") {
-            // 从请求头中获取对应的header值
-            let header_value = req_header
-                .headers
-                .get(header_name)
-                .or_else(|| req_header.headers.get(&header_name.to_lowercase()))
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-
-            if header_value.is_empty() {
-                return Err(*PingoraError::new_str("Missing auth header"));
-            }
-
-            // 根据值格式提取API密钥
-            if value_format == "{key}" {
-                // 直接值格式，如 "X-goog-api-key: {key}"
-                Ok(header_value.to_string())
-            } else if value_format.starts_with("Bearer {key}") {
-                // Bearer token格式
-                if let Some(key) = header_value.strip_prefix("Bearer ") {
-                    Ok(key.to_string())
-                } else {
-                    Err(*PingoraError::new_str("Invalid Bearer token format"))
-                }
-            } else {
-                // 其他格式的解析
-                // TODO: 可以扩展支持更复杂的格式
-                Err(*PingoraError::new_str("Unsupported auth format"))
-            }
-        } else {
-            Err(*PingoraError::new_str("Invalid auth format configuration"))
-        }
-    }
-
-    /// 选择API密钥 - 委托给ApiKeyPoolManager处理
-    async fn select_api_key(
-        &self,
-        _auth_result: &AuthResult,
-        service_api_config: &entity::user_service_apis::Model,
-        ctx: &mut RequestContext,
-    ) -> Result<entity::user_provider_keys::Model, PingoraError> {
-        // 创建选择上下文
-        let selection_context = SelectionContext::new(
-            ctx.request_id.clone(),
-            service_api_config.user_id,
-            service_api_config.id,
-            service_api_config.provider_type_id,
-        );
-
-        // 使用ApiKeyPoolManager执行密钥选择
-        let selection_result = self
-            .api_key_pool
-            .select_api_key_from_service_api(service_api_config, &selection_context)
-            .await
-            .map_err(|err| {
-                tracing::error!(
-                    request_id = %ctx.request_id,
-                    error = %err,
-                    "API key selection failed"
-                );
-                *PingoraError::new_str("API key selection failed")
-            })?;
-
-        // 更新请求上下文
-        ctx.provider_id = Some(ProviderId::from_database_id(
-            selection_result.selected_key.provider_type_id,
-        ));
-        ctx.api_key_id = Some(selection_result.selected_key.id);
+        session: &Session,
+        ctx: &mut ProxyContext,
+    ) -> Result<(), ProxyError> {
+        let start = std::time::Instant::now();
 
         tracing::debug!(
             request_id = %ctx.request_id,
-            selected_key_id = selection_result.selected_key.id,
-            strategy = %selection_result.strategy.as_str(),
-            reason = %selection_result.reason,
-            "API key selected successfully"
+            "Starting AI proxy request preparation using coordinator pattern"
         );
 
-        Ok(selection_result.selected_key)
+        // 步骤1: 身份验证 - 委托给AuthenticationService
+        let auth_start = std::time::Instant::now();
+        let auth_result = self.auth_service.authenticate(session, &ctx.request_id).await?;
+        let _auth_duration = auth_start.elapsed();
+
+        // 应用认证结果到上下文
+        self.auth_service.apply_auth_result_to_context(ctx, &auth_result);
+        let user_service_api = ctx.user_service_api.as_ref().unwrap();
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            user_id = user_service_api.user_id,
+            provider_type_id = user_service_api.provider_type_id,
+            "Authentication completed via AuthenticationService"
+        );
+
+        // 步骤2: 开始请求追踪 - 委托给TracingService
+        let method = session.req_header().method.as_str();
+        let path = Some(session.req_header().uri.path().to_string());
+        let request_stats = self.statistics_service.collect_request_stats(session);
+        let client_ip = request_stats.client_ip.clone();
+        let user_agent = request_stats.user_agent.clone();
+
+        self.tracing_service.start_trace(
+            &ctx.request_id,
+            user_service_api.id,
+            Some(user_service_api.user_id),
+            method,
+            path,
+            Some(client_ip),
+            user_agent,
+        ).await?;
+
+        // 步骤3: 速率验证 - 仍由RequestHandler处理（业务逻辑）
+        let rate_limit_start = std::time::Instant::now();
+        let rate_limit_result = self.check_rate_limit(user_service_api).await;
+        let _rate_limit_duration = rate_limit_start.elapsed();
+
+        if let Err(e) = rate_limit_result {
+            // 速率限制失败时立即记录到数据库
+            self.tracing_service.complete_trace_rate_limit(
+                &ctx.request_id,
+                &e.to_string(),
+            ).await?;
+            return Err(e);
+        }
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            rate_limit = user_service_api.max_request_per_min,
+            "Rate limit check passed"
+        );
+
+        // 步骤4: 获取提供商类型信息和配置
+        let provider_type = match self
+            .get_provider_type(user_service_api.provider_type_id)
+            .await
+        {
+            Ok(provider_type) => provider_type,
+            Err(e) => {
+                // 提供商类型获取失败时立即记录到数据库
+                self.tracing_service.complete_trace_config_error(
+                    &ctx.request_id,
+                    &e.to_string(),
+                ).await?;
+                return Err(e);
+            }
+        };
+        ctx.provider_type = Some(provider_type.clone());
+        ctx.selected_provider = Some(provider_type.name.clone());
+
+        // 设置超时配置，优先级：用户配置 > 动态配置 > 默认配置
+        ctx.timeout_seconds = if let Some(user_timeout) = user_service_api.timeout_seconds {
+            // 优先使用用户配置的超时时间
+            Some(user_timeout)
+        } else if let Ok(Some(provider_config)) = self
+            .provider_config_manager
+            .get_provider_by_name(&provider_type.name)
+            .await
+        {
+            // 其次使用动态配置的超时时间
+            provider_config.timeout_seconds
+        } else {
+            // 最后使用provider_types表中的默认超时时间
+            provider_type.timeout_seconds
+        };
+
+        let timeout_source = if user_service_api.timeout_seconds.is_some() {
+            "user_service_api configuration (highest priority)"
+        } else if let Ok(Some(_)) = self
+            .provider_config_manager
+            .get_provider_by_name(&provider_type.name)
+            .await
+        {
+            "dynamic provider configuration"
+        } else {
+            "provider_types default configuration"
+        };
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            timeout_seconds = ?ctx.timeout_seconds,
+            source = timeout_source,
+            user_config = ?user_service_api.timeout_seconds,
+            "Applied timeout configuration with correct priority"
+        );
+
+        // 步骤5: 根据用户配置选择合适的API密钥
+        let _api_key_selection_start = std::time::Instant::now();
+        let selected_backend = match self
+            .select_api_key(user_service_api, &ctx.request_id)
+            .await
+        {
+            Ok(backend) => backend,
+            Err(e) => {
+                // API密钥选择失败时立即记录到数据库
+                self.tracing_service.complete_trace_api_key_selection_failed(
+                    &ctx.request_id,
+                    &e.to_string(),
+                ).await?;
+                return Err(e);
+            }
+        };
+        ctx.selected_backend = Some(selected_backend.clone());
+
+        // 更新追踪信息 - 使用TracingService记录更多信息
+        self.tracing_service.update_extended_trace_info(
+            &ctx.request_id,
+            Some(provider_type.id),    // provider_type_id
+            None,                      // model_used将在响应处理时设置
+            Some(selected_backend.id), // user_provider_key_id
+        ).await?;
+
+        let elapsed = start.elapsed();
+        tracing::info!(
+            request_id = %ctx.request_id,
+            user_id = user_service_api.user_id,
+            provider = %provider_type.name,
+            backend_key_id = selected_backend.id,
+            strategy = %user_service_api.scheduling_strategy.as_deref().unwrap_or("round_robin"),
+            elapsed_ms = elapsed.as_millis(),
+            "AI proxy request preparation completed"
+        );
+
+        Ok(())
     }
 
-    /// 创建上游连接
-    async fn create_upstream_peer(
-        &self,
-        _selected_key: &entity::user_provider_keys::Model,
-        _ctx: &RequestContext,
-    ) -> Result<HttpPeer, PingoraError> {
-        // 简化实现：使用默认的上游地址
-        let host = "api.openai.com";
-        let port = 443;
-        let use_tls = true;
-        let address = format!("{}:{}", host, port);
 
-        Ok(HttpPeer::new(&address, use_tls, host.to_string()))
+
+
+    /// 检查速率限制 - 基于统一缓存的滑动窗口算法
+    async fn check_rate_limit(
+        &self,
+        user_api: &user_service_apis::Model,
+    ) -> Result<(), ProxyError> {
+        let rate_limit = user_api.max_request_per_min.unwrap_or(60); // 默认每分钟60次
+
+        if rate_limit <= 0 {
+            return Ok(()); // 无限制
+        }
+
+        let cache_key = format!("rate_limit:service_api:{}:minute", user_api.id);
+
+        // 使用统一缓存的incr操作实现速率限制
+        let current_count = self
+            .cache
+            .provider()
+            .incr(&cache_key, 1)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Cache incr error: {}", e)))?;
+
+        // 如果是第一次请求，设置过期时间
+        if current_count == 1 {
+            let _ = self
+                .cache
+                .provider()
+                .expire(&cache_key, Duration::from_secs(60))
+                .await;
+        }
+
+        if current_count > rate_limit as i64 {
+            tracing::warn!(
+                user_service_api_id = user_api.id,
+                current_count = current_count,
+                rate_limit = rate_limit,
+                "Rate limit exceeded"
+            );
+
+            return Err(ProxyError::rate_limit(format!(
+                "Rate limit exceeded: {} requests per minute",
+                rate_limit
+            )));
+        }
+
+        tracing::debug!(
+            user_service_api_id = user_api.id,
+            current_count = current_count,
+            rate_limit = rate_limit,
+            remaining = rate_limit as i64 - current_count,
+            "Rate limit check passed"
+        );
+
+        Ok(())
     }
 
-    /// 处理响应
-    pub async fn handle_response(
+    /// 获取提供商类型配置
+    async fn get_provider_type(
         &self,
-        _session: &mut Session,
-        ctx: &RequestContext,
-    ) -> Result<(), PingoraError> {
-        if let Some(ref forwarding_ctx) = ctx.forwarding_context {
-            // 简化响应处理 - 假设成功状态（避免session.resp_header()方法不存在的问题）
-            let status_code = 200u16;
+        provider_type_id: i32,
+    ) -> Result<provider_types::Model, ProxyError> {
+        let cache_key = format!("provider_type:{}", provider_type_id);
 
-            // 创建转发结果用于统计
-            let result = ForwardingResult {
-                success: status_code >= 200 && status_code < 400,
-                status_code,
-                response_time: forwarding_ctx.start_time.elapsed(),
-                provider_id: forwarding_ctx.provider_id,
-                error_message: if status_code >= 400 {
-                    Some(format!("HTTP {}", status_code))
-                } else {
-                    None
-                },
-                bytes_transferred: 0, // TODO: 从响应中获取实际字节数
-            };
+        // 首先检查缓存
+        if let Ok(Some(provider_type)) = self
+            .cache
+            .provider()
+            .get::<provider_types::Model>(&cache_key)
+            .await
+        {
+            return Ok(provider_type);
+        }
 
-            // 简化的追踪记录 (跳过复杂的tracer调用，直接记录基本信息)
-            if let Some(_tracer) = &self.tracer {
-                tracing::info!(
+        // 从数据库查询
+        let provider_type = ProviderTypes::find_by_id(provider_type_id)
+            .one(&*self.db)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Database error: {}", e)))?
+            .ok_or(ProxyError::internal("Provider type not found"))?;
+
+        // 缓存结果（30分钟）
+        let _ = self
+            .cache
+            .provider()
+            .set(&cache_key, &provider_type, Some(Duration::from_secs(1800)))
+            .await;
+
+        Ok(provider_type)
+    }
+
+    /// 根据用户API配置选择合适的API密钥
+    async fn select_api_key(
+        &self,
+        user_service_api: &user_service_apis::Model,
+        request_id: &str,
+    ) -> Result<user_provider_keys::Model, ProxyError> {
+        // 创建选择上下文
+        let context = SelectionContext::new(
+            request_id.to_string(),
+            user_service_api.user_id,
+            user_service_api.id,
+            user_service_api.provider_type_id,
+        );
+
+        // 使用ApiKeyPoolManager处理密钥选择 - 正确使用user_provider_keys_ids约束
+        let result = self
+            .api_key_pool
+            .select_api_key_from_service_api(user_service_api, &context)
+            .await?;
+
+        tracing::debug!(
+            request_id = %request_id,
+            user_id = user_service_api.user_id,
+            provider_type_id = user_service_api.provider_type_id,
+            selected_key_id = result.selected_key.id,
+            strategy = %result.strategy.as_str(),
+            reason = %result.reason,
+            "API key selection completed using ApiKeyPoolManager"
+        );
+
+        Ok(result.selected_key)
+    }
+
+    /// 选择上游对等体
+    pub async fn select_upstream_peer(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Result<Box<HttpPeer>, ProxyError> {
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider_type) => provider_type,
+            None => {
+                let error = ProxyError::internal("Provider type not set");
+                // 上游对等体选择失败时立即记录到数据库
+                self.tracing_service.complete_trace_upstream_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+        };
+
+        // 构建上游地址，确保使用HTTPS
+        let upstream_addr = if provider_type.base_url.contains(':') {
+            provider_type.base_url.clone()
+        } else {
+            format!("{}:443", provider_type.base_url)
+        };
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            upstream = %upstream_addr,
+            provider = %provider_type.name,
+            "Selected upstream peer"
+        );
+
+        // Upstream address no longer stored in simplified trace schema
+        tracing::info!(
+            request_id = %ctx.request_id,
+            upstream_addr = %upstream_addr,
+            "Selected upstream address (not stored in trace)"
+        );
+
+        // 创建基础peer
+        let mut peer = HttpPeer::new(upstream_addr, true, provider_type.base_url.clone());
+
+        // 获取超时配置，如果前面的配置逻辑未设置则使用30秒fallback
+        let connection_timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let total_timeout_secs = connection_timeout_secs + 5; // 总超时比连接超时多5秒
+        let read_timeout_secs = connection_timeout_secs * 2; // 读取超时是连接超时的2倍
+
+        // 为所有提供商配置通用选项
+        if let Some(options) = peer.get_mut_peer_options() {
+            // 已移除 ALPN 配置，使用默认协议选项
+
+            // 设置动态超时配置
+            options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
+            options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
+            options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
+            options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
+
+            // 已移除 TLS 验证设置
+
+            // 设置HTTP/2特定选项
+            options.h2_ping_interval = Some(Duration::from_secs(30));
+            options.max_h2_streams = 100;
+
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                provider_id = provider_type.id,
+                connection_timeout_s = connection_timeout_secs,
+                total_timeout_s = total_timeout_secs,
+                read_timeout_s = read_timeout_secs,
+                "Configured universal peer options with dynamic timeout"
+            );
+        } else {
+            // 为其他服务商也应用动态超时配置
+            if let Some(options) = peer.get_mut_peer_options() {
+                options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
+                options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
+                options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
+                options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
+
+                tracing::debug!(
                     request_id = %ctx.request_id,
-                    user_id = ctx.user_id.unwrap_or(0),
-                    api_key_id = ctx.api_key_id.unwrap_or(0),
-                    method = %ctx.method,
-                    path = %ctx.path,
-                    status_code = result.status_code,
-                    response_time_ms = result.response_time.as_millis() as u64,
-                    success = result.success,
-                    "Request completed"
+                    provider = %provider_type.name,
+                    connection_timeout_s = connection_timeout_secs,
+                    total_timeout_s = total_timeout_secs,
+                    read_timeout_s = read_timeout_secs,
+                    "Configured peer options with dynamic timeout"
                 );
             }
         }
 
+        Ok(Box::new(peer))
+    }
+
+    /// 过滤上游请求 - 替换认证信息和隐藏源信息
+    pub async fn filter_upstream_request(
+        &self,
+        session: &Session,
+        upstream_request: &mut RequestHeader,
+        ctx: &mut ProxyContext,
+    ) -> Result<(), ProxyError> {
+        // 重要: 从URI中去除provider前缀，恢复原始API路径
+        let original_path = session.req_header().uri.path();
+        if let Some(provider_name) = extract_provider_name_from_path(original_path) {
+            let api_path = original_path
+                .strip_prefix(&format!("/{}", provider_name))
+                .unwrap_or(original_path);
+
+            // 重建URI，只保留API路径部分
+            let new_uri = if let Some(query) = session.req_header().uri.query() {
+                format!("{}?{}", api_path, query)
+            } else {
+                api_path.to_string()
+            };
+
+            // 更新上游请求的URI
+            upstream_request.set_uri(new_uri.parse().map_err(|e| {
+                ProxyError::internal(format!("Failed to parse new URI '{}': {}", new_uri, e))
+            })?);
+
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                original_path = %original_path,
+                provider_name = %provider_name,
+                api_path = %api_path,
+                new_uri = %new_uri,
+                "Stripped provider prefix from upstream request URI"
+            );
+        }
+
+        // 收集请求详情 - 委托给StatisticsService
+        let request_stats_for_details = self.statistics_service.collect_request_stats(session);
+        let request_details = self.statistics_service.collect_request_details(session, &request_stats_for_details);
+        ctx.request_details = request_details;
+
+        // Request size no longer stored in simplified trace schema
+        if ctx.request_details.body_size.is_some() {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                request_size = ?ctx.request_details.body_size,
+                "Request size collected (not stored in trace)"
+            );
+        }
+
+        let selected_backend = match ctx.selected_backend.as_ref() {
+            Some(backend) => backend,
+            None => {
+                let error = ProxyError::internal("Backend not selected");
+                // 请求转发失败时立即记录到数据库
+                self.tracing_service.complete_trace_upstream_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+        };
+
+        let provider_type = match ctx.provider_type.as_ref() {
+            Some(provider_type) => provider_type,
+            None => {
+                let error = ProxyError::internal("Provider type not set");
+                // 请求转发失败时立即记录到数据库
+                self.tracing_service.complete_trace_config_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+        };
+
+        // 应用统一的数据库驱动认证
+        self.apply_authentication(
+            ctx,
+            upstream_request,
+            provider_type,
+            &selected_backend.api_key,
+        )
+        .await?;
+
+        // 设置正确的Host头 - 只使用域名，不包含协议
+        let host_name = provider_type
+            .base_url
+            .replace("https://", "")
+            .replace("http://", "");
+        if let Err(e) = upstream_request.insert_header("host", &host_name) {
+            let error = ProxyError::internal(format!("Failed to set host header: {}", e));
+            // 头部设置失败时立即记录到数据库
+            self.tracing_service.complete_trace_config_error(
+                &ctx.request_id,
+                &error.to_string(),
+            ).await?;
+            return Err(error);
+        }
+
+        // 移除可能暴露客户端信息的头部 - 完全隐藏源信息
+        let headers_to_remove = [
+            "x-forwarded-for",
+            "x-real-ip",
+            "x-forwarded-proto",
+            "x-original-forwarded-for",
+            "x-client-ip",
+            "cf-connecting-ip",
+            "x-forwarded-host",
+            "x-forwarded-port",
+            "via",
+        ];
+
+        for header in &headers_to_remove {
+            upstream_request.remove_header(*header);
+        }
+
+        // 保持原始用户代理或使用标准浏览器用户代理
+        if upstream_request.headers.get("user-agent").is_none() {
+            if let Err(e) = upstream_request.insert_header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36") {
+                let error = ProxyError::internal(format!("Failed to set user-agent: {}", e));
+                // 头部设置失败时立即记录到数据库
+                self.tracing_service.complete_trace_config_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+        }
+
+        // 为所有AI服务添加标准头部（移除硬编码的Google特判）
+        {
+            // 确保有Accept头
+            if upstream_request.headers.get("accept").is_none() {
+                if let Err(e) = upstream_request.insert_header("accept", "application/json") {
+                    let error = ProxyError::internal(format!("Failed to set accept header: {}", e));
+                    // 头部设置失败时立即记录到数据库
+                    self.tracing_service.complete_trace_config_error(
+                        &ctx.request_id,
+                        &error.to_string(),
+                    ).await?;
+                    return Err(error);
+                }
+            }
+
+            // 智能处理Accept-Encoding：只有当原始客户端请求支持压缩时才请求压缩
+            // 这样可以避免普通客户端收到压缩响应的问题
+            let client_supports_compression = session
+                .req_header()
+                .headers
+                .get("accept-encoding")
+                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+                .map(|s| s.contains("gzip") || s.contains("deflate"))
+                .unwrap_or(false);
+
+            if client_supports_compression
+                && upstream_request.headers.get("accept-encoding").is_none()
+            {
+                if let Err(e) = upstream_request.insert_header("accept-encoding", "gzip, deflate") {
+                    let error = ProxyError::internal(format!(
+                        "Failed to set accept-encoding header: {}",
+                        e
+                    ));
+                    // 头部设置失败时立即记录到数据库
+                    self.tracing_service.complete_trace_config_error(
+                        &ctx.request_id,
+                        &error.to_string(),
+                    ).await?;
+                    return Err(error);
+                }
+
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "Client supports compression, requesting compressed response from upstream"
+                );
+            } else {
+                // 客户端不支持压缩，移除任何Accept-Encoding头，确保上游返回未压缩响应
+                upstream_request.remove_header("accept-encoding");
+
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    client_supports_compression = client_supports_compression,
+                    "Client doesn't support compression, requesting uncompressed response from upstream"
+                );
+            }
+        }
+
+        // 注释掉可能导致问题的自定义头部
+        // upstream_request.insert_header("x-request-id", &ctx.request_id)
+        //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
+
+        // 添加详细的Pingora请求日志用于对比
+        tracing::info!(
+            request_id = %ctx.request_id,
+            final_uri = %upstream_request.uri,
+            method = %upstream_request.method,
+            "=== PINGORA REQUEST DETAILS ==="
+        );
+
+        // 记录所有Pingora请求头用于与reqwest对比
+        let mut pingora_headers = Vec::new();
+        for (name, value) in upstream_request.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                pingora_headers.push(format!("{}: {}", name.as_str(), value_str));
+            }
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            headers = ?pingora_headers,
+            backend_key_id = selected_backend.id,
+            provider = %provider_type.name,
+            auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
+            "PINGORA HTTP REQUEST HEADERS"
+        );
+
         Ok(())
+    }
+
+
+
+
+    /// 过滤上游响应 - 协调器模式：委托给专门服务
+    pub async fn filter_upstream_response(
+        &self,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut ProxyContext,
+    ) -> Result<(), ProxyError> {
+        // 收集响应详情 - 委托给StatisticsService
+        self.statistics_service.collect_response_details(upstream_response, ctx);
+
+        // 初始化token使用信息 - 委托给StatisticsService
+        let token_usage = self.statistics_service.initialize_token_usage(ctx).await?;
+        ctx.token_usage = token_usage;
+
+        // 更新数据库中的model信息 - 委托给TracingService
+        if let Some(model_used) = &ctx.token_usage.model_used {
+            self.tracing_service.update_extended_trace_info(
+                &ctx.request_id,
+                None,                        // provider_type_id 已设置
+                Some(model_used.clone()),    // 更新model_used字段
+                None,                        // user_provider_key_id 已设置
+            ).await?;
+
+            tracing::info!(
+                request_id = %ctx.request_id,
+                model_used = ?model_used,
+                "Updated trace info with model information via TracingService"
+            );
+        }
+
+        // ========== 压缩响应处理 ==========
+        // 检测响应是否被压缩
+        let content_encoding = upstream_response
+            .headers
+            .get("content-encoding")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_lowercase());
+
+        // 检测内容类型
+        let content_type = upstream_response
+            .headers
+            .get("content-type")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .unwrap_or("application/json");
+
+        // 检测是否为流式响应
+        let is_streaming = content_type.contains("text/event-stream")
+            || content_type.contains("text/plain")
+            || ctx
+                .provider_type
+                .as_ref()
+                .and_then(|p| {
+                    // 从数据库配置中检查流式支持
+                    p.config_json
+                        .as_ref()
+                        .and_then(|config_str| {
+                            serde_json::from_str::<serde_json::Value>(config_str).ok()
+                        })
+                        .and_then(|config| {
+                            config
+                                .get("streaming")
+                                .and_then(|streaming| streaming.get("supported"))
+                                .and_then(|supported| supported.as_bool())
+                        })
+                })
+                .unwrap_or(false);
+
+        // 日志记录响应信息
+        tracing::info!(
+            request_id = %ctx.request_id,
+            status = upstream_response.status.as_u16(),
+            content_type = content_type,
+            content_encoding = ?content_encoding,
+            is_streaming = is_streaming,
+            content_length = upstream_response.headers.get("content-length")
+                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok()),
+            "Processing upstream response"
+        );
+
+        // ========== 透明响应传递 ==========
+        // 对于压缩响应，确保完整透传所有相关头部
+        if content_encoding.is_some() {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                encoding = ?content_encoding,
+                "Preserving compressed response with all headers"
+            );
+            // 保持压缩相关的所有头部，让客户端处理解压
+            // 不移除 Content-Encoding, Content-Length, Transfer-Encoding 等关键头部
+        }
+
+        // 对于流式响应，确保支持chunk传输
+        if is_streaming {
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                "Configuring for streaming response"
+            );
+            // 保持流式传输相关头部
+            // Transfer-Encoding: chunked 应该保持
+        }
+
+        // ========== 安全头部处理 ==========
+        // 只移除可能暴露服务器信息的头部，保留传输相关的核心头部
+        let headers_to_remove = [
+            "x-powered-by",
+            "x-ratelimit-limit-requests",
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-remaining-tokens",
+        ];
+
+        for header in &headers_to_remove {
+            upstream_response.remove_header(*header);
+        }
+
+        // 谨慎处理server头部 - 保持原有或使用通用标识
+        if upstream_response.headers.get("server").is_none() {
+            upstream_response
+                .insert_header("server", "nginx/1.24.0")
+                .map_err(|e| ProxyError::internal(format!("Failed to set server header: {}", e)))?;
+        }
+
+        // ========== 跨域支持 ==========
+        // 为API响应添加基本的CORS头部
+        if upstream_response
+            .headers
+            .get("access-control-allow-origin")
+            .is_none()
+        {
+            upstream_response
+                .insert_header("access-control-allow-origin", "*")
+                .map_err(|e| ProxyError::internal(format!("Failed to set CORS header: {}", e)))?;
+        }
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            status = upstream_response.status.as_u16(),
+            tokens_used = ctx.tokens_used,
+            preserved_encoding = ?content_encoding,
+            "Upstream response processed successfully"
+        );
+
+        Ok(())
+    }
+
+
+
+
+    /// 统一的认证头处理方法 - 完全基于数据库配置
+    async fn apply_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        api_key: &str,
+    ) -> Result<(), ProxyError> {
+        // 从config_json中获取认证格式
+        let auth_format = provider_type
+            .config_json
+            .as_deref()
+            .and_then(|json_str| serde_json::from_str::<serde_json::Value>(json_str).ok())
+            .and_then(|config| {
+                config
+                    .get("auth_header_format")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "Authorization: Bearer {key}".to_string());
+
+        // 使用通用认证头解析器并提取字符串以避免生命周期问题
+        let (auth_name, auth_value) = match AuthHeaderParser::parse(&auth_format, api_key) {
+            Ok(header) => (header.name, header.value),
+            Err(AuthParseError::InvalidFormat(format)) => {
+                let error = ProxyError::internal(format!(
+                    "Invalid authentication header format in database: {}",
+                    format
+                ));
+                // 认证格式错误时立即记录到数据库
+                self.tracing_service.complete_trace_config_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+            Err(e) => {
+                let error =
+                    ProxyError::internal(format!("Authentication header parsing failed: {}", e));
+                // 认证解析失败时立即记录到数据库
+                self.tracing_service.complete_trace_config_error(
+                    &ctx.request_id,
+                    &error.to_string(),
+                ).await?;
+                return Err(error);
+            }
+        };
+
+        // 清除所有可能的认证头，确保干净的状态
+        upstream_request.remove_header("authorization");
+        upstream_request.remove_header("x-goog-api-key");
+        upstream_request.remove_header("x-api-key");
+        upstream_request.remove_header("api-key");
+
+        // 设置正确的认证头（使用静态字符串映射解决生命周期问题）
+        let static_header_name = get_static_header_name(&auth_name);
+        if let Err(e) = upstream_request.insert_header(static_header_name, &auth_value) {
+            let error = ProxyError::internal(format!(
+                "Failed to set authentication header '{}': {}",
+                auth_name, e
+            ));
+            // 头部设置失败时立即记录到数据库
+            self.tracing_service.complete_trace_config_error(
+                &ctx.request_id,
+                &error.to_string(),
+            ).await?;
+            return Err(error);
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            provider_id = provider_type.id,
+            auth_header = %auth_name,
+            auth_format = %auth_format,
+            api_key_preview = %AuthUtils::sanitize_api_key(api_key),
+            "Applied database-driven authentication"
+        );
+
+        Ok(())
+    }
+
+    /// 检测并转换Pingora错误为ProxyError
+    pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {
+        let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64; // 使用配置的超时或30秒fallback
+        let provider_name = ctx
+            .provider_type
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("unknown");
+        let provider_url = ctx
+            .provider_type
+            .as_ref()
+            .map(|p| p.base_url.as_str())
+            .unwrap_or("unknown");
+
+        match &error.etype {
+            ErrorType::ConnectTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Connection timeout to upstream provider"
+                );
+                ProxyError::connection_timeout(
+                    format!(
+                        "Failed to connect to {} ({}) within {}s",
+                        provider_name, provider_url, timeout_secs
+                    ),
+                    timeout_secs,
+                )
+            }
+            ErrorType::ReadTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Read timeout from upstream provider"
+                );
+                ProxyError::read_timeout(
+                    format!(
+                        "Read timeout when communicating with {} ({}) after {}s",
+                        provider_name, provider_url, timeout_secs
+                    ),
+                    timeout_secs,
+                )
+            }
+            ErrorType::WriteTimedout => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    timeout_seconds = timeout_secs,
+                    "Write timeout to upstream provider"
+                );
+                ProxyError::read_timeout(
+                    format!(
+                        "Write timeout when sending data to {} ({}) after {}s",
+                        provider_name, provider_url, timeout_secs
+                    ),
+                    timeout_secs,
+                )
+            }
+            ErrorType::ConnectError => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    "Failed to connect to upstream provider"
+                );
+                ProxyError::network(format!(
+                    "Failed to connect to {} ({})",
+                    provider_name, provider_url
+                ))
+            }
+            ErrorType::ConnectRefused => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    "Connection refused by upstream provider"
+                );
+                ProxyError::upstream_not_available(format!(
+                    "Connection refused by {} ({})",
+                    provider_name, provider_url
+                ))
+            }
+            ErrorType::HTTPStatus(status) if *status >= 500 => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    status = *status,
+                    "Upstream provider returned server error"
+                );
+                ProxyError::bad_gateway(format!(
+                    "Upstream {} returned server error: {}",
+                    provider_name, status
+                ))
+            }
+            _ => {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    provider = provider_name,
+                    error_type = ?error.etype,
+                    error_source = ?error.esource,
+                    "Upstream error"
+                );
+                ProxyError::network(format!(
+                    "Network error when communicating with {} ({})",
+                    provider_name, provider_url
+                ))
+            }
+        }
     }
 }
 
-impl RequestContext {
-    /// 创建新的请求上下文
-    pub fn new(request_id: String, method: String, path: String) -> Self {
-        Self {
-            request_id,
-            user_id: None,
-            provider_id: None,
-            api_key_id: None,
-            method,
-            path,
-            forwarding_context: None,
+/// 将动态header name映射为静态字符串引用，解决Rust生命周期问题
+///
+/// Pingora的insert_header方法需要'static生命周期的字符串引用，
+/// 但AuthHeader返回的是String类型。这个函数将常见的header names
+/// 映射为静态字符串常量，对于未知header则使用Box::leak作为fallback。
+fn get_static_header_name(header_name: &str) -> &'static str {
+    match header_name {
+        "authorization" => "authorization",
+        "x-goog-api-key" => "x-goog-api-key",
+        "x-api-key" => "x-api-key",
+        "api-key" => "api-key",
+        "x-custom-auth" => "x-custom-auth",
+        "bearer" => "bearer",
+        "token" => "token",
+        // 对于未知的header name，使用Box::leak创建静态引用
+        // 注意：这会造成少量内存泄漏，但对于HTTP headers这种少量且固定的情况可以接受
+        unknown => {
+            tracing::warn!("Using Box::leak for unknown header name: {}", unknown);
+            Box::leak(unknown.to_string().into_boxed_str())
         }
     }
 }

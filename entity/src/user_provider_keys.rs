@@ -21,6 +21,12 @@ pub struct Model {
     pub max_requests_per_day: Option<i32>,
     pub is_active: bool,
     pub health_status: String,
+    // 多认证支持字段
+    pub auth_type: String,                     // 认证类型 (api_key, oauth2, etc.)
+    pub auth_config_json: Option<String>,      // 认证配置JSON
+    pub auth_status: Option<String>,           // 认证状态 (pending, authorized, expired, error)
+    pub expires_at: Option<DateTime>,          // 认证过期时间
+    pub last_auth_check: Option<DateTime>,     // 最后认证检查时间
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

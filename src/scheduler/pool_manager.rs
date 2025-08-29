@@ -314,7 +314,6 @@ impl std::fmt::Debug for ApiKeyPoolManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio;
 
     #[tokio::test]

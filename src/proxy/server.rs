@@ -57,6 +57,7 @@ impl ProxyServer {
                     components.cache.clone(),
                     components.provider_config_manager.clone(),
                 )
+                .await
                 .map_err(|e| {
                     ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e))
                 })?;

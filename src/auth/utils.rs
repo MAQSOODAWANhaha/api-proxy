@@ -271,6 +271,23 @@ impl AuthUtils {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
     }
+
+    /// 净化用户名用于日志记录（管理端和代理端共享）
+    /// 
+    /// # 参数
+    /// - `username`: 原始用户名
+    /// 
+    /// # 返回
+    /// 脱敏后的用户名字符串，用于安全日志记录
+    pub fn sanitize_username(username: &str) -> String {
+        if username.len() > 6 {
+            format!("{}***{}", &username[..2], &username[username.len() - 2..])
+        } else if username.len() > 2 {
+            format!("{}***", &username[..1])
+        } else {
+            "***".to_string()
+        }
+    }
 }
 
 #[cfg(test)]

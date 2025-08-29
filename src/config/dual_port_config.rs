@@ -68,12 +68,12 @@ pub struct AccessControlConfig {
     /// 是否需要认证
     pub require_auth: bool,
     /// 认证方式
-    pub auth_methods: Vec<AuthMethod>,
+    pub auth_methods: Vec<ConfigAuthMethod>,
 }
 
-/// 认证方式
+/// 配置中的认证方式
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AuthMethod {
+pub enum ConfigAuthMethod {
     ApiKey,
     JWT,
     BasicAuth,
@@ -155,7 +155,7 @@ impl Default for AccessControlConfig {
             allowed_ips: vec!["127.0.0.1/32".to_string(), "::1/128".to_string()],
             denied_ips: vec![],
             require_auth: false,
-            auth_methods: vec![AuthMethod::ApiKey],
+            auth_methods: vec![ConfigAuthMethod::ApiKey],
         }
     }
 }

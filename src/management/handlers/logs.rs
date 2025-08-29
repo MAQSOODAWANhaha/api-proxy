@@ -148,6 +148,7 @@ pub struct LogsAnalyticsQuery {
 }
 
 /// 获取日志仪表板统计数据
+#[allow(clippy::similar_names)]
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
     headers: HeaderMap,
