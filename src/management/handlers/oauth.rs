@@ -130,14 +130,41 @@ pub async fn initiate_oauth_flow(
         .map(|s| s.to_string())
         .collect::<Vec<String>>();
 
-    // 构建重定向URI
-    let redirect_uri = req.redirect_uri.unwrap_or_else(|| {
-        format!("{}://{}:{}/oauth/callback", 
-            if cfg!(debug_assertions) { "http" } else { "https" },
-            if cfg!(debug_assertions) { "localhost" } else { "api.example.com" },
-            if cfg!(debug_assertions) { "9090" } else { "443" }
-        )
-    });
+    // 构建重定向URI - 动态获取当前请求的host信息
+    let redirect_uri = match req.redirect_uri {
+        Some(uri) => uri,
+        None => {
+            // 从请求头获取Host信息 - 必须存在
+            let host = headers.get("host")
+                .and_then(|h| h.to_str().ok())
+                .ok_or_else(|| {
+                    tracing::error!("Missing or invalid Host header in OAuth request");
+                    response::error(
+                        StatusCode::BAD_REQUEST,
+                        "MISSING_HOST_HEADER",
+                        "请求头中缺少Host信息，无法生成OAuth重定向URI"
+                    )
+                });
+            
+            let host = match host {
+                Ok(h) => h,
+                Err(error_response) => return error_response,
+            };
+            
+            // 检测协议 - 优先使用X-Forwarded-Proto，然后检查端口
+            let scheme = headers.get("x-forwarded-proto")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or_else(|| {
+                    if host.contains(":443") || (!cfg!(debug_assertions) && !host.contains(":")) {
+                        "https"
+                    } else {
+                        "http"
+                    }
+                });
+            
+            format!("{}://{}/oauth/callback", scheme, host)
+        }
+    };
 
     // 创建OAuth会话记录
     let oauth_session = oauth_sessions::ActiveModel {
