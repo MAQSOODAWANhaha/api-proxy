@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod health;
 pub mod logs;
+pub mod oauth;
 pub mod provider_keys;
 pub mod provider_types;
 pub mod service_apis;

@@ -70,7 +70,7 @@ impl ProviderResolver {
         debug!(
             provider_id = provider.id,
             provider_name = %provider.name,
-            auth_type = %provider.auth_type,
+            supported_auth_types = %provider.supported_auth_types,
             auth_format = %provider.auth_header_format,
             "Resolved provider from database"
         );

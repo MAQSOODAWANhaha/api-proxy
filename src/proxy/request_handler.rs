@@ -11,7 +11,7 @@ use sea_orm::{DatabaseConnection, EntityTrait};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils, RefactoredUnifiedAuthManager};
+use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils, RefactoredUnifiedAuthManager, types::AuthType};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
@@ -348,7 +348,7 @@ impl RequestHandler {
             request_id = %ctx.request_id,
             provider_name = %provider.name,
             provider_id = provider.id,
-            auth_type = %provider.auth_type,
+            supported_auth_types = %provider.supported_auth_types,
             auth_header_format = %provider.auth_header_format,
             "Provider resolved from request path"
         );
@@ -1085,7 +1085,7 @@ impl RequestHandler {
         Ok(())
     }
 
-    /// 统一的认证头处理方法 - 完全基于数据库配置
+    /// 统一的认证头处理方法 - 支持多认证类型
     async fn apply_authentication(
         &self,
         ctx: &ProxyContext,
@@ -1093,7 +1093,48 @@ impl RequestHandler {
         provider_type: &provider_types::Model,
         api_key: &str,
     ) -> Result<(), ProxyError> {
-        // 直接使用数据库auth_header_format字段（修复Bug）
+        // 获取用户配置的认证类型
+        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
+            ProxyError::internal("Backend not selected in context")
+        })?;
+        
+        let auth_type = &selected_backend.auth_type;
+        
+        // 根据认证类型应用不同的认证策略
+        let parsed_auth_type = AuthType::from(auth_type.as_str());
+        match parsed_auth_type {
+            AuthType::ApiKey => {
+                // 传统API Key认证 - 使用provider的auth_header_format
+                self.apply_api_key_authentication(ctx, upstream_request, provider_type, api_key).await
+            }
+            AuthType::OAuth2 => {
+                // OAuth2认证 - api_key字段存储的是access_token
+                self.apply_oauth2_authentication(ctx, upstream_request, provider_type, api_key).await
+            }
+            AuthType::GoogleOAuth => {
+                // Google OAuth认证 - 特殊的Google认证格式
+                self.apply_google_oauth_authentication(ctx, upstream_request, provider_type, api_key).await
+            }
+            AuthType::ServiceAccount => {
+                // Google服务账户认证 - JWT格式
+                self.apply_service_account_authentication(ctx, upstream_request, provider_type, api_key).await
+            }
+            AuthType::Adc => {
+                // Google ADC认证 - 使用环境凭据
+                self.apply_adc_authentication(ctx, upstream_request, provider_type, api_key).await
+            }
+        }
+    }
+
+    /// 应用API Key认证
+    async fn apply_api_key_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        api_key: &str,
+    ) -> Result<(), ProxyError> {
+        // 直接使用数据库auth_header_format字段（原有逻辑）
         let auth_format = provider_type.auth_header_format.clone();
 
         // 使用通用认证头解析器并提取字符串以避免生命周期问题
@@ -1104,7 +1145,6 @@ impl RequestHandler {
                     "Invalid authentication header format in database: {}",
                     format
                 ));
-                // 认证格式错误时立即记录到数据库
                 self.tracing_service
                     .complete_trace_config_error(&ctx.request_id, &error.to_string())
                     .await?;
@@ -1113,7 +1153,6 @@ impl RequestHandler {
             Err(e) => {
                 let error =
                     ProxyError::internal(format!("Authentication header parsing failed: {}", e));
-                // 认证解析失败时立即记录到数据库
                 self.tracing_service
                     .complete_trace_config_error(&ctx.request_id, &error.to_string())
                     .await?;
@@ -1122,19 +1161,15 @@ impl RequestHandler {
         };
 
         // 清除所有可能的认证头，确保干净的状态
-        upstream_request.remove_header("authorization");
-        upstream_request.remove_header("x-goog-api-key");
-        upstream_request.remove_header("x-api-key");
-        upstream_request.remove_header("api-key");
+        self.clear_auth_headers(upstream_request);
 
-        // 设置正确的认证头（使用静态字符串映射解决生命周期问题）
+        // 设置正确的认证头
         let static_header_name = get_static_header_name(&auth_name);
         if let Err(e) = upstream_request.insert_header(static_header_name, &auth_value) {
             let error = ProxyError::internal(format!(
                 "Failed to set authentication header '{}': {}",
                 auth_name, e
             ));
-            // 头部设置失败时立即记录到数据库
             self.tracing_service
                 .complete_trace_config_error(&ctx.request_id, &error.to_string())
                 .await?;
@@ -1144,14 +1179,157 @@ impl RequestHandler {
         tracing::info!(
             request_id = %ctx.request_id,
             provider = %provider_type.name,
-            provider_id = provider_type.id,
+            auth_type = "api_key",
             auth_header = %auth_name,
-            auth_format = %auth_format,
             api_key_preview = %AuthUtils::sanitize_api_key(api_key),
-            "Applied database-driven authentication"
+            "Applied API key authentication"
         );
 
         Ok(())
+    }
+
+    /// 应用OAuth2认证
+    async fn apply_oauth2_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        access_token: &str,
+    ) -> Result<(), ProxyError> {
+        // 清除所有可能的认证头
+        self.clear_auth_headers(upstream_request);
+
+        // OAuth2通常使用Authorization: Bearer格式
+        let auth_value = format!("Bearer {}", access_token);
+        if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
+            let error = ProxyError::internal(format!(
+                "Failed to set OAuth2 authorization header: {}", e
+            ));
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
+            return Err(error);
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            auth_type = "oauth2",
+            token_preview = %AuthUtils::sanitize_api_key(access_token),
+            "Applied OAuth2 authentication"
+        );
+
+        Ok(())
+    }
+
+    /// 应用Google OAuth认证
+    async fn apply_google_oauth_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        access_token: &str,
+    ) -> Result<(), ProxyError> {
+        // 清除所有可能的认证头
+        self.clear_auth_headers(upstream_request);
+
+        // Google OAuth使用Authorization: Bearer格式
+        let auth_value = format!("Bearer {}", access_token);
+        if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
+            let error = ProxyError::internal(format!(
+                "Failed to set Google OAuth authorization header: {}", e
+            ));
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
+            return Err(error);
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            auth_type = "google_oauth",
+            token_preview = %AuthUtils::sanitize_api_key(access_token),
+            "Applied Google OAuth authentication"
+        );
+
+        Ok(())
+    }
+
+    /// 应用服务账户认证
+    async fn apply_service_account_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        jwt_token: &str,
+    ) -> Result<(), ProxyError> {
+        // 清除所有可能的认证头
+        self.clear_auth_headers(upstream_request);
+
+        // 服务账户使用Authorization: Bearer JWT格式
+        let auth_value = format!("Bearer {}", jwt_token);
+        if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
+            let error = ProxyError::internal(format!(
+                "Failed to set service account authorization header: {}", e
+            ));
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
+            return Err(error);
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            auth_type = "service_account",
+            jwt_preview = %AuthUtils::sanitize_api_key(jwt_token),
+            "Applied service account authentication"
+        );
+
+        Ok(())
+    }
+
+    /// 应用ADC认证
+    async fn apply_adc_authentication(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        provider_type: &provider_types::Model,
+        token: &str,
+    ) -> Result<(), ProxyError> {
+        // 清除所有可能的认证头
+        self.clear_auth_headers(upstream_request);
+
+        // ADC使用Authorization: Bearer格式
+        let auth_value = format!("Bearer {}", token);
+        if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
+            let error = ProxyError::internal(format!(
+                "Failed to set ADC authorization header: {}", e
+            ));
+            self.tracing_service
+                .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                .await?;
+            return Err(error);
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            provider = %provider_type.name,
+            auth_type = "adc",
+            token_preview = %AuthUtils::sanitize_api_key(token),
+            "Applied ADC authentication"
+        );
+
+        Ok(())
+    }
+
+    /// 清除所有可能的认证头
+    fn clear_auth_headers(&self, upstream_request: &mut RequestHeader) {
+        upstream_request.remove_header("authorization");
+        upstream_request.remove_header("x-goog-api-key");
+        upstream_request.remove_header("x-api-key");
+        upstream_request.remove_header("api-key");
     }
 
     /// 检测并转换Pingora错误为ProxyError

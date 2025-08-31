@@ -412,10 +412,9 @@ impl AuthType {
         match self {
             AuthType::OAuth2 => "oauth2".to_string(),
             AuthType::GoogleOAuth => "google_oauth".to_string(),
-            AuthType::BearerToken => "bearer_token".to_string(),
             AuthType::ApiKey => "api_key".to_string(),
             AuthType::ServiceAccount => "service_account".to_string(),
-            AuthType::ApplicationDefaultCredentials => "application_default_credentials".to_string(),
+            AuthType::Adc => "adc".to_string(),
         }
     }
 }

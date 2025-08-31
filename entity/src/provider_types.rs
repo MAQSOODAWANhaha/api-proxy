@@ -26,8 +26,9 @@ pub struct Model {
     pub token_mappings_json: Option<String>,   // Token字段映射配置
     pub model_extraction_json: Option<String>, // 模型提取规则配置
     // 认证配置字段
-    pub auth_type: String,                     // 认证类型 (api_key, oauth2, etc.)
+    pub supported_auth_types: String,          // 支持的认证类型列表 (JSON数组)
     pub auth_header_format: String,            // 认证头格式模板
+    pub auth_configs_json: Option<String>,     // 认证配置详情 (JSON对象)
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }
@@ -72,8 +73,9 @@ impl Default for Model {
             config_json: None,
             token_mappings_json: None,
             model_extraction_json: None,
-            auth_type: "api_key".to_string(),
+            supported_auth_types: "[\"api_key\"]".to_string(),
             auth_header_format: "Authorization: Bearer {key}".to_string(),
+            auth_configs_json: None,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
         }

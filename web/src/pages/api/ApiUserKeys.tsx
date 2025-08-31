@@ -28,7 +28,7 @@ import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
 import MultiSelect from '../../components/common/MultiSelect'
-import { api, UserServiceApiKey } from '../../lib/api'
+import { api, UserServiceApiKey, ProviderType, SchedulingStrategy } from '../../lib/api'
 
 // 使用API中定义的类型，并添加额外需要的字段
 interface ApiKey extends UserServiceApiKey {
@@ -42,24 +42,7 @@ interface ApiKey extends UserServiceApiKey {
   max_cost_per_day?: number
 }
 
-/** 服务商类型 */
-interface ProviderType {
-  id: number
-  name: string
-  display_name: string
-  description: string
-  is_active: boolean
-  supported_models: string[]
-  created_at: string
-}
-
-/** 调度策略 */
-interface SchedulingStrategy {
-  value: string
-  label: string
-  description: string
-  is_default: boolean
-}
+// 服务商类型和调度策略从api.ts导入
 
 /** 用户提供商密钥 */
 interface UserProviderKey {
@@ -701,6 +684,7 @@ const AddDialog: React.FC<{
   const [loadingSchedulingStrategies, setLoadingSchedulingStrategies] = useState(false)
   const [loadingKeys, setLoadingKeys] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  
 
   // 获取服务商类型列表
   const fetchProviderTypesLocal = async () => {
@@ -718,6 +702,7 @@ const AddDialog: React.FC<{
             provider_type_id: firstProvider.id,
             provider: firstProvider.name 
           }))
+          setSelectedProviderType(firstProvider)
         }
       } else {
         console.error('[AddDialog] 获取服务商类型失败:', response.message)
@@ -786,6 +771,18 @@ const AddDialog: React.FC<{
     setFormData(prev => ({
       ...prev,
       [field]: Math.max(0, (prev[field as keyof typeof prev] as number) + delta)
+    }))
+  }
+
+
+  // 处理服务商类型变更
+  const handleProviderTypeChange = (value: string) => {
+    const selectedProvider = providerTypes.find(type => type.id.toString() === value)
+    setFormData(prev => ({ 
+      ...prev, 
+      provider_type_id: parseInt(value),
+      provider: selectedProvider ? selectedProvider.name : '',
+      user_provider_keys_ids: [] // 重置选择的密钥
     }))
   }
 
@@ -864,14 +861,7 @@ const AddDialog: React.FC<{
           ) : (
             <ModernSelect
               value={formData.provider_type_id > 0 ? formData.provider_type_id.toString() : ''}
-              onValueChange={(value) => {
-                const selectedProvider = providerTypes.find(type => type.id.toString() === value)
-                setFormData({ 
-                  ...formData, 
-                  provider_type_id: parseInt(value),
-                  provider: selectedProvider ? selectedProvider.name : ''
-                })
-              }}
+              onValueChange={handleProviderTypeChange}
               options={providerTypes.map(type => ({
                 value: type.id.toString(),
                 label: type.display_name
@@ -880,6 +870,7 @@ const AddDialog: React.FC<{
             />
           )}
         </div>
+
 
         {/* 调度策略 */}
         <div>

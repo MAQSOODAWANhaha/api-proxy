@@ -109,11 +109,26 @@ pub async fn get_provider_keys_list(
             .cloned()
             .unwrap_or_default();
 
+        // 隐藏API Key敏感信息
+        let masked_api_key = if provider_key.api_key.len() > 8 {
+            format!(
+                "{}****{}",
+                &provider_key.api_key[..4],
+                &provider_key.api_key[provider_key.api_key.len()-4..]
+            )
+        } else {
+            "****".to_string()
+        };
+
         let response_key = json!({
             "id": provider_key.id,
             "provider": provider_name,
             "name": provider_key.name,
-            "api_key": provider_key.api_key,
+            "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { "".to_string() },
+            "auth_type": provider_key.auth_type,
+            "auth_status": provider_key.auth_status,
+            "auth_config_json": provider_key.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+            "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
             "weight": provider_key.weight,
             "max_requests_per_minute": provider_key.max_requests_per_minute,
             "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
@@ -201,12 +216,33 @@ pub async fn create_provider_key(
         _ => {}
     }
 
+    // 验证认证类型和API密钥参数
+    if payload.auth_type == "api_key" && payload.api_key.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_API_KEY",
+            "API Key认证类型需要提供api_key字段",
+        );
+    }
+
+    // OAuth类型需要auth_config_json
+    if (payload.auth_type == "oauth2" || payload.auth_type == "google_oauth") && payload.auth_config_json.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_OAUTH_CONFIG",
+            "OAuth认证类型需要提供auth_config_json字段",
+        );
+    }
+
     // 创建新密钥
     let new_provider_key = user_provider_keys::ActiveModel {
         user_id: Set(user_id),
         provider_type_id: Set(payload.provider_type_id),
         name: Set(payload.name),
-        api_key: Set(payload.api_key),
+        api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
+        auth_type: Set(payload.auth_type),
+        auth_config_json: Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default())),
+        auth_status: Set(Some("active".to_string())),
         weight: Set(payload.weight),
         max_requests_per_minute: Set(payload.max_requests_per_minute),
         max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
@@ -242,6 +278,8 @@ pub async fn create_provider_key(
         "id": result.id,
         "provider": provider_name,
         "name": result.name,
+        "auth_type": result.auth_type,
+        "auth_status": result.auth_status,
         "created_at": result.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
     });
 
@@ -299,11 +337,27 @@ pub async fn get_provider_key_detail(
         .cloned()
         .unwrap_or_default();
 
+    // 隐藏API Key敏感信息
+    let masked_api_key = if provider_key.0.api_key.len() > 8 {
+        format!(
+            "{}****{}",
+            &provider_key.0.api_key[..4],
+            &provider_key.0.api_key[provider_key.0.api_key.len()-4..]
+        )
+    } else {
+        "****".to_string()
+    };
+
     let data = json!({
         "id": provider_key.0.id,
         "provider": provider_name,
         "name": provider_key.0.name,
-        "api_key": provider_key.0.api_key,
+        "api_key": if provider_key.0.auth_type == "api_key" { masked_api_key } else { "".to_string() },
+        "auth_type": provider_key.0.auth_type,
+        "auth_status": provider_key.0.auth_status,
+        "auth_config_json": provider_key.0.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+        "expires_at": provider_key.0.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        "last_auth_check": provider_key.0.last_auth_check.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "weight": provider_key.0.weight,
         "max_requests_per_minute": provider_key.0.max_requests_per_minute,
         "max_tokens_prompt_per_minute": provider_key.0.max_tokens_prompt_per_minute,
@@ -399,11 +453,31 @@ pub async fn update_provider_key(
         }
     }
 
+    // 验证认证类型和API密钥参数
+    if payload.auth_type == "api_key" && payload.api_key.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_API_KEY",
+            "API Key认证类型需要提供api_key字段",
+        );
+    }
+
+    // OAuth类型需要auth_config_json
+    if (payload.auth_type == "oauth2" || payload.auth_type == "google_oauth") && payload.auth_config_json.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_OAUTH_CONFIG",
+            "OAuth认证类型需要提供auth_config_json字段",
+        );
+    }
+
     // 更新密钥
     let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
     active_model.provider_type_id = Set(payload.provider_type_id);
     active_model.name = Set(payload.name);
-    active_model.api_key = Set(payload.api_key);
+    active_model.api_key = Set(payload.api_key.unwrap_or_else(|| "".to_string()));
+    active_model.auth_type = Set(payload.auth_type);
+    active_model.auth_config_json = Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default()));
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
     active_model.max_tokens_prompt_per_minute = Set(payload.max_tokens_prompt_per_minute);
@@ -426,6 +500,8 @@ pub async fn update_provider_key(
     let data = json!({
         "id": updated_key.id,
         "name": updated_key.name,
+        "auth_type": updated_key.auth_type,
+        "auth_status": updated_key.auth_status,
         "updated_at": updated_key.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
     });
 
@@ -836,7 +912,9 @@ pub struct ProviderKeysListQuery {
 pub struct CreateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
-    pub api_key: String,
+    pub api_key: Option<String>,
+    pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
+    pub auth_config_json: Option<serde_json::Value>,
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,
@@ -849,7 +927,9 @@ pub struct CreateProviderKeyRequest {
 pub struct UpdateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
-    pub api_key: String,
+    pub api_key: Option<String>,
+    pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
+    pub auth_config_json: Option<serde_json::Value>,
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,

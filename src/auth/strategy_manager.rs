@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::auth::{
     types::{AuthType, MultiAuthConfig},
-    strategies::{traits::{AuthStrategy, OAuthTokenResult}, ApiKeyStrategy, BearerTokenStrategy},
+    strategies::{traits::{AuthStrategy, OAuthTokenResult}, ApiKeyStrategy},
     AuthError,
 };
 use crate::error::Result;
@@ -41,10 +41,6 @@ impl AuthStrategyManager {
         // 注册API密钥策略
         let api_key_strategy = Box::new(ApiKeyStrategy::new("Authorization", "Bearer {key}"));
         self.register_strategy(api_key_strategy);
-        
-        // 注册Bearer Token策略
-        let bearer_token_strategy = Box::new(BearerTokenStrategy::new());
-        self.register_strategy(bearer_token_strategy);
         
         info!("Default auth strategies registered in AuthStrategyManager");
     }

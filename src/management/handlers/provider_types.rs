@@ -32,6 +32,14 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
     let provider_types: Vec<_> = provider_types_data
         .into_iter()
         .map(|provider| {
+            // 解析支持的认证类型
+            let supported_auth_types: Vec<String> = serde_json::from_str::<Vec<String>>(&provider.supported_auth_types).unwrap_or_else(|_| vec!["api_key".to_string()]);
+
+            // 解析认证配置
+            let auth_configs: Option<serde_json::Value> = provider.auth_configs_json
+                .as_ref()
+                .and_then(|config_json| serde_json::from_str(config_json).ok());
+
             json!({
                 "id": provider.id,
                 "name": provider.name,
@@ -41,6 +49,8 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
                 "default_model": provider.default_model,
                 "is_active": provider.is_active,
                 "supported_models": [], // 暂时为空数组，可以根据需要添加
+                "supported_auth_types": supported_auth_types,
+                "auth_configs": auth_configs,
                 "created_at": provider.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
             })
         })

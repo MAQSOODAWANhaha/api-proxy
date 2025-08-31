@@ -174,7 +174,7 @@ impl AuthenticationService {
         tracing::debug!(
             request_id = %request_id,
             provider_name = %provider.name,
-            auth_type = %provider.auth_type,
+            supported_auth_types = %provider.supported_auth_types,
             "Starting proxy authentication with provider config"
         );
 

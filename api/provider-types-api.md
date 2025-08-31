@@ -35,33 +35,54 @@
                 "description": "OpenAI GPT系列模型",
                 "is_active": true,
                 "supported_models": ["gpt-4", "gpt-3.5-turbo"],
+                "supported_auth_types": ["api_key"],
+                "auth_configs": {
+                    "api_key": {}
+                },
                 "created_at": "2024-01-01T00:00:00Z"
             },
             {
                 "id": 2,
-                "name": "anthropic",
-                "display_name": "Anthropic",
-                "description": "Anthropic Claude系列模型",
+                "name": "gemini",
+                "display_name": "Google Gemini",
+                "description": "Google Gemini系列模型",
                 "is_active": true,
-                "supported_models": ["claude-3-opus", "claude-3-sonnet"],
+                "supported_models": ["gemini-pro", "gemini-pro-vision"],
+                "supported_auth_types": ["api_key", "google_oauth", "service_account", "adc"],
+                "auth_configs": {
+                    "api_key": {},
+                    "google_oauth": {
+                        "authorize_url": "https://accounts.google.com/o/oauth2/auth",
+                        "scopes": "https://www.googleapis.com/auth/generative-language"
+                    },
+                    "service_account": {
+                        "token_url": "https://oauth2.googleapis.com/token",
+                        "scopes": "https://www.googleapis.com/auth/generative-language"
+                    },
+                    "adc": {
+                        "scopes": "https://www.googleapis.com/auth/generative-language"
+                    }
+                },
                 "created_at": "2024-01-01T00:00:00Z"
             },
             {
                 "id": 3,
-                "name": "google",
-                "display_name": "Google",
-                "description": "Google Gemini系列模型",
+                "name": "claude",
+                "display_name": "Anthropic Claude",
+                "description": "Anthropic Claude系列模型",
                 "is_active": true,
-                "supported_models": ["gemini-pro", "gemini-pro-vision"],
-                "created_at": "2024-01-01T00:00:00Z"
-            },
-            {
-                "id": 4,
-                "name": "azure",
-                "display_name": "Azure OpenAI",
-                "description": "微软Azure OpenAI服务",
-                "is_active": true,
-                "supported_models": ["gpt-4", "gpt-35-turbo"],
+                "supported_models": ["claude-3-opus", "claude-3-sonnet"],
+                "supported_auth_types": ["api_key", "oauth2"],
+                "auth_configs": {
+                    "api_key": {},
+                    "oauth2": {
+                        "authorize_url": "https://claude.ai/oauth/authorize",
+                        "token_url": "https://console.anthropic.com/v1/oauth/token",
+                        "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                        "scopes": "org:create_api_key user:profile user:inference",
+                        "pkce_required": true
+                    }
+                },
                 "created_at": "2024-01-01T00:00:00Z"
             }
         ]
@@ -80,7 +101,18 @@
 | description | string | 服务商描述信息 |
 | is_active | bool | 是否启用 |
 | supported_models | array[string] | 支持的模型列表 |
+| supported_auth_types | array[string] | 支持的认证类型列表 |
+| auth_configs | object | 各认证类型的配置信息 |
 | created_at | string | 创建时间（ISO 8601格式） |
+
+### 支持的认证类型
+| 类型 | 描述 |
+|------|------|
+| api_key | API密钥认证 |
+| oauth2 | OAuth 2.0认证 |
+| google_oauth | Google OAuth认证 |
+| service_account | Google服务账户认证 |
+| adc | Google应用默认凭据认证 |
 
 ---
 

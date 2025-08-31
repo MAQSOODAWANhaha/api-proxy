@@ -12,7 +12,6 @@ import ProtectedRoute from './components/ProtectedRoute'
 
 /** 各页面 */
 import DashboardPage from './pages/dashboard/Dashboard'
-import ApiKeysPage from './pages/api/ApiKeys'
 import ApiUserKeysPage from './pages/api/ApiUserKeys'
 import ProviderKeysPage from './pages/api/ProviderKeys'
 import LogsPage from './pages/Logs'
@@ -39,7 +38,7 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<DashboardLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/api" element={<ApiKeysPage />} />
+              <Route path="/api" element={<ApiUserKeysPage />} />
               <Route path="/api/user-keys" element={<ApiUserKeysPage />} />
               <Route path="/api/provider-keys" element={<ProviderKeysPage />} />
               {/* 统计分析页已移除 */}

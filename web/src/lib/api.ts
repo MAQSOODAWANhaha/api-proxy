@@ -6,7 +6,7 @@
 // API基础配置
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
   ? '/api'  // 生产环境使用相对路径，由 Caddy 转发
-  : 'http://192.168.153.140:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
+  : 'http://172.28.190.69:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
 
 // 导入认证状态管理，用于401处理
 import { useAuthStore } from '../store/auth'
@@ -76,6 +76,91 @@ export interface ValidateTokenResponse {
   }
 }
 
+// OAuth相关类型定义
+export interface OAuthAuthorizeRequest {
+  provider_type_id: number
+  auth_type: string
+  name: string
+  description?: string
+  redirect_uri?: string
+}
+
+export interface OAuthAuthorizeResponse {
+  authorization_url: string
+  session_id: string
+  state: string
+  expires_at: string
+}
+
+export interface OAuthCallbackResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+  expires_at: string
+  auth_type: string
+  provider_type_id: number
+  session_id: string
+  auth_status: string
+}
+
+export interface OAuthStatusResponse {
+  session_id: string
+  status: 'pending' | 'completed' | 'expired' | 'error' | 'cancelled'
+  provider_type_id: number
+  auth_type: string
+  created_at: string
+  expires_at: string
+}
+
+export interface OAuthRefreshRequest {
+  provider_key_id: number
+}
+
+export interface OAuthRefreshResponse {
+  provider_key_id: number
+  new_expires_at: string
+  refreshed_at: string
+}
+
+// Provider Types相关类型定义
+export interface AuthConfig {
+  authorize_url?: string
+  token_url?: string
+  client_id?: string
+  scopes?: string
+  pkce_required?: boolean
+}
+
+export interface ProviderType {
+  id: number
+  name: string
+  display_name: string
+  base_url?: string
+  api_format?: string
+  default_model?: string
+  is_active: boolean
+  supported_models?: string[]
+  supported_auth_types: string[]
+  auth_configs?: Record<string, AuthConfig>
+  created_at: string
+}
+
+export interface ProviderTypesResponse {
+  provider_types: ProviderType[]
+}
+
+export interface SchedulingStrategy {
+  value: string
+  label: string
+  description: string
+  is_default: boolean
+}
+
+export interface SchedulingStrategiesResponse {
+  scheduling_strategies: SchedulingStrategy[]
+}
+
 // 新的统计接口响应类型定义
 export interface ModelUsage {
   model: string
@@ -143,6 +228,8 @@ export interface ProviderKey {
   provider: string
   name: string
   api_key: string
+  auth_type: string // "api_key", "oauth2", "google_oauth", "service_account", "adc"  
+  auth_config_json?: Record<string, any>
   weight: number
   max_requests_per_minute: number
   max_tokens_prompt_per_minute: number
@@ -185,7 +272,9 @@ export interface ProviderKeysListResponse {
 export interface CreateProviderKeyRequest {
   provider_type_id: number
   name: string
-  api_key: string
+  api_key?: string
+  auth_type: string // "api_key", "oauth2", "google_oauth", "service_account", "adc"
+  auth_config_json?: Record<string, any>
   weight?: number
   max_requests_per_minute?: number
   max_tokens_prompt_per_minute?: number
@@ -203,7 +292,9 @@ export interface CreateProviderKeyResponse {
 export interface UpdateProviderKeyRequest {
   provider_type_id: number
   name: string
-  api_key: string
+  api_key?: string
+  auth_type: string // "api_key", "oauth2", "google_oauth", "service_account", "adc"
+  auth_config_json?: Record<string, any>
   weight?: number
   max_requests_per_minute?: number
   max_tokens_prompt_per_minute?: number
@@ -1147,12 +1238,12 @@ export const api = {
      */
     async getProviderTypes(params?: {
       is_active?: boolean
-    }): Promise<ApiResponse<{ provider_types: Array<{ id: number; name: string; display_name: string; description: string; is_active: boolean; supported_models: string[]; created_at: string }> }>> {
+    }): Promise<ApiResponse<ProviderTypesResponse>> {
       try {
         const queryParams: Record<string, string> = {}
         if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
 
-        return await apiClient.get('/provider-types/providers', queryParams)
+        return await apiClient.get<ProviderTypesResponse>('/provider-types/providers', queryParams)
       } catch (error) {
         console.error('[Auth] Failed to fetch provider types:', error)
         return {
@@ -1168,9 +1259,9 @@ export const api = {
     /**
      * 获取调度策略列表
      */
-    async getSchedulingStrategies(): Promise<ApiResponse<{ scheduling_strategies: Array<{ value: string; label: string; description: string; is_default: boolean }> }>> {
+    async getSchedulingStrategies(): Promise<ApiResponse<SchedulingStrategiesResponse>> {
       try {
-        return await apiClient.get('/provider-types/scheduling-strategies')
+        return await apiClient.get<SchedulingStrategiesResponse>('/provider-types/scheduling-strategies')
       } catch (error) {
         console.error('[Auth] Failed to fetch scheduling strategies:', error)
         return {
@@ -1203,6 +1294,79 @@ export const api = {
           error: {
             code: 'USER_PROVIDER_KEYS_ERROR',
             message: '获取用户提供商密钥失败'
+          }
+        }
+      }
+    },
+
+    // OAuth相关接口
+    /**
+     * 启动OAuth授权流程
+     */
+    async initiateOAuth(request: OAuthAuthorizeRequest): Promise<ApiResponse<OAuthAuthorizeResponse>> {
+      try {
+        return await apiClient.post<OAuthAuthorizeResponse>('/oauth/authorize', request)
+      } catch (error) {
+        console.error('[OAuth] Failed to initiate OAuth flow:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_INITIATE_ERROR',
+            message: 'OAuth授权启动失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 查询OAuth状态
+     */
+    async getOAuthStatus(sessionId: string): Promise<ApiResponse<OAuthStatusResponse>> {
+      try {
+        return await apiClient.get<OAuthStatusResponse>(`/oauth/status/${sessionId}`)
+      } catch (error) {
+        console.error('[OAuth] Failed to get OAuth status:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_STATUS_ERROR',
+            message: '获取OAuth状态失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 刷新OAuth令牌
+     */
+    async refreshOAuthToken(request: OAuthRefreshRequest): Promise<ApiResponse<OAuthRefreshResponse>> {
+      try {
+        return await apiClient.post<OAuthRefreshResponse>('/oauth/refresh', request)
+      } catch (error) {
+        console.error('[OAuth] Failed to refresh OAuth token:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_REFRESH_ERROR',
+            message: 'OAuth令牌刷新失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 撤销OAuth授权
+     */
+    async revokeOAuthAuthorization(keyId: number): Promise<ApiResponse<void>> {
+      try {
+        return await apiClient.delete<void>(`/oauth/revoke/${keyId}`)
+      } catch (error) {
+        console.error('[OAuth] Failed to revoke OAuth authorization:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_REVOKE_ERROR',
+            message: 'OAuth授权撤销失败'
           }
         }
       }
@@ -1440,7 +1604,7 @@ export const api = {
         if (params?.is_success !== undefined) queryParams.is_success = params.is_success.toString()
         if (params?.model_used) queryParams.model_used = params.model_used
         if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
-        if (params?.user_service_api_id !== undefined) query_params.user_service_api_id = params.user_service_api_id.toString()
+        if (params?.user_service_api_id !== undefined) queryParams.user_service_api_id = params.user_service_api_id.toString()
         if (params?.start_time) queryParams.start_time = params.start_time
         if (params?.end_time) queryParams.end_time = params.end_time
 

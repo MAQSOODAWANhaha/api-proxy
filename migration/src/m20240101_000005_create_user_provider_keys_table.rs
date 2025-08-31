@@ -30,8 +30,14 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(UserProviderKeys::ApiKey)
-                            .string_len(255)
+                            .string_len(512)
                             .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(UserProviderKeys::AuthType)
+                            .string_len(30)
+                            .not_null()
+                            .default("api_key"),
                     )
                     .col(
                         ColumnDef::new(UserProviderKeys::Name)
@@ -87,7 +93,7 @@ impl MigrationTrait for Migration {
                     .col(
                         ColumnDef::new(UserProviderKeys::AuthStatus)
                             .string_len(20)
-                            .default("pending"),
+                            .default("active"),
                     )
                     .col(ColumnDef::new(UserProviderKeys::ExpiresAt).timestamp())
                     .col(ColumnDef::new(UserProviderKeys::LastAuthCheck).timestamp())
@@ -148,7 +154,17 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // OAuth认证相关索引
+        // 认证相关索引
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_auth_type")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::AuthType)
+                    .to_owned(),
+            )
+            .await?;
+
         manager
             .create_index(
                 Index::create()
@@ -186,6 +202,7 @@ enum UserProviderKeys {
     UserId,
     ProviderTypeId,
     ApiKey,
+    AuthType,
     Name,
     Weight,
     MaxRequestsPerMinute,
@@ -195,7 +212,7 @@ enum UserProviderKeys {
     HealthStatus,
     CreatedAt,
     UpdatedAt,
-    // OAuth认证支持字段
+    // 认证支持字段
     AuthConfigJson,
     AuthStatus,
     ExpiresAt,

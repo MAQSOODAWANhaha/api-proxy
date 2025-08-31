@@ -363,9 +363,7 @@ pub enum AuthType {
     /// Google服务账户认证策略
     ServiceAccount,
     /// Google应用默认凭据策略
-    ApplicationDefaultCredentials,
-    /// Bearer Token验证策略
-    BearerToken,
+    Adc,
 }
 
 impl fmt::Display for AuthType {
@@ -375,8 +373,7 @@ impl fmt::Display for AuthType {
             AuthType::OAuth2 => write!(f, "oauth2"),
             AuthType::GoogleOAuth => write!(f, "google_oauth"),
             AuthType::ServiceAccount => write!(f, "service_account"),
-            AuthType::ApplicationDefaultCredentials => write!(f, "application_default_credentials"),
-            AuthType::BearerToken => write!(f, "bearer_token"),
+            AuthType::Adc => write!(f, "adc"),
         }
     }
 }
@@ -388,8 +385,7 @@ impl From<&str> for AuthType {
             "oauth2" => AuthType::OAuth2,
             "google_oauth" => AuthType::GoogleOAuth,
             "service_account" => AuthType::ServiceAccount,
-            "adc" | "application_default_credentials" => AuthType::ApplicationDefaultCredentials,
-            "bearer_token" => AuthType::BearerToken,
+            "adc" => AuthType::Adc,
             _ => AuthType::ApiKey, // 默认使用API密钥认证
         }
     }
@@ -665,8 +661,7 @@ mod tests {
         assert_eq!(AuthType::OAuth2.to_string(), "oauth2");
         assert_eq!(AuthType::GoogleOAuth.to_string(), "google_oauth");
         assert_eq!(AuthType::ServiceAccount.to_string(), "service_account");
-        assert_eq!(AuthType::ApplicationDefaultCredentials.to_string(), "application_default_credentials");
-        assert_eq!(AuthType::BearerToken.to_string(), "bearer_token");
+        assert_eq!(AuthType::Adc.to_string(), "adc");
     }
 
     #[test]
@@ -674,6 +669,9 @@ mod tests {
         assert_eq!(AuthType::from("api_key"), AuthType::ApiKey);
         assert_eq!(AuthType::from("OAuth2"), AuthType::OAuth2);
         assert_eq!(AuthType::from("GOOGLE_OAUTH"), AuthType::GoogleOAuth);
+        assert_eq!(AuthType::from("service_account"), AuthType::ServiceAccount);
+        assert_eq!(AuthType::from("adc"), AuthType::Adc);
+        assert_eq!(AuthType::from("ADC"), AuthType::Adc);
         assert_eq!(AuthType::from("unknown"), AuthType::ApiKey); // 默认值
     }
 

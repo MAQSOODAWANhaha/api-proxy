@@ -36,16 +36,37 @@
                 "id": "1",
                 "provider": "OpenAI",
                 "name": "Primary GPT Key",
-                "api_key": "sk-1234567890abcdef1234567890abcdef",
+                "api_key": "sk-12****cdef",
+                "auth_type": "api_key",
+                "auth_status": "active",
+                "auth_config_json": null,
+                "expires_at": null,
                 "weight": 1,
                 "max_requests_per_minute": 60,
                 "max_tokens_prompt_per_minute": 1000,
                 "max_requests_per_day": 10000,
                 "is_active": true,
-                "usage": 8520,
-                "cost": 125.50,
+                "usage": {
+                    "total_requests": 8520,
+                    "successful_requests": 8456,
+                    "failed_requests": 64,
+                    "success_rate": 99.25,
+                    "total_tokens": 125000,
+                    "total_cost": 125.50,
+                    "avg_response_time": 850,
+                    "last_used_at": "2024-01-16T15:20:00Z"
+                },
+                "limits": {
+                    "max_requests_per_minute": 60,
+                    "max_tokens_prompt_per_minute": 1000,
+                    "max_requests_per_day": 10000
+                },
+                "status": {
+                    "is_active": true,
+                    "health_status": "healthy"
+                },
                 "created_at": "2024-01-10T00:00:00Z",
-                "health_status": "healthy"
+                "updated_at": "2024-01-16T15:20:00Z"
             }
         ],
         "pagination": {
@@ -68,15 +89,20 @@
 | provider_type_id | int | 服务商类型ID |
 | provider | string | 服务商名称（通过provider_type_id关联查询） |
 | name | string | 密钥名称 |
-| api_key | string | API密钥值 |
+| api_key | string | API密钥值（已掉码处理），仅在api_key认证类型时显示 |
+| auth_type | string | 认证类型（api_key/oauth2/google_oauth/service_account/adc） |
+| auth_status | string | 认证状态（active/expired/error/pending） |
+| auth_config_json | object \| null | OAuth认证配置信息，仅OAuth类型使用 |
+| expires_at | string \| null | OAuth令牌过期时间（ISO 8601格式） |
 | weight | int | 权重 |
 | max_requests_per_minute | int | 请求限制/分钟（RPM） |
 | max_tokens_prompt_per_minute | int | Token限制/分钟（TPM） |
 | max_requests_per_day | int | 请求限制/天（RPD） |
 | is_active | boolean | 是否启用 |
 | health_status | string | 健康状态（healthy/warning/error） |
-| usage | int | 使用次数（统计字段） |
-| cost | float | 本月花费（统计字段） |
+| usage | object | 使用统计信息 |
+| limits | object | 限制配置 |
+| status | object | 状态信息 |
 | created_at | string | 创建时间（ISO 8601格式） |
 | updated_at | string | 更新时间（ISO 8601格式） |
 
@@ -90,11 +116,57 @@
 - **作用**: 创建新的提供商密钥
 
 ### 请求体
+
+#### API Key 认证类型示例
 ```json
 {
     "provider_type_id": 1,
     "name": "Primary GPT Key",
+    "auth_type": "api_key",
     "api_key": "sk-1234567890abcdef1234567890abcdef",
+    "auth_config_json": null,
+    "weight": 1,
+    "max_requests_per_minute": 60,
+    "max_tokens_prompt_per_minute": 1000,
+    "max_requests_per_day": 10000,
+    "is_active": true
+}
+```
+
+#### OAuth 2.0 认证类型示例
+```json
+{
+    "provider_type_id": 2,
+    "name": "Claude Max OAuth",
+    "auth_type": "oauth2",
+    "api_key": null,
+    "auth_config_json": {
+        "client_id": "your-client-id",
+        "client_secret": "your-client-secret",
+        "redirect_uri": "http://localhost:3000/oauth/callback",
+        "scopes": "read write"
+    },
+    "weight": 1,
+    "max_requests_per_minute": 60,
+    "max_tokens_prompt_per_minute": 1000,
+    "max_requests_per_day": 10000,
+    "is_active": true
+}
+```
+
+#### Google OAuth 认证类型示例
+```json
+{
+    "provider_type_id": 3,
+    "name": "Google AI OAuth",
+    "auth_type": "google_oauth",
+    "api_key": null,
+    "auth_config_json": {
+        "client_id": "your-google-client-id.googleusercontent.com",
+        "client_secret": "your-google-client-secret",
+        "redirect_uri": "http://localhost:3000/oauth/google/callback",
+        "scopes": "https://www.googleapis.com/auth/generative-language"
+    },
     "weight": 1,
     "max_requests_per_minute": 60,
     "max_tokens_prompt_per_minute": 1000,
@@ -108,7 +180,9 @@
 |--------|------|------|------|
 | provider_type_id | int | 是 | 服务商类型id |
 | name | string | 是 | 密钥名称 |
-| api_key | string | 是 | API密钥值 |
+| auth_type | string | 是 | 认证类型（api_key/oauth2/google_oauth/service_account/adc） |
+| api_key | string \| null | 有条件 | API密钥值，仅api_key类型必填 |
+| auth_config_json | object \| null | 有条件 | OAuth认证配置，仅OAuth类型必填 |
 | weight | int | 否 | 权重，默认1 |
 | max_requests_per_minute | int | 否 | 请求限制/分钟，默认0 |
 | max_tokens_prompt_per_minute | int | 否 | Token限制/分钟，默认0 |
@@ -123,6 +197,8 @@
         "id": "12345",
         "provider": "OpenAI",
         "name": "Primary GPT Key",
+        "auth_type": "api_key",
+        "auth_status": "active",
         "created_at": "2025-08-20T06:47:12.364806516Z"
     },
     "message": "创建成功",
@@ -152,17 +228,38 @@
         "id": "1",
         "provider": "OpenAI",
         "name": "Primary GPT Key",
-        "api_key": "sk-1234567890abcdef1234567890abcdef",
+        "api_key": "sk-12****cdef",
+        "auth_type": "api_key",
+        "auth_status": "active",
+        "auth_config_json": null,
+        "expires_at": null,
+        "last_auth_check": null,
         "weight": 1,
         "max_requests_per_minute": 60,
         "max_tokens_prompt_per_minute": 1000,
         "max_requests_per_day": 10000,
         "is_active": true,
-        "usage": 8520,
-        "cost": 125.50,
+        "usage": {
+            "total_requests": 8520,
+            "successful_requests": 8456,
+            "failed_requests": 64,
+            "success_rate": 99.25,
+            "total_tokens": 125000,
+            "total_cost": 125.50,
+            "avg_response_time": 850,
+            "last_used_at": "2024-01-16T15:20:00Z"
+        },
+        "limits": {
+            "max_requests_per_minute": 60,
+            "max_tokens_prompt_per_minute": 1000,
+            "max_requests_per_day": 10000
+        },
+        "status": {
+            "is_active": true,
+            "health_status": "healthy"
+        },
         "created_at": "2024-01-10T00:00:00Z",
-        "updated_at": "2024-01-16T15:20:00Z",
-        "health_status": "healthy"
+        "updated_at": "2024-01-16T15:20:00Z"
     },
     "message": "操作成功",
     "timestamp": "2025-08-20T06:47:12.364806516Z"
@@ -188,7 +285,9 @@
 {
     "provider_type_id": 1,
     "name": "Updated GPT Key",
+    "auth_type": "api_key",
     "api_key": "sk-new1234567890abcdef1234567890abcdef",
+    "auth_config_json": null,
     "weight": 2,
     "max_requests_per_minute": 80,
     "max_tokens_prompt_per_minute": 1200,
@@ -204,6 +303,8 @@
     "data": {
         "id": "1",
         "name": "Updated GPT Key",
+        "auth_type": "api_key",
+        "auth_status": "active",
         "updated_at": "2025-08-20T06:47:12.364806516Z"
     },
     "message": "更新成功",

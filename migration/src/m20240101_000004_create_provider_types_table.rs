@@ -71,17 +71,18 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(ProviderTypes::ModelExtractionJson).json())
                     // 认证配置字段
                     .col(
-                        ColumnDef::new(ProviderTypes::AuthType)
-                            .string_len(30)
+                        ColumnDef::new(ProviderTypes::SupportedAuthTypes)
+                            .json()
                             .not_null()
-                            .default("api_key"),
+                            .default("[\"api_key\"]"),
                     )
                     .col(
                         ColumnDef::new(ProviderTypes::AuthHeaderFormat)
                             .string_len(255)
                             .not_null()
-                            .default("Authorization: Bearer {key}"),
+                            .default("Authorization: Bearer {token}"),
                     )
+                    .col(ColumnDef::new(ProviderTypes::AuthConfigsJson).json())
                     .col(
                         ColumnDef::new(ProviderTypes::CreatedAt)
                             .timestamp()
@@ -122,9 +123,9 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("idx_provider_types_auth_type")
+                    .name("idx_provider_types_supported_auth")
                     .table(ProviderTypes::Table)
-                    .col(ProviderTypes::AuthType)
+                    .col(ProviderTypes::SupportedAuthTypes)
                     .to_owned(),
             )
             .await?;
@@ -140,11 +141,12 @@ impl MigrationTrait for Migration {
                         ProviderTypes::BaseUrl,
                         ProviderTypes::ApiFormat,
                         ProviderTypes::DefaultModel,
-                        ProviderTypes::AuthType,
+                        ProviderTypes::SupportedAuthTypes,
                         ProviderTypes::AuthHeaderFormat,
                         ProviderTypes::ConfigJson,
                         ProviderTypes::TokenMappingsJson,
                         ProviderTypes::ModelExtractionJson,
+                        ProviderTypes::AuthConfigsJson,
                     ])
                     // OpenAI配置 - 标准OpenAI兼容格式，使用最新GPT-4.1
                     .values_panic([
@@ -153,50 +155,40 @@ impl MigrationTrait for Migration {
                         "api.openai.com".into(),
                         "openai".into(),
                         "gpt-4.1".into(),
-                        "api_key".into(),
+                        "[\"api_key\"]".into(),
                         "Authorization: Bearer {key}".into(),
                         r#"{"streaming":{"supported":true,"content_type":"text/event-stream","chunk_prefix":"data: ","end_marker":"data: [DONE]"},"request_transform":{"default_parameters":{"stream":false,"max_tokens":4096,"temperature":0.7}},"response_transform":{"extract_content":"choices[0].message.content","extract_usage":"usage"},"supported_models":["gpt-4.1","gpt-4.1-mini","gpt-4.1-nano","gpt-4o","gpt-4-turbo","gpt-3.5-turbo","o4-mini","o3","o3-pro"],"field_mappings":{"input_tokens":"usage.prompt_tokens","output_tokens":"usage.completion_tokens","total_tokens":"usage.total_tokens","model_name":"model","content":"choices[0].message.content","finish_reason":"choices[0].finish_reason","cost":"usage.total_cost","cache_create_tokens":"usage.prompt_tokens_details.cached_tokens","cache_read_tokens":"usage.completion_tokens_details.accepted_prediction_tokens","error_type":"error.type","error_message":"error.message"},"default_values":{"cost_currency":"USD","cache_create_tokens":0,"cache_read_tokens":0},"transformations":{"cost":"divide:1000000"}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usage.prompt_tokens"},"tokens_completion":{"type":"direct","path":"usage.completion_tokens"},"tokens_total":{"type":"expression","formula":"usage.prompt_tokens + usage.completion_tokens","fallback":"usage.total_tokens"},"cache_create_tokens":{"type":"fallback","paths":["usage.prompt_tokens_details.cached_tokens","0"]},"cache_read_tokens":{"type":"fallback","paths":["usage.completion_tokens_details.accepted_prediction_tokens","0"]}}"#.into(),
                         r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名"},{"type":"query_param","parameter":"model","priority":2,"description":"从query参数提取模型名"}],"fallback_model":"gpt-3.5-turbo"}"#.into(),
+                        r#"{"api_key": {}}"#.into(),
                     ])
-                    // Gemini配置 - 支持任意URL格式和X-goog-api-key认证，使用最新Gemini 2.5 Flash
+                    // Gemini配置 - 支持多种认证方式：API Key, Google OAuth, Service Account, ADC
                     .values_panic([
                         "gemini".into(),
                         "Google Gemini".into(),
                         "generativelanguage.googleapis.com".into(),
                         "gemini".into(),
                         "gemini-2.5-flash".into(),
-                        "api_key".into(),
+                        "[\"api_key\", \"google_oauth\", \"service_account\", \"adc\"]".into(),
                         "X-goog-api-key: {key}".into(),
                         r#"{"streaming":{"supported":true,"content_type":"text/event-stream","chunk_format":"gemini_sse"},"request_transform":{"message_format":"contents","default_parameters":{"generationConfig":{"maxOutputTokens":4096,"temperature":0.7},"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_MEDIUM_AND_ABOVE"}]}},"response_transform":{"extract_content":"candidates[0].content.parts[0].text","extract_usage":"usageMetadata"},"supported_models":["gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-2.0-flash","gemini-2.0-pro","gemini-1.5-pro","gemini-1.5-flash","gemini-pro"],"field_mappings":{"input_tokens":"usageMetadata.promptTokenCount","output_tokens":"usageMetadata.candidatesTokenCount","total_tokens":"usageMetadata.totalTokenCount","model_name":"model","content":"candidates[0].content.parts[0].text","finish_reason":"candidates[0].finishReason","cost":"usageMetadata.totalCost","error_type":"error.code","error_message":"error.message"},"default_values":{"cost_currency":"USD","cache_create_tokens":0,"cache_read_tokens":0,"input_tokens":0,"output_tokens":0},"transformations":{}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usageMetadata.promptTokenCount"},"tokens_completion":{"type":"direct","path":"usageMetadata.candidatesTokenCount"},"tokens_total":{"type":"expression","formula":"usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount","fallback":"usageMetadata.totalTokenCount"},"cache_create_tokens":{"type":"default","value":0},"cache_read_tokens":{"type":"conditional","condition":"exists(usageMetadata.thoughtsTokenCount)","true_value":"usageMetadata.thoughtsTokenCount","false_value":0}}"#.into(),
                         r#"{"extraction_rules":[{"type":"url_regex","pattern":"/v1beta/models/([^:]+):generateContent","priority":1,"description":"从URL路径提取模型名"},{"type":"body_json","path":"model","priority":2,"description":"从请求body提取模型名"}],"fallback_model":"gemini-pro"}"#.into(),
+                        r#"{"api_key": {}, "google_oauth": {"authorize_url": "https://accounts.google.com/o/oauth2/auth", "token_url": "https://oauth2.googleapis.com/token", "scopes": "https://www.googleapis.com/auth/generative-language"}, "service_account": {"token_url": "https://oauth2.googleapis.com/token", "scopes": "https://www.googleapis.com/auth/generative-language"}, "adc": {"scopes": "https://www.googleapis.com/auth/generative-language"}}"#.into(),
                     ])
-                    // Claude配置 - Anthropic API格式，使用最新Claude 3.5 Sonnet
+                    // Claude配置 - 支持API Key和OAuth2认证
                     .values_panic([
-                        "anthropic".into(),
+                        "claude".into(),
                         "Anthropic Claude".into(),
                         "api.anthropic.com".into(),
                         "anthropic".into(),
                         "claude-3.5-sonnet".into(),
-                        "api_key".into(),
+                        "[\"api_key\", \"oauth2\"]".into(),
                         "Authorization: Bearer {key}".into(),
                         r#"{"streaming":{"supported":true,"content_type":"text/event-stream","chunk_format":"anthropic_sse"},"request_transform":{"message_format":"messages","default_parameters":{"max_tokens":4096,"anthropic_version":"2023-06-01"},"required_headers":{"anthropic-version":"2023-06-01"}},"response_transform":{"extract_content":"content[0].text","extract_usage":"usage"},"supported_models":["claude-4.1","claude-4","claude-3.7-sonnet","claude-3.5-sonnet","claude-3.5-haiku","claude-3-opus-20240229","claude-3-sonnet-20240229","claude-3-haiku-20240307"],"field_mappings":{"input_tokens":"usage.input_tokens","output_tokens":"usage.output_tokens","total_tokens":"usage.total_tokens","model_name":"model","content":"content[0].text","finish_reason":"stop_reason","cost":"billing.subtotal","cache_create_tokens":"usage.cache_creation_input_tokens","cache_read_tokens":"usage.cache_read_input_tokens","error_type":"error.type","error_message":"error.message"},"default_values":{"cost_currency":"USD","cache_create_tokens":0,"cache_read_tokens":0},"transformations":{"cost":"divide:1000"}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usage.input_tokens"},"tokens_completion":{"type":"direct","path":"usage.output_tokens"},"tokens_total":{"type":"expression","formula":"usage.input_tokens + usage.output_tokens","fallback":"usage.total_tokens"},"cache_create_tokens":{"type":"fallback","paths":["usage.cache_creation_input_tokens","0"]},"cache_read_tokens":{"type":"fallback","paths":["usage.cache_read_input_tokens","0"]}}"#.into(),
                         r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名"}],"fallback_model":"claude-3-sonnet"}"#.into(),
-                    ])
-                    // 自定义Gemini实例 - 用于测试任意URL格式
-                    .values_panic([
-                        "custom_gemini".into(),
-                        "Custom Gemini Instance".into(),
-                        "3.92.178.170:8080".into(),
-                        "gemini".into(),
-                        "gemini-2.5-flash".into(),
-                        "api_key".into(),
-                        "X-goog-api-key: {key}".into(),
-                        r#"{"base_url_override":"http://3.92.178.170:8080","streaming":{"supported":true,"content_type":"text/event-stream"},"request_transform":{"message_format":"contents","default_parameters":{"generationConfig":{"maxOutputTokens":4096,"temperature":0.7}}},"response_transform":{"extract_content":"candidates[0].content.parts[0].text","extract_usage":"usageMetadata"},"supported_models":["gemini-2.5-flash"],"custom_config":{"description":"用户自定义的Gemini实例，任意URL格式","example_url":"POST http://3.92.178.170:8080/v1/models/gemini-2.5-flash:generateContent"},"field_mappings":{"input_tokens":"usageMetadata.promptTokenCount","output_tokens":"usageMetadata.candidatesTokenCount","total_tokens":"usageMetadata.totalTokenCount","model_name":"model","content":"candidates[0].content.parts[0].text","finish_reason":"candidates[0].finishReason","error_type":"error.code","error_message":"error.message"},"default_values":{"cost_currency":"USD","cache_create_tokens":0,"cache_read_tokens":0,"cost":0},"transformations":{}}"#.into(),
-                        r#"{"tokens_prompt":{"type":"direct","path":"usageMetadata.promptTokenCount"},"tokens_completion":{"type":"direct","path":"usageMetadata.candidatesTokenCount"},"tokens_total":{"type":"expression","formula":"usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount","fallback":"usageMetadata.totalTokenCount"},"cache_create_tokens":{"type":"default","value":0},"cache_read_tokens":{"type":"default","value":0}}"#.into(),
-                        r#"{"extraction_rules":[{"type":"url_regex","pattern":"/v1/models/([^:]+):generateContent","priority":1,"description":"从自定义URL路径提取模型名"},{"type":"body_json","path":"model","priority":2,"description":"从请求body提取模型名"}],"fallback_model":"gemini-2.5-flash"}"#.into(),
+                        r#"{"api_key": {}, "oauth2": {"authorize_url": "https://claude.ai/oauth/authorize", "token_url": "https://console.anthropic.com/v1/oauth/token", "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e", "redirect_uri": "https://console.anthropic.com/oauth/code/callback", "scopes": "org:create_api_key user:profile user:inference", "pkce_required": true}}"#.into(),
                     ])
                     .to_owned(),
             )
@@ -229,8 +221,9 @@ enum ProviderTypes {
     ConfigJson,
     TokenMappingsJson,
     ModelExtractionJson,
-    AuthType,
+    SupportedAuthTypes,
     AuthHeaderFormat,
+    AuthConfigsJson,
     CreatedAt,
     UpdatedAt,
 }

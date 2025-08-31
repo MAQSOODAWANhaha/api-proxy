@@ -5,13 +5,13 @@
 
 pub mod traits;
 pub mod api_key;
-pub mod bearer_token;
 pub mod service_account;
+pub mod adc;
 
 // 导出核心trait和类型
 pub use traits::{AuthStrategy, OAuthTokenResult};
 
 // 导出具体策略实现
 pub use api_key::ApiKeyStrategy;
-pub use bearer_token::BearerTokenStrategy;
 pub use service_account::ServiceAccountStrategy;
+pub use adc::AdcStrategy;

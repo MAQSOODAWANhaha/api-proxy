@@ -74,7 +74,7 @@ impl MigrationTrait for Migration {
                         ForeignKey::create()
                             .name("fk_oauth_sessions_provider_type_id")
                             .from(OAuthSessions::Table, OAuthSessions::ProviderTypeId)
-                            .to(ProviderTypesTable::Table, ProviderTypesTable::Id)
+                            .to(ProviderTypes::Table, ProviderTypes::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -129,6 +129,7 @@ impl MigrationTrait for Migration {
 
 #[derive(DeriveIden)]
 enum OAuthSessions {
+    #[sea_orm(iden = "oauth_sessions")]
     Table,
     Id,
     SessionId,
@@ -148,12 +149,14 @@ enum OAuthSessions {
 
 #[derive(DeriveIden)]
 enum Users {
+    #[sea_orm(iden = "users")]
     Table,
     Id,
 }
 
 #[derive(DeriveIden)]
-enum ProviderTypesTable {
+enum ProviderTypes {
+    #[sea_orm(iden = "provider_types")]
     Table,
     Id,
 }

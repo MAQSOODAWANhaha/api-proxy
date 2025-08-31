@@ -24,7 +24,9 @@ import {
 import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
-import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse } from '../../lib/api'
+import AuthTypeSelector from '../../components/common/AuthTypeSelector'
+import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
+import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType } from '../../lib/api'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
 interface LocalProviderKey extends ProviderKey {
@@ -41,16 +43,6 @@ interface LocalProviderKey extends ProviderKey {
   usage: number // 从 usage.total_requests 映射
 }
 
-/** 服务商类型 */
-interface ProviderType {
-  id: number
-  name: string
-  display_name: string
-  description: string
-  is_active: boolean
-  supported_models: string[]
-  created_at: string
-}
 
 // 数据转换工具函数
 const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
@@ -206,6 +198,8 @@ const ProviderKeysPage: React.FC = () => {
         provider_type_id: providerTypeId,
         name: newKey.keyName,
         api_key: newKey.keyValue || generateApiKey(newKey.provider),
+        auth_type: newKey.auth_type || 'api_key',
+        auth_config_json: newKey.auth_config_json,
         weight: newKey.weight || 1,
         max_requests_per_minute: newKey.requestLimitPerMinute || 0,
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
@@ -247,6 +241,8 @@ const ProviderKeysPage: React.FC = () => {
         provider_type_id: providerTypeId,
         name: updatedKey.keyName,
         api_key: updatedKey.keyValue,
+        auth_type: updatedKey.auth_type || 'api_key',
+        auth_config_json: updatedKey.auth_config_json,
         weight: updatedKey.weight,
         max_requests_per_minute: updatedKey.requestLimitPerMinute,
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
@@ -664,6 +660,10 @@ const ProviderKeysPage: React.FC = () => {
           onAdd={handleAdd}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onRefresh={async () => {
+            await fetchData()
+            await fetchDashboardStats()
+          }}
         />
       )}
     </div>
@@ -678,7 +678,8 @@ const DialogPortal: React.FC<{
   onAdd: (item: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => void
   onEdit: (item: LocalProviderKey) => void
   onDelete: () => void
-}> = ({ type, selectedItem, onClose, onAdd, onEdit, onDelete }) => {
+  onRefresh: () => Promise<void>
+}> = ({ type, selectedItem, onClose, onAdd, onEdit, onDelete, onRefresh }) => {
   if (!type) return null
 
   return (
@@ -698,8 +699,10 @@ const AddDialog: React.FC<{
 }> = ({ onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     provider: '',
+    provider_type_id: 0,
     keyName: '',
     keyValue: '',
+    auth_type: 'api_key',
     weight: 1,
     requestLimitPerMinute: 0,
     tokenLimitPromptPerMinute: 0,
@@ -710,6 +713,10 @@ const AddDialog: React.FC<{
   // 服务商类型状态管理
   const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
   const [loadingProviderTypes, setLoadingProviderTypes] = useState(true)
+  const [selectedProviderType, setSelectedProviderType] = useState<ProviderType | null>(null)
+  
+  // OAuth相关状态
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>('idle')
 
   // 获取服务商类型列表
   const fetchProviderTypes = async () => {
@@ -724,8 +731,10 @@ const AddDialog: React.FC<{
           const firstProvider = response.data.provider_types[0]
           setFormData(prev => ({ 
             ...prev, 
-            provider: firstProvider.display_name
+            provider: firstProvider.display_name,
+            provider_type_id: firstProvider.id
           }))
+          setSelectedProviderType(firstProvider)
         }
       } else {
         console.error('[AddDialog] 获取服务商类型失败:', response.message)
@@ -742,8 +751,58 @@ const AddDialog: React.FC<{
     fetchProviderTypes()
   }, [])
 
+  // OAuth处理函数
+  const handleOAuthComplete = async (result: OAuthResult) => {
+    console.log('OAuth完成:', result)
+    if (result.success && result.data) {
+      // OAuth成功完成，将获取到的token填充到表单
+      setOAuthStatus('completed')
+      
+      // 将OAuth返回的access_token填入表单的API密钥字段
+      setFormData(prev => ({
+        ...prev,
+        keyValue: result.data.access_token,
+        // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
+      }))
+      
+      // 显示成功消息，提示用户可以看到token并决定是否提交
+      alert(`OAuth授权成功！Token已填充到API密钥字段，请检查并完善其他信息后点击"添加"按钮提交。`)
+    } else {
+      setOAuthStatus('error')
+      console.error('OAuth失败:', result.error)
+    }
+  }
+
+  const handleProviderTypeChange = (value: string) => {
+    const selectedProvider = providerTypes.find(type => type.display_name === value)
+    if (selectedProvider) {
+      setFormData(prev => ({ 
+        ...prev, 
+        provider: selectedProvider.display_name,
+        provider_type_id: selectedProvider.id
+      }))
+      setSelectedProviderType(selectedProvider)
+      // 重置OAuth状态和认证类型
+      setOAuthStatus('idle')
+      setFormData(prev => ({ ...prev, auth_type: 'api_key' }))
+    }
+  }
+
+  const handleAuthTypeChange = (authType: string) => {
+    setFormData(prev => ({ ...prev, auth_type: authType }))
+    // 如果切换到非OAuth类型，重置OAuth状态
+    if (authType !== 'oauth2' && authType !== 'google_oauth') {
+      setOAuthStatus('idle')
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // OAuth类型的密钥需要先完成OAuth流程
+    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'completed') {
+      alert('请先完成OAuth授权流程')
+      return
+    }
     onSubmit(formData)
   }
 
@@ -788,13 +847,7 @@ const AddDialog: React.FC<{
           ) : (
             <ModernSelect
               value={formData.provider}
-              onValueChange={(value) => {
-                const selectedProvider = providerTypes.find(type => type.display_name === value)
-                setFormData({ 
-                  ...formData, 
-                  provider: selectedProvider ? selectedProvider.display_name : value
-                })
-              }}
+              onValueChange={handleProviderTypeChange}
               options={providerTypes.map(type => ({
                 value: type.display_name,
                 label: type.display_name
@@ -804,6 +857,40 @@ const AddDialog: React.FC<{
           )}
         </div>
 
+        {/* 认证类型 */}
+        {selectedProviderType && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              <span className="text-red-500">*</span> 认证类型
+            </label>
+            <AuthTypeSelector
+              providerType={selectedProviderType}
+              value={formData.auth_type}
+              onValueChange={handleAuthTypeChange}
+            />
+          </div>
+        )}
+
+        {/* OAuth Handler */}
+        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              OAuth授权
+            </label>
+            <OAuthHandler
+              request={{
+                provider_type_id: selectedProviderType.id,
+                auth_type: formData.auth_type,
+                name: formData.keyName || 'Provider Key',
+                description: `${selectedProviderType.display_name} OAuth Key`,
+              }}
+              status={oauthStatus}
+              onStatusChange={setOAuthStatus}
+              onComplete={handleOAuthComplete}
+            />
+          </div>
+        )}
+
         {/* API密钥 */}
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">
@@ -811,11 +898,16 @@ const AddDialog: React.FC<{
           </label>
           <input
             type="text"
-            required
+            required={!(formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth')}
             value={formData.keyValue}
             onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
-            placeholder="请输入API密钥"
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            placeholder={
+              (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') 
+                ? "OAuth授权完成后自动填入" 
+                : "请输入API密钥"
+            }
+            disabled={formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth'}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>
 
@@ -978,11 +1070,19 @@ const EditDialog: React.FC<{
   onClose: () => void
   onSubmit: (item: LocalProviderKey) => void
 }> = ({ item, onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({ ...item })
+  const [formData, setFormData] = useState({ 
+    ...item, 
+    auth_type: item.auth_type || 'api_key',
+    provider_type_id: item.provider_type_id || 0
+  })
 
   // 服务商类型状态管理
   const [providerTypes, setProviderTypes] = useState<ProviderType[]>([])
   const [loadingProviderTypes, setLoadingProviderTypes] = useState(true)
+  const [selectedProviderType, setSelectedProviderType] = useState<ProviderType | null>(null)
+  
+  // OAuth相关状态
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>('idle')
 
   // 获取服务商类型列表
   const fetchProviderTypes = async () => {
@@ -992,6 +1092,13 @@ const EditDialog: React.FC<{
       
       if (response.success && response.data) {
         setProviderTypes(response.data.provider_types || [])
+        // 根据当前item的provider设置selectedProviderType
+        const currentProvider = response.data.provider_types?.find(
+          type => type.display_name === item.provider
+        )
+        if (currentProvider) {
+          setSelectedProviderType(currentProvider)
+        }
       } else {
         console.error('[EditDialog] 获取服务商类型失败:', response.message)
       }
@@ -1007,8 +1114,58 @@ const EditDialog: React.FC<{
     fetchProviderTypes()
   }, [])
 
+  // OAuth处理函数
+  const handleOAuthComplete = async (result: OAuthResult) => {
+    console.log('OAuth完成:', result)
+    if (result.success && result.data) {
+      // OAuth成功完成，将获取到的token填充到表单
+      setOAuthStatus('completed')
+      
+      // 将OAuth返回的access_token填入表单的API密钥字段
+      setFormData(prev => ({
+        ...prev,
+        keyValue: result.data.access_token,
+        // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
+      }))
+      
+      // 显示成功消息，提示用户可以看到token并决定是否提交
+      alert(`OAuth授权成功！Token已填充到API密钥字段，请检查并完善其他信息后点击"保存修改"按钮提交。`)
+    } else {
+      setOAuthStatus('error')
+      console.error('OAuth失败:', result.error)
+    }
+  }
+
+  const handleProviderTypeChange = (value: string) => {
+    const selectedProvider = providerTypes.find(type => type.display_name === value)
+    if (selectedProvider) {
+      setFormData(prev => ({ 
+        ...prev, 
+        provider: selectedProvider.display_name,
+        provider_type_id: selectedProvider.id
+      }))
+      setSelectedProviderType(selectedProvider)
+      // 重置OAuth状态和认证类型
+      setOAuthStatus('idle')
+      setFormData(prev => ({ ...prev, auth_type: 'api_key' }))
+    }
+  }
+
+  const handleAuthTypeChange = (authType: string) => {
+    setFormData(prev => ({ ...prev, auth_type: authType }))
+    // 如果切换到非OAuth类型，重置OAuth状态
+    if (authType !== 'oauth2' && authType !== 'google_oauth') {
+      setOAuthStatus('idle')
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // OAuth类型的密钥需要先完成OAuth流程
+    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'completed') {
+      alert('请先完成OAuth授权流程')
+      return
+    }
     onSubmit(formData)
   }
 
@@ -1052,13 +1209,7 @@ const EditDialog: React.FC<{
           ) : (
             <ModernSelect
               value={formData.provider}
-              onValueChange={(value) => {
-                const selectedProvider = providerTypes.find(type => type.display_name === value)
-                setFormData({ 
-                  ...formData, 
-                  provider: selectedProvider ? selectedProvider.display_name : value
-                })
-              }}
+              onValueChange={handleProviderTypeChange}
               options={providerTypes.map(type => ({
                 value: type.display_name,
                 label: type.display_name
@@ -1068,6 +1219,40 @@ const EditDialog: React.FC<{
           )}
         </div>
 
+        {/* 认证类型 */}
+        {selectedProviderType && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              <span className="text-red-500">*</span> 认证类型
+            </label>
+            <AuthTypeSelector
+              providerType={selectedProviderType}
+              value={formData.auth_type || 'api_key'}
+              onValueChange={handleAuthTypeChange}
+            />
+          </div>
+        )}
+
+        {/* OAuth Handler */}
+        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              OAuth授权
+            </label>
+            <OAuthHandler
+              request={{
+                provider_type_id: selectedProviderType.id,
+                auth_type: formData.auth_type,
+                name: formData.keyName || 'Provider Key',
+                description: `${selectedProviderType.display_name} OAuth Key`,
+              }}
+              status={oauthStatus}
+              onStatusChange={setOAuthStatus}
+              onComplete={handleOAuthComplete}
+            />
+          </div>
+        )}
+
         {/* API密钥 */}
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">
@@ -1075,9 +1260,16 @@ const EditDialog: React.FC<{
           </label>
           <input
             type="text"
+            required={!(formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth')}
             value={formData.keyValue}
             onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            placeholder={
+              (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') 
+                ? "OAuth授权完成后自动填入" 
+                : "请输入API密钥"
+            }
+            disabled={formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth'}
+            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>
 

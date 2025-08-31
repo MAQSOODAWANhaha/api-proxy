@@ -14,6 +14,7 @@ pub struct Model {
     pub user_id: i32,
     pub provider_type_id: i32,
     pub api_key: String,
+    pub auth_type: String,
     pub name: String,
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
