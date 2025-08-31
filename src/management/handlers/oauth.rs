@@ -6,6 +6,7 @@ use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse};
 use axum::Json;
 use chrono::{Duration, Utc};
 use entity::{oauth_sessions, provider_types, user_provider_keys};
@@ -184,13 +185,24 @@ pub async fn initiate_oauth_flow(
         .and_then(|v| v.as_str())
         .unwrap_or_default();
 
+    // 获取可选的OAuth参数
+    let access_type = oauth_config.get("access_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("online");
+    
+    let prompt = oauth_config.get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("consent");
+
     let mut auth_url = format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&access_type={}&prompt={}",
         authorize_url,
         urlencoding::encode(client_id),
         urlencoding::encode(&redirect_uri),
         urlencoding::encode(scopes),
-        state_param
+        state_param,
+        access_type,
+        prompt
     );
 
     // 如果需要PKCE
@@ -225,29 +237,17 @@ pub async fn handle_oauth_callback(
     {
         Ok(Some(session)) => session,
         Ok(None) => {
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_SESSION",
-                "无效的OAuth会话或状态参数",
-            );
+            return create_oauth_error_html("无效的OAuth会话", "会话不存在或状态参数错误");
         }
         Err(err) => {
             tracing::error!("Failed to fetch OAuth session: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "查询OAuth会话失败",
-            );
+            return create_oauth_error_html("数据库查询失败", &err.to_string());
         }
     };
 
     // 检查会话是否过期
     if session.expires_at < Utc::now().naive_utc() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "SESSION_EXPIRED",
-            "OAuth会话已过期",
-        );
+        return create_oauth_error_html("OAuth会话已过期", "请重新发起授权流程");
     }
 
     // 获取服务商信息
@@ -258,18 +258,10 @@ pub async fn handle_oauth_callback(
         Ok(Some(provider)) => provider,
         Err(err) => {
             tracing::error!("Failed to fetch provider: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "查询服务商信息失败",
-            );
+            return create_oauth_error_html("查询服务商信息失败", &err.to_string());
         }
         _ => {
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_PROVIDER",
-                "无效的服务商",
-            );
+            return create_oauth_error_html("无效的服务商", "服务商配置不存在");
         }
     };
 
@@ -294,11 +286,7 @@ pub async fn handle_oauth_callback(
         Ok(tokens) => tokens,
         Err(err) => {
             tracing::error!("OAuth token交换失败: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "TOKEN_EXCHANGE_FAILED",
-                "OAuth token交换失败",
-            );
+            return create_oauth_error_html("OAuth token交换失败", &err.to_string());
         }
     };
 
@@ -312,14 +300,11 @@ pub async fn handle_oauth_callback(
         .await
     {
         tracing::error!("Failed to update OAuth session: {}", err);
-        return response::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DB_ERROR",
-            "更新OAuth会话失败",
-        );
+        return create_oauth_error_html("更新OAuth会话失败", &err.to_string());
     }
 
-    let response_data = json!({
+    // 构造OAuth成功的数据
+    let oauth_result = json!({
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "Bearer",
@@ -331,7 +316,110 @@ pub async fn handle_oauth_callback(
         "auth_status": "authorized"
     });
 
-    response::success(response_data)
+    // 返回HTML页面，通过postMessage将结果发送给父窗口
+    let html_content = format!(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OAuth授权成功</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }}
+        .container {{
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }}
+        .checkmark {{
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: block;
+            stroke-width: 2;
+            stroke: #4CAF50;
+            stroke-miterlimit: 10;
+            margin: 10px auto;
+            box-shadow: inset 0px 0px 0px #4CAF50;
+            animation: fill 0.4s ease-in-out 0.4s forwards, scale 0.3s ease-in-out 0.9s both;
+        }}
+        .checkmark-circle {{
+            stroke-dasharray: 166;
+            stroke-dashoffset: 166;
+            stroke-width: 2;
+            stroke-miterlimit: 10;
+            stroke: #4CAF50;
+            fill: none;
+            animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+        }}
+        .checkmark-check {{
+            transform-origin: 50% 50%;
+            stroke-dasharray: 48;
+            stroke-dashoffset: 48;
+            animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.8s forwards;
+        }}
+        @keyframes stroke {{
+            100% {{ stroke-dashoffset: 0; }}
+        }}
+        @keyframes scale {{
+            0%, 100% {{ transform: none; }}
+            50% {{ transform: scale3d(1.1, 1.1, 1); }}
+        }}
+        @keyframes fill {{
+            100% {{ box-shadow: inset 0px 0px 0px 30px #4CAF50; }}
+        }}
+        h1 {{ margin: 1rem 0; font-size: 1.5rem; }}
+        p {{ margin: 0.5rem 0; opacity: 0.9; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
+            <circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none"/>
+            <path class="checkmark-check" fill="none" d="m14.1 27.2l7.1 7.2 16.7-16.8"/>
+        </svg>
+        <h1>OAuth授权成功</h1>
+        <p>正在返回授权信息...</p>
+        <p style="font-size: 0.9rem; margin-top: 1rem;">此窗口将自动关闭</p>
+    </div>
+
+    <script>
+        try {{
+            // 向父窗口发送OAuth成功消息
+            const result = {oauth_result};
+            window.parent.postMessage({{
+                type: 'OAUTH_SUCCESS',
+                data: result
+            }}, window.location.origin);
+            
+            console.log('OAuth授权成功，已发送数据给父窗口');
+            
+            // 2秒后自动关闭窗口
+            setTimeout(() => {{
+                window.close();
+            }}, 2000);
+        }} catch (error) {{
+            console.error('发送OAuth结果时出错:', error);
+            window.parent.postMessage({{
+                type: 'OAUTH_ERROR',
+                error: {{ message: '发送授权结果失败: ' + error.message }}
+            }}, window.location.origin);
+        }}
+    </script>
+</body>
+</html>
+    "#, oauth_result = serde_json::to_string(&oauth_result).unwrap_or_else(|_| "{}".to_string()));
+
+    Html(html_content).into_response()
 }
 
 /// 查询OAuth状态
@@ -615,6 +703,14 @@ async fn exchange_code_for_tokens(
     form_params.insert("client_id", client_id);
     form_params.insert("code_verifier", code_verifier);
     
+    // 如果配置了client_secret且不为空，则添加它（用于机密客户端）
+    if let Some(client_secret) = oauth_config.get("client_secret")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && !s.contains("PLACEHOLDER"))
+    {
+        form_params.insert("client_secret", client_secret);
+    }
+    
     // 发送token交换请求
     let response = client
         .post(token_url)
@@ -648,6 +744,96 @@ async fn exchange_code_for_tokens(
     Ok((access_token, refresh_token, expires_in))
 }
 
+/// 创建OAuth错误的HTML响应
+fn create_oauth_error_html(error_title: &str, error_message: &str) -> axum::response::Response {
+    let html_content = format!(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OAuth授权失败</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #FF6B6B 0%, #EE5A52 100%);
+            color: white;
+        }}
+        .container {{
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            max-width: 400px;
+        }}
+        .error-icon {{
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 1rem;
+            border-radius: 50%;
+            background: #FF4757;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            color: white;
+        }}
+        h1 {{ margin: 1rem 0; font-size: 1.5rem; }}
+        p {{ margin: 0.5rem 0; opacity: 0.9; font-size: 0.9rem; }}
+        .error-details {{
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            text-align: left;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-icon">✕</div>
+        <h1>OAuth授权失败</h1>
+        <p>{error_title}</p>
+        <div class="error-details">{error_message}</div>
+        <p style="font-size: 0.9rem; margin-top: 1rem;">此窗口将自动关闭</p>
+    </div>
+
+    <script>
+        try {{
+            // 向父窗口发送OAuth错误消息
+            window.parent.postMessage({{
+                type: 'OAUTH_ERROR',
+                error: {{ 
+                    message: '{error_title}: {error_message}' 
+                }}
+            }}, window.location.origin);
+            
+            console.error('OAuth授权失败:', '{error_title}', '{error_message}');
+            
+            // 3秒后自动关闭窗口
+            setTimeout(() => {{
+                window.close();
+            }}, 3000);
+        }} catch (error) {{
+            console.error('发送OAuth错误时出错:', error);
+        }}
+    </script>
+</body>
+</html>
+    "#, 
+        error_title = error_title.replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;"),
+        error_message = error_message.replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    );
+
+    Html(html_content).into_response()
+}
+
 /// 真实的OAuth token刷新函数
 async fn refresh_access_token(
     refresh_token: &str,
@@ -669,6 +855,14 @@ async fn refresh_access_token(
     form_params.insert("grant_type", "refresh_token");
     form_params.insert("refresh_token", refresh_token);
     form_params.insert("client_id", client_id);
+    
+    // 如果配置了client_secret且不为空，则添加它（用于机密客户端）
+    if let Some(client_secret) = oauth_config.get("client_secret")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && !s.contains("PLACEHOLDER"))
+    {
+        form_params.insert("client_secret", client_secret);
+    }
     
     // 发送刷新token请求
     let response = client
