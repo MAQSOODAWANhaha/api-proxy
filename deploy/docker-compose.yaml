@@ -57,7 +57,6 @@ services:
     environment:
       - DOMAIN=${DOMAIN:-example.com}
       - CERT_EMAIL=${CERT_EMAIL:-admin@example.com}
-      - LOCAL_IP=${LOCAL_IP}
       - PROXY_HOST=proxy
       - PROXY_PORT_9090=9090
       - PROXY_PORT_8080=8080
