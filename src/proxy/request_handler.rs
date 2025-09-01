@@ -1036,26 +1036,10 @@ impl RequestHandler {
             .unwrap_or("application/json");
 
         // 检测是否为流式响应
+        // 默认支持流式，主要通过Content-Type自动检测
         let is_streaming = content_type.contains("text/event-stream")
-            || content_type.contains("text/plain")
-            || ctx
-                .provider_type
-                .as_ref()
-                .and_then(|p| {
-                    // 从数据库配置中检查流式支持
-                    p.config_json
-                        .as_ref()
-                        .and_then(|config_str| {
-                            serde_json::from_str::<serde_json::Value>(config_str).ok()
-                        })
-                        .and_then(|config| {
-                            config
-                                .get("streaming")
-                                .and_then(|streaming| streaming.get("supported"))
-                                .and_then(|supported| supported.as_bool())
-                        })
-                })
-                .unwrap_or(false);
+            || content_type.contains("application/stream+json")
+            || content_type.contains("text/plain");
 
         // 日志记录响应信息
         tracing::info!(

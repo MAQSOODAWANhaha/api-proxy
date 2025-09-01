@@ -2,7 +2,7 @@
 //!
 //! 基于数据库配置的通用AI服务适配器，支持任意提供商
 
-use super::field_extractor::{FieldExtractor, ModelExtractor, TokenFieldExtractor};
+use super::field_extractor::{ModelExtractor, TokenFieldExtractor};
 use super::traits::ProviderAdapter;
 use super::types::{
     AdapterRequest, AdapterResponse, ChatChoice, ChatCompletionRequest, ChatCompletionResponse,
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// 通用适配器配置
+/// 简化后只包含必要的配置项，保持代理透明性
 #[derive(Debug, Clone)]
 pub struct GenericAdapterConfig {
     /// 提供商ID
@@ -24,17 +25,13 @@ pub struct GenericAdapterConfig {
     pub display_name: String,
     /// API格式（openai-compatible, gemini, claude等）
     pub api_format: String,
-    /// 请求转换规则
-    pub request_transform_rules: Option<Value>,
-    /// 响应转换规则
-    pub response_transform_rules: Option<Value>,
-    /// 流式响应处理配置
-    pub streaming_config: Option<Value>,
-    /// 字段提取器 (旧版本，用于非Token字段)
-    pub field_extractor: Option<FieldExtractor>,
-    /// Token字段提取器 (新增，用于Token统计)
+    /// 请求阶段特殊配置（如required_headers）
+    pub request_stage_config: Option<Value>,
+    /// 响应阶段特殊配置（目前为空，预留扩展）
+    pub response_stage_config: Option<Value>,
+    /// Token字段提取器（用于Token统计）
     pub token_field_extractor: Option<TokenFieldExtractor>,
-    /// 模型提取器 (新增，用于模型名称提取)
+    /// 模型提取器（用于模型名称提取）
     pub model_extractor: Option<Arc<ModelExtractor>>,
 }
 
@@ -45,10 +42,8 @@ impl Default for GenericAdapterConfig {
             provider_name: "generic".to_string(),
             display_name: "Generic Provider".to_string(),
             api_format: "openai-compatible".to_string(),
-            request_transform_rules: None,
-            response_transform_rules: None,
-            streaming_config: None,
-            field_extractor: None,
+            request_stage_config: None,
+            response_stage_config: None,
             token_field_extractor: None,
             model_extractor: None,
         }
@@ -95,47 +90,7 @@ impl GenericAdapter {
         token_mappings_json: Option<String>,
         model_extraction_json: Option<String>,
     ) -> Self {
-        // 创建字段提取器（用于非Token字段）
-        let field_extractor = config_json
-            .as_ref()
-            .and_then(|config| {
-                // 构建字段映射配置的JSON字符串
-                let field_config = serde_json::json!({
-                    "field_mappings": config.get("field_mappings").unwrap_or(&Value::Object(serde_json::Map::new())),
-                    "default_values": config.get("default_values").unwrap_or(&Value::Object(serde_json::Map::new())),
-                    "transformations": config.get("transformations").unwrap_or(&Value::Object(serde_json::Map::new()))
-                });
-
-                match serde_json::to_string(&field_config) {
-                    Ok(config_str) => {
-                        match FieldExtractor::from_json_config(&config_str) {
-                            Ok(extractor) => {
-                                debug!(
-                                    provider_name = %provider_name,
-                                    "Successfully created field extractor for provider"
-                                );
-                                Some(extractor)
-                            },
-                            Err(e) => {
-                                warn!(
-                                    provider_name = %provider_name,
-                                    error = %e,
-                                    "Failed to create field extractor, will use default behavior"
-                                );
-                                None
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            provider_name = %provider_name,
-                            error = %e,
-                            "Failed to serialize field config"
-                        );
-                        None
-                    }
-                }
-            });
+        // 简化配置：移除复杂的字段提取器
 
         // 创建Token字段提取器（用于Token统计）
         let token_field_extractor = token_mappings_json.as_ref().and_then(|token_config| {
@@ -179,21 +134,24 @@ impl GenericAdapter {
             }
         });
 
+        // 解析新的ConfigJson结构
+        let (request_stage_config, response_stage_config) = config_json
+            .as_ref()
+            .map(|config| {
+                let request_stage = config.get("request_stage").cloned();
+                let response_stage = config.get("response_stage").cloned();
+                (request_stage, response_stage)
+            })
+            .unwrap_or((None, None));
+
         let config = GenericAdapterConfig {
             provider_id,
             provider_name: provider_name.clone(),
             display_name,
             api_format: api_format.clone(),
-            request_transform_rules: config_json
-                .as_ref()
-                .and_then(|c| c.get("request_transform").cloned()),
-            response_transform_rules: config_json
-                .as_ref()
-                .and_then(|c| c.get("response_transform").cloned()),
-            streaming_config: config_json
-                .as_ref()
-                .and_then(|c| c.get("streaming").cloned()),
-            field_extractor,
+            // 从新的ConfigJson结构中提取阶段配置
+            request_stage_config,
+            response_stage_config,
             token_field_extractor,
             model_extractor,
         };
@@ -203,14 +161,11 @@ impl GenericAdapter {
 
     /// 使用字段提取器提取Usage信息
     fn extract_usage_info(&self, response: &Value) -> Option<Usage> {
-        if let Some(extractor) = &self.config.field_extractor {
-            let input_tokens = extractor.extract_u32(response, "input_tokens").unwrap_or(0);
-            let output_tokens = extractor
-                .extract_u32(response, "output_tokens")
-                .unwrap_or(0);
-            let total_tokens = extractor
-                .extract_u32(response, "total_tokens")
-                .unwrap_or(input_tokens + output_tokens);
+        // 简化后移除了通用field_extractor，优先使用专门的token_field_extractor
+        if let Some(token_extractor) = &self.config.token_field_extractor {
+            let input_tokens = token_extractor.extract_token_u32(response, "tokens_prompt").unwrap_or(0);
+            let output_tokens = token_extractor.extract_token_u32(response, "tokens_completion").unwrap_or(0);
+            let total_tokens = token_extractor.extract_token_u32(response, "tokens_total").unwrap_or(input_tokens + output_tokens);
 
             debug!(
                 provider = %self.config.provider_name,
@@ -239,36 +194,33 @@ impl GenericAdapter {
         }
     }
 
-    /// 使用字段提取器提取内容
+    /// 提取内容（简化版）
     fn extract_content(&self, response: &Value) -> String {
-        if let Some(extractor) = &self.config.field_extractor {
-            extractor
-                .extract_string(response, "content")
-                .unwrap_or_else(|| "".to_string())
-        } else {
-            // 回退到默认行为
-            "".to_string()
-        }
+        // 简化后使用通用的响应提取逻辑
+        response.get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string()
     }
 
-    /// 使用字段提取器提取模型名称
+    /// 提取模型名称（简化版）
     fn extract_model_name(&self, response: &Value, fallback: &str) -> String {
-        if let Some(extractor) = &self.config.field_extractor {
-            extractor
-                .extract_string(response, "model_name")
-                .unwrap_or_else(|| fallback.to_string())
-        } else {
-            fallback.to_string()
-        }
+        // 简化后的模型提取逻辑：从响应中直接提取
+        // ModelExtractor主要用于从请求阶段提取，这里简化为直接提取
+        response.get("model")
+            .and_then(|m| m.as_str())
+            .or_else(|| response.pointer("/choices/0/model").and_then(|m| m.as_str()))  // 兼容某些格式
+            .unwrap_or(fallback)
+            .to_string()
     }
 
-    /// 使用字段提取器提取完成原因
+    /// 提取完成原因（简化版）
     fn extract_finish_reason(&self, response: &Value) -> Option<String> {
-        if let Some(extractor) = &self.config.field_extractor {
-            extractor.extract_string(response, "finish_reason")
-        } else {
-            Some("stop".to_string())
-        }
+        // 简化后使用通用的提取逻辑
+        response.get("finish_reason")
+            .and_then(|r| r.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| Some("stop".to_string()))
     }
 
     /// 公共接口：提取统计信息供trace系统使用
@@ -283,32 +235,19 @@ impl GenericAdapter {
                     token_extractor.extract_token_u32(response, "cache_create_tokens"),
                     token_extractor.extract_token_u32(response, "cache_read_tokens"),
                 )
-            } else if let Some(extractor) = &self.config.field_extractor {
-                // 回退到旧的FieldExtractor（向后兼容）
-                (
-                    extractor.extract_u32(response, "input_tokens"),
-                    extractor.extract_u32(response, "output_tokens"),
-                    extractor.extract_u32(response, "total_tokens"),
-                    extractor.extract_u32(response, "cache_create_tokens"),
-                    extractor.extract_u32(response, "cache_read_tokens"),
-                )
+            // 简化后移除了旧的FieldExtractor
             } else {
                 (None, None, None, None, None)
             };
 
-        // 使用FieldExtractor提取非Token字段
-        let (cost, cost_currency, model_name, error_type, error_message) =
-            if let Some(extractor) = &self.config.field_extractor {
-                (
-                    extractor.extract_f64(response, "cost"),
-                    extractor.extract_string(response, "cost_currency"),
-                    extractor.extract_string(response, "model_name"),
-                    extractor.extract_string(response, "error_type"),
-                    extractor.extract_string(response, "error_message"),
-                )
-            } else {
-                (None, None, None, None, None)
-            };
+        // 简化的非Token字段提取
+        let (cost, cost_currency, model_name, error_type, error_message) = (
+            response.get("cost").and_then(|v| v.as_f64()),
+            response.get("cost_currency").and_then(|v| v.as_str()).map(String::from),
+            response.get("model").and_then(|v| v.as_str()).map(String::from),
+            response.get("error_type").and_then(|v| v.as_str()).map(String::from),
+            response.get("error_message").and_then(|v| v.as_str()).map(String::from),
+        );
 
         TraceStats {
             input_tokens,
@@ -585,13 +524,8 @@ impl ProviderAdapter for GenericAdapter {
     }
 
     fn transform_request(&self, request: &AdapterRequest) -> ProviderResult<AdapterRequest> {
-        // 应用自定义转换规则（如果有）
-        if let Some(_transform_rules) = &self.config.request_transform_rules {
-            // TODO: 实现基于JSON配置的请求转换
-            tracing::debug!("Custom request transform rules not implemented yet");
-        }
-
-        // 应用格式转换
+        // 简化后直接使用格式转换，保持代理透明性
+        // 可以根据 request_stage_config 添加特殊头部处理
         self.transform_request_format(request)
     }
 
@@ -600,16 +534,8 @@ impl ProviderAdapter for GenericAdapter {
         response: &AdapterResponse,
         request: &AdapterRequest,
     ) -> ProviderResult<AdapterResponse> {
-        // 应用格式转换
-        let transformed_response = self.transform_response_format(response, request)?;
-
-        // 应用自定义转换规则（如果有）
-        if let Some(_transform_rules) = &self.config.response_transform_rules {
-            // TODO: 实现基于JSON配置的响应转换
-            tracing::debug!("Custom response transform rules not implemented yet");
-        }
-
-        Ok(transformed_response)
+        // 简化后直接使用格式转换，保持代理透明性
+        self.transform_response_format(response, request)
     }
 
     fn validate_request(&self, request: &AdapterRequest) -> ProviderResult<()> {
@@ -644,22 +570,8 @@ impl ProviderAdapter for GenericAdapter {
     }
 
     fn supports_streaming(&self, _endpoint: &str) -> bool {
-        // 检查配置中是否启用流式支持
-        if let Some(streaming_config) = &self.config.streaming_config {
-            // 如果有流式配置，检查是否启用
-            streaming_config
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true) // 默认启用，如果有streaming_config
-        } else {
-            // 如果没有特定配置，根据API格式判断通用支持情况
-            match self.config.api_format.to_lowercase().as_str() {
-                "openai" | "openai-compatible" => true,
-                "gemini" | "google" => true,
-                "anthropic" | "claude" => true,
-                _ => false, // 未知格式默认不支持
-            }
-        }
+        // 简化后默认都支持流式响应，保持代理透明性
+        true
     }
 
     /// 检查请求是否要求流式响应
