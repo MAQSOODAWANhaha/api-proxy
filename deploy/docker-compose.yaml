@@ -55,7 +55,7 @@ services:
       - caddy_config:/config
       - ./logs/caddy:/var/log/caddy
     environment:
-      - DOMAIN=${DOMAIN:-zhanglei.work}
+      - DOMAIN=${DOMAIN:-example.com}
       - LOCAL_IP=${LOCAL_IP}
       - PROXY_HOST=proxy
       - PROXY_PORT_9090=9090

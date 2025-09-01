@@ -15,7 +15,7 @@ ENV_FILE="$SCRIPT_DIR/.env.production"
 
 # TLS证书配置
 TLS_MODE="${TLS_MODE:-auto}"  # auto|selfsigned|manual
-DOMAIN_NAME="${DOMAIN:-zhanglei.work}"
+DOMAIN_NAME="${DOMAIN:-example.com}"
 CERT_EMAIL="${CERT_EMAIL:-admin@${DOMAIN_NAME}}"
 
 # IP模式配置 (将在函数定义后初始化)
@@ -141,7 +141,7 @@ interactive_tls_setup() {
                 TLS_MODE="auto"
                 echo ""
                 echo -e "${BLUE}域名配置:${NC}"
-                read -p "请输入域名 (默认: zhanglei.work): " user_domain
+                read -p "请输入域名 (必填): " user_domain
                 if [[ -n "$user_domain" ]]; then
                     DOMAIN_NAME="$user_domain"
                 fi
@@ -486,11 +486,11 @@ EOF
 # 全局选项
 # ================================
 {
-    # 自动HTTPS
-    auto_https on
+    # 自动HTTPS (域名模式下默认启用，不需要重定向)
+    auto_https disable_redirects
     
     # 证书申请邮箱
-    email {$CERT_EMAIL:-admin@zhanglei.work}
+    email {$CERT_EMAIL}
     
     # 管理端点
     admin :2019
@@ -507,35 +507,13 @@ EOF
 # ================================
 # 主域名 HTTPS (443端口) - 自动证书
 # ================================
-{$DOMAIN:-zhanglei.work} {
+{$DOMAIN} {
     # 健康检查端点
     handle /health {
         respond "OK - Auto TLS" 200
     }
     
-    # API 路由
-    handle /api/* {
-        reverse_proxy proxy:9090 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-        }
-    }
-    
-    # WebSocket 支持
-    handle /ws/* {
-        reverse_proxy proxy:9090 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-            header_up Connection {>Connection}
-            header_up Upgrade {>Upgrade}
-        }
-    }
-    
-    # 静态文件和前端路由
+    # 管理API和前端 - 转发到9090端口
     handle /* {
         reverse_proxy proxy:9090 {
             header_up Host {http.request.host}
@@ -576,10 +554,30 @@ EOF
 }
 
 # ================================
+# 8443端口 HTTPS 转发 - 自动证书 (AI代理服务)
+# ================================
+{$DOMAIN}:8443 {
+    # 健康检查端点
+    handle /health {
+        respond "OK - Port 8443" 200
+    }
+    
+    # AI代理服务 - 转发到8080端口
+    handle /* {
+        reverse_proxy proxy:8080 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+}
+
+# ================================
 # HTTP重定向到HTTPS
 # ================================
-http://{$DOMAIN:-zhanglei.work} {
-    redir https://{$DOMAIN:-zhanglei.work}{uri} permanent
+http://{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
 }
 EOF
             ;;
@@ -614,38 +612,16 @@ EOF
 # ================================
 # 主域名 HTTPS (443端口) - 手动证书
 # ================================
-https://{$DOMAIN:-zhanglei.work} {
+https://{$DOMAIN} {
     # 使用手动提供的证书
-    tls /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.crt /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.key
+    tls /etc/caddy/certs/{$DOMAIN}.crt /etc/caddy/certs/{$DOMAIN}.key
     
     # 健康检查端点
     handle /health {
         respond "OK - Manual TLS" 200
     }
     
-    # API 路由
-    handle /api/* {
-        reverse_proxy proxy:9090 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-        }
-    }
-    
-    # WebSocket 支持
-    handle /ws/* {
-        reverse_proxy proxy:9090 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-            header_up Connection {>Connection}
-            header_up Upgrade {>Upgrade}
-        }
-    }
-    
-    # 静态文件和前端路由
+    # 管理API和前端 - 转发到9090端口
     handle /* {
         reverse_proxy proxy:9090 {
             header_up Host {http.request.host}
@@ -666,10 +642,10 @@ https://{$DOMAIN:-zhanglei.work} {
 }
 
 # ================================
-# 8443端口 HTTPS 转发
+# 8443端口 HTTPS 转发 - 手动证书 (AI代理服务)
 # ================================
-:8443 {
-    tls /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.crt /etc/caddy/certs/{$DOMAIN:-zhanglei.work}.key
+{$DOMAIN}:8443 {
+    tls /etc/caddy/certs/{$DOMAIN}.crt /etc/caddy/certs/{$DOMAIN}.key
     
     handle /health {
         respond "OK - Port 8443" 200
@@ -1161,7 +1137,7 @@ TLS证书管理:
 
   Caddy反向代理：
     • 自动HTTPS和SSL证书管理
-    • 域名 zhanglei.work 路由到统一服务
+    • 域名 example.com 路由到统一服务
     • 443端口：主域名访问
     • 8443端口：备用访问端口
 
@@ -1169,7 +1145,7 @@ TLS证书管理:
     • 6379端口，用于缓存和会话管理
 
 环境变量:
-  DOMAIN=<domain>      指定主域名（默认：zhanglei.work）
+  DOMAIN=<domain>      指定主域名（默认：example.com）
   LOCAL_IP=<ip>        指定本机IP地址（自动检测或手动设置，默认：自动检测）
   TLS_MODE=<mode>      TLS证书模式（auto|selfsigned|manual，默认：auto）
   CERT_EMAIL=<email>   Let's Encrypt证书申请邮箱
@@ -1196,7 +1172,7 @@ TLS证书管理示例:
   • https://localhost              # 本地访问
   • https://localhost:8443         # 备用端口
   • http://[本机IP]                # HTTP访问（开发模式）
-  • 域名模式: https://zhanglei.work # 域名访问（auto/manual证书模式）
+  • 域名模式: https://example.com # 域名访问（auto/manual证书模式）
 
 EOF
 }
