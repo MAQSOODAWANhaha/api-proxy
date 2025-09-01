@@ -14,9 +14,8 @@ COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yaml"
 ENV_FILE="$SCRIPT_DIR/.env.production"
 
 # TLS证书配置
-TLS_MODE="${TLS_MODE:-auto}"  # auto|selfsigned|manual
-DOMAIN_NAME="${DOMAIN:-example.com}"
-CERT_EMAIL="${CERT_EMAIL:-admin@${DOMAIN_NAME}}"
+TLS_MODE="${TLS_MODE:-auto}"  # auto|selfsigned
+# DOMAIN 直接从环境变量读取，CERT_EMAIL 在需要时处理
 
 # IP模式配置 (将在函数定义后初始化)
 LOCAL_IP="${LOCAL_IP:-}"
@@ -143,17 +142,17 @@ interactive_tls_setup() {
                 echo -e "${BLUE}域名配置:${NC}"
                 read -p "请输入域名 (必填): " user_domain
                 if [[ -n "$user_domain" ]]; then
-                    DOMAIN_NAME="$user_domain"
+                    DOMAIN="$user_domain"
                 fi
                 
-                read -p "请输入证书申请邮箱 (默认: admin@$DOMAIN_NAME): " user_email
+                read -p "请输入证书申请邮箱 (默认: admin@$DOMAIN): " user_email
                 if [[ -n "$user_email" ]]; then
                     CERT_EMAIL="$user_email"
                 else
-                    CERT_EMAIL="admin@$DOMAIN_NAME"
+                    CERT_EMAIL="admin@$DOMAIN"
                 fi
                 
-                log_success "将使用域名证书，域名: $DOMAIN_NAME，邮箱: $CERT_EMAIL"
+                log_success "将使用域名证书，域名: $DOMAIN，邮箱: $CERT_EMAIL"
                 break
                 ;;
             *)
@@ -395,6 +394,27 @@ setup_caddy_tls() {
     local caddyfile="$SCRIPT_DIR/Caddyfile"
     local cert_dir="$SCRIPT_DIR/certs"
     
+    # 确保从环境文件加载变量
+    if [ -f "$ENV_FILE" ]; then
+        set -a
+        source "$ENV_FILE"
+        set +a
+        log_info "已加载环境变量: DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
+        
+        # 验证必需变量（域名模式需要域名和邮箱）
+        if [[ "$TLS_MODE" == "auto" && ( -z "$DOMAIN" || "$DOMAIN" == "example.com" ) ]]; then
+            log_error "域名模式需要配置有效的DOMAIN变量"
+            return 1
+        fi
+        if [[ "$TLS_MODE" == "auto" && ( -z "$CERT_EMAIL" || "$CERT_EMAIL" == "admin@example.com" ) ]]; then
+            log_error "域名模式需要配置有效的CERT_EMAIL变量" 
+            return 1
+        fi
+    else
+        log_error "未找到环境配置文件: $ENV_FILE"
+        return 1
+    fi
+    
     case "$TLS_MODE" in
         "selfsigned")
             log_info "使用IP地址自签名证书模式"
@@ -476,10 +496,11 @@ EOF
             
         "auto"|"")
             log_info "使用自动域名证书模式（Let's Encrypt）"
-            check_domain_cert_status "$DOMAIN_NAME"
+            # check_domain_cert_status "$DOMAIN"  # 临时跳过域名检查
             
-            # 创建自动证书Caddyfile
-            cat > "$caddyfile" << 'EOF'
+            # 创建自动证书Caddyfile（直接替换变量）
+            log_info "生成Caddyfile，使用 DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
+            cat > "$caddyfile" << EOF
 # AI代理平台 Caddy 配置文件 - 自动域名证书模式
 
 # ================================
@@ -490,7 +511,7 @@ EOF
     auto_https disable_redirects
     
     # 证书申请邮箱
-    email {$CERT_EMAIL}
+    email $CERT_EMAIL
     
     # 管理端点
     admin :2019
@@ -507,7 +528,7 @@ EOF
 # ================================
 # 主域名 HTTPS (443端口) - 自动证书
 # ================================
-{$DOMAIN} {
+$DOMAIN {
     # 健康检查端点
     handle /health {
         respond "OK - Auto TLS" 200
@@ -534,29 +555,9 @@ EOF
 }
 
 # ================================
-# 8443端口 HTTPS 转发 - 内部证书
-# ================================
-:8443 {
-    tls internal
-    
-    handle /health {
-        respond "OK - Port 8443" 200
-    }
-    
-    handle /* {
-        reverse_proxy proxy:8080 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-        }
-    }
-}
-
-# ================================
 # 8443端口 HTTPS 转发 - 自动证书 (AI代理服务)
 # ================================
-{$DOMAIN}:8443 {
+$DOMAIN:8443 {
     # 健康检查端点
     handle /health {
         respond "OK - Port 8443" 200
@@ -576,96 +577,16 @@ EOF
 # ================================
 # HTTP重定向到HTTPS
 # ================================
-http://{$DOMAIN} {
-    redir https://{$DOMAIN}{uri} permanent
+http://$DOMAIN {
+    redir https://$DOMAIN{uri} permanent
 }
 EOF
             ;;
             
-        "manual")
-            log_info "使用手动证书模式"
-            if [[ ! -f "$cert_dir/$DOMAIN_NAME.crt" || ! -f "$cert_dir/$DOMAIN_NAME.key" ]]; then
-                log_error "手动模式需要提供证书文件: $cert_dir/$DOMAIN_NAME.crt 和 $cert_dir/$DOMAIN_NAME.key"
-                return 1
-            fi
-            
-            # 创建手动证书Caddyfile（类似自签名，但使用手动提供的证书）
-            cat > "$caddyfile" << 'EOF'
-# AI代理平台 Caddy 配置文件 - 手动证书模式
-
-# ================================
-# 全局选项
-# ================================
-{
-    # 禁用自动HTTPS
-    auto_https off
-    
-    # 管理端点
-    admin :2019
-    
-    # 日志级别
-    log {
-        level INFO
-    }
-}
-
-# ================================
-# 主域名 HTTPS (443端口) - 手动证书
-# ================================
-https://{$DOMAIN} {
-    # 使用手动提供的证书
-    tls /etc/caddy/certs/{$DOMAIN}.crt /etc/caddy/certs/{$DOMAIN}.key
-    
-    # 健康检查端点
-    handle /health {
-        respond "OK - Manual TLS" 200
-    }
-    
-    # 管理API和前端 - 转发到9090端口
-    handle /* {
-        reverse_proxy proxy:9090 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-        }
-    }
-    
-    # 访问日志
-    log {
-        output file /var/log/caddy/manual.log {
-            roll_size 100mb
-            roll_keep 10
-        }
-        format json
-    }
-}
-
-# ================================
-# 8443端口 HTTPS 转发 - 手动证书 (AI代理服务)
-# ================================
-{$DOMAIN}:8443 {
-    tls /etc/caddy/certs/{$DOMAIN}.crt /etc/caddy/certs/{$DOMAIN}.key
-    
-    handle /health {
-        respond "OK - Port 8443" 200
-    }
-    
-    handle /* {
-        reverse_proxy proxy:8080 {
-            header_up Host {http.request.host}
-            header_up X-Real-IP {http.request.remote.host}
-            header_up X-Forwarded-For {http.request.remote.host}
-            header_up X-Forwarded-Proto {http.request.scheme}
-        }
-    }
-}
-EOF
-            ;;
             
         *)
             log_error "不支持的TLS模式: $TLS_MODE"
-            log_info "支持的模式: auto, selfsigned, manual"
+            log_info "支持的模式: auto, selfsigned"
             return 1
             ;;
     esac
@@ -678,12 +599,12 @@ show_cert_status() {
     log_step "TLS证书状态检查"
     
     local cert_dir="$SCRIPT_DIR/certs"
-    local cert_file="$cert_dir/$DOMAIN_NAME.crt"
+    local cert_file="$cert_dir/$DOMAIN.crt"
     
     echo ""
     log_info "当前配置:"
     echo "  TLS模式: $TLS_MODE"
-    echo "  域名: $DOMAIN_NAME"
+    echo "  域名: $DOMAIN"
     echo "  证书邮箱: $CERT_EMAIL"
     
     echo ""
@@ -742,8 +663,8 @@ renew_certificates() {
         "selfsigned")
             log_info "重新生成自签名证书"
             # 删除旧证书强制重新生成
-            rm -f "$SCRIPT_DIR/certs/$DOMAIN_NAME.crt" "$SCRIPT_DIR/certs/$DOMAIN_NAME.key"
-            generate_self_signed_cert "$DOMAIN_NAME"
+            rm -f "$SCRIPT_DIR/certs/$DOMAIN.crt" "$SCRIPT_DIR/certs/$DOMAIN.key"
+            generate_self_signed_cert "$DOMAIN"
             ;;
             
         "auto"|"")
@@ -754,7 +675,7 @@ renew_certificates() {
                 container_id=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy)
                 docker exec "$container_id" curl -X POST http://localhost:2019/load \
                     -H "Content-Type: application/json" \
-                    -d '{"apps":{"tls":{"automation":{"policies":[{"management":{"module":"acme"},"subjects":["'$DOMAIN_NAME'"]}]}}}}'
+                    -d '{"apps":{"tls":{"automation":{"policies":[{"management":{"module":"acme"},"subjects":["'$DOMAIN'"]}]}}}}'
                 log_success "证书更新请求已发送"
             else
                 log_error "Caddy服务未运行，无法更新证书"
@@ -762,11 +683,6 @@ renew_certificates() {
             fi
             ;;
             
-        "manual")
-            log_warning "手动模式需要您自己更新证书文件"
-            log_info "请将新证书放在: $SCRIPT_DIR/certs/$DOMAIN_NAME.crt"
-            log_info "请将私钥放在: $SCRIPT_DIR/certs/$DOMAIN_NAME.key"
-            ;;
     esac
     
     # 重启Caddy服务以加载新证书
@@ -781,12 +697,12 @@ switch_tls_mode() {
     local new_mode="$1"
     
     if [[ -z "$new_mode" ]]; then
-        log_error "请指定TLS模式: auto, selfsigned, manual"
+        log_error "请指定TLS模式: auto, selfsigned"
         return 1
     fi
     
     case "$new_mode" in
-        "auto"|"selfsigned"|"manual")
+        "auto"|"selfsigned")
             log_step "切换TLS模式: $TLS_MODE -> $new_mode"
             
             # 更新环境变量
@@ -810,7 +726,7 @@ switch_tls_mode() {
             ;;
         *)
             log_error "不支持的TLS模式: $new_mode"
-            log_info "支持的模式: auto, selfsigned, manual"
+            log_info "支持的模式: auto, selfsigned"
             return 1
             ;;
     esac
@@ -865,7 +781,7 @@ LOCAL_IP=${LOCAL_IP}
 EOF
         else
             cat >> "$ENV_FILE" << EOF
-DOMAIN=${DOMAIN_NAME}
+DOMAIN=${DOMAIN}
 CERT_EMAIL=${CERT_EMAIL}
 EOF
         fi
@@ -912,7 +828,7 @@ build_images() {
             ENV_LOCAL_IP="${LOCAL_IP:-$(grep '^LOCAL_IP=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)}"
             log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=自签名证书, IP=${ENV_LOCAL_IP}"
         else
-            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=域名证书, DOMAIN=${DOMAIN_NAME}"
+            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=域名证书, DOMAIN=${DOMAIN}"
         fi
     fi
     
@@ -1068,13 +984,13 @@ show_access_info() {
         echo "  • 自签名证书仅供测试使用，生产环境请使用域名证书"
     else
         echo -e "${BLUE}🌍 域名证书模式 (生产环境):${NC}"
-        echo -e "  📱 主域名:    ${GREEN}https://$DOMAIN_NAME${NC} ${YELLOW}← 主要访问入口${NC}"
-        echo -e "  🔧 管理面板:  ${GREEN}https://$DOMAIN_NAME/dashboard${NC}"
-        echo -e "  🤖 API接口:   ${GREEN}https://$DOMAIN_NAME/api${NC}"
-        echo -e "  🚀 AI代理服务: ${GREEN}https://$DOMAIN_NAME:8443${NC}"
+        echo -e "  📱 主域名:    ${GREEN}https://$DOMAIN${NC} ${YELLOW}← 主要访问入口${NC}"
+        echo -e "  🔧 管理面板:  ${GREEN}https://$DOMAIN/dashboard${NC}"
+        echo -e "  🤖 API接口:   ${GREEN}https://$DOMAIN/api${NC}"
+        echo -e "  🚀 AI代理服务: ${GREEN}https://$DOMAIN:8443${NC}"
         echo ""
         echo -e "${YELLOW}📌 证书信息:${NC}"
-        echo "  • 域名: $DOMAIN_NAME"
+        echo "  • 域名: $DOMAIN"
         echo "  • 邮箱: $CERT_EMAIL"
         echo "  • 自动续期: Let's Encrypt"
     fi
@@ -1126,7 +1042,7 @@ TLS证书管理:
   cert-status          查看当前证书状态
   cert-renew           手动更新证书
   cert-selfsign        生成自签名证书（开发用）
-  cert-mode <mode>     切换证书模式 (auto|selfsigned|manual)
+  cert-mode <mode>     切换证书模式 (auto|selfsigned)
 
 服务架构:
   统一代理服务：
@@ -1147,7 +1063,7 @@ TLS证书管理:
 环境变量:
   DOMAIN=<domain>      指定主域名（默认：example.com）
   LOCAL_IP=<ip>        指定本机IP地址（自动检测或手动设置，默认：自动检测）
-  TLS_MODE=<mode>      TLS证书模式（auto|selfsigned|manual，默认：auto）
+  TLS_MODE=<mode>      TLS证书模式（auto|selfsigned，默认：auto）
   CERT_EMAIL=<email>   Let's Encrypt证书申请邮箱
 
 使用示例:
@@ -1172,7 +1088,7 @@ TLS证书管理示例:
   • https://localhost              # 本地访问
   • https://localhost:8443         # 备用端口
   • http://[本机IP]                # HTTP访问（开发模式）
-  • 域名模式: https://example.com # 域名访问（auto/manual证书模式）
+  • 域名模式: https://example.com # 域名访问（auto证书模式）
 
 EOF
 }
@@ -1232,7 +1148,7 @@ main() {
             ;;
         "cert-selfsign")
             TLS_MODE="selfsigned"
-            generate_self_signed_cert "$DOMAIN_NAME"
+            generate_self_signed_cert "$DOMAIN"
             ;;
         "cert-mode")
             switch_tls_mode "$2"
