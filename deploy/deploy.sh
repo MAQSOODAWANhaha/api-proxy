@@ -134,25 +134,44 @@ interactive_tls_setup() {
                 fi
                 
                 log_success "将使用自签名证书，主IP: $LOCAL_IP"
+                log_info "配置摘要: TLS_MODE=$TLS_MODE, LOCAL_IP=$LOCAL_IP"
                 break
                 ;;
             2)
                 TLS_MODE="auto"
                 echo ""
                 echo -e "${BLUE}域名配置:${NC}"
-                read -p "请输入域名 (必填): " user_domain
-                if [[ -n "$user_domain" ]]; then
-                    DOMAIN="$user_domain"
-                fi
                 
-                read -p "请输入证书申请邮箱 (默认: admin@$DOMAIN): " user_email
-                if [[ -n "$user_email" ]]; then
-                    CERT_EMAIL="$user_email"
-                else
-                    CERT_EMAIL="admin@$DOMAIN"
-                fi
+                # 域名是必填项，必须验证
+                while true; do
+                    read -p "请输入域名 (必填): " user_domain
+                    if [[ -n "$user_domain" && "$user_domain" != "example.com" ]]; then
+                        DOMAIN="$user_domain"
+                        break
+                    else
+                        log_error "域名不能为空且不能是示例域名，请输入真实域名"
+                    fi
+                done
+                
+                # 邮箱验证
+                while true; do
+                    read -p "请输入证书申请邮箱 (默认: admin@$DOMAIN): " user_email
+                    if [[ -n "$user_email" ]]; then
+                        # 简单邮箱格式验证
+                        if [[ "$user_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                            CERT_EMAIL="$user_email"
+                            break
+                        else
+                            log_error "邮箱格式无效，请重新输入"
+                        fi
+                    else
+                        CERT_EMAIL="admin@$DOMAIN"
+                        break
+                    fi
+                done
                 
                 log_success "将使用域名证书，域名: $DOMAIN，邮箱: $CERT_EMAIL"
+                log_info "配置摘要: TLS_MODE=$TLS_MODE, DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
                 break
                 ;;
             *)
@@ -387,29 +406,19 @@ check_domain_cert_status() {
     return 0
 }
 
-# 配置Caddy证书模式
+# 配置Caddy证书模式（只负责生成Caddyfile）
 setup_caddy_tls() {
-    log_step "配置Caddy TLS模式: $TLS_MODE"
+    log_step "生成Caddy配置文件"
     
     local caddyfile="$SCRIPT_DIR/Caddyfile"
     local cert_dir="$SCRIPT_DIR/certs"
     
-    # 确保从环境文件加载变量
+    # 简单读取环境变量（环境文件已在prepare_environment中生成）
     if [ -f "$ENV_FILE" ]; then
         set -a
         source "$ENV_FILE"
         set +a
-        log_info "已加载环境变量: DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
-        
-        # 验证必需变量（域名模式需要域名和邮箱）
-        if [[ "$TLS_MODE" == "auto" && ( -z "$DOMAIN" || "$DOMAIN" == "example.com" ) ]]; then
-            log_error "域名模式需要配置有效的DOMAIN变量"
-            return 1
-        fi
-        if [[ "$TLS_MODE" == "auto" && ( -z "$CERT_EMAIL" || "$CERT_EMAIL" == "admin@example.com" ) ]]; then
-            log_error "域名模式需要配置有效的CERT_EMAIL变量" 
-            return 1
-        fi
+        log_info "读取环境配置: TLS_MODE=$TLS_MODE"
     else
         log_error "未找到环境配置文件: $ENV_FILE"
         return 1
@@ -418,6 +427,7 @@ setup_caddy_tls() {
     case "$TLS_MODE" in
         "selfsigned")
             log_info "使用IP地址自签名证书模式"
+            log_info "生成自签名证书Caddyfile: LOCAL_IP=$LOCAL_IP"
             generate_ip_self_signed_cert
             
             # 创建基于IP的自签名证书Caddyfile
@@ -496,10 +506,7 @@ EOF
             
         "auto"|"")
             log_info "使用自动域名证书模式（Let's Encrypt）"
-            # check_domain_cert_status "$DOMAIN"  # 临时跳过域名检查
-            
-            # 创建自动证书Caddyfile（直接替换变量）
-            log_info "生成Caddyfile，使用 DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
+            log_info "生成域名证书Caddyfile: DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
             cat > "$caddyfile" << EOF
 # AI代理平台 Caddy 配置文件 - 自动域名证书模式
 
@@ -591,7 +598,7 @@ EOF
             ;;
     esac
     
-    log_success "Caddy TLS配置完成: $TLS_MODE 模式"
+    log_success "Caddy配置文件生成完成: $TLS_MODE 模式"
 }
 
 # 查看证书状态
@@ -750,17 +757,13 @@ prepare_environment() {
         log_warning "配置文件 $CONFIG_SOURCE 不存在"
     fi
     
-    # 交互式选择TLS配置
+    # 第1步：交互式收集用户输入
     interactive_tls_setup
     
-    # 设置TLS证书模式
-    setup_caddy_tls
-    
-    # 确保环境变量文件存在
-    if [ ! -f "$ENV_FILE" ]; then
-        log_info "创建环境配置文件: $ENV_FILE"
-        cat > "$ENV_FILE" << EOF
-# AI代理平台环境配置
+    # 第2步：立即根据用户输入生成环境文件
+    log_info "根据用户配置生成环境文件: $ENV_FILE"
+    cat > "$ENV_FILE" << EOF
+# AI代理平台环境配置 - 根据用户输入自动生成
 
 # ================================
 # 基础配置
@@ -769,24 +772,27 @@ COMPOSE_PROJECT_NAME=api-proxy
 CONFIG_FILE=config.prod.toml
 
 # ================================
-# TLS证书配置 (用户交互式选择)
+# TLS证书配置 (用户交互式选择结果)
 # ================================
 TLS_MODE=${TLS_MODE}
 EOF
 
-        # 根据TLS模式添加相应配置
-        if [[ "$TLS_MODE" == "selfsigned" ]]; then
-            cat >> "$ENV_FILE" << EOF
+    # 根据TLS模式添加相应的用户配置
+    if [[ "$TLS_MODE" == "selfsigned" ]]; then
+        log_info "添加自签名证书配置到环境文件"
+        cat >> "$ENV_FILE" << EOF
 LOCAL_IP=${LOCAL_IP}
 EOF
-        else
-            cat >> "$ENV_FILE" << EOF
+    else
+        log_info "添加域名证书配置到环境文件"
+        cat >> "$ENV_FILE" << EOF
 DOMAIN=${DOMAIN}
 CERT_EMAIL=${CERT_EMAIL}
 EOF
-        fi
+    fi
 
-        cat >> "$ENV_FILE" << EOF
+    # 添加通用配置
+    cat >> "$ENV_FILE" << EOF
 
 # ================================
 # 日志配置
@@ -800,42 +806,53 @@ RUST_BACKTRACE=1
 DATABASE_URL=sqlite:///app/data/api-proxy.db
 
 # ================================
+# Redis配置
+# ================================
+REDIS_URL=redis://redis:6379
+
+# ================================
+# 安全配置
+# ================================
+JWT_SECRET=59cRk3Cp/+SpZ9LZxA3ypQh0kKnY48JB6tbJPRzcsw4=
+API_KEY_SECRET=BjvhuJKr7K9xVkv/UTThV97ovabUC39LGw7VtIHu3Ck=
+
+# ================================
+# 前端配置
+# ================================
+VITE_API_BASE_URL=/api
+VITE_WS_URL=/ws
+VITE_APP_VERSION=1.0.0
+
+# ================================
+# 监控配置
+# ================================
+ENABLE_METRICS=true
+METRICS_PORT=9091
+
+# ================================
 # 版本标识
 # ================================
 VERSION=1.0.0
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
+
+    log_success "环境文件生成完成: $ENV_FILE"
+    
+    # 第3步：验证生成的环境文件
+    log_info "验证环境文件内容:"
+    if [[ "$TLS_MODE" == "selfsigned" ]]; then
+        log_info "  模式: 自签名证书"
+        log_info "  IP地址: $LOCAL_IP"
+    else
+        log_info "  模式: 域名证书"
+        log_info "  域名: $DOMAIN"
+        log_info "  邮箱: $CERT_EMAIL"
     fi
+    
+    # 第4步：生成Caddy配置
+    setup_caddy_tls
     
     log_success "环境配置完成"
-}
-
-# 构建镜像
-build_images() {
-    log_step "构建统一Docker镜像"
-    
-    cd "$SCRIPT_DIR"
-    
-    # 使用.env文件
-    if [ -f "$ENV_FILE" ]; then
-        set -a  # 自动导出所有变量
-        source "$ENV_FILE"
-        set +a  # 关闭自动导出
-        
-        # 根据TLS模式显示不同信息
-        if [[ "$TLS_MODE" == "selfsigned" ]]; then
-            # 从环境文件读取IP或使用当前变量
-            ENV_LOCAL_IP="${LOCAL_IP:-$(grep '^LOCAL_IP=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)}"
-            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=自签名证书, IP=${ENV_LOCAL_IP}"
-        else
-            log_info "已加载环境变量: CONFIG_FILE=${CONFIG_FILE}, TLS_MODE=域名证书, DOMAIN=${DOMAIN}"
-        fi
-    fi
-    
-    # 构建统一的前后端镜像
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --no-cache proxy
-    
-    log_success "统一镜像构建完成"
 }
 
 # 启动服务
@@ -1032,7 +1049,6 @@ AI代理平台统一部署脚本
 管理命令:
   status               查看服务运行状态
   logs [service]       查看服务日志 (proxy|caddy|redis)
-  build                重新构建Docker镜像
   cleanup [--images]   清理Docker资源
   backup               备份数据库
   restore <file>       恢复数据库
@@ -1103,7 +1119,6 @@ main() {
         "install")
             check_docker
             prepare_environment
-            build_images
             start_services
             show_access_info
             ;;
@@ -1123,10 +1138,6 @@ main() {
             ;;
         "logs")
             show_logs "$2" "$3"
-            ;;
-        "build")
-            check_docker
-            build_images
             ;;
         "cleanup")
             cleanup "$2"
