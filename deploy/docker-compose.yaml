@@ -28,8 +28,6 @@ services:
       - DATABASE_URL=sqlite:///app/data/api-proxy.db
     networks:
       - api-proxy-network
-    depends_on:
-      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
       interval: 30s
@@ -78,25 +76,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # ================================
-  # Redis缓存服务
-  # ================================
-  redis:
-    image: docker.m.daocloud.io/redis:7.2-alpine
-    container_name: api-proxy-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    networks:
-      - api-proxy-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
 # ================================
 # 数据卷定义
@@ -105,8 +84,6 @@ volumes:
   proxy_data:
     driver: local
   proxy_logs:
-    driver: local
-  redis_data:
     driver: local
   caddy_data:
     driver: local

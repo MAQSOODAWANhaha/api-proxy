@@ -806,11 +806,6 @@ RUST_BACKTRACE=1
 DATABASE_URL=sqlite:///app/data/api-proxy.db
 
 # ================================
-# Redis配置
-# ================================
-REDIS_URL=redis://redis:6379
-
-# ================================
 # 安全配置
 # ================================
 JWT_SECRET=59cRk3Cp/+SpZ9LZxA3ypQh0kKnY48JB6tbJPRzcsw4=
@@ -909,7 +904,6 @@ show_status() {
     log_info "服务健康状态:"
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec proxy curl -f http://localhost:9090/api/health 2>/dev/null && log_success "统一代理服务正常" || log_warning "统一代理服务异常"
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec caddy wget --quiet --tries=1 --spider http://localhost:2019/config/ 2>/dev/null && log_success "Caddy代理正常" || log_warning "Caddy代理异常"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec redis redis-cli ping 2>/dev/null && log_success "Redis服务正常" || log_warning "Redis服务异常"
 }
 
 # 查看日志
@@ -1022,11 +1016,10 @@ show_access_info() {
     echo -e "${BLUE}🔧 直接访问（调试用）:${NC}"
     echo "  • 统一服务: http://localhost:9090"
     echo "  • API健康检查: http://localhost:9090/api/health"
-    echo "  • Redis: redis://localhost:6379"
     echo ""
     echo -e "${BLUE}⚙️ 管理命令:${NC}"
     echo -e "  📊 查看状态: ${GREEN}./deploy.sh status${NC}"
-    echo -e "  📋 查看日志: ${GREEN}./deploy.sh logs [proxy|caddy|redis]${NC}"
+    echo -e "  📋 查看日志: ${GREEN}./deploy.sh logs [proxy|caddy]${NC}"
     echo -e "  ⏹️  停止服务: ${GREEN}./deploy.sh stop${NC}"
     echo -e "  🔄 重启服务: ${GREEN}./deploy.sh restart${NC}"
     echo ""
@@ -1048,7 +1041,7 @@ AI代理平台统一部署脚本
 
 管理命令:
   status               查看服务运行状态
-  logs [service]       查看服务日志 (proxy|caddy|redis)
+  logs [service]       查看服务日志 (proxy|caddy)
   cleanup [--images]   清理Docker资源
   backup               备份数据库
   restore <file>       恢复数据库
@@ -1073,8 +1066,6 @@ TLS证书管理:
     • 443端口：主域名访问
     • 8443端口：备用访问端口
 
-  Redis缓存：
-    • 6379端口，用于缓存和会话管理
 
 环境变量:
   DOMAIN=<domain>      指定主域名（默认：example.com）
