@@ -340,25 +340,39 @@ generate_ip_self_signed_cert() {
     openssl x509 -in "$cert_file" -text -noout | grep -A 5 "Subject Alternative Name" 2>/dev/null || log_warning "无法读取SAN信息"
 }
 
-# 检查域名证书状态
-check_domain_cert_status() {
+# 简单检查域名证书是否存在且有效
+check_existing_cert() {
     local domain="$1"
-    log_step "检查域名 $domain 的证书状态"
     
-    # 检查域名解析
-    if ! nslookup "$domain" &>/dev/null; then
-        log_warning "域名 $domain 解析失败，可能影响证书申请"
-        return 1
+    # 检查Caddy容器是否存在
+    if ! docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy &>/dev/null; then
+        return 1  # 容器不存在，需要申请证书
     fi
     
-    # 检查80和443端口可达性（Let's Encrypt需要）
-    local local_ip
-    local_ip=$(get_local_ip)
+    local container_id
+    container_id=$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q caddy)
     
-    log_info "检查域名解析: $domain -> $(nslookup "$domain" | grep -A1 "Name:" | tail -n1 | awk '{print $2}' 2>/dev/null || echo "未解析")"
-    log_info "本机IP: $local_ip"
+    if [[ -n "$container_id" ]]; then
+        # 检查证书文件是否存在
+        local cert_files
+        cert_files=$(docker exec "$container_id" find /data/caddy/certificates -name "*${domain}*" -name "*.crt" 2>/dev/null)
+        
+        if [[ -n "$cert_files" ]]; then
+            # 找到证书文件，检查有效期
+            local cert_file
+            cert_file=$(echo "$cert_files" | head -1)
+            
+            # 检查证书是否在30天内过期
+            if docker exec "$container_id" openssl x509 -in "$cert_file" -checkend 2592000 -noout &>/dev/null 2>&1; then
+                log_success "发现有效证书，跳过申请避免Let's Encrypt速率限制"
+                return 0  # 证书有效
+            else
+                log_warning "现有证书即将过期，需要续期"
+            fi
+        fi
+    fi
     
-    return 0
+    return 1  # 需要申请证书
 }
 
 # 配置Caddy证书模式（只负责生成Caddyfile）
@@ -462,14 +476,22 @@ EOF
         "auto"|"")
             log_info "使用自动域名证书模式（Let's Encrypt）"
             log_info "生成域名证书Caddyfile: DOMAIN=$DOMAIN, CERT_EMAIL=$CERT_EMAIL"
+            
+            # 检查现有证书，避免重复申请
+            if check_existing_cert "$DOMAIN"; then
+                log_info "检测到有效证书，Caddy将复用现有证书"
+            else
+                log_info "未发现有效证书，Caddy将申请新证书（注意Let's Encrypt速率限制）"
+            fi
+            
             cat > "$caddyfile" << EOF
-# AI代理平台 Caddy 配置文件 - 自动域名证书模式
+# AI代理平台 Caddy 配置文件 - 智能证书管理
 
 # ================================
 # 全局选项
 # ================================
 {
-    # 自动HTTPS (域名模式下默认启用，不需要重定向)
+    # 自动HTTPS
     auto_https disable_redirects
     
     # 证书申请邮箱
@@ -483,17 +505,17 @@ EOF
         level INFO
     }
     
-    # ACME服务器（生产环境使用Let's Encrypt）
+    # Let's Encrypt配置
     acme_ca https://acme-v02.api.letsencrypt.org/directory
 }
 
 # ================================
-# 主域名 HTTPS (443端口) - 自动证书
+# 主域名 HTTPS (443端口) - 智能证书管理
 # ================================
 $DOMAIN {
     # 健康检查端点
     handle /health {
-        respond "OK - Auto TLS" 200
+        respond "OK - Smart TLS Management" 200
     }
     
     # 管理API和前端 - 转发到9090端口
@@ -517,12 +539,12 @@ $DOMAIN {
 }
 
 # ================================
-# 8443端口 HTTPS 转发 - 自动证书 (AI代理服务)
+# 8443端口 HTTPS 转发 - 智能证书管理 (AI代理服务)
 # ================================
 $DOMAIN:8443 {
     # 健康检查端点
     handle /health {
-        respond "OK - Port 8443" 200
+        respond "OK - Port 8443 Smart TLS" 200
     }
     
     # AI代理服务 - 转发到8080端口
@@ -664,6 +686,7 @@ renew_certificates() {
     
     log_success "证书更新完成"
 }
+
 
 # 重新生成安全密钥（谨慎操作）
 regenerate_security_secrets() {

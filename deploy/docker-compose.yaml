@@ -49,8 +49,10 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/etc/caddy/certs:ro
+      # 证书数据持久化 - 关键配置，避免证书重复申请
       - caddy_data:/data
       - caddy_config:/config
+      # Caddy日志持久化
       - ./logs/caddy:/var/log/caddy
     environment:
       - DOMAIN=${DOMAIN:-example.com}
