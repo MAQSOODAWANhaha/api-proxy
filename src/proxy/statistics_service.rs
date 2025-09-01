@@ -286,7 +286,85 @@ impl StatisticsService {
         None
     }
 
-    /// 从响应体JSON提取token使用信息（数据驱动版本）
+    /// 解析SSE(Server-Sent Events)格式的响应体
+    /// 
+    /// SSE响应格式为多行"data: {...}"，需要提取每行的JSON数据并返回最后一个完整的JSON对象
+    fn parse_sse_response(&self, response_body: &str) -> Result<serde_json::Value, ProxyError> {
+        let mut last_json = None;
+        
+        // 按行分割响应体，处理每个"data: "行
+        for line in response_body.lines() {
+            let line = line.trim();
+            
+            // 跳过空行和非data行
+            if line.is_empty() || !line.starts_with("data: ") {
+                continue;
+            }
+            
+            // 提取"data: "后面的JSON字符串
+            let json_str = &line[6..]; // 跳过"data: "前缀
+            
+            // 跳过SSE结束标记
+            if json_str == "[DONE]" {
+                break;
+            }
+            
+            // 尝试解析JSON
+            match serde_json::from_str::<serde_json::Value>(json_str) {
+                Ok(json_value) => {
+                    last_json = Some(json_value);
+                    tracing::debug!(
+                        json_preview = %if json_str.len() > 200 { 
+                            format!("{}...", &json_str[..200]) 
+                        } else { 
+                            json_str.to_string() 
+                        },
+                        "Successfully parsed SSE data line"
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        line = %if json_str.len() > 200 { 
+                            format!("{}...", &json_str[..200]) 
+                        } else { 
+                            json_str.to_string() 
+                        },
+                        error = %e,
+                        "Failed to parse SSE data line as JSON, continuing"
+                    );
+                    // 继续处理其他行，不中断整个解析过程
+                }
+            }
+        }
+        
+        match last_json {
+            Some(json) => Ok(json),
+            None => Err(ProxyError::internal("No valid JSON data found in SSE response"))
+        }
+    }
+
+    /// 检测响应体是否为SSE格式
+    fn is_sse_format(&self, response_body: &str, content_type: Option<&str>) -> bool {
+        // 检查Content-Type
+        if let Some(ct) = content_type {
+            if ct.contains("text/event-stream") {
+                return true;
+            }
+        }
+        
+        // 检查响应体内容格式
+        let first_few_lines: Vec<&str> = response_body.lines().take(3).collect();
+        let has_data_prefix = first_few_lines.iter().any(|line| line.trim().starts_with("data: "));
+        
+        // 如果有多个"data: "开头的行，很可能是SSE格式
+        let data_line_count = first_few_lines.iter()
+            .filter(|line| line.trim().starts_with("data: "))
+            .count();
+        
+        has_data_prefix && (data_line_count > 0 || content_type.map_or(false, |ct| ct.contains("event-stream")))
+    }
+
+    /// 从响应体JSON提取token使用信息（数据驱动版本，支持SSE格式）
     /// 
     /// 这个方法应该在响应体收集完成后调用，使用数据库配置的TokenFieldExtractor获取准确的token数据
     pub async fn extract_token_usage_from_response_body(
@@ -329,38 +407,83 @@ impl StatisticsService {
             }
         };
 
-        // 解析响应体为JSON - 支持流式响应
+        // 获取响应的Content-Type用于格式检测
+        let content_type = ctx.response_details.content_type.as_deref();
+        
+        // 解析响应体为JSON - 支持SSE和传统流式响应
         let response_json: serde_json::Value = {
-            // 对于流式响应，响应体可能是多个JSON对象的拼接，我们需要处理最后一个完整的JSON
-            let mut last_json = None;
-            let stream =
-                serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
-
-            for value_result in stream {
-                if let Ok(value) = value_result {
-                    last_json = Some(value);
+            // 首先检测是否为SSE格式
+            if self.is_sse_format(response_body, content_type) {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    content_type = ?content_type,
+                    "Detected SSE format response, using SSE parser"
+                );
+                
+                match self.parse_sse_response(response_body) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            provider = %provider_type.name,
+                            error = %e,
+                            body_preview = %if response_body.len() > 500 {
+                                format!("{}...", &response_body[..500])
+                            } else {
+                                response_body.clone()
+                            },
+                            "Failed to parse SSE response body for token extraction"
+                        );
+                        return Ok(TokenUsage::default());
+                    }
                 }
-            }
+            } else {
+                // 传统流式响应处理：响应体可能是多个JSON对象的拼接
+                let mut last_json = None;
+                let stream =
+                    serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
 
-            match last_json {
-                Some(json) => json,
-                None => {
-                    // 如果流式解析失败，尝试作为单个JSON解析（兼容非流式响应）
-                    match serde_json::from_str(response_body) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            tracing::warn!(
-                                request_id = %ctx.request_id,
-                                provider = %provider_type.name,
-                                error = %e,
-                                body_preview = %if response_body.len() > 200 {
-                                    format!("{}...", &response_body[..200])
-                                } else {
-                                    response_body.clone()
-                                },
-                                "Failed to parse response body as JSON for token extraction"
-                            );
-                            return Ok(TokenUsage::default());
+                for value_result in stream {
+                    if let Ok(value) = value_result {
+                        last_json = Some(value);
+                    }
+                }
+
+                match last_json {
+                    Some(json) => {
+                        tracing::debug!(
+                            request_id = %ctx.request_id,
+                            provider = %provider_type.name,
+                            "Successfully parsed traditional streaming response"
+                        );
+                        json
+                    }
+                    None => {
+                        // 如果流式解析失败，尝试作为单个JSON解析（兼容非流式响应）
+                        match serde_json::from_str(response_body) {
+                            Ok(json) => {
+                                tracing::debug!(
+                                    request_id = %ctx.request_id,
+                                    provider = %provider_type.name,
+                                    "Successfully parsed single JSON response"
+                                );
+                                json
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    request_id = %ctx.request_id,
+                                    provider = %provider_type.name,
+                                    error = %e,
+                                    body_preview = %if response_body.len() > 200 {
+                                        format!("{}...", &response_body[..200])
+                                    } else {
+                                        response_body.clone()
+                                    },
+                                    "Failed to parse response body as JSON for token extraction"
+                                );
+                                return Ok(TokenUsage::default());
+                            }
                         }
                     }
                 }
@@ -475,31 +598,58 @@ impl StatisticsService {
             }
         };
 
-        // 解析响应体为JSON
+        // 获取响应的Content-Type用于格式检测
+        let content_type = ctx.response_details.content_type.as_deref();
+        
+        // 解析响应体为JSON - 支持SSE和传统流式响应
         let response_json: serde_json::Value = {
-            let mut last_json = None;
-            let stream =
-                serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
-
-            for value_result in stream {
-                if let Ok(value) = value_result {
-                    last_json = Some(value);
+            // 首先检测是否为SSE格式
+            if self.is_sse_format(response_body, content_type) {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    provider = %provider_type.name,
+                    content_type = ?content_type,
+                    "Detected SSE format response for stats extraction, using SSE parser"
+                );
+                
+                match self.parse_sse_response(response_body) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        tracing::warn!(
+                            request_id = %ctx.request_id,
+                            provider = %provider_type.name,
+                            error = %e,
+                            "Failed to parse SSE response body for stats extraction"
+                        );
+                        return Ok(DetailedRequestStats::default());
+                    }
                 }
-            }
+            } else {
+                // 传统流式响应处理
+                let mut last_json = None;
+                let stream =
+                    serde_json::Deserializer::from_str(response_body).into_iter::<serde_json::Value>();
 
-            match last_json {
-                Some(json) => json,
-                None => {
-                    match serde_json::from_str(response_body) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            tracing::warn!(
-                                request_id = %ctx.request_id,
-                                provider = %provider_type.name,
-                                error = %e,
-                                "Failed to parse response body as JSON for stats extraction"
-                            );
-                            return Ok(DetailedRequestStats::default());
+                for value_result in stream {
+                    if let Ok(value) = value_result {
+                        last_json = Some(value);
+                    }
+                }
+
+                match last_json {
+                    Some(json) => json,
+                    None => {
+                        match serde_json::from_str(response_body) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                tracing::warn!(
+                                    request_id = %ctx.request_id,
+                                    provider = %provider_type.name,
+                                    error = %e,
+                                    "Failed to parse response body as JSON for stats extraction"
+                                );
+                                return Ok(DetailedRequestStats::default());
+                            }
                         }
                     }
                 }

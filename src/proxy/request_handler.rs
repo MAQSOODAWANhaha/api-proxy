@@ -144,6 +144,39 @@ impl ResponseDetails {
         }
     }
 
+    /// 检测响应是否为SSE格式
+    pub fn is_sse_format(&self) -> bool {
+        // 检查Content-Type
+        if let Some(content_type) = &self.content_type {
+            if content_type.contains("text/event-stream") {
+                return true;
+            }
+        }
+        
+        // 检查响应体内容格式（如果已经finalized）
+        if let Some(body) = &self.body {
+            let first_few_lines: Vec<&str> = body.lines().take(5).collect();
+            let data_line_count = first_few_lines.iter()
+                .filter(|line| line.trim().starts_with("data: "))
+                .count();
+            
+            // 如果有多个"data: "开头的行，很可能是SSE格式
+            return data_line_count > 1;
+        }
+        
+        false
+    }
+
+    /// 获取SSE响应中的有效数据行数量
+    pub fn get_sse_data_line_count(&self) -> usize {
+        if let Some(body) = &self.body {
+            return body.lines()
+                .filter(|line| line.trim().starts_with("data: ") && !line.contains("[DONE]"))
+                .count();
+        }
+        0
+    }
+
     /// 完成响应体收集，将累积的数据转换为字符串
     pub fn finalize_body(&mut self) {
         let original_chunks_len = self.body_chunks.len();
@@ -173,11 +206,28 @@ impl ResponseDetails {
                             "Response body finalized as UTF-8 string (truncated)"
                         );
                     } else {
-                        self.body = Some(body_str);
-                        tracing::info!(
-                            body_size = original_str_len,
-                            "Response body finalized as UTF-8 string (complete)"
-                        );
+                        self.body = Some(body_str.clone());
+                        
+                        // 检测是否为SSE格式并记录相关信息
+                        let is_sse = body_str.lines().any(|line| line.trim().starts_with("data: "));
+                        if is_sse {
+                            let data_line_count = body_str.lines()
+                                .filter(|line| line.trim().starts_with("data: ") && !line.contains("[DONE]"))
+                                .count();
+                            
+                            tracing::info!(
+                                body_size = original_str_len,
+                                is_sse_format = true,
+                                sse_data_lines = data_line_count,
+                                "Response body finalized as UTF-8 string (complete, SSE format detected)"
+                            );
+                        } else {
+                            tracing::info!(
+                                body_size = original_str_len,
+                                is_sse_format = false,
+                                "Response body finalized as UTF-8 string (complete)"
+                            );
+                        }
                     }
                 }
                 Err(utf8_error) => {

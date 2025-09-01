@@ -60,6 +60,28 @@ check_command() {
     fi
 }
 
+# 生成安全的随机密钥
+generate_secure_key() {
+    if command -v openssl &> /dev/null; then
+        openssl rand -base64 32
+    elif command -v head &> /dev/null && [ -r /dev/urandom ]; then
+        head -c 32 /dev/urandom | base64
+    else
+        # 备用方法：使用date和随机数生成
+        echo -n "$(date +%s)$(shuf -i 1000-9999 -n 1)$(hostname)" | sha256sum | cut -d' ' -f1 | head -c 32 | base64
+    fi
+}
+
+# 从现有环境文件中提取值
+extract_env_value() {
+    local key="$1"
+    local env_file="$2"
+    
+    if [[ -f "$env_file" ]]; then
+        grep "^${key}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | head -1
+    fi
+}
+
 # 检查Docker和Docker Compose
 check_docker() {
     log_step "检查Docker环境"
@@ -247,73 +269,6 @@ ensure_local_ip() {
 # TLS证书管理函数
 # ================================
 
-# 生成自签名证书
-generate_self_signed_cert() {
-    log_step "生成自签名TLS证书"
-    
-    local cert_dir="$SCRIPT_DIR/certs"
-    local domain="$1"
-    local cert_file="$cert_dir/${domain}.crt"
-    local key_file="$cert_dir/${domain}.key"
-    
-    # 检查是否已存在证书
-    if [[ -f "$cert_file" && -f "$key_file" ]]; then
-        log_info "证书已存在，检查有效期..."
-        if openssl x509 -in "$cert_file" -checkend 604800 -noout &>/dev/null; then
-            log_success "现有证书仍然有效（7天内不会过期）"
-            return 0
-        else
-            log_warning "证书即将过期，重新生成..."
-        fi
-    fi
-    
-    # 确保证书目录存在
-    mkdir -p "$cert_dir"
-    
-    # 创建证书配置文件
-    cat > "$cert_dir/cert.conf" << EOF
-[req]
-distinguished_name = req_distinguished_name
-req_extensions = v3_req
-prompt = no
-
-[req_distinguished_name]
-C = CN
-ST = Beijing
-L = Beijing
-O = AI Proxy Platform
-OU = Development
-CN = ${domain}
-
-[v3_req]
-keyUsage = keyEncipherment, dataEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = ${domain}
-DNS.2 = *.${domain}
-DNS.3 = localhost
-IP.1 = 127.0.0.1
-IP.2 = $(get_local_ip)
-EOF
-    
-    # 生成私钥和证书
-    openssl genrsa -out "$key_file" 2048
-    openssl req -new -key "$key_file" -out "$cert_dir/${domain}.csr" -config "$cert_dir/cert.conf"
-    openssl x509 -req -in "$cert_dir/${domain}.csr" -signkey "$key_file" -out "$cert_file" \
-        -days 365 -extensions v3_req -extfile "$cert_dir/cert.conf"
-    
-    # 设置权限
-    chmod 600 "$key_file"
-    chmod 644 "$cert_file"
-    
-    # 清理临时文件
-    rm -f "$cert_dir/${domain}.csr" "$cert_dir/cert.conf"
-    
-    log_success "自签名证书生成完成: $cert_file"
-    log_info "证书有效期: 365天"
-}
 
 # 生成基于IP的自签名证书（简化版）
 generate_ip_self_signed_cert() {
@@ -606,13 +561,24 @@ show_cert_status() {
     log_step "TLS证书状态检查"
     
     local cert_dir="$SCRIPT_DIR/certs"
-    local cert_file="$cert_dir/$DOMAIN.crt"
+    local cert_file=""
+    
+    # 根据TLS模式选择正确的证书文件
+    if [[ "$TLS_MODE" == "selfsigned" ]]; then
+        cert_file="$cert_dir/server.crt"
+    else
+        cert_file="$cert_dir/$DOMAIN.crt"
+    fi
     
     echo ""
     log_info "当前配置:"
     echo "  TLS模式: $TLS_MODE"
-    echo "  域名: $DOMAIN"
-    echo "  证书邮箱: $CERT_EMAIL"
+    if [[ "$TLS_MODE" == "selfsigned" ]]; then
+        echo "  本机IP: $LOCAL_IP"
+    else
+        echo "  域名: $DOMAIN"
+        echo "  证书邮箱: $CERT_EMAIL"
+    fi
     
     echo ""
     if [[ -f "$cert_file" ]]; then
@@ -670,8 +636,8 @@ renew_certificates() {
         "selfsigned")
             log_info "重新生成自签名证书"
             # 删除旧证书强制重新生成
-            rm -f "$SCRIPT_DIR/certs/$DOMAIN.crt" "$SCRIPT_DIR/certs/$DOMAIN.key"
-            generate_self_signed_cert "$DOMAIN"
+            rm -f "$SCRIPT_DIR/certs/server.crt" "$SCRIPT_DIR/certs/server.key"
+            generate_ip_self_signed_cert
             ;;
             
         "auto"|"")
@@ -697,6 +663,55 @@ renew_certificates() {
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart caddy
     
     log_success "证书更新完成"
+}
+
+# 重新生成安全密钥（谨慎操作）
+regenerate_security_secrets() {
+    log_step "重新生成安全密钥"
+    
+    echo ""
+    log_warning "⚠️  重要提醒：此操作将重新生成JWT_SECRET和API_KEY_SECRET"
+    echo ""
+    echo "这将导致："
+    echo "• 所有用户的JWT token失效，需要重新登录"
+    echo "• 所有API密钥需要重新验证"
+    echo "• 当前进行的API调用可能中断"
+    echo ""
+    
+    read -p "确定要继续吗？(输入 'YES' 确认): " confirm
+    
+    if [[ "$confirm" != "YES" ]]; then
+        log_info "操作已取消"
+        return 0
+    fi
+    
+    log_info "生成新的安全密钥..."
+    
+    # 生成新密钥
+    local new_jwt_secret=$(generate_secure_key)
+    local new_api_key_secret=$(generate_secure_key)
+    
+    # 更新环境文件
+    if [[ -f "$ENV_FILE" ]]; then
+        # 备份原文件
+        cp "$ENV_FILE" "${ENV_FILE}.backup.$(date +%Y%m%d-%H%M%S)"
+        log_info "已备份原环境文件"
+        
+        # 更新密钥
+        sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${new_jwt_secret}/" "$ENV_FILE"
+        sed -i "s/^API_KEY_SECRET=.*/API_KEY_SECRET=${new_api_key_secret}/" "$ENV_FILE"
+        
+        log_success "安全密钥已更新"
+        
+        # 重启服务
+        log_info "重启服务以应用新密钥"
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart proxy
+        
+        log_success "密钥重新生成完成，所有用户需要重新登录"
+    else
+        log_error "未找到环境配置文件: $ENV_FILE"
+        return 1
+    fi
 }
 
 # 切换TLS模式
@@ -760,7 +775,35 @@ prepare_environment() {
     # 第1步：交互式收集用户输入
     interactive_tls_setup
     
-    # 第2步：立即根据用户输入生成环境文件
+    # 第2步：在生成新环境文件之前，先保存现有的安全密钥 - 关键修复点
+    log_info "处理安全密钥配置"
+    
+    # 检查是否存在旧的环境文件以保持密钥持久化
+    local existing_jwt_secret
+    local existing_api_key_secret
+    
+    if [[ -f "$ENV_FILE" ]]; then
+        existing_jwt_secret=$(extract_env_value "JWT_SECRET" "$ENV_FILE")
+        existing_api_key_secret=$(extract_env_value "API_KEY_SECRET" "$ENV_FILE")
+        log_info "发现现有环境文件，将保持密钥持久化"
+    fi
+    
+    # 如果没有现有密钥，生成新的安全密钥
+    if [[ -z "$existing_jwt_secret" ]]; then
+        existing_jwt_secret=$(generate_secure_key)
+        log_success "生成新的JWT_SECRET"
+    else
+        log_info "保持现有JWT_SECRET不变"
+    fi
+    
+    if [[ -z "$existing_api_key_secret" ]]; then
+        existing_api_key_secret=$(generate_secure_key)
+        log_success "生成新的API_KEY_SECRET"
+    else
+        log_info "保持现有API_KEY_SECRET不变"
+    fi
+
+    # 第3步：根据用户输入生成环境文件（现在安全密钥已经准备好）
     log_info "根据用户配置生成环境文件: $ENV_FILE"
     cat > "$ENV_FILE" << EOF
 # AI代理平台环境配置 - 根据用户输入自动生成
@@ -806,10 +849,10 @@ RUST_BACKTRACE=1
 DATABASE_URL=sqlite:///app/data/api-proxy.db
 
 # ================================
-# 安全配置
+# 安全配置 (持久化密钥，避免用户会话丢失)
 # ================================
-JWT_SECRET=59cRk3Cp/+SpZ9LZxA3ypQh0kKnY48JB6tbJPRzcsw4=
-API_KEY_SECRET=BjvhuJKr7K9xVkv/UTThV97ovabUC39LGw7VtIHu3Ck=
+JWT_SECRET=${existing_jwt_secret}
+API_KEY_SECRET=${existing_api_key_secret}
 
 # ================================
 # 前端配置
@@ -1053,6 +1096,9 @@ TLS证书管理:
   cert-selfsign        生成自签名证书（开发用）
   cert-mode <mode>     切换证书模式 (auto|selfsigned)
 
+安全密钥管理:
+  regenerate-secrets   重新生成JWT和API密钥（⚠️ 谨慎使用）
+
 服务架构:
   统一代理服务：
     • 前后端合并部署，9090端口提供完整服务
@@ -1150,10 +1196,14 @@ main() {
             ;;
         "cert-selfsign")
             TLS_MODE="selfsigned"
-            generate_self_signed_cert "$DOMAIN"
+            ensure_local_ip
+            generate_ip_self_signed_cert
             ;;
         "cert-mode")
             switch_tls_mode "$2"
+            ;;
+        "regenerate-secrets")
+            regenerate_security_secrets
             ;;
         "help"|"--help"|"-h"|"")
             show_help
