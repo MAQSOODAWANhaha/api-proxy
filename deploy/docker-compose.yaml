@@ -15,8 +15,6 @@ services:
       # 数据持久化
       - proxy_data:/app/data
       - proxy_logs:/app/logs
-      # TLS证书（如果需要外部证书）
-      - ./certs:/app/certs:ro
       # 配置文件（可选，用于动态配置）
       - ./config:/app/config:ro
     environment:
@@ -50,8 +48,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/etc/caddy/certs:ro
       # 证书数据持久化 - 关键配置，避免证书重复申请
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./caddy_data:/data
+      - ./caddy_config:/config
       # Caddy日志持久化
       - ./logs/caddy:/var/log/caddy
     environment:
@@ -78,7 +76,6 @@ services:
       timeout: 10s
       retries: 3
 
-
 # ================================
 # 数据卷定义
 # ================================
@@ -86,10 +83,6 @@ volumes:
   proxy_data:
     driver: local
   proxy_logs:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
     driver: local
 
 # ================================

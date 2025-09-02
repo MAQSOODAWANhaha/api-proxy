@@ -136,23 +136,16 @@ impl AuthStrategyManager {
         strategy.handle_callback(code, state).await.map_err(Into::into)
     }
     
-    /// 动态注册OAuth2策略
+    /// 动态注册OAuth2策略 (已迁移到UnifiedOAuthClient)
     pub async fn register_oauth2_strategy(
         &mut self,
-        client_id: String,
-        client_secret: String,
-        auth_url: String,
-        token_url: String,
+        _client_id: String,
+        _client_secret: String,
+        _auth_url: String,
+        _token_url: String,
     ) -> Result<()> {
-        use crate::auth::oauth::strategies::OAuth2Strategy;
-        let strategy = Box::new(OAuth2Strategy::new(
-            client_id,
-            client_secret,
-            auth_url,
-            token_url,
-        ));
-        self.register_strategy(strategy);
-        Ok(())
+        // TODO: 使用UnifiedOAuthClient替代旧的OAuth2Strategy
+        Err(AuthError::ConfigError("OAuth2策略已迁移到UnifiedOAuthClient，请使用新的OAuth接口".to_string()).into())
     }
 }
 
