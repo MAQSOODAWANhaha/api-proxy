@@ -10,7 +10,7 @@ import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
 import { useTokensTrend } from '../../hooks/useTokensTrend'
 import { useUserApiKeysTrend } from '../../hooks/useUserApiKeysTrend'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, PieChart as RechartsPieChart, Pie, Cell } from 'recharts'
 
 /** 指标项接口 */
 interface StatItem {
@@ -555,25 +555,9 @@ const CompactTimeRangeSelector: React.FC<{
   )
 }
 
-/** 饼图组件 */
+/** 饼图组件 - 使用Recharts实现 */
 const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   const total = data.reduce((sum, item) => sum + item.count, 0)
-  let currentAngle = 0
-
-  const createPath = (startAngle: number, endAngle: number) => {
-    const centerX = 160
-    const centerY = 160
-    const radius = 120
-
-    const x1 = centerX + radius * Math.cos(startAngle)
-    const y1 = centerY + radius * Math.sin(startAngle)
-    const x2 = centerX + radius * Math.cos(endAngle)
-    const y2 = centerY + radius * Math.sin(endAngle)
-
-    const largeArcFlag = endAngle - startAngle <= Math.PI ? "0" : "1"
-
-    return `M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2} Z`
-  }
 
   // 智能处理模型数据显示
   const processedData = useMemo(() => {
@@ -628,48 +612,74 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   // 动态调整图例布局：少量模型用单列，多模型用双列
   const legendCols = processedData.length <= 3 ? 1 : 2
 
+  // 自定义Tooltip
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload
+      return (
+        <div className="bg-white border border-neutral-200 rounded-lg p-3 shadow-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <div 
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: data.color }}
+            />
+            <span className="font-medium text-neutral-900">{data.name}</span>
+          </div>
+          <div className="text-sm space-y-1">
+            <div className="flex justify-between gap-4">
+              <span className="text-neutral-600">请求次数:</span>
+              <span className="font-medium">{data.count.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-neutral-600">占比:</span>
+              <span className="font-medium">{data.percentage.toFixed(1)}%</span>
+            </div>
+            {data.cost > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-neutral-600">成本:</span>
+                <span className="font-medium">${data.cost.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
+
   return (
     <div className="flex flex-col items-center gap-6">
+      {/* Recharts 饼图 */}
       <div className="relative">
-        <svg width="320" height="320" className="transform -rotate-90">
-          {processedData.map((item, index) => {
-            const percentage = (item.count / total) * 100
-            const startAngle = currentAngle
-            const endAngle = currentAngle + (percentage / 100) * 2 * Math.PI
-            currentAngle = endAngle
-
-            // 过滤掉极小的片段（<0.5%），避免视觉噪音
-            if (percentage < 0.5) return null
-
-            return (
-              <g key={index}>
-                <path
-                  d={createPath(startAngle, endAngle)}
-                  fill={item.color}
-                  className="transition-all duration-200 hover:opacity-80 cursor-pointer"
+        <ResponsiveContainer width={320} height={320}>
+          <RechartsPieChart>
+            <Pie
+              data={processedData}
+              cx={160}
+              cy={160}
+              innerRadius={60}
+              outerRadius={120}
+              paddingAngle={2}
+              dataKey="count"
+              stroke="none"
+            >
+              {processedData.map((entry, index) => (
+                <Cell 
+                  key={`cell-${index}`} 
+                  fill={entry.color}
                   style={{
-                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))'
+                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))',
+                    cursor: 'pointer'
                   }}
                 />
-                {/* 为小片段添加标签线（当片段太小时） */}
-                {percentage > 0.5 && percentage < 5 && (
-                  <g className="pointer-events-none">
-                    <line
-                      x1={160 + 90 * Math.cos((startAngle + endAngle) / 2)}
-                      y1={160 + 90 * Math.sin((startAngle + endAngle) / 2)}
-                      x2={160 + 130 * Math.cos((startAngle + endAngle) / 2)}
-                      y2={160 + 130 * Math.sin((startAngle + endAngle) / 2)}
-                      stroke={item.color}
-                      strokeWidth="1"
-                      className="opacity-60"
-                    />
-                  </g>
-                )}
-              </g>
-            )
-          })}
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
+              ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </RechartsPieChart>
+        </ResponsiveContainer>
+        
+        {/* 中心显示总数 */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <div className="text-3xl font-bold text-neutral-900">{total.toLocaleString()}</div>
             <div className="text-sm text-neutral-500 mt-1">总请求数</div>
@@ -677,6 +687,7 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
         </div>
       </div>
       
+      {/* 图例 */}
       <div className={`w-full grid gap-2 ${legendCols === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
         {processedData.map((item, index) => (
           <div key={index} className="flex items-center gap-2">
