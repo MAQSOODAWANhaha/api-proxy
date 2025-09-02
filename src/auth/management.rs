@@ -23,6 +23,39 @@ pub struct Claims {
     pub iat: usize,
 }
 
+/// 从请求头中检查用户是否为管理员
+/// 基于已有的JWT token解析逻辑，返回管理员状态
+pub fn check_is_admin_from_headers(headers: &HeaderMap) -> Result<bool, axum::response::Response> {
+    // 使用共享的AuthUtils提取Authorization头
+    let auth_header = match AuthUtils::extract_authorization_header(headers) {
+        Some(header) => header,
+        None => return Ok(false), // 无认证头，默认非管理员
+    };
+
+    // 使用共享的AuthUtils提取Bearer token
+    let token = match AuthUtils::extract_bearer_token(&auth_header) {
+        Some(token) => token,
+        None => return Ok(false), // token格式错误，默认非管理员
+    };
+
+    // 从环境变量获取JWT密钥
+    let jwt_secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+
+    // 验证并解码JWT token
+    let validation = Validation::default();
+    let token_data = match decode::<Claims>(
+        &token,
+        &DecodingKey::from_secret(jwt_secret.as_ref()),
+        &validation,
+    ) {
+        Ok(data) => data,
+        Err(_) => return Ok(false), // token无效，默认非管理员
+    };
+
+    Ok(token_data.claims.is_admin)
+}
+
 /// 从请求头中提取用户ID
 /// 解析JWT token并返回当前认证用户的ID
 pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::response::Response> {

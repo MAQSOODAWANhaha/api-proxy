@@ -2,7 +2,7 @@
 //!
 //! 基于 proxy_tracing 表的日志查询、统计和分析功能
 
-use crate::auth::extract_user_id_from_headers;
+use crate::auth::{extract_user_id_from_headers, check_is_admin_from_headers};
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
 use ::entity::proxy_tracing;
@@ -247,15 +247,21 @@ pub async fn get_traces_list(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     // 验证用户认证
-    let _user_id = match extract_user_id_from_headers(&headers) {
+    let user_id = match extract_user_id_from_headers(&headers) {
         Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
+
+    // 检查是否为管理员
+    let is_admin = match check_is_admin_from_headers(&headers) {
+        Ok(is_admin) => is_admin,
         Err(response) => return response,
     };
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20).min(100); // 限制最大每页100条
 
-    match fetch_traces_list(&state.database, &query, page, limit).await {
+    match fetch_traces_list(&state.database, &query, page, limit, user_id, is_admin).await {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志列表失败: {}", e);
@@ -275,9 +281,19 @@ async fn fetch_traces_list(
     query: &LogsListQuery,
     page: u64,
     limit: u64,
+    current_user_id: i32,
+    is_admin: bool,
 ) -> Result<LogsListResponse, DbErr> {
     // 构建基础查询
     let mut select = ProxyTracing::find();
+
+    // 权限控制：非管理员只能查看自己的日志记录
+    if !is_admin {
+        select = select.filter(proxy_tracing::Column::UserId.eq(current_user_id));
+        tracing::info!("Non-admin user {} accessing traces - filtering by user_id", current_user_id);
+    } else {
+        tracing::info!("Admin user {} accessing all traces", current_user_id);
+    }
 
     // 应用搜索过滤
     if let Some(search) = &query.search {

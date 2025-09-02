@@ -1,5 +1,6 @@
 //! # 用户管理处理器
 
+use crate::auth::{extract_user_id_from_headers, check_is_admin_from_headers};
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -230,7 +231,60 @@ async fn get_user_statistics(user_id: i32, db: &DatabaseConnection) -> UserStats
 pub async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
+    headers: HeaderMap,
 ) -> axum::response::Response {
+    // 验证用户认证
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(user_id) => user_id,
+        Err(response) => return response,
+    };
+
+    // 检查是否为管理员
+    let is_admin = match check_is_admin_from_headers(&headers) {
+        Ok(is_admin) => is_admin,
+        Err(response) => return response,
+    };
+
+    // 权限控制：非管理员只能查看自己的用户信息
+    if !is_admin {
+        // 非管理员只能查看自己的信息，直接返回单个用户数据
+        let self_user = match Users::find_by_id(user_id)
+            .one(state.database.as_ref())
+            .await
+        {
+            Ok(Some(user)) => user,
+            Ok(None) => {
+                return response::error(
+                    StatusCode::NOT_FOUND,
+                    "USER_NOT_FOUND",
+                    "用户不存在",
+                );
+            }
+            Err(err) => {
+                tracing::error!("获取用户信息失败: {}", err);
+                return response::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DB_ERROR",
+                    "获取用户信息失败",
+                );
+            }
+        };
+
+        let user_stats = get_user_statistics(self_user.id, state.database.as_ref()).await;
+        let user_response = UserResponse::from_user_with_stats(self_user, user_stats);
+        
+        let pagination = response::Pagination {
+            page: 1,
+            limit: 1,
+            total: 1,
+            pages: 1,
+        };
+        
+        tracing::info!("Non-admin user {} accessing only their own user info", user_id);
+        return response::paginated(vec![user_response], pagination);
+    }
+
+    tracing::info!("Admin user {} accessing all users list", user_id);
     let page = query.page.unwrap_or(1).max(1);
     let limit = query.limit.unwrap_or(10).min(100);
     let offset = (page - 1) * limit;

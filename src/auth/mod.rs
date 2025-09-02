@@ -22,30 +22,27 @@ pub mod utils;
 pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
-pub use management::{Claims, extract_user_id_from_headers};
-pub use strategies::{AuthStrategy, OAuthTokenResult};
-pub use oauth::{
-    OAuthSessionManager, CreateSessionRequest, CompleteSessionRequest, SessionInfo
-};
+pub use management::{Claims, check_is_admin_from_headers, extract_user_id_from_headers};
+pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
 pub use permissions::{Permission, Role};
-pub use proxy::{ProxyAuthenticator, ProxyAuthResult};
+pub use proxy::{ProxyAuthResult, ProxyAuthenticator};
 pub use service::AuthService;
+pub use strategies::{AuthStrategy, OAuthTokenResult};
 pub use types::*;
-// 注意：RefactoredUnifiedAuthManager已被删除，请使用新的服务化架构  
+// 注意：RefactoredUnifiedAuthManager已被删除，请使用新的服务化架构
 pub use unified_refactored::{AuthRequest, RefactoredUnifiedAuthManager};
 pub use utils::AuthUtils;
 
-
 // 统一缓存策略
 pub use cache_strategy::{
-    UnifiedAuthCacheManager, AuthCacheKey, AuthCacheStats, CacheStrategyConfig,
-    hash_token, hash_credentials,
+    AuthCacheKey, AuthCacheStats, CacheStrategyConfig, UnifiedAuthCacheManager, hash_credentials,
+    hash_token,
 };
 
 // 双认证边界控制
 pub use dual_auth_boundary::{
-    DualAuthBoundaryController, AuthBoundaryRule, PortType, AuthRequestContext,
-    BoundaryViolationStats, validate_auth_boundary, get_violation_stats,
+    AuthBoundaryRule, AuthRequestContext, BoundaryViolationStats, DualAuthBoundaryController,
+    PortType, get_violation_stats, validate_auth_boundary,
 };
 
 /// 统一认证结果
@@ -73,11 +70,11 @@ pub struct AuthResult {
 }
 
 /// 认证方式 - 表示已完成认证的方式（认证结果状态）
-/// 
+///
 /// 注意：与 `AuthType` 的区别：
 /// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
 /// - `AuthType` 表示认证策略的具体类型（配置输入）
-/// 
+///
 /// 例如：`AuthType::GoogleOAuth` 策略完成认证后，结果可能是 `AuthMethod::Jwt`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AuthMethod {
