@@ -27,6 +27,7 @@ import ModernSelect from '../../components/common/ModernSelect'
 import AuthTypeSelector from '../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
 import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType } from '../../lib/api'
+import { toast } from 'sonner'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
 interface LocalProviderKey extends ProviderKey {
@@ -754,24 +755,63 @@ const AddDialog: React.FC<{
 
   // OAuth处理函数
   const handleOAuthComplete = async (result: OAuthResult) => {
-    console.log('OAuth完成:', result)
+    console.log('=== OAuth完成回调开始 ===')
+    console.log('OAuth完成结果:', result)
+    console.log('当前formData状态:', formData)
+    
     if (result.success && result.data) {
+      console.log('OAuth数据详情:', {
+        access_token: result.data.access_token,
+        refresh_token: result.data.refresh_token,
+        token_type: result.data.token_type,
+        expires_in: result.data.expires_in,
+        auth_status: result.data.auth_status,
+        完整data对象: result.data
+      })
+      
       // OAuth成功完成，将获取到的token填充到表单
-      setOAuthStatus('completed')
+      setOAuthStatus('success')
       
       // 将OAuth返回的access_token填入表单的API密钥字段
-      setFormData(prev => ({
-        ...prev,
-        keyValue: result.data.access_token,
-        // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
-      }))
+      const newKeyValue = result.data.access_token
+      console.log('准备填充的access_token:', newKeyValue)
+      console.log('access_token类型:', typeof newKeyValue)
+      console.log('access_token长度:', newKeyValue ? newKeyValue.length : 0)
+      console.log('access_token是否为空:', !newKeyValue)
+      
+      setFormData(prev => {
+        const newFormData = {
+          ...prev,
+          keyValue: newKeyValue,
+          // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
+        }
+        console.log('更新前的formData:', prev)
+        console.log('更新后的formData:', newFormData)
+        console.log('keyValue变更:', prev.keyValue, '=>', newFormData.keyValue)
+        return newFormData
+      })
+      
+      // 延迟检查状态更新是否生效  
+      setTimeout(() => {
+        console.log('延迟检查 - 当前formData.keyValue:', formData.keyValue)
+        const inputElement = document.querySelector('input[placeholder*="API密钥"]') as HTMLInputElement
+        console.log('延迟检查 - 输入框实际值:', inputElement?.value)
+      }, 100)
       
       // 显示成功消息，提示用户可以看到token并决定是否提交
-      alert(`OAuth授权成功！Token已填充到API密钥字段，请检查并完善其他信息后点击"添加"按钮提交。`)
+      toast.success('OAuth授权成功！', {
+        description: 'Token已填充到API密钥字段，请检查并完善其他信息后点击"添加"按钮提交。',
+        duration: 5000,
+      })
     } else {
       setOAuthStatus('error')
+      toast.error('OAuth授权失败', {
+        description: result.error || 'OAuth授权过程中发生错误，请重试',
+        duration: 5000,
+      })
       console.error('OAuth失败:', result.error)
     }
+    console.log('=== OAuth完成回调结束 ===')
   }
 
   const handleProviderTypeChange = (value: string) => {
@@ -821,7 +861,7 @@ const AddDialog: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'completed') {
+    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'success') {
       alert('请先完成OAuth授权流程')
       return
     }
@@ -1167,23 +1207,29 @@ const EditDialog: React.FC<{
 
   // OAuth处理函数
   const handleOAuthComplete = async (result: OAuthResult) => {
-    console.log('OAuth完成:', result)
     if (result.success && result.data) {
       // OAuth成功完成，将获取到的token填充到表单
-      setOAuthStatus('completed')
+      setOAuthStatus('success')
       
       // 将OAuth返回的access_token填入表单的API密钥字段
+      const newKeyValue = result.data.access_token
+      
       setFormData(prev => ({
         ...prev,
-        keyValue: result.data.access_token,
-        // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
+        keyValue: newKeyValue,
       }))
       
       // 显示成功消息，提示用户可以看到token并决定是否提交
-      alert(`OAuth授权成功！Token已填充到API密钥字段，请检查并完善其他信息后点击"保存修改"按钮提交。`)
+      toast.success('OAuth授权成功！', {
+        description: 'Token已填充到API密钥字段，请检查并完善其他信息后点击"保存修改"按钮提交。',
+        duration: 5000,
+      })
     } else {
       setOAuthStatus('error')
-      console.error('OAuth失败:', result.error)
+      toast.error('OAuth授权失败', {
+        description: result.error || 'OAuth授权过程中发生错误，请重试',
+        duration: 5000,
+      })
     }
   }
 
@@ -1234,7 +1280,7 @@ const EditDialog: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'completed') {
+    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'success') {
       alert('请先完成OAuth授权流程')
       return
     }

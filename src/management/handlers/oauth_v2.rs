@@ -139,11 +139,7 @@ pub async fn poll_session(
     // 轮询会话状态
     match oauth_client.poll_session(&query.session_id).await {
         Ok(polling_status) => {
-            response::success(
-                OAuthV2Response::PollingStatus {
-                    data: polling_status,
-                }
-            )
+            response::success(polling_status)
         }
         Err(OAuthError::InvalidSession(_)) => {
             response::error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found")
@@ -180,11 +176,7 @@ pub async fn exchange_token(
     // 交换令牌
     match oauth_client.exchange_token(&request.session_id, &request.authorization_code).await {
         Ok(token_response) => {
-            response::success(
-                OAuthV2Response::TokenResponse {
-                    data: token_response,
-                }
-            )
+            response::success(token_response)
         }
         Err(OAuthError::InvalidSession(_)) => {
             response::error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found")
@@ -221,11 +213,7 @@ pub async fn list_sessions(
     // 获取用户会话列表
     match oauth_client.list_user_sessions(user_id).await {
         Ok(sessions) => {
-            response::success(
-                OAuthV2Response::SessionList {
-                    data: sessions,
-                }
-            )
+            response::success(sessions)
         }
         Err(e) => {
             tracing::error!("Failed to list sessions: {:?}", e);
@@ -291,11 +279,7 @@ pub async fn refresh_token(
     // 刷新令牌
     match oauth_client.refresh_token(&session_id).await {
         Ok(token_response) => {
-            response::success(
-                OAuthV2Response::TokenResponse {
-                    data: token_response,
-                }
-            )
+            response::success(token_response)
         }
         Err(OAuthError::InvalidSession(_)) => {
             response::error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found")
@@ -329,11 +313,7 @@ pub async fn get_statistics(
     // 获取统计信息
     match oauth_client.get_session_statistics(user_id).await {
         Ok(statistics) => {
-            response::success(
-                OAuthV2Response::Statistics {
-                    data: statistics,
-                }
-            )
+            response::success(statistics)
         }
         Err(e) => {
             tracing::error!("Failed to get statistics: {:?}", e);
