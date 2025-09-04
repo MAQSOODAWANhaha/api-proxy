@@ -24,8 +24,8 @@ pub fn create_routes(state: AppState) -> Router {
         .nest("/provider-types", provider_type_routes())
         // 日志管理路由
         .nest("/logs", logs_routes())
-        // OAuth认证路由
-        .nest("/oauth", oauth_routes())
+        // OAuth认证路由（新版本）
+        .nest("/oauth", oauth_v2_routes())
         .with_state(state)
 }
 
@@ -318,13 +318,28 @@ fn logs_routes() -> Router<AppState> {
         )
 }
 
-/// OAuth认证路由
-fn oauth_routes() -> Router<AppState> {
+// OAuth认证路由已迁移到oauth_v2_routes
+
+/// OAuth v2客户端路由
+fn oauth_v2_routes() -> Router<AppState> {
     use axum::routing::delete;
     Router::new()
-        .route("/authorize", post(crate::management::handlers::oauth::initiate_oauth_flow))
-        .route("/callback", get(crate::management::handlers::oauth::handle_oauth_callback))
-        .route("/status/{session_id}", get(crate::management::handlers::oauth::get_oauth_status))
-        .route("/refresh", post(crate::management::handlers::oauth::refresh_oauth_token))
-        .route("/revoke/{key_id}", delete(crate::management::handlers::oauth::revoke_oauth_authorization))
+        // 开始OAuth授权流程
+        .route("/authorize", post(crate::management::handlers::oauth_v2::start_authorization))
+        // 轮询OAuth会话状态
+        .route("/poll", get(crate::management::handlers::oauth_v2::poll_session))
+        // 交换授权码获取令牌
+        .route("/exchange", post(crate::management::handlers::oauth_v2::exchange_token))
+        // 获取用户会话列表
+        .route("/sessions", get(crate::management::handlers::oauth_v2::list_sessions))
+        // 删除会话
+        .route("/sessions/{session_id}", delete(crate::management::handlers::oauth_v2::delete_session))
+        // 刷新令牌
+        .route("/sessions/{session_id}/refresh", post(crate::management::handlers::oauth_v2::refresh_token))
+        // 获取统计信息
+        .route("/statistics", get(crate::management::handlers::oauth_v2::get_statistics))
+        // 清理过期会话（管理员接口）
+        .route("/cleanup", post(crate::management::handlers::oauth_v2::cleanup_expired_sessions))
+        // 获取支持的提供商列表
+        .route("/providers", get(crate::management::handlers::oauth_v2::list_providers))
 }

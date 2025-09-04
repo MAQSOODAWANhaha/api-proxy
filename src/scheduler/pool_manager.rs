@@ -5,15 +5,16 @@
 use super::algorithms::{ApiKeySelector, ApiKeySelectionResult, SelectionContext};
 use super::api_key_health::ApiKeyHealthChecker;
 use super::types::SchedulingStrategy;
+use crate::auth::{SmartApiKeyProvider, CredentialResult, AuthCredentialType};
 use crate::error::{ProxyError, Result};
 use entity::user_provider_keys;
 use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, warn, info, error};
 
 /// API密钥池管理器
-/// 职责：管理用户的API密钥池，根据策略选择合适的密钥
+/// 职责：管理用户的API密钥池，根据策略选择合适的密钥，并集成OAuth token智能刷新
 pub struct ApiKeyPoolManager {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
@@ -23,6 +24,8 @@ pub struct ApiKeyPoolManager {
     selectors: tokio::sync::RwLock<HashMap<SchedulingStrategy, Arc<dyn ApiKeySelector>>>,
     /// API密钥健康检查器
     health_checker: Arc<ApiKeyHealthChecker>,
+    /// 智能API密钥提供者（支持OAuth token刷新）
+    smart_provider: Option<Arc<SmartApiKeyProvider>>,
 }
 
 impl ApiKeyPoolManager {
@@ -33,7 +36,28 @@ impl ApiKeyPoolManager {
             key_pools: tokio::sync::RwLock::new(HashMap::new()),
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             health_checker,
+            smart_provider: None,
         }
+    }
+
+    /// 创建带有智能密钥提供者的API密钥池管理器
+    pub fn new_with_smart_provider(
+        db: Arc<DatabaseConnection>, 
+        health_checker: Arc<ApiKeyHealthChecker>,
+        smart_provider: Arc<SmartApiKeyProvider>
+    ) -> Self {
+        Self {
+            db,
+            key_pools: tokio::sync::RwLock::new(HashMap::new()),
+            selectors: tokio::sync::RwLock::new(HashMap::new()),
+            health_checker,
+            smart_provider: Some(smart_provider),
+        }
+    }
+
+    /// 设置智能密钥提供者
+    pub fn set_smart_provider(&mut self, smart_provider: Arc<SmartApiKeyProvider>) {
+        self.smart_provider = Some(smart_provider);
     }
 
     /// 从用户服务API配置中获取API密钥池并选择密钥
@@ -124,6 +148,74 @@ impl ApiKeyPoolManager {
 
         let selector = self.get_selector(strategy).await;
         selector.select_key(keys_to_use, context).await
+    }
+
+    /// 使用智能提供者获取有效的API凭证（支持OAuth token刷新）
+    /// 
+    /// 这个方法集成了OAuth token的智能刷新功能：
+    /// 1. 使用传统的密钥选择逻辑选择API密钥
+    /// 2. 通过SmartApiKeyProvider获取有效凭证（自动处理OAuth token刷新）
+    /// 3. 返回增强的选择结果，包含实际可用的凭证
+    pub async fn select_smart_api_key_from_service_api(
+        &self,
+        service_api: &entity::user_service_apis::Model,
+        context: &SelectionContext,
+    ) -> Result<SmartApiKeySelectionResult> {
+        // 先使用传统方法选择密钥
+        let selection_result = self.select_api_key_from_service_api(service_api, context).await?;
+        
+        // 如果有智能提供者，获取有效凭证
+        if let Some(smart_provider) = &self.smart_provider {
+            match smart_provider.get_valid_credential(selection_result.selected_key.id).await {
+                Ok(credential_result) => {
+                    info!(
+                        key_id = selection_result.selected_key.id,
+                        auth_type = ?credential_result.auth_type,
+                        refreshed = credential_result.refreshed,
+                        "Successfully obtained smart API credential"
+                    );
+                    
+                    Ok(SmartApiKeySelectionResult {
+                        selection_result,
+                        credential: credential_result,
+                        smart_enhanced: true,
+                    })
+                },
+                Err(e) => {
+                    error!(
+                        key_id = selection_result.selected_key.id,
+                        error = ?e,
+                        "Failed to get smart API credential, falling back to raw key"
+                    );
+                    
+                    // 降级：使用原始API密钥
+                    let fallback_credential = CredentialResult {
+                        credential: selection_result.selected_key.api_key.clone(),
+                        auth_type: AuthCredentialType::ApiKey,
+                        refreshed: false,
+                    };
+                    
+                    Ok(SmartApiKeySelectionResult {
+                        selection_result,
+                        credential: fallback_credential,
+                        smart_enhanced: false,
+                    })
+                }
+            }
+        } else {
+            // 没有智能提供者，使用原始API密钥
+            let basic_credential = CredentialResult {
+                credential: selection_result.selected_key.api_key.clone(),
+                auth_type: AuthCredentialType::ApiKey,
+                refreshed: false,
+            };
+            
+            Ok(SmartApiKeySelectionResult {
+                selection_result,
+                credential: basic_credential,
+                smart_enhanced: false,
+            })
+        }
     }
 
     /// 缓存用户的API密钥池
@@ -301,6 +393,53 @@ pub struct PoolStats {
     pub total_tracked_keys: usize,
     /// 健康检查服务是否运行中
     pub health_check_running: bool,
+}
+
+/// 智能API密钥选择结果
+/// 
+/// 扩展了传统的ApiKeySelectionResult，增加了OAuth token智能刷新支持
+#[derive(Debug, Clone)]
+pub struct SmartApiKeySelectionResult {
+    /// 传统的密钥选择结果
+    pub selection_result: ApiKeySelectionResult,
+    
+    /// 智能凭证（可能是刷新后的OAuth token或原始API密钥）
+    pub credential: CredentialResult,
+    
+    /// 是否启用了智能增强（即是否使用了SmartApiKeyProvider）
+    pub smart_enhanced: bool,
+}
+
+impl SmartApiKeySelectionResult {
+    /// 获取实际可用的API凭证
+    pub fn get_credential(&self) -> &str {
+        &self.credential.credential
+    }
+    
+    /// 检查凭证是否是OAuth token
+    pub fn is_oauth_token(&self) -> bool {
+        matches!(self.credential.auth_type, AuthCredentialType::OAuthToken { .. })
+    }
+    
+    /// 检查凭证是否刚刚刷新过
+    pub fn is_refreshed(&self) -> bool {
+        self.credential.refreshed
+    }
+    
+    /// 获取选中的密钥ID
+    pub fn get_key_id(&self) -> i32 {
+        self.selection_result.selected_key.id
+    }
+    
+    /// 获取选中的密钥名称
+    pub fn get_key_name(&self) -> &str {
+        &self.selection_result.selected_key.name
+    }
+    
+    /// 获取用户ID
+    pub fn get_user_id(&self) -> i32 {
+        self.selection_result.selected_key.user_id
+    }
 }
 
 impl std::fmt::Debug for ApiKeyPoolManager {

@@ -13,7 +13,7 @@ use crate::auth::{
     AuthContext, AuthError, AuthMethod, AuthResult, AuthService,
     types::{AuthConfig, AuthType}, 
     strategies::traits::OAuthTokenResult,
-    oauth::OAuthSessionManager,
+    // oauth::OAuthSessionManager, // 已删除，使用oauth_client替代
 };
 use crate::cache::UnifiedCacheManager;
 use crate::error::Result;
@@ -32,7 +32,7 @@ pub struct RefactoredUnifiedAuthManager {
     /// 核心认证服务
     auth_service: Arc<AuthService>,
     /// OAuth会话管理器
-    oauth_session_manager: Arc<OAuthSessionManager>,
+    // oauth_session_manager: Arc<OAuthSessionManager>, // 已删除，使用oauth_client替代
     /// 认证配置
     config: Arc<AuthConfig>,
 }
@@ -59,14 +59,14 @@ impl RefactoredUnifiedAuthManager {
     pub async fn new(
         auth_service: Arc<AuthService>, 
         config: Arc<AuthConfig>,
-        db: Arc<DatabaseConnection>,
+        _db: Arc<DatabaseConnection>,
         _cache_manager: Arc<UnifiedCacheManager>,
     ) -> Result<Self> {
-        let oauth_session_manager = Arc::new(OAuthSessionManager::new(db.clone()));
+        // let oauth_session_manager = Arc::new(OAuthSessionManager::new(db.clone())); // 已删除
         
         Ok(Self {
             auth_service,
-            oauth_session_manager,
+            // oauth_session_manager, // 已删除
             config,
         })
     }
@@ -201,9 +201,9 @@ impl RefactoredUnifiedAuthManager {
     }
 
     /// 获取OAuth会话管理器引用（保持向后兼容）
-    pub fn get_oauth_session_manager(&self) -> &Arc<OAuthSessionManager> {
-        &self.oauth_session_manager
-    }
+    // pub fn get_oauth_session_manager(&self) -> &Arc<OAuthSessionManager> {
+    //     &self.oauth_session_manager
+    // } // 已删除，使用oauth_client替代
 
     /// 获取认证统计信息
     pub async fn get_auth_stats(&self) -> Result<std::collections::HashMap<String, String>> {
@@ -231,31 +231,33 @@ impl RefactoredUnifiedAuthManager {
         }.into())
     }
 
-    /// OAuth会话创建
-    pub async fn create_oauth_session(
-        &self,
-        request: crate::auth::oauth::CreateSessionRequest,
-    ) -> Result<crate::auth::oauth::SessionInfo> {
-        self.oauth_session_manager.create_session(request).await
-    }
-
-    /// 根据会话ID获取OAuth会话信息
-    pub async fn get_oauth_session_by_id(&self, session_id: &str) -> Result<Option<crate::auth::oauth::SessionInfo>> {
-        self.oauth_session_manager.get_session_by_id(session_id).await
-    }
-
-    /// 根据state参数获取OAuth会话信息
-    pub async fn get_oauth_session_by_state(&self, state: &str) -> Result<Option<crate::auth::oauth::SessionInfo>> {
-        self.oauth_session_manager.get_session_by_state(state).await
-    }
-
-    /// 完成OAuth会话
-    pub async fn complete_oauth_session(
-        &self,
-        request: crate::auth::oauth::CompleteSessionRequest,
-    ) -> Result<crate::auth::oauth::SessionInfo> {
-        self.oauth_session_manager.complete_session(request).await
-    }
+    // 注意：以下OAuth方法已被弃用，请使用新的oauth_client模块
+    // 
+    // /// OAuth会话创建
+    // pub async fn create_oauth_session(
+    //     &self,
+    //     request: crate::auth::oauth::CreateSessionRequest,
+    // ) -> Result<crate::auth::oauth::SessionInfo> {
+    //     self.oauth_session_manager.create_session(request).await
+    // }
+    //
+    // /// 根据会话ID获取OAuth会话信息
+    // pub async fn get_oauth_session_by_id(&self, session_id: &str) -> Result<Option<crate::auth::oauth::SessionInfo>> {
+    //     self.oauth_session_manager.get_session_by_id(session_id).await
+    // }
+    //
+    // /// 根据state参数获取OAuth会话信息
+    // pub async fn get_oauth_session_by_state(&self, state: &str) -> Result<Option<crate::auth::oauth::SessionInfo>> {
+    //     self.oauth_session_manager.get_session_by_id(session_id).await
+    // }
+    //
+    // /// 完成OAuth会话
+    // pub async fn complete_oauth_session(
+    //     &self,
+    //     request: crate::auth::oauth::CompleteSessionRequest,
+    // ) -> Result<crate::auth::oauth::SessionInfo> {
+    //     self.oauth_session_manager.complete_session(request).await
+    // }
 
     /// 获取OAuth认证URL
     pub async fn get_oauth_auth_url(
@@ -281,30 +283,34 @@ impl RefactoredUnifiedAuthManager {
         Err(AuthError::InternalError("OAuth回调处理需要专门实现".to_string()).into())
     }
 
-    /// 标记OAuth会话为失败
-    pub async fn fail_oauth_session(&self, session_id: &str, error_message: &str) -> Result<()> {
-        self.oauth_session_manager.fail_session(session_id, error_message).await
-    }
+    // 注意：以下OAuth方法已被弃用，请使用新的oauth_client模块
+    //
+    // /// 标记OAuth会话为失败
+    // pub async fn fail_oauth_session(&self, session_id: &str, error_message: &str) -> Result<()> {
+    //     self.oauth_session_manager.fail_session(session_id, error_message).await
+    // }
+    //
+    // /// 验证OAuth会话状态
+    // pub async fn validate_oauth_session(&self, session_id: &str, state: &str) -> Result<bool> {
+    //     self.oauth_session_manager.validate_session(session_id, state).await
+    // }
+    //
+    // /// 获取用户的活跃OAuth会话
+    // pub async fn get_user_active_oauth_sessions(&self, user_id: i32) -> Result<Vec<crate::auth::oauth::SessionInfo>> {
+    //     self.oauth_session_manager.get_user_active_sessions(user_id).await
+    // }
 
-    /// 验证OAuth会话状态
-    pub async fn validate_oauth_session(&self, session_id: &str, state: &str) -> Result<bool> {
-        self.oauth_session_manager.validate_session(session_id, state).await
-    }
-
-    /// 获取用户的活跃OAuth会话
-    pub async fn get_user_active_oauth_sessions(&self, user_id: i32) -> Result<Vec<crate::auth::oauth::SessionInfo>> {
-        self.oauth_session_manager.get_user_active_sessions(user_id).await
-    }
-
-    /// 撤销用户的所有OAuth会话
-    pub async fn revoke_user_oauth_sessions(&self, user_id: i32) -> Result<u64> {
-        self.oauth_session_manager.revoke_user_sessions(user_id).await
-    }
-
-    /// 清理过期的OAuth会话
-    pub async fn cleanup_expired_oauth_sessions(&self) -> Result<u64> {
-        self.oauth_session_manager.cleanup_expired_sessions().await
-    }
+    // 注意：以下OAuth方法已被弃用，请使用新的oauth_client模块
+    //
+    // /// 撤销用户的所有OAuth会话
+    // pub async fn revoke_user_oauth_sessions(&self, user_id: i32) -> Result<u64> {
+    //     self.oauth_session_manager.revoke_user_sessions(user_id).await
+    // }
+    //
+    // /// 清理过期的OAuth会话
+    // pub async fn cleanup_expired_oauth_sessions(&self) -> Result<u64> {
+    //     self.oauth_session_manager.cleanup_expired_sessions().await
+    // }
 }
 
 /// 便捷的工厂函数，用于创建重构后的RefactoredUnifiedAuthManager

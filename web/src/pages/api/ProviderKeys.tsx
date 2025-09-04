@@ -717,6 +717,7 @@ const AddDialog: React.FC<{
   
   // OAuth相关状态
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>('idle')
+  const [oauthExtraParams, setOAuthExtraParams] = useState<{ [key: string]: string }>({})
 
   // 获取服务商类型列表
   const fetchProviderTypes = async () => {
@@ -785,6 +786,7 @@ const AddDialog: React.FC<{
       // 重置OAuth状态和认证类型
       setOAuthStatus('idle')
       setFormData(prev => ({ ...prev, auth_type: 'api_key' }))
+      setOAuthExtraParams({})
     }
   }
 
@@ -794,6 +796,26 @@ const AddDialog: React.FC<{
     if (authType !== 'oauth2' && authType !== 'google_oauth') {
       setOAuthStatus('idle')
     }
+    // 重置额外参数
+    setOAuthExtraParams({})
+  }
+
+  // 获取当前认证类型的额外参数配置
+  const getCurrentAuthExtraParams = (): Array<{
+    key: string
+    label: string
+    default: string
+    required: boolean
+    type: string
+    placeholder?: string
+    description?: string
+  }> => {
+    if (!selectedProviderType?.auth_configs) return []
+    
+    const authConfigs = selectedProviderType.auth_configs as any
+    const currentAuthConfig = authConfigs[formData.auth_type]
+    
+    return currentAuthConfig?.extra_params || []
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -871,6 +893,34 @@ const AddDialog: React.FC<{
           </div>
         )}
 
+        {/* 动态额外参数字段 */}
+        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && getCurrentAuthExtraParams().length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-2">OAuth额外参数</label>
+            {getCurrentAuthExtraParams().map((param) => (
+              <div key={param.key} className="mb-3">
+                <label className="block text-sm font-medium text-neutral-700 mb-1">
+                  {param.required && <span className="text-red-500">*</span>} {param.label}
+                </label>
+                <input
+                  type={param.type === 'number' ? 'number' : 'text'}
+                  required={param.required}
+                  value={oauthExtraParams[param.key] || param.default || ''}
+                  onChange={(e) => setOAuthExtraParams(prev => ({
+                    ...prev,
+                    [param.key]: e.target.value
+                  }))}
+                  placeholder={param.placeholder}
+                  className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                />
+                {param.description && (
+                  <p className="text-xs text-neutral-600 mt-1">{param.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* OAuth Handler */}
         {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
           <div>
@@ -879,10 +929,10 @@ const AddDialog: React.FC<{
             </label>
             <OAuthHandler
               request={{
-                provider_type_id: selectedProviderType.id,
-                auth_type: formData.auth_type,
+                provider_name: selectedProviderType.name,
                 name: formData.keyName || 'Provider Key',
                 description: `${selectedProviderType.display_name} OAuth Key`,
+                extra_params: oauthExtraParams,
               }}
               status={oauthStatus}
               onStatusChange={setOAuthStatus}
@@ -1083,6 +1133,7 @@ const EditDialog: React.FC<{
   
   // OAuth相关状态
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>('idle')
+  const [oauthExtraParams, setOAuthExtraParams] = useState<{ [key: string]: string }>({})
 
   // 获取服务商类型列表
   const fetchProviderTypes = async () => {
@@ -1148,6 +1199,7 @@ const EditDialog: React.FC<{
       // 重置OAuth状态和认证类型
       setOAuthStatus('idle')
       setFormData(prev => ({ ...prev, auth_type: 'api_key' }))
+      setOAuthExtraParams({})
     }
   }
 
@@ -1157,6 +1209,26 @@ const EditDialog: React.FC<{
     if (authType !== 'oauth2' && authType !== 'google_oauth') {
       setOAuthStatus('idle')
     }
+    // 重置额外参数
+    setOAuthExtraParams({})
+  }
+
+  // 获取当前认证类型的额外参数配置
+  const getCurrentAuthExtraParams = (): Array<{
+    key: string
+    label: string
+    default: string
+    required: boolean
+    type: string
+    placeholder?: string
+    description?: string
+  }> => {
+    if (!selectedProviderType?.auth_configs) return []
+    
+    const authConfigs = selectedProviderType.auth_configs as any
+    const currentAuthConfig = authConfigs[formData.auth_type]
+    
+    return currentAuthConfig?.extra_params || []
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1233,6 +1305,34 @@ const EditDialog: React.FC<{
           </div>
         )}
 
+        {/* 动态额外参数字段 */}
+        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && getCurrentAuthExtraParams().length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-2">OAuth额外参数</label>
+            {getCurrentAuthExtraParams().map((param) => (
+              <div key={param.key} className="mb-3">
+                <label className="block text-sm font-medium text-neutral-700 mb-1">
+                  {param.required && <span className="text-red-500">*</span>} {param.label}
+                </label>
+                <input
+                  type={param.type === 'number' ? 'number' : 'text'}
+                  required={param.required}
+                  value={oauthExtraParams[param.key] || param.default || ''}
+                  onChange={(e) => setOAuthExtraParams(prev => ({
+                    ...prev,
+                    [param.key]: e.target.value
+                  }))}
+                  placeholder={param.placeholder}
+                  className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                />
+                {param.description && (
+                  <p className="text-xs text-neutral-600 mt-1">{param.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* OAuth Handler */}
         {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
           <div>
@@ -1241,10 +1341,10 @@ const EditDialog: React.FC<{
             </label>
             <OAuthHandler
               request={{
-                provider_type_id: selectedProviderType.id,
-                auth_type: formData.auth_type,
+                provider_name: selectedProviderType.name,
                 name: formData.keyName || 'Provider Key',
                 description: `${selectedProviderType.display_name} OAuth Key`,
+                extra_params: oauthExtraParams,
               }}
               status={oauthStatus}
               onStatusChange={setOAuthStatus}

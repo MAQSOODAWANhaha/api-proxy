@@ -16,5 +16,5 @@ pub use api_key_health::{
     ApiKeyHealthChecker, ApiKeyHealthStatus, ApiKeyCheckResult,
     ApiKeyHealthConfig, ApiKeyCheckType, ApiKeyErrorCategory,
 };
-pub use pool_manager::{ApiKeyPoolManager, PoolStats};
+pub use pool_manager::{ApiKeyPoolManager, PoolStats, SmartApiKeySelectionResult};
 pub use types::SchedulingStrategy;

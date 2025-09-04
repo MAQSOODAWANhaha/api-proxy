@@ -1,19 +1,22 @@
 /**
  * OAuthHandler.tsx
- * OAuth授权处理组件 - 处理OAuth弹窗和postMessage通信
+ * OAuth授权处理组件 - 手动授权码输入流程
  */
 
-import React, { useCallback, useRef } from 'react'
-import { ExternalLink, Shield, AlertCircle, CheckCircle2 } from 'lucide-react'
+import React, { useCallback, useRef, useState } from 'react'
+import { ExternalLink, Shield, AlertCircle, CheckCircle2, Copy, Clipboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api, OAuthAuthorizeRequest, OAuthCallbackResponse } from '@/lib/api'
 import { toast } from 'sonner'
 
 /** OAuth状态类型 */
-export type OAuthStatus = 'idle' | 'authorizing' | 'waiting' | 'success' | 'error' | 'cancelled'
+export type OAuthStatus = 'idle' | 'authorizing' | 'waiting_code' | 'exchanging' | 'success' | 'error' | 'cancelled'
 
 /** OAuth结果 */
 export interface OAuthResult {
@@ -47,8 +50,8 @@ export interface OAuthHandlerProps {
  * OAuthHandler OAuth授权处理器
  * - 启动OAuth授权流程
  * - 管理OAuth弹窗
- * - 处理postMessage通信
- * - 监听授权结果
+ * - 手动授权码输入
+ * - 交换访问令牌
  */
 const OAuthHandler: React.FC<OAuthHandlerProps> = ({
   request,
@@ -60,29 +63,18 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
   buttonText = '开始OAuth授权',
   buttonVariant = 'default',
 }) => {
-  const popupRef = useRef<Window | null>(null)
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const messageListenerRef = useRef<((event: MessageEvent) => void) | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const [authUrl, setAuthUrl] = useState<string>('')
+  const [authCode, setAuthCode] = useState<string>('')
+  const [isExchanging, setIsExchanging] = useState(false)
 
   /** 清理资源 */
   const cleanup = useCallback(() => {
-    // 关闭弹窗
-    if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.close()
-      popupRef.current = null
-    }
-
-    // 清理轮询定时器
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
-    }
-
-    // 移除消息监听器
-    if (messageListenerRef.current) {
-      window.removeEventListener('message', messageListenerRef.current)
-      messageListenerRef.current = null
-    }
+    // 清理会话ID和状态
+    sessionIdRef.current = null
+    setAuthUrl('')
+    setAuthCode('')
+    setIsExchanging(false)
   }, [])
 
   /** 启动OAuth授权流程 */
@@ -99,88 +91,29 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
         throw new Error(response.error?.message || 'OAuth授权启动失败')
       }
 
-      const { authorization_url, session_id } = response.data
-
-      // 打开OAuth授权弹窗
-      const popupFeatures = [
-        'width=600',
-        'height=700',
-        'left=' + Math.round(window.screenX + (window.outerWidth - 600) / 2),
-        'top=' + Math.round(window.screenY + (window.outerHeight - 700) / 2.5),
-        'toolbar=no',
-        'location=no',
-        'directories=no',
-        'status=no',
-        'menubar=no',
-        'scrollbars=yes',
-        'resizable=yes',
-      ].join(',')
-
-      popupRef.current = window.open(authorization_url, 'oauth_popup', popupFeatures)
+      const { authorize_url, session_id } = response.data
       
-      if (!popupRef.current) {
-        throw new Error('无法打开OAuth授权弹窗，请检查弹窗拦截设置')
+      // 调试信息
+      console.log('OAuth授权响应:', response.data)
+      console.log('授权URL:', authorize_url)
+      
+      if (!authorize_url || !authorize_url.trim()) {
+        throw new Error('获取授权URL失败，授权URL为空')
       }
-
-      onStatusChange('waiting')
-
-      // 监听postMessage消息
-      const messageListener = (event: MessageEvent) => {
-        // 验证消息来源（这里可以根据需要添加更严格的验证）
-        if (event.origin !== window.location.origin) {
-          return
-        }
-
-        const { type, data, error } = event.data
-
-        switch (type) {
-          case 'OAUTH_SUCCESS':
-            cleanup()
-            onStatusChange('success')
-            onComplete({
-              success: true,
-              data: data,
-            })
-            toast.success('OAuth授权成功！')
-            break
-
-          case 'OAUTH_ERROR':
-            cleanup()
-            onStatusChange('error')
-            onComplete({
-              success: false,
-              error: error?.message || 'OAuth授权失败',
-            })
-            toast.error(`OAuth授权失败: ${error?.message || '未知错误'}`)
-            break
-
-          case 'OAUTH_CANCEL':
-            cleanup()
-            onStatusChange('cancelled')
-            onComplete({
-              success: false,
-              cancelled: true,
-            })
-            toast.info('OAuth授权已取消')
-            break
-        }
+      
+      sessionIdRef.current = session_id
+      setAuthUrl(authorize_url)
+      onStatusChange('waiting_code')
+      
+      toast.info('请在新打开的页面中完成授权，然后复制授权码回来')
+      
+      // 在新标签页中打开授权页面
+      console.log('打开授权URL:', authorize_url)
+      const popup = window.open(authorize_url, '_blank')
+      
+      if (!popup || popup.closed) {
+        toast.warning('无法打开弹窗，请检查浏览器弹窗设置，或手动复制下方链接打开')
       }
-
-      messageListenerRef.current = messageListener
-      window.addEventListener('message', messageListener)
-
-      // 轮询检查弹窗状态（防止用户直接关闭弹窗）
-      pollIntervalRef.current = setInterval(() => {
-        if (popupRef.current?.closed) {
-          cleanup()
-          onStatusChange('cancelled')
-          onComplete({
-            success: false,
-            cancelled: true,
-          })
-          toast.info('OAuth授权窗口已关闭')
-        }
-      }, 1000)
 
     } catch (error) {
       cleanup()
@@ -193,6 +126,58 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
       toast.error(errorMessage)
     }
   }, [request, status, disabled, onStatusChange, onComplete, cleanup])
+
+  /** 提交授权码 */
+  const submitAuthCode = useCallback(async () => {
+    if (!authCode.trim() || !sessionIdRef.current || isExchanging) return
+
+    try {
+      setIsExchanging(true)
+      onStatusChange('exchanging')
+      
+      // 调用后端API交换token
+      const response = await api.auth.exchangeOAuthToken({
+        session_id: sessionIdRef.current,
+        authorization_code: authCode.trim(),
+      })
+      
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message || 'Token交换失败')
+      }
+
+      cleanup()
+      onStatusChange('success')
+      onComplete({
+        success: true,
+        data: response.data,
+      })
+      toast.success('OAuth授权成功！')
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Token交换失败'
+      onStatusChange('error')
+      onComplete({
+        success: false,
+        error: errorMessage,
+      })
+      toast.error(errorMessage)
+    } finally {
+      setIsExchanging(false)
+    }
+  }, [authCode, isExchanging, onStatusChange, onComplete, cleanup])
+
+  /** 复制授权URL */
+  const copyAuthUrl = useCallback(async () => {
+    if (!authUrl) return
+    
+    try {
+      await navigator.clipboard.writeText(authUrl)
+      toast.success('授权链接已复制到剪贴板')
+    } catch (error) {
+      console.error('复制失败:', error)
+      toast.error('复制失败，请手动复制')
+    }
+  }, [authUrl])
 
   /** 取消OAuth流程 */
   const cancelOAuthFlow = useCallback(() => {
@@ -276,13 +261,57 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
       
       <CardContent className="space-y-4">
         <div className="text-sm text-muted-foreground">
-          <p>将打开新窗口进行OAuth授权，请在弹出窗口中完成授权流程。</p>
-          {status === 'waiting' && (
+          <p>将打开新页面进行OAuth授权，完成授权后请复制授权码并在下方输入。</p>
+          {status === 'waiting_code' && (
             <p className="mt-2 text-blue-600 dark:text-blue-400">
-              💡 授权窗口已打开，请在弹窗中完成授权操作
+              💡 授权页面已打开，完成授权后请复制Authorization Code
             </p>
           )}
         </div>
+
+        {/* 授权URL显示和复制 */}
+        {authUrl && status === 'waiting_code' && (
+          <div className="space-y-2">
+            <Label htmlFor="auth-url">授权链接</Label>
+            <div className="flex gap-2">
+              <Input
+                id="auth-url"
+                value={authUrl}
+                readOnly
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={copyAuthUrl}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              如果页面没有自动打开，请点击复制按钮后在浏览器中打开此链接
+            </p>
+          </div>
+        )}
+
+        {/* 授权码输入区域 */}
+        {status === 'waiting_code' && (
+          <div className="space-y-2">
+            <Label htmlFor="auth-code">授权码 (Authorization Code)</Label>
+            <Textarea
+              id="auth-code"
+              placeholder="请粘贴从授权页面获取的Authorization Code..."
+              value={authCode}
+              onChange={(e) => setAuthCode(e.target.value)}
+              className="font-mono text-xs min-h-[80px]"
+              disabled={isExchanging}
+            />
+            <p className="text-xs text-muted-foreground">
+              💡 完成授权后，将显示一个很长的授权码，请复制完整的授权码到此处
+            </p>
+          </div>
+        )}
 
         <div className="flex gap-2">
           {status === 'idle' || status === 'error' || status === 'cancelled' ? (
@@ -295,17 +324,41 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
               <ExternalLink className="h-4 w-4" />
               {status === 'idle' ? buttonText : '重新授权'}
             </Button>
-          ) : status === 'waiting' ? (
-            <Button
-              onClick={cancelOAuthFlow}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <AlertCircle className="h-4 w-4" />
-              取消授权
-            </Button>
+          ) : status === 'waiting_code' ? (
+            <>
+              <Button
+                onClick={submitAuthCode}
+                disabled={!authCode.trim() || isExchanging}
+                className="flex items-center gap-2"
+              >
+                <Clipboard className="h-4 w-4" />
+                {isExchanging ? '交换Token中...' : '提交授权码'}
+              </Button>
+              <Button
+                onClick={cancelOAuthFlow}
+                variant="outline"
+                className="flex items-center gap-2"
+                disabled={isExchanging}
+              >
+                <AlertCircle className="h-4 w-4" />
+                取消授权
+              </Button>
+            </>
           ) : null}
         </div>
+
+        {/* 操作说明 */}
+        {status === 'waiting_code' && (
+          <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 p-3 rounded-md">
+            <strong>操作步骤：</strong>
+            <ol className="mt-1 space-y-1 list-decimal list-inside">
+              <li>在新打开的授权页面中完成登录和授权</li>
+              <li>授权完成后会显示一个长的Authorization Code</li>
+              <li>复制完整的Authorization Code到上方输入框</li>
+              <li>点击"提交授权码"完成OAuth流程</li>
+            </ol>
+          </div>
+        )}
 
         {/* 安全提示 */}
         <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-md">

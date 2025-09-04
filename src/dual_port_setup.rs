@@ -22,6 +22,9 @@ pub struct SharedServices {
     pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
+    pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
+    pub smart_api_key_provider: Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>,
+    pub oauth_token_refresh_task: Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>,
 }
 
 /// 双端口服务器启动函数
@@ -74,6 +77,8 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
         shared_services.statistics_service.clone(),
         shared_services.provider_config_manager.clone(),
         Some(shared_services.api_key_health_checker.clone()),
+        Some(shared_services.oauth_client.clone()),
+        Some(shared_services.smart_api_key_provider.clone()),
     )
     .map_err(|e| {
         ProxyError::server_init(format!("Failed to create management server: {}", e))
@@ -82,6 +87,14 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
     // 创建代理服务器，传递数据库连接和追踪系统
     let proxy_server =
         PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
+
+    // 启动OAuth token后台刷新任务
+    info!("🔄 Starting OAuth token refresh background task...");
+    if let Err(e) = shared_services.oauth_token_refresh_task.start().await {
+        error!("Failed to start OAuth token refresh task: {:?}", e);
+        return Err(ProxyError::server_init(format!("OAuth token refresh task startup failed: {}", e)));
+    }
+    info!("✅ OAuth token refresh background task started successfully");
 
     info!("🎯 Starting both servers concurrently...");
 
@@ -266,6 +279,43 @@ pub async fn initialize_shared_services(
     ));
     info!("✅ API key health checker initialized successfully");
 
+    // 初始化OAuth客户端
+    info!("🔐 Initializing OAuth client...");
+    let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
+    info!("✅ OAuth client initialized successfully");
+
+    // 初始化OAuth token刷新服务
+    info!("🔄 Initializing OAuth token refresh service...");
+    let oauth_refresh_service = Arc::new(
+        crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService::new(
+            db.clone(),
+            oauth_client.clone(),
+            crate::auth::oauth_token_refresh_service::RefreshServiceConfig::default(),
+        )
+    );
+    info!("✅ OAuth token refresh service initialized successfully");
+
+    // 初始化智能API密钥提供者
+    info!("🧠 Initializing smart API key provider...");
+    let smart_api_key_provider = Arc::new(
+        crate::auth::smart_api_key_provider::SmartApiKeyProvider::new(
+            db.clone(),
+            oauth_client.clone(),
+            oauth_refresh_service.clone(),
+        )
+    );
+    info!("✅ Smart API key provider initialized successfully");
+
+    // 初始化OAuth token刷新任务
+    info!("⏰ Initializing OAuth token refresh task...");
+    let oauth_token_refresh_task = Arc::new(
+        crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(
+            oauth_refresh_service.clone(),
+            crate::auth::oauth_token_refresh_task::RefreshTaskConfig::default(),
+        )
+    );
+    info!("✅ OAuth token refresh task initialized successfully");
+
     info!("✅ All shared services initialized successfully");
 
     let shared_services = SharedServices {
@@ -275,6 +325,9 @@ pub async fn initialize_shared_services(
         statistics_service,
         provider_config_manager,
         api_key_health_checker,
+        oauth_client,
+        smart_api_key_provider,
+        oauth_token_refresh_task,
     };
 
     Ok((config_arc, db, shared_services, trace_system))

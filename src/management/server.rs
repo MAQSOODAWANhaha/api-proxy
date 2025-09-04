@@ -85,6 +85,10 @@ pub struct AppState {
     pub provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥健康检查器
     pub api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
+    /// OAuth客户端
+    pub oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
+    /// 智能API密钥提供者
+    pub smart_api_key_provider: Option<Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>>,
 }
 
 /// 管理服务器
@@ -109,6 +113,8 @@ impl ManagementServer {
         statistics_service: Arc<StatisticsService>,
         provider_config_manager: Arc<ProviderConfigManager>,
         api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
+        oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
+        smart_api_key_provider: Option<Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>>,
     ) -> Result<Self> {
         let state = AppState {
             config: app_config,
@@ -118,6 +124,8 @@ impl ManagementServer {
             statistics_service,
             provider_config_manager,
             api_key_health_checker,
+            oauth_client,
+            smart_api_key_provider,
         };
 
         let router = Self::create_router(state.clone(), &config)?;

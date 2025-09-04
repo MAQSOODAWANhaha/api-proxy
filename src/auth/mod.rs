@@ -8,10 +8,14 @@ pub mod dual_auth_boundary; // 双认证机制边界控制
 pub mod header_parser;
 pub mod jwt;
 pub mod management;
-pub mod oauth;
+// pub mod oauth; // 已删除，使用oauth_client替代
+pub mod oauth_client; // 新的OAuth客户端模块
+pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
+pub mod oauth_token_refresh_task; // OAuth token刷新后台任务
 pub mod permissions;
 pub mod proxy;
 pub mod service;
+pub mod smart_api_key_provider; // 智能API密钥提供者
 pub mod strategies;
 pub mod strategy_manager;
 pub mod types;
@@ -23,10 +27,14 @@ pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
 pub use management::{Claims, check_is_admin_from_headers, extract_user_id_from_headers};
-pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
+// 注意：旧的oauth模块已被oauth_client替代
+// pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
+pub use oauth_token_refresh_service::{OAuthTokenRefreshService, RefreshServiceConfig, RefreshStats, TokenRefreshResult, RefreshType, OAuthTokenRefreshServiceBuilder};
+pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, RefreshTaskConfig, TaskState, TaskControl, TaskStats, OAuthTokenRefreshTaskBuilder};
 pub use permissions::{Permission, Role};
 pub use proxy::{ProxyAuthResult, ProxyAuthenticator};
 pub use service::AuthService;
+pub use smart_api_key_provider::{SmartApiKeyProvider, AuthCredentialType, CredentialResult, SmartApiKeyProviderConfig};
 pub use strategies::{AuthStrategy, OAuthTokenResult};
 pub use types::*;
 // 注意：RefactoredUnifiedAuthManager已被删除，请使用新的服务化架构

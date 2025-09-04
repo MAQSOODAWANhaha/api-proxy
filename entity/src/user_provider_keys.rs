@@ -28,6 +28,7 @@ pub struct Model {
     pub auth_status: Option<String>,           // 认证状态 (pending, authorized, expired, error)
     pub expires_at: Option<DateTime>,          // 认证过期时间
     pub last_auth_check: Option<DateTime>,     // 最后认证检查时间
+    pub oauth_session_id: Option<String>,      // OAuth会话ID，用于token刷新
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

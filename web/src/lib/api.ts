@@ -6,7 +6,7 @@
 // API基础配置
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
   ? '/api'  // 生产环境使用相对路径，由 Caddy 转发
-  : 'http://172.28.190.69:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
+  : 'http://192.168.153.140:9090/api'  // 开发环境直连后端，WSL环境指定IP地址
 
 // 导入认证状态管理，用于401处理
 import { useAuthStore } from '../store/auth'
@@ -78,15 +78,14 @@ export interface ValidateTokenResponse {
 
 // OAuth相关类型定义
 export interface OAuthAuthorizeRequest {
-  provider_type_id: number
-  auth_type: string
+  provider_name: string
   name: string
   description?: string
-  redirect_uri?: string
+  extra_params?: Record<string, string>
 }
 
 export interface OAuthAuthorizeResponse {
-  authorization_url: string
+  authorize_url: string
   session_id: string
   state: string
   expires_at: string
@@ -104,23 +103,33 @@ export interface OAuthCallbackResponse {
   auth_status: string
 }
 
-export interface OAuthStatusResponse {
+// OAuth轮询状态响应
+export interface OAuthPollingStatusResponse {
+  status: 'pending' | 'completed' | 'failed' | 'expired' | 'exchanging'
+  data?: {
+    expires_in?: number
+    interval?: number
+    token_response?: OAuthCallbackResponse
+    error?: string
+    error_description?: string
+  }
+}
+
+export interface OAuthExchangeRequest {
   session_id: string
-  status: 'pending' | 'completed' | 'expired' | 'error' | 'cancelled'
-  provider_type_id: number
-  auth_type: string
-  created_at: string
-  expires_at: string
+  authorization_code: string
 }
 
 export interface OAuthRefreshRequest {
-  provider_key_id: number
+  session_id: string
 }
 
 export interface OAuthRefreshResponse {
-  provider_key_id: number
-  new_expires_at: string
-  refreshed_at: string
+  access_token: string
+  refresh_token?: string
+  token_type: string
+  expires_in?: number
+  expires_at: string
 }
 
 // Provider Types相关类型定义
@@ -1301,7 +1310,7 @@ export const api = {
 
     // OAuth相关接口
     /**
-     * 启动OAuth授权流程
+     * 启动OAuth授权流程 (OAuth v2)
      */
     async initiateOAuth(request: OAuthAuthorizeRequest): Promise<ApiResponse<OAuthAuthorizeResponse>> {
       try {
@@ -1319,11 +1328,47 @@ export const api = {
     },
 
     /**
-     * 查询OAuth状态
+     * 轮询OAuth状态 (OAuth v2)
+     */
+    async pollOAuthStatus(sessionId: string): Promise<ApiResponse<OAuthPollingStatusResponse>> {
+      try {
+        return await apiClient.get<OAuthPollingStatusResponse>(`/oauth/poll?session_id=${sessionId}`)
+      } catch (error) {
+        console.error('[OAuth] Failed to poll OAuth status:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_POLL_ERROR',
+            message: '轮询OAuth状态失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 手动交换OAuth授权码获取Token (OAuth v2)
+     */
+    async exchangeOAuthToken(request: OAuthExchangeRequest): Promise<ApiResponse<OAuthCallbackResponse>> {
+      try {
+        return await apiClient.post<OAuthCallbackResponse>('/oauth/exchange', request)
+      } catch (error) {
+        console.error('[OAuth] Failed to exchange OAuth token:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_EXCHANGE_ERROR',
+            message: 'OAuth令牌交换失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 查询OAuth状态 (旧版本，保持兼容性)
      */
     async getOAuthStatus(sessionId: string): Promise<ApiResponse<OAuthStatusResponse>> {
       try {
-        return await apiClient.get<OAuthStatusResponse>(`/oauth/status/${sessionId}`)
+        return await apiClient.get<OAuthStatusResponse>(`/oauth/poll?session_id=${sessionId}`)
       } catch (error) {
         console.error('[OAuth] Failed to get OAuth status:', error)
         return {
@@ -1355,18 +1400,54 @@ export const api = {
     },
 
     /**
-     * 撤销OAuth授权
+     * 删除OAuth会话
      */
-    async revokeOAuthAuthorization(keyId: number): Promise<ApiResponse<void>> {
+    async deleteOAuthSession(sessionId: string): Promise<ApiResponse<void>> {
       try {
-        return await apiClient.delete<void>(`/oauth/revoke/${keyId}`)
+        return await apiClient.delete<void>(`/oauth/sessions/${sessionId}`)
       } catch (error) {
-        console.error('[OAuth] Failed to revoke OAuth authorization:', error)
+        console.error('[OAuth] Failed to delete OAuth session:', error)
         return {
           success: false,
           error: {
-            code: 'OAUTH_REVOKE_ERROR',
-            message: 'OAuth授权撤销失败'
+            code: 'OAUTH_DELETE_ERROR',
+            message: 'OAuth会话删除失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取OAuth会话列表
+     */
+    async getOAuthSessions(): Promise<ApiResponse<{ sessions: any[] }>> {
+      try {
+        return await apiClient.get<{ sessions: any[] }>('/oauth/sessions')
+      } catch (error) {
+        console.error('[OAuth] Failed to get OAuth sessions:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_SESSIONS_ERROR',
+            message: '获取OAuth会话列表失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取OAuth统计信息
+     */
+    async getOAuthStatistics(): Promise<ApiResponse<any>> {
+      try {
+        return await apiClient.get<any>('/oauth/statistics')
+      } catch (error) {
+        console.error('[OAuth] Failed to get OAuth statistics:', error)
+        return {
+          success: false,
+          error: {
+            code: 'OAUTH_STATS_ERROR',
+            message: '获取OAuth统计信息失败'
           }
         }
       }

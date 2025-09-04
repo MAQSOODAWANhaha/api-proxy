@@ -128,6 +128,7 @@ pub async fn get_provider_keys_list(
             "auth_type": provider_key.auth_type,
             "auth_status": provider_key.auth_status,
             "auth_config_json": provider_key.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+            "oauth_session_id": provider_key.oauth_session_id,
             "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
             "weight": provider_key.weight,
             "max_requests_per_minute": provider_key.max_requests_per_minute,
@@ -216,7 +217,7 @@ pub async fn create_provider_key(
         _ => {}
     }
 
-    // 验证认证类型和API密钥参数
+    // 验证认证类型和相应参数
     if payload.auth_type == "api_key" && payload.api_key.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
@@ -225,12 +226,75 @@ pub async fn create_provider_key(
         );
     }
 
-    // OAuth类型需要auth_config_json
-    if (payload.auth_type == "oauth2" || payload.auth_type == "google_oauth") && payload.auth_config_json.is_none() {
+    // OAuth类型需要oauth_session_id
+    if payload.auth_type == "oauth2" && payload.oauth_session_id.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_OAUTH_SESSION",
+            "OAuth2认证类型需要提供oauth_session_id字段",
+        );
+    }
+
+    // 验证OAuth会话存在性和所有权
+    if let Some(session_id) = &payload.oauth_session_id {
+        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+        
+        match OAuthSession::find()
+            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .one(db)
+            .await
+        {
+            Ok(Some(_)) => {
+                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                let existing_usage = UserProviderKey::find()
+                    .filter(user_provider_keys::Column::OauthSessionId.eq(session_id))
+                    .filter(user_provider_keys::Column::IsActive.eq(true))
+                    .one(db)
+                    .await;
+                    
+                match existing_usage {
+                    Ok(Some(_)) => {
+                        return response::error(
+                            StatusCode::BAD_REQUEST,
+                            "OAUTH_SESSION_IN_USE",
+                            "指定的OAuth会话已被其他provider key使用",
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to check OAuth session usage: {}", err);
+                        return response::app_error(crate::error::ProxyError::database_with_source(
+                            "Failed to check OAuth session usage",
+                            err,
+                        ));
+                    }
+                    _ => {} // 会话可用
+                }
+            }
+            Ok(None) => {
+                return response::error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_OAUTH_SESSION",
+                    "指定的OAuth会话不存在或未完成授权",
+                );
+            }
+            Err(err) => {
+                tracing::error!("Failed to validate OAuth session: {}", err);
+                return response::app_error(crate::error::ProxyError::database_with_source(
+                    "Failed to validate OAuth session",
+                    err,
+                ));
+            }
+        }
+    }
+
+    // 传统OAuth类型需要auth_config_json (向后兼容)
+    if payload.auth_type == "google_oauth" && payload.auth_config_json.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_CONFIG",
-            "OAuth认证类型需要提供auth_config_json字段",
+            "Google OAuth认证类型需要提供auth_config_json字段",
         );
     }
 
@@ -242,6 +306,7 @@ pub async fn create_provider_key(
         api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
         auth_type: Set(payload.auth_type),
         auth_config_json: Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default())),
+        oauth_session_id: Set(payload.oauth_session_id),
         auth_status: Set(Some("active".to_string())),
         weight: Set(payload.weight),
         max_requests_per_minute: Set(payload.max_requests_per_minute),
@@ -356,6 +421,7 @@ pub async fn get_provider_key_detail(
         "auth_type": provider_key.0.auth_type,
         "auth_status": provider_key.0.auth_status,
         "auth_config_json": provider_key.0.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+        "oauth_session_id": provider_key.0.oauth_session_id,
         "expires_at": provider_key.0.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "last_auth_check": provider_key.0.last_auth_check.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "weight": provider_key.0.weight,
@@ -453,7 +519,7 @@ pub async fn update_provider_key(
         }
     }
 
-    // 验证认证类型和API密钥参数
+    // 验证认证类型和相应参数
     if payload.auth_type == "api_key" && payload.api_key.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
@@ -462,12 +528,78 @@ pub async fn update_provider_key(
         );
     }
 
-    // OAuth类型需要auth_config_json
-    if (payload.auth_type == "oauth2" || payload.auth_type == "google_oauth") && payload.auth_config_json.is_none() {
+    // OAuth2类型需要oauth_session_id
+    if payload.auth_type == "oauth2" && payload.oauth_session_id.is_none() {
+        return response::error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_OAUTH_SESSION",
+            "OAuth2认证类型需要提供oauth_session_id字段",
+        );
+    }
+
+    // 验证OAuth会话存在性和所有权
+    if let Some(session_id) = &payload.oauth_session_id {
+        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+        
+        // 检查会话是否有效
+        match OAuthSession::find()
+            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .one(db)
+            .await
+        {
+            Ok(Some(_)) => {
+                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                // (排除当前正在更新的key)
+                let existing_usage = UserProviderKey::find()
+                    .filter(user_provider_keys::Column::OauthSessionId.eq(session_id))
+                    .filter(user_provider_keys::Column::IsActive.eq(true))
+                    .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
+                    .one(db)
+                    .await;
+                    
+                match existing_usage {
+                    Ok(Some(_)) => {
+                        return response::error(
+                            StatusCode::BAD_REQUEST,
+                            "OAUTH_SESSION_IN_USE",
+                            "指定的OAuth会话已被其他provider key使用",
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to check OAuth session usage: {}", err);
+                        return response::app_error(crate::error::ProxyError::database_with_source(
+                            "Failed to check OAuth session usage",
+                            err,
+                        ));
+                    }
+                    _ => {} // 会话可用
+                }
+            }
+            Ok(None) => {
+                return response::error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_OAUTH_SESSION",
+                    "指定的OAuth会话不存在或未完成授权",
+                );
+            }
+            Err(err) => {
+                tracing::error!("Failed to validate OAuth session: {}", err);
+                return response::app_error(crate::error::ProxyError::database_with_source(
+                    "Failed to validate OAuth session",
+                    err,
+                ));
+            }
+        }
+    }
+
+    // 传统OAuth类型需要auth_config_json (向后兼容)
+    if payload.auth_type == "google_oauth" && payload.auth_config_json.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_CONFIG",
-            "OAuth认证类型需要提供auth_config_json字段",
+            "Google OAuth认证类型需要提供auth_config_json字段",
         );
     }
 
@@ -478,6 +610,7 @@ pub async fn update_provider_key(
     active_model.api_key = Set(payload.api_key.unwrap_or_else(|| "".to_string()));
     active_model.auth_type = Set(payload.auth_type);
     active_model.auth_config_json = Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default()));
+    active_model.oauth_session_id = Set(payload.oauth_session_id);
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
     active_model.max_tokens_prompt_per_minute = Set(payload.max_tokens_prompt_per_minute);
@@ -915,6 +1048,7 @@ pub struct CreateProviderKeyRequest {
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
     pub auth_config_json: Option<serde_json::Value>,
+    pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,
@@ -930,6 +1064,7 @@ pub struct UpdateProviderKeyRequest {
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
     pub auth_config_json: Option<serde_json::Value>,
+    pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,
