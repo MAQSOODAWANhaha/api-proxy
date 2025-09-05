@@ -135,18 +135,6 @@ impl AuthStrategyManager {
 
         strategy.handle_callback(code, state).await.map_err(Into::into)
     }
-    
-    /// 动态注册OAuth2策略 (已迁移到UnifiedOAuthClient)
-    pub async fn register_oauth2_strategy(
-        &mut self,
-        _client_id: String,
-        _client_secret: String,
-        _auth_url: String,
-        _token_url: String,
-    ) -> Result<()> {
-        // TODO: 使用UnifiedOAuthClient替代旧的OAuth2Strategy
-        Err(AuthError::ConfigError("OAuth2策略已迁移到UnifiedOAuthClient，请使用新的OAuth接口".to_string()).into())
-    }
 }
 
 impl Default for AuthStrategyManager {

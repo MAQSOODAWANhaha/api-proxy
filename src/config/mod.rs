@@ -10,7 +10,7 @@ mod manager;
 mod provider_config;
 mod watcher;
 
-pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig};
+pub use app_config::{AppConfig, CacheConfig, CacheType, OAuthCleanupConfig, RedisConfig, ServerConfig};
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use database::DatabaseConfig;
 pub use dual_port_config::{DualPortServerConfig, ManagementPortConfig, ProxyPortConfig};

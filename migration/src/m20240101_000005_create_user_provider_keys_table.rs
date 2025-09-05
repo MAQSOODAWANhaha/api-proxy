@@ -88,8 +88,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    // OAuth认证支持字段
-                    .col(ColumnDef::new(UserProviderKeys::AuthConfigJson).json())
+                    // OAuth认证支持字段 - 移除auth_config_json，统一使用oauth_session_id
                     .col(
                         ColumnDef::new(UserProviderKeys::AuthStatus)
                             .string_len(20)
@@ -212,8 +211,7 @@ enum UserProviderKeys {
     HealthStatus,
     CreatedAt,
     UpdatedAt,
-    // 认证支持字段
-    AuthConfigJson,
+    // 认证支持字段 - 移除AuthConfigJson，统一使用oauth_session_id
     AuthStatus,
     ExpiresAt,
     LastAuthCheck,

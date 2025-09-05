@@ -142,13 +142,13 @@ impl OAuthProviderManager {
 
     /// 从数据库加载配置
     async fn load_from_db(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
-        // 解析provider_name，格式可能是 "gemini" 或 "gemini:google_oauth"
+        // 解析provider_name，格式可能是 "gemini" 或 "gemini:oauth"
         let (base_provider, oauth_type) = if provider_name.contains(':') {
             let parts: Vec<&str> = provider_name.split(':').collect();
-            (parts[0], *parts.get(1).unwrap_or(&"oauth2"))
+            (parts[0], *parts.get(1).unwrap_or(&"oauth"))
         } else {
-            // 默认查找OAuth2配置，如果不存在则查找google_oauth
-            (provider_name, "oauth2")
+            // 默认查找OAuth配置
+            (provider_name, "oauth")
         };
 
         let model = ProviderTypes::find()

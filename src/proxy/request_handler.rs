@@ -1141,13 +1141,9 @@ impl RequestHandler {
                 // 传统API Key认证 - 使用provider的auth_header_format
                 self.apply_api_key_authentication(ctx, upstream_request, provider_type, api_key).await
             }
-            AuthType::OAuth2 => {
-                // OAuth2认证 - api_key字段存储的是access_token
-                self.apply_oauth2_authentication(ctx, upstream_request, provider_type, api_key).await
-            }
-            AuthType::GoogleOAuth => {
-                // Google OAuth认证 - 特殊的Google认证格式
-                self.apply_google_oauth_authentication(ctx, upstream_request, provider_type, api_key).await
+            AuthType::OAuth => {
+                // 统一OAuth认证 - 支持所有OAuth 2.0提供商
+                self.apply_oauth_authentication(ctx, upstream_request, provider_type, api_key).await
             }
             AuthType::ServiceAccount => {
                 // Google服务账户认证 - JWT格式
@@ -1222,8 +1218,8 @@ impl RequestHandler {
         Ok(())
     }
 
-    /// 应用OAuth2认证
-    async fn apply_oauth2_authentication(
+    /// 应用统一OAuth认证
+    async fn apply_oauth_authentication(
         &self,
         ctx: &ProxyContext,
         upstream_request: &mut RequestHeader,
@@ -1233,11 +1229,11 @@ impl RequestHandler {
         // 清除所有可能的认证头
         self.clear_auth_headers(upstream_request);
 
-        // OAuth2通常使用Authorization: Bearer格式
+        // OAuth 2.0标准使用Authorization: Bearer格式
         let auth_value = format!("Bearer {}", access_token);
         if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
             let error = ProxyError::internal(format!(
-                "Failed to set OAuth2 authorization header: {}", e
+                "Failed to set OAuth authorization header: {}", e
             ));
             self.tracing_service
                 .complete_trace_config_error(&ctx.request_id, &error.to_string())
@@ -1248,47 +1244,14 @@ impl RequestHandler {
         tracing::info!(
             request_id = %ctx.request_id,
             provider = %provider_type.name,
-            auth_type = "oauth2",
+            auth_type = "oauth",
             token_preview = %AuthUtils::sanitize_api_key(access_token),
-            "Applied OAuth2 authentication"
+            "Applied OAuth authentication"
         );
 
         Ok(())
     }
 
-    /// 应用Google OAuth认证
-    async fn apply_google_oauth_authentication(
-        &self,
-        ctx: &ProxyContext,
-        upstream_request: &mut RequestHeader,
-        provider_type: &provider_types::Model,
-        access_token: &str,
-    ) -> Result<(), ProxyError> {
-        // 清除所有可能的认证头
-        self.clear_auth_headers(upstream_request);
-
-        // Google OAuth使用Authorization: Bearer格式
-        let auth_value = format!("Bearer {}", access_token);
-        if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
-            let error = ProxyError::internal(format!(
-                "Failed to set Google OAuth authorization header: {}", e
-            ));
-            self.tracing_service
-                .complete_trace_config_error(&ctx.request_id, &error.to_string())
-                .await?;
-            return Err(error);
-        }
-
-        tracing::info!(
-            request_id = %ctx.request_id,
-            provider = %provider_type.name,
-            auth_type = "google_oauth",
-            token_preview = %AuthUtils::sanitize_api_key(access_token),
-            "Applied Google OAuth authentication"
-        );
-
-        Ok(())
-    }
 
     /// 应用服务账户认证
     async fn apply_service_account_authentication(

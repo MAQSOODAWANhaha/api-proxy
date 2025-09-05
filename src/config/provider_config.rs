@@ -393,8 +393,7 @@ impl ProviderConfigManager {
         for type_str in type_strings {
             match type_str.as_str() {
                 "api_key" => auth_types.push(AuthType::ApiKey),
-                "oauth2" => auth_types.push(AuthType::OAuth2),
-                "google_oauth" => auth_types.push(AuthType::GoogleOAuth),
+                "oauth" => auth_types.push(AuthType::OAuth),
                 "service_account" => auth_types.push(AuthType::ServiceAccount),
                 "adc" => auth_types.push(AuthType::Adc),
                 _ => {

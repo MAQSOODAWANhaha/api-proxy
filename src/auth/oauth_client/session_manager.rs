@@ -171,12 +171,12 @@ impl SessionManager {
     pub async fn update_session_authorization_code(
         &self,
         session_id: &str,
-        authorization_code: &str,
+        _authorization_code: &str,
     ) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
         
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
-        active_model.authorization_code = Set(Some(authorization_code.to_string()));
+        // authorization_code 字段已删除，不再持久化授权码（安全最佳实践）
         active_model.status = Set("exchanging".to_string());
         active_model.updated_at = Set(Utc::now().naive_utc());
 

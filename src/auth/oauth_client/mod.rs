@@ -203,7 +203,7 @@ impl OAuthClient {
         // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
         
-        // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:google_oauth"）
+        // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
         let provider_type_id = if provider_name.contains(':') {
             // 这里可以通过数据库查询获取真正的provider_type_id
             // 现在暂时设为None，后续可以完善

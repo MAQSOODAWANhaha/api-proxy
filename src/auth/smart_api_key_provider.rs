@@ -142,7 +142,8 @@ impl SmartApiKeyProvider {
                 Ok(result)
             },
             
-            "oauth2" => {
+            // OAuth认证类型处理
+            "oauth" => {
                 // OAuth token，使用智能刷新服务处理
                 self.handle_oauth_credential_with_refresh_service(provider_key_id, &provider_key).await
             },

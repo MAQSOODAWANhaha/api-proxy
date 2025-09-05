@@ -200,7 +200,6 @@ const ProviderKeysPage: React.FC = () => {
         name: newKey.keyName,
         api_key: newKey.keyValue || generateApiKey(newKey.provider),
         auth_type: newKey.auth_type || 'api_key',
-        auth_config_json: newKey.auth_config_json,
         weight: newKey.weight || 1,
         max_requests_per_minute: newKey.requestLimitPerMinute || 0,
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
@@ -243,7 +242,6 @@ const ProviderKeysPage: React.FC = () => {
         name: updatedKey.keyName,
         api_key: updatedKey.keyValue,
         auth_type: updatedKey.auth_type || 'api_key',
-        auth_config_json: updatedKey.auth_config_json,
         weight: updatedKey.weight,
         max_requests_per_minute: updatedKey.requestLimitPerMinute,
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
@@ -783,7 +781,6 @@ const AddDialog: React.FC<{
         const newFormData = {
           ...prev,
           keyValue: newKeyValue,
-          // 也可以在用户提交时将refresh_token等信息存储到auth_config_json中
         }
         console.log('更新前的formData:', prev)
         console.log('更新后的formData:', newFormData)
@@ -833,7 +830,7 @@ const AddDialog: React.FC<{
   const handleAuthTypeChange = (authType: string) => {
     setFormData(prev => ({ ...prev, auth_type: authType }))
     // 如果切换到非OAuth类型，重置OAuth状态
-    if (authType !== 'oauth2' && authType !== 'google_oauth') {
+    if (!authType.includes('oauth')) {
       setOAuthStatus('idle')
     }
     // 重置额外参数
@@ -861,7 +858,7 @@ const AddDialog: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'success') {
+    if (formData.auth_type.includes('oauth') && oauthStatus !== 'success') {
       alert('请先完成OAuth授权流程')
       return
     }
@@ -934,7 +931,7 @@ const AddDialog: React.FC<{
         )}
 
         {/* 动态额外参数字段 */}
-        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && getCurrentAuthExtraParams().length > 0 && (
+        {selectedProviderType && formData.auth_type.includes('oauth') && getCurrentAuthExtraParams().length > 0 && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-2">OAuth额外参数</label>
             {getCurrentAuthExtraParams().map((param) => (
@@ -962,7 +959,7 @@ const AddDialog: React.FC<{
         )}
 
         {/* OAuth Handler */}
-        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
+        {selectedProviderType && formData.auth_type.includes('oauth') && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">
               OAuth授权
@@ -988,15 +985,15 @@ const AddDialog: React.FC<{
           </label>
           <input
             type="text"
-            required={!(formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth')}
+            required={!formData.auth_type.includes('oauth')}
             value={formData.keyValue}
             onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
             placeholder={
-              (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') 
+              formData.auth_type.includes('oauth') 
                 ? "OAuth授权完成后自动填入" 
                 : "请输入API密钥"
             }
-            disabled={formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth'}
+            disabled={formData.auth_type.includes('oauth')}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>
@@ -1252,7 +1249,7 @@ const EditDialog: React.FC<{
   const handleAuthTypeChange = (authType: string) => {
     setFormData(prev => ({ ...prev, auth_type: authType }))
     // 如果切换到非OAuth类型，重置OAuth状态
-    if (authType !== 'oauth2' && authType !== 'google_oauth') {
+    if (!authType.includes('oauth')) {
       setOAuthStatus('idle')
     }
     // 重置额外参数
@@ -1280,7 +1277,7 @@ const EditDialog: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if ((formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && oauthStatus !== 'success') {
+    if (formData.auth_type.includes('oauth') && oauthStatus !== 'success') {
       alert('请先完成OAuth授权流程')
       return
     }
@@ -1352,7 +1349,7 @@ const EditDialog: React.FC<{
         )}
 
         {/* 动态额外参数字段 */}
-        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && getCurrentAuthExtraParams().length > 0 && (
+        {selectedProviderType && formData.auth_type.includes('oauth') && getCurrentAuthExtraParams().length > 0 && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-2">OAuth额外参数</label>
             {getCurrentAuthExtraParams().map((param) => (
@@ -1380,7 +1377,7 @@ const EditDialog: React.FC<{
         )}
 
         {/* OAuth Handler */}
-        {selectedProviderType && (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') && (
+        {selectedProviderType && formData.auth_type.includes('oauth') && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">
               OAuth授权
@@ -1406,15 +1403,15 @@ const EditDialog: React.FC<{
           </label>
           <input
             type="text"
-            required={!(formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth')}
+            required={!formData.auth_type.includes('oauth')}
             value={formData.keyValue}
             onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
             placeholder={
-              (formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth') 
+              formData.auth_type.includes('oauth') 
                 ? "OAuth授权完成后自动填入" 
                 : "请输入API密钥"
             }
-            disabled={formData.auth_type === 'oauth2' || formData.auth_type === 'google_oauth'}
+            disabled={formData.auth_type.includes('oauth')}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>

@@ -108,19 +108,14 @@ impl Model {
         }
     }
 
-    /// 获取Google OAuth配置
-    pub fn get_google_oauth_config(&self) -> Result<Option<OAuthConfig>, serde_json::Error> {
-        self.get_oauth_config("google_oauth")
-    }
-
-    /// 获取标准OAuth2配置
-    pub fn get_oauth2_config(&self) -> Result<Option<OAuthConfig>, serde_json::Error> {
-        self.get_oauth_config("oauth2")
+    /// 获取统一OAuth配置
+    pub fn get_oauth_config_unified(&self) -> Result<Option<OAuthConfig>, serde_json::Error> {
+        self.get_oauth_config("oauth")
     }
 
     /// 获取所有OAuth配置类型
     pub fn get_oauth_types(&self) -> Vec<String> {
-        let oauth_types = vec!["oauth2", "google_oauth"];
+        let oauth_types = vec!["oauth"];
         oauth_types.into_iter()
             .filter(|&auth_type| self.supports_auth_type(auth_type))
             .map(|s| s.to_string())

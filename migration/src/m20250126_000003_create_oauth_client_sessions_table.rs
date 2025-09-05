@@ -70,10 +70,6 @@ impl MigrationTrait for Migration {
                             .default("pending"),
                     )
                     .col(
-                        ColumnDef::new(OAuthClientSessions::AuthorizationCode)
-                            .string_len(512),
-                    )
-                    .col(
                         ColumnDef::new(OAuthClientSessions::AccessToken)
                             .text(),
                     )
@@ -271,7 +267,6 @@ enum OAuthClientSessions {
     Name,
     Description,
     Status,
-    AuthorizationCode,
     AccessToken,
     RefreshToken,
     IdToken,

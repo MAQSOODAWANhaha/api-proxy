@@ -23,7 +23,6 @@ pub struct Model {
     pub name: String,
     pub description: Option<String>,
     pub status: String, // pending, completed, failed
-    pub authorization_code: Option<String>,
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub id_token: Option<String>,
@@ -93,7 +92,6 @@ impl Default for Model {
             name: String::new(),
             description: None,
             status: "pending".to_string(),
-            authorization_code: None,
             access_token: None,
             refresh_token: None,
             id_token: None,

@@ -127,7 +127,6 @@ pub async fn get_provider_keys_list(
             "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { "".to_string() },
             "auth_type": provider_key.auth_type,
             "auth_status": provider_key.auth_status,
-            "auth_config_json": provider_key.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
             "oauth_session_id": provider_key.oauth_session_id,
             "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
             "weight": provider_key.weight,
@@ -227,11 +226,11 @@ pub async fn create_provider_key(
     }
 
     // OAuth类型需要oauth_session_id
-    if payload.auth_type == "oauth2" && payload.oauth_session_id.is_none() {
+    if payload.auth_type == "oauth" && payload.oauth_session_id.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_SESSION",
-            "OAuth2认证类型需要提供oauth_session_id字段",
+            "OAuth认证类型需要提供oauth_session_id字段",
         );
     }
 
@@ -289,14 +288,6 @@ pub async fn create_provider_key(
         }
     }
 
-    // 传统OAuth类型需要auth_config_json (向后兼容)
-    if payload.auth_type == "google_oauth" && payload.auth_config_json.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_OAUTH_CONFIG",
-            "Google OAuth认证类型需要提供auth_config_json字段",
-        );
-    }
 
     // 创建新密钥
     let new_provider_key = user_provider_keys::ActiveModel {
@@ -305,7 +296,6 @@ pub async fn create_provider_key(
         name: Set(payload.name),
         api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
         auth_type: Set(payload.auth_type),
-        auth_config_json: Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default())),
         oauth_session_id: Set(payload.oauth_session_id),
         auth_status: Set(Some("active".to_string())),
         weight: Set(payload.weight),
@@ -420,7 +410,6 @@ pub async fn get_provider_key_detail(
         "api_key": if provider_key.0.auth_type == "api_key" { masked_api_key } else { "".to_string() },
         "auth_type": provider_key.0.auth_type,
         "auth_status": provider_key.0.auth_status,
-        "auth_config_json": provider_key.0.auth_config_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
         "oauth_session_id": provider_key.0.oauth_session_id,
         "expires_at": provider_key.0.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "last_auth_check": provider_key.0.last_auth_check.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
@@ -528,12 +517,12 @@ pub async fn update_provider_key(
         );
     }
 
-    // OAuth2类型需要oauth_session_id
-    if payload.auth_type == "oauth2" && payload.oauth_session_id.is_none() {
+    // OAuth类型需要oauth_session_id
+    if payload.auth_type == "oauth" && payload.oauth_session_id.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_SESSION",
-            "OAuth2认证类型需要提供oauth_session_id字段",
+            "OAuth认证类型需要提供oauth_session_id字段",
         );
     }
 
@@ -594,14 +583,6 @@ pub async fn update_provider_key(
         }
     }
 
-    // 传统OAuth类型需要auth_config_json (向后兼容)
-    if payload.auth_type == "google_oauth" && payload.auth_config_json.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_OAUTH_CONFIG",
-            "Google OAuth认证类型需要提供auth_config_json字段",
-        );
-    }
 
     // 更新密钥
     let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
@@ -609,7 +590,6 @@ pub async fn update_provider_key(
     active_model.name = Set(payload.name);
     active_model.api_key = Set(payload.api_key.unwrap_or_else(|| "".to_string()));
     active_model.auth_type = Set(payload.auth_type);
-    active_model.auth_config_json = Set(payload.auth_config_json.map(|v| serde_json::to_string(&v).unwrap_or_default()));
     active_model.oauth_session_id = Set(payload.oauth_session_id);
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
@@ -1046,8 +1026,7 @@ pub struct CreateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
     pub api_key: Option<String>,
-    pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
-    pub auth_config_json: Option<serde_json::Value>,
+    pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
     pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
@@ -1062,8 +1041,7 @@ pub struct UpdateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
     pub api_key: Option<String>,
-    pub auth_type: String, // "api_key", "oauth2", "google_oauth", "service_account", "adc"
-    pub auth_config_json: Option<serde_json::Value>,
+    pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
     pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,

@@ -3,6 +3,7 @@
 //! 提供完整的身份验证和权限控制功能
 
 pub mod api_key;
+pub mod background_task_manager; // 后台任务管理器
 pub mod cache_strategy; // 统一缓存策略
 pub mod dual_auth_boundary; // 双认证机制边界控制
 pub mod header_parser;
@@ -10,6 +11,7 @@ pub mod jwt;
 pub mod management;
 // pub mod oauth; // 已删除，使用oauth_client替代
 pub mod oauth_client; // 新的OAuth客户端模块
+pub mod oauth_cleanup_task; // OAuth 会话清理任务
 pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
 pub mod oauth_token_refresh_task; // OAuth token刷新后台任务
 pub mod permissions;
@@ -24,11 +26,13 @@ pub mod unified_refactored; // 重构后的统一认证管理器
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
+pub use background_task_manager::{BackgroundTaskManager, BackgroundTaskType, BackgroundTaskStatus, BackgroundTaskInfo};
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
 pub use management::{Claims, check_is_admin_from_headers, extract_user_id_from_headers};
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
+pub use oauth_cleanup_task::{OAuthCleanupTask, OAuthCleanupStats};
 pub use oauth_token_refresh_service::{OAuthTokenRefreshService, RefreshServiceConfig, RefreshStats, TokenRefreshResult, RefreshType, OAuthTokenRefreshServiceBuilder};
 pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, RefreshTaskConfig, TaskState, TaskControl, TaskStats, OAuthTokenRefreshTaskBuilder};
 pub use permissions::{Permission, Role};
@@ -83,7 +87,7 @@ pub struct AuthResult {
 /// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
 /// - `AuthType` 表示认证策略的具体类型（配置输入）
 ///
-/// 例如：`AuthType::GoogleOAuth` 策略完成认证后，结果可能是 `AuthMethod::Jwt`
+/// 例如：`AuthType::OAuth` 策略完成认证后，结果可能是 `AuthMethod::Jwt`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AuthMethod {
     /// 通过API密钥认证

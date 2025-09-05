@@ -18,6 +18,9 @@ pub struct AppConfig {
     pub redis: RedisConfig,
     /// 缓存配置
     pub cache: CacheConfig,
+    /// OAuth 清理配置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_cleanup: Option<OAuthCleanupConfig>,
 }
 
 /// 服务器配置
@@ -126,6 +129,33 @@ impl Default for ServerConfig {
     }
 }
 
+/// OAuth 清理配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthCleanupConfig {
+    /// pending 状态会话的过期时间（分钟）
+    pub pending_expire_minutes: i32,
+    /// 清理任务执行间隔（秒）
+    pub cleanup_interval_seconds: u64,
+    /// 是否启用清理任务
+    pub enabled: bool,
+    /// 单次清理的最大记录数
+    pub max_cleanup_records: u64,
+    /// 删除已过期记录的保留天数
+    pub expired_records_retention_days: i32,
+}
+
+impl Default for OAuthCleanupConfig {
+    fn default() -> Self {
+        Self {
+            pending_expire_minutes: 30, // 30分钟过期
+            cleanup_interval_seconds: 300, // 5分钟执行一次
+            enabled: true,
+            max_cleanup_records: 1000,
+            expired_records_retention_days: 7, // 保留7天
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -134,6 +164,7 @@ impl Default for AppConfig {
             database: super::DatabaseConfig::default(),
             redis: RedisConfig::default(),
             cache: CacheConfig::default(),
+            oauth_cleanup: Some(OAuthCleanupConfig::default()),
         }
     }
 }

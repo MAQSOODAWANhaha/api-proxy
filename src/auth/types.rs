@@ -356,10 +356,8 @@ pub enum AuthError {
 pub enum AuthType {
     /// API密钥认证策略
     ApiKey,
-    /// 标准OAuth2认证策略
-    OAuth2,
-    /// Google专用OAuth认证策略
-    GoogleOAuth,
+    /// 统一OAuth认证策略（支持所有OAuth 2.0提供商）
+    OAuth,
     /// Google服务账户认证策略
     ServiceAccount,
     /// Google应用默认凭据策略
@@ -370,8 +368,7 @@ impl fmt::Display for AuthType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AuthType::ApiKey => write!(f, "api_key"),
-            AuthType::OAuth2 => write!(f, "oauth2"),
-            AuthType::GoogleOAuth => write!(f, "google_oauth"),
+            AuthType::OAuth => write!(f, "oauth"),
             AuthType::ServiceAccount => write!(f, "service_account"),
             AuthType::Adc => write!(f, "adc"),
         }
@@ -382,8 +379,7 @@ impl From<&str> for AuthType {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "api_key" => AuthType::ApiKey,
-            "oauth2" => AuthType::OAuth2,
-            "google_oauth" => AuthType::GoogleOAuth,
+            "oauth" => AuthType::OAuth,
             "service_account" => AuthType::ServiceAccount,
             "adc" => AuthType::Adc,
             _ => AuthType::ApiKey, // 默认使用API密钥认证
@@ -529,8 +525,8 @@ impl MultiAuthConfig {
         }
     }
 
-    /// 创建OAuth2认证配置
-    pub fn oauth2(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
+    /// 创建OAuth认证配置
+    pub fn oauth(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
         let mut config = serde_json::Map::new();
         config.insert("client_id".to_string(), serde_json::Value::String(client_id.to_string()));
         config.insert("client_secret".to_string(), serde_json::Value::String(client_secret.to_string()));
@@ -538,7 +534,7 @@ impl MultiAuthConfig {
         config.insert("token_url".to_string(), serde_json::Value::String(token_url.to_string()));
 
         Self {
-            auth_type: AuthType::OAuth2,
+            auth_type: AuthType::OAuth,
             header_format: AuthHeaderFormat::default(),
             extra_config: Some(serde_json::Value::Object(config)),
         }
@@ -658,8 +654,7 @@ mod tests {
     #[test]
     fn test_auth_type_display() {
         assert_eq!(AuthType::ApiKey.to_string(), "api_key");
-        assert_eq!(AuthType::OAuth2.to_string(), "oauth2");
-        assert_eq!(AuthType::GoogleOAuth.to_string(), "google_oauth");
+        assert_eq!(AuthType::OAuth.to_string(), "oauth");
         assert_eq!(AuthType::ServiceAccount.to_string(), "service_account");
         assert_eq!(AuthType::Adc.to_string(), "adc");
     }
@@ -667,8 +662,7 @@ mod tests {
     #[test]
     fn test_auth_type_from_str() {
         assert_eq!(AuthType::from("api_key"), AuthType::ApiKey);
-        assert_eq!(AuthType::from("OAuth2"), AuthType::OAuth2);
-        assert_eq!(AuthType::from("GOOGLE_OAUTH"), AuthType::GoogleOAuth);
+        assert_eq!(AuthType::from("oauth"), AuthType::OAuth);
         assert_eq!(AuthType::from("service_account"), AuthType::ServiceAccount);
         assert_eq!(AuthType::from("adc"), AuthType::Adc);
         assert_eq!(AuthType::from("ADC"), AuthType::Adc);
@@ -699,8 +693,8 @@ mod tests {
         assert_eq!(api_config.auth_type, AuthType::ApiKey);
         assert_eq!(api_config.header_format.header_name, "X-API-Key");
 
-        let oauth_config = MultiAuthConfig::oauth2("client123", "secret456", "https://auth.example.com", "https://token.example.com");
-        assert_eq!(oauth_config.auth_type, AuthType::OAuth2);
+        let oauth_config = MultiAuthConfig::oauth("client123", "secret456", "https://auth.example.com", "https://token.example.com");
+        assert_eq!(oauth_config.auth_type, AuthType::OAuth);
         assert!(oauth_config.extra_config.is_some());
     }
 }

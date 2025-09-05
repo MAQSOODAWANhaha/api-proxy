@@ -33,18 +33,12 @@ const AUTH_TYPE_CONFIG: Record<string, AuthTypeOption> = {
     description: '使用API密钥进行认证',
     icon: Key,
   },
-  oauth2: {
-    value: 'oauth2',
+  oauth: {
+    value: 'oauth',
     label: 'OAuth 2.0',
     description: '使用OAuth 2.0进行安全授权',
     icon: Shield,
     recommended: true,
-  },
-  google_oauth: {
-    value: 'google_oauth',
-    label: 'Google OAuth',
-    description: '使用Google账户进行OAuth认证',
-    icon: User,
   },
   service_account: {
     value: 'service_account',
@@ -191,15 +185,9 @@ const AuthTypeSelector: React.FC<AuthTypeSelectorProps> = ({
           <p>{selectedAuthType.description}</p>
           
           {/* OAuth特殊说明 */}
-          {value === 'oauth2' && (
+          {value === 'oauth' && (
             <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
               💡 OAuth 2.0 提供更安全的授权方式，无需直接暴露API密钥
-            </p>
-          )}
-          
-          {value === 'google_oauth' && (
-            <p className="mt-2 text-xs text-green-600 dark:text-green-400">
-              💡 使用Google账户登录，支持细粒度权限控制
             </p>
           )}
         </div>

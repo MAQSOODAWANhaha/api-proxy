@@ -72,6 +72,14 @@ connection_timeout = 5
 default_ttl = 3600
 max_connections = 10
 
+# OAuth会话清理配置
+[oauth_cleanup]
+enabled = true
+pending_expire_minutes = 15
+cleanup_interval_seconds = 180
+max_cleanup_records = 1000
+expired_records_retention_days = 14
+
 # 全局服务启用配置
 [services]
 management = true
