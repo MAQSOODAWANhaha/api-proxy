@@ -770,12 +770,12 @@ const AddDialog: React.FC<{
       // OAuth成功完成，将获取到的token填充到表单
       setOAuthStatus('success')
       
-      // 将OAuth返回的access_token填入表单的API密钥字段
-      const newKeyValue = result.data.access_token
-      console.log('准备填充的access_token:', newKeyValue)
-      console.log('access_token类型:', typeof newKeyValue)
-      console.log('access_token长度:', newKeyValue ? newKeyValue.length : 0)
-      console.log('access_token是否为空:', !newKeyValue)
+      // 将OAuth返回的session_id填入表单的API密钥字段 (OAuth类型需要session_id而不是access_token)
+      const newKeyValue = result.data.session_id
+      console.log('准备填充的session_id:', newKeyValue)
+      console.log('session_id类型:', typeof newKeyValue)
+      console.log('session_id长度:', newKeyValue ? newKeyValue.length : 0)
+      console.log('session_id是否为空:', !newKeyValue)
       
       setFormData(prev => {
         const newFormData = {
@@ -1208,8 +1208,8 @@ const EditDialog: React.FC<{
       // OAuth成功完成，将获取到的token填充到表单
       setOAuthStatus('success')
       
-      // 将OAuth返回的access_token填入表单的API密钥字段
-      const newKeyValue = result.data.access_token
+      // 将OAuth返回的session_id填入表单的API密钥字段 (OAuth类型需要session_id而不是access_token)
+      const newKeyValue = result.data.session_id
       
       setFormData(prev => ({
         ...prev,
@@ -1218,7 +1218,7 @@ const EditDialog: React.FC<{
       
       // 显示成功消息，提示用户可以看到token并决定是否提交
       toast.success('OAuth授权成功！', {
-        description: 'Token已填充到API密钥字段，请检查并完善其他信息后点击"保存修改"按钮提交。',
+        description: 'OAuth会话ID已填充到API密钥字段，请检查并完善其他信息后点击"保存修改"按钮提交。',
         duration: 5000,
       })
     } else {
