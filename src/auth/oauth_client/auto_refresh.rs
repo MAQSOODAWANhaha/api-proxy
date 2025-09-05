@@ -201,6 +201,7 @@ impl AutoRefreshManager {
             debug!("Token for session {} was already refreshed", session_id);
             if let Some(token) = current_session.access_token {
                 return Ok(OAuthTokenResponse {
+                    session_id: session_id.to_string(),
                     access_token: token,
                     refresh_token: current_session.refresh_token,
                     id_token: current_session.id_token,

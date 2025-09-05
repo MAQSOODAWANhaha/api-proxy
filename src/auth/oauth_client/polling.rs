@@ -284,6 +284,7 @@ impl OAuthPollingClient {
             .clone();
 
         Ok(OAuthTokenResponse {
+            session_id: session.session_id.clone(),
             access_token,
             refresh_token: session.refresh_token.clone(),
             id_token: session.id_token.clone(),

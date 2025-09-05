@@ -108,7 +108,7 @@ impl TokenExchangeClient {
         let response = self.send_token_request(&config.token_url, form_params).await?;
 
         // 处理响应
-        let token_response = self.process_token_response(response).await?;
+        let token_response = self.process_token_response(response, session_id).await?;
 
         // 更新会话状态
         session_manager.update_session_with_tokens(
@@ -151,7 +151,7 @@ impl TokenExchangeClient {
         let response = self.send_token_request(&config.token_url, form_params).await?;
 
         // 处理响应
-        let token_response = self.process_token_response(response).await?;
+        let token_response = self.process_token_response(response, session_id).await?;
 
         // 更新会话状态
         session_manager.update_session_with_tokens(
@@ -309,6 +309,7 @@ impl TokenExchangeClient {
     async fn process_token_response(
         &self,
         response: TokenResponse,
+        session_id: &str,
     ) -> OAuthResult<OAuthTokenResponse> {
         // 检查是否有错误
         if let Some(error) = response.error {
@@ -323,6 +324,7 @@ impl TokenExchangeClient {
             .unwrap_or_default();
 
         Ok(OAuthTokenResponse {
+            session_id: session_id.to_string(),
             access_token: response.access_token,
             refresh_token: response.refresh_token,
             id_token: response.id_token,

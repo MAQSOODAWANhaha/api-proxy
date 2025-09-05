@@ -205,46 +205,11 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 为user_provider_keys表添加oauth_session_id字段，建立与oauth_client_sessions的关联
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .add_column_if_not_exists(
-                        ColumnDef::new(UserProviderKeys::OAuthSessionId)
-                            .string_len(64)
-                            .null()
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
-        // 为oauth_session_id字段创建索引
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_user_provider_keys_oauth_session_id")
-                    .table(UserProviderKeys::Table)
-                    .col(UserProviderKeys::OAuthSessionId)
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // 删除user_provider_keys表的oauth_session_id字段
-        manager
-            .alter_table(
-                Table::alter()
-                    .table(UserProviderKeys::Table)
-                    .drop_column(UserProviderKeys::OAuthSessionId)
-                    .to_owned(),
-            )
-            .await?;
-
         // 删除oauth_client_sessions表
         manager
             .drop_table(Table::drop().table(OAuthClientSessions::Table).to_owned())
@@ -294,10 +259,3 @@ enum ProviderTypes {
     Name,
 }
 
-#[derive(DeriveIden)]
-enum UserProviderKeys {
-    #[sea_orm(iden = "user_provider_keys")]
-    Table,
-    #[sea_orm(iden = "oauth_session_id")]
-    OAuthSessionId,
-}

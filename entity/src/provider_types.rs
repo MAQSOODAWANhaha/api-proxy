@@ -72,6 +72,9 @@ pub struct OAuthConfig {
     pub project_id: Option<String>,
     pub response_type: Option<String>,
     pub grant_type: Option<String>,
+    // 通用额外参数支持
+    #[serde(default)]
+    pub extra_params: Option<std::collections::HashMap<String, String>>,
 }
 
 /// OAuth配置解析方法

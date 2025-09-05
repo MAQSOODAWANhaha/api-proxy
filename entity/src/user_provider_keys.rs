@@ -24,11 +24,10 @@ pub struct Model {
     pub health_status: String,
     // OAuth认证支持字段
     // 注意: auth_type由provider_types表决定，不需要在这里重复存储
-    // auth_config_json字段已删除 - 统一使用oauth_session_id从oauth_client_sessions表获取OAuth数据
+    // OAuth认证直接通过api_key字段存储session_id，从oauth_client_sessions表获取OAuth数据
     pub auth_status: Option<String>,           // 认证状态 (pending, authorized, expired, error)
     pub expires_at: Option<DateTime>,          // 认证过期时间
     pub last_auth_check: Option<DateTime>,     // 最后认证检查时间
-    pub oauth_session_id: Option<String>,      // OAuth会话ID，用于token刷新
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

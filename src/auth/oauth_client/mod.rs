@@ -98,6 +98,8 @@ pub struct AuthorizeUrlResponse {
 /// OAuth令牌响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokenResponse {
+    /// 会话ID（用于后续创建provider key）
+    pub session_id: String,
     /// 访问令牌
     pub access_token: String,
     /// 刷新令牌（可选）

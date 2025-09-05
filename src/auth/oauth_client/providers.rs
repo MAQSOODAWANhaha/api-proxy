@@ -5,7 +5,7 @@
 
 use super::{OAuthError, OAuthProviderConfig, OAuthResult};
 // use crate::auth::oauth_client::pkce::PkceChallenge; // 未使用
-use entity::{provider_types, ProviderTypes};
+use entity::{ProviderTypes, provider_types};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 // use serde_json; // 未使用
 use std::collections::HashMap;
@@ -36,10 +36,10 @@ impl OAuthProviderManager {
 
         // 从数据库加载
         let config = self.load_from_db(provider_name).await?;
-        
+
         // 更新缓存
         self.update_cache(provider_name.to_string(), config.clone());
-        
+
         Ok(config)
     }
 
@@ -91,7 +91,8 @@ impl OAuthProviderManager {
         }
 
         // 额外参数
-        let extra_params: Vec<(&str, &str)> = config.extra_params
+        let extra_params: Vec<(&str, &str)> = config
+            .extra_params
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
@@ -106,9 +107,11 @@ impl OAuthProviderManager {
     /// 刷新缓存
     pub async fn refresh_cache(&self) -> OAuthResult<()> {
         let configs = self.list_active_configs().await?;
-        let mut cache = self.cache.write()
+        let mut cache = self
+            .cache
+            .write()
             .map_err(|_| OAuthError::DatabaseError("Cache lock error".to_string()))?;
-        
+
         cache.clear();
         for config in configs {
             cache.insert(config.provider_name.clone(), config);
@@ -163,7 +166,7 @@ impl OAuthProviderManager {
                 if let Ok(Some(oauth_config)) = model.get_oauth_config(oauth_type) {
                     return self.oauth_model_to_config(&model, oauth_type, oauth_config);
                 }
-                
+
                 // 如果指定类型不存在，尝试其他OAuth类型
                 let oauth_types = model.get_oauth_types();
                 for available_type in oauth_types {
@@ -171,8 +174,11 @@ impl OAuthProviderManager {
                         return self.oauth_model_to_config(&model, &available_type, oauth_config);
                     }
                 }
-                
-                Err(OAuthError::ProviderNotFound(format!("No OAuth config found for provider: {}", provider_name)))
+
+                Err(OAuthError::ProviderNotFound(format!(
+                    "No OAuth config found for provider: {}",
+                    provider_name
+                )))
             }
             None => Err(OAuthError::ProviderNotFound(provider_name.to_string())),
         }
@@ -187,33 +193,38 @@ impl OAuthProviderManager {
 
     /// 将OAuth配置转换为OAuthProviderConfig
     fn oauth_model_to_config(
-        &self, 
-        model: &provider_types::Model, 
-        oauth_type: &str, 
-        oauth_config: entity::provider_types::OAuthConfig
+        &self,
+        model: &provider_types::Model,
+        oauth_type: &str,
+        oauth_config: entity::provider_types::OAuthConfig,
     ) -> OAuthResult<OAuthProviderConfig> {
         // 解析作用域
-        let scopes: Vec<String> = oauth_config.scopes
+        let scopes: Vec<String> = oauth_config
+            .scopes
             .split_whitespace()
             .map(|s| s.to_string())
             .collect();
 
         // 构建额外参数
         let mut extra_params = HashMap::new();
+
+        // 添加传统的特定参数（向后兼容）
         if let Some(access_type) = oauth_config.access_type {
             extra_params.insert("access_type".to_string(), access_type);
         }
         if let Some(prompt) = oauth_config.prompt {
             extra_params.insert("prompt".to_string(), prompt);
         }
-        if let Some(project_id) = oauth_config.project_id {
-            extra_params.insert("project_id".to_string(), project_id);
-        }
         if let Some(response_type) = oauth_config.response_type {
             extra_params.insert("response_type".to_string(), response_type);
         }
         if let Some(grant_type) = oauth_config.grant_type {
             extra_params.insert("grant_type".to_string(), grant_type);
+        }
+
+        // 添加通用extra_params（新增支持）
+        if let Some(ref config_extra_params) = oauth_config.extra_params {
+            extra_params.extend(config_extra_params.clone());
         }
 
         // 添加提供商特定的额外参数
@@ -332,7 +343,9 @@ impl ProviderConfigBuilder {
 
     /// 添加额外参数
     pub fn extra_param(mut self, key: &str, value: &str) -> Self {
-        self.config.extra_params.insert(key.to_string(), value.to_string());
+        self.config
+            .extra_params
+            .insert(key.to_string(), value.to_string());
         self
     }
 
@@ -345,7 +358,7 @@ impl ProviderConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_provider_config_builder() {
         let config = ProviderConfigBuilder::new("test")
@@ -363,6 +376,9 @@ mod tests {
         assert_eq!(config.client_id, "test_client_id");
         assert_eq!(config.client_secret, Some("test_secret".to_string()));
         assert_eq!(config.scopes, vec!["read", "write"]);
-        assert_eq!(config.extra_params.get("custom"), Some(&"value".to_string()));
+        assert_eq!(
+            config.extra_params.get("custom"),
+            Some(&"value".to_string())
+        );
     }
 }

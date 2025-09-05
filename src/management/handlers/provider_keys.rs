@@ -124,10 +124,9 @@ pub async fn get_provider_keys_list(
             "id": provider_key.id,
             "provider": provider_name,
             "name": provider_key.name,
-            "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { "".to_string() },
+            "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { provider_key.api_key.clone() },
             "auth_type": provider_key.auth_type,
             "auth_status": provider_key.auth_status,
-            "oauth_session_id": provider_key.oauth_session_id,
             "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
             "weight": provider_key.weight,
             "max_requests_per_minute": provider_key.max_requests_per_minute,
@@ -225,17 +224,18 @@ pub async fn create_provider_key(
         );
     }
 
-    // OAuth类型需要oauth_session_id
-    if payload.auth_type == "oauth" && payload.oauth_session_id.is_none() {
+    // OAuth类型需要通过api_key字段提供session_id
+    if payload.auth_type == "oauth" && payload.api_key.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_SESSION",
-            "OAuth认证类型需要提供oauth_session_id字段",
+            "OAuth认证类型需要通过api_key字段提供session_id",
         );
     }
 
     // 验证OAuth会话存在性和所有权
-    if let Some(session_id) = &payload.oauth_session_id {
+    if payload.auth_type == "oauth" {
+        if let Some(session_id) = &payload.api_key {
         use entity::oauth_client_sessions::{self, Entity as OAuthSession};
         
         match OAuthSession::find()
@@ -248,7 +248,8 @@ pub async fn create_provider_key(
             Ok(Some(_)) => {
                 // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
                 let existing_usage = UserProviderKey::find()
-                    .filter(user_provider_keys::Column::OauthSessionId.eq(session_id))
+                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
                     .filter(user_provider_keys::Column::IsActive.eq(true))
                     .one(db)
                     .await;
@@ -286,8 +287,8 @@ pub async fn create_provider_key(
                 ));
             }
         }
+        }
     }
-
 
     // 创建新密钥
     let new_provider_key = user_provider_keys::ActiveModel {
@@ -296,7 +297,6 @@ pub async fn create_provider_key(
         name: Set(payload.name),
         api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
         auth_type: Set(payload.auth_type),
-        oauth_session_id: Set(payload.oauth_session_id),
         auth_status: Set(Some("active".to_string())),
         weight: Set(payload.weight),
         max_requests_per_minute: Set(payload.max_requests_per_minute),
@@ -407,10 +407,9 @@ pub async fn get_provider_key_detail(
         "id": provider_key.0.id,
         "provider": provider_name,
         "name": provider_key.0.name,
-        "api_key": if provider_key.0.auth_type == "api_key" { masked_api_key } else { "".to_string() },
+        "api_key": if provider_key.0.auth_type == "api_key" { masked_api_key } else { provider_key.0.api_key.clone() },
         "auth_type": provider_key.0.auth_type,
         "auth_status": provider_key.0.auth_status,
-        "oauth_session_id": provider_key.0.oauth_session_id,
         "expires_at": provider_key.0.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "last_auth_check": provider_key.0.last_auth_check.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
         "weight": provider_key.0.weight,
@@ -517,17 +516,18 @@ pub async fn update_provider_key(
         );
     }
 
-    // OAuth类型需要oauth_session_id
-    if payload.auth_type == "oauth" && payload.oauth_session_id.is_none() {
+    // OAuth类型需要通过api_key字段提供session_id
+    if payload.auth_type == "oauth" && payload.api_key.is_none() {
         return response::error(
             StatusCode::BAD_REQUEST,
             "MISSING_OAUTH_SESSION",
-            "OAuth认证类型需要提供oauth_session_id字段",
+            "OAuth认证类型需要通过api_key字段提供session_id",
         );
     }
 
     // 验证OAuth会话存在性和所有权
-    if let Some(session_id) = &payload.oauth_session_id {
+    if payload.auth_type == "oauth" {
+        if let Some(session_id) = &payload.api_key {
         use entity::oauth_client_sessions::{self, Entity as OAuthSession};
         
         // 检查会话是否有效
@@ -542,7 +542,8 @@ pub async fn update_provider_key(
                 // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
                 // (排除当前正在更新的key)
                 let existing_usage = UserProviderKey::find()
-                    .filter(user_provider_keys::Column::OauthSessionId.eq(session_id))
+                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
                     .filter(user_provider_keys::Column::IsActive.eq(true))
                     .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
                     .one(db)
@@ -581,8 +582,8 @@ pub async fn update_provider_key(
                 ));
             }
         }
+        }
     }
-
 
     // 更新密钥
     let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
@@ -590,7 +591,6 @@ pub async fn update_provider_key(
     active_model.name = Set(payload.name);
     active_model.api_key = Set(payload.api_key.unwrap_or_else(|| "".to_string()));
     active_model.auth_type = Set(payload.auth_type);
-    active_model.oauth_session_id = Set(payload.oauth_session_id);
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
     active_model.max_tokens_prompt_per_minute = Set(payload.max_tokens_prompt_per_minute);
@@ -1027,7 +1027,7 @@ pub struct CreateProviderKeyRequest {
     pub name: String,
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
-    pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
+    // OAuth认证类型现在通过api_key字段传递session_id
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,
@@ -1042,7 +1042,7 @@ pub struct UpdateProviderKeyRequest {
     pub name: String,
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
-    pub oauth_session_id: Option<String>, // OAuth会话ID，用于OAuth认证类型
+    // OAuth认证类型现在通过api_key字段传递session_id
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
     pub max_tokens_prompt_per_minute: Option<i32>,

@@ -161,10 +161,9 @@ impl SmartApiKeyProvider {
         provider_key_id: i32,
         provider_key: &user_provider_keys::Model
     ) -> Result<CredentialResult> {
-        let oauth_session_id = provider_key.oauth_session_id.as_ref()
-            .ok_or_else(|| ProxyError::authentication("OAuth provider key missing oauth_session_id".to_string()))?;
+        let session_id = &provider_key.api_key;
         
-        debug!("Handling OAuth credential with refresh service for session_id: {}", oauth_session_id);
+        debug!("Handling OAuth credential with refresh service for session_id: {}", session_id);
         
         // 获取刷新锁，防止并发刷新
         let refresh_lock = self.get_refresh_lock(provider_key_id).await;
@@ -181,7 +180,7 @@ impl SmartApiKeyProvider {
         }
         
         // 使用智能刷新服务进行被动刷新检查
-        match self.refresh_service.passive_refresh_if_needed(oauth_session_id).await {
+        match self.refresh_service.passive_refresh_if_needed(session_id).await {
             Ok(refresh_result) => {
                 if refresh_result.success {
                     // 刷新成功或token仍然有效
@@ -190,7 +189,7 @@ impl SmartApiKeyProvider {
                         info!("Got refreshed OAuth access token for provider_key_id: {}", provider_key_id);
                         
                         let credential_type = AuthCredentialType::OAuthToken {
-                            session_id: oauth_session_id.clone(),
+                            session_id: session_id.clone(),
                         };
                         
                         let result = CredentialResult {
@@ -211,12 +210,12 @@ impl SmartApiKeyProvider {
                         Ok(result)
                     } else {
                         // token仍然有效，从OAuth client获取当前token
-                        match self.oauth_client.get_valid_access_token(oauth_session_id).await {
+                        match self.oauth_client.get_valid_access_token(session_id).await {
                             Ok(Some(access_token)) => {
                                 debug!("Using current valid OAuth access token for provider_key_id: {}", provider_key_id);
                                 
                                 let credential_type = AuthCredentialType::OAuthToken {
-                                    session_id: oauth_session_id.clone(),
+                                    session_id: session_id.clone(),
                                 };
                                 
                                 let result = CredentialResult {
@@ -230,7 +229,7 @@ impl SmartApiKeyProvider {
                                     credential: access_token,
                                     auth_type: credential_type,
                                     cached_at: Utc::now(),
-                                    expires_at: self.get_token_expiry_time(oauth_session_id).await,
+                                    expires_at: self.get_token_expiry_time(session_id).await,
                                     refreshing: false,
                                 }).await;
                                 
