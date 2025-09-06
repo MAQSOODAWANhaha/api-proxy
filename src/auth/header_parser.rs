@@ -131,6 +131,71 @@ impl AuthHeaderParser {
     pub fn build_standard_format(header_name: &str, value_template: &str) -> String {
         format!("{}: {}", header_name, value_template)
     }
+
+    /// 解析认证头格式数组，支持多种认证头格式
+    ///
+    /// # 参数
+    /// - `formats_json`: JSON数组格式的认证头模板，如 `["Authorization: Bearer {key}", "X-goog-api-key: {key}"]`
+    /// - `api_key`: 实际的API密钥
+    ///
+    /// # 返回
+    /// - `Ok(Vec<AuthHeader>)`: 解析成功，返回所有认证头
+    /// - `Err(AuthParseError)`: JSON解析失败或格式错误
+    pub fn parse_multiple(formats_json: &str, api_key: &str) -> Result<Vec<AuthHeader>, AuthParseError> {
+        // 尝试解析为JSON数组
+        let formats: Vec<String> = serde_json::from_str(formats_json)
+            .map_err(|_| AuthParseError::InvalidFormat(format!("Invalid JSON array: {}", formats_json)))?;
+
+        let mut headers = Vec::new();
+        for format in formats {
+            let header = Self::parse(&format, api_key)?;
+            headers.push(header);
+        }
+
+        Ok(headers)
+    }
+
+    /// 从JSON格式数组中提取所有头名称（用于请求解析）
+    ///
+    /// # 参数  
+    /// - `formats_json`: JSON数组格式的认证头模板
+    ///
+    /// # 返回
+    /// - `Ok(Vec<String>)`: 所有头名称（小写）
+    /// - `Err(AuthParseError)`: JSON解析失败或格式错误
+    pub fn extract_header_names_from_array(formats_json: &str) -> Result<Vec<String>, AuthParseError> {
+        // 尝试解析为JSON数组
+        let formats: Vec<String> = serde_json::from_str(formats_json)
+            .map_err(|_| AuthParseError::InvalidFormat(format!("Invalid JSON array: {}", formats_json)))?;
+
+        let mut header_names = Vec::new();
+        for format in formats {
+            let header_name = Self::extract_header_name(&format)?;
+            header_names.push(header_name);
+        }
+
+        Ok(header_names)
+    }
+
+    /// 智能解析：自动检测是单一格式还是数组格式
+    ///
+    /// # 参数
+    /// - `format_or_array`: 单一格式字符串或JSON数组
+    /// - `api_key`: 实际的API密钥
+    ///
+    /// # 返回
+    /// - `Ok(Vec<AuthHeader>)`: 解析成功的认证头列表
+    /// - `Err(AuthParseError)`: 解析失败
+    pub fn parse_smart(format_or_array: &str, api_key: &str) -> Result<Vec<AuthHeader>, AuthParseError> {
+        // 先尝试作为JSON数组解析
+        if let Ok(headers) = Self::parse_multiple(format_or_array, api_key) {
+            return Ok(headers);
+        }
+
+        // 如果不是JSON数组，尝试作为单一格式解析
+        let header = Self::parse(format_or_array, api_key)?;
+        Ok(vec![header])
+    }
 }
 
 #[cfg(test)]

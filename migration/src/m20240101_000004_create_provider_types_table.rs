@@ -78,9 +78,9 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(ProviderTypes::AuthHeaderFormat)
-                            .string_len(255)
+                            .json()
                             .not_null()
-                            .default("Authorization: Bearer {token}"),
+                            .default("[\"Authorization: Bearer {key}\"]"),
                     )
                     .col(ColumnDef::new(ProviderTypes::AuthConfigsJson).json())
                     .col(
@@ -156,7 +156,7 @@ impl MigrationTrait for Migration {
                         "openai".into(),
                         "gpt-4.1".into(),
                         "[\"api_key\", \"oauth\"]".into(),
-                        "Authorization: Bearer {key}".into(),
+                        "[\"Authorization: Bearer {key}\"]".into(),
                         r#"{"request_stage":{"required_headers":{}},"response_stage":{}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usage.prompt_tokens"},"tokens_completion":{"type":"direct","path":"usage.completion_tokens"},"tokens_total":{"type":"expression","formula":"usage.prompt_tokens + usage.completion_tokens","fallback":"usage.total_tokens"},"cache_create_tokens":{"type":"fallback","paths":["usage.prompt_tokens_details.cached_tokens","0"]},"cache_read_tokens":{"type":"fallback","paths":["usage.completion_tokens_details.accepted_prediction_tokens","0"]}}"#.into(),
                         r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名"},{"type":"query_param","parameter":"model","priority":2,"description":"从query参数提取模型名"}],"fallback_model":"gpt-3.5-turbo"}"#.into(),
@@ -170,7 +170,7 @@ impl MigrationTrait for Migration {
                         "gemini".into(),
                         "gemini-2.5-flash".into(),
                         "[\"api_key\", \"oauth\", \"service_account\", \"adc\"]".into(),
-                        "X-goog-api-key: {key}".into(),
+                        "[\"Authorization: Bearer {key}\", \"X-goog-api-key: {key}\"]".into(),
                         r#"{"request_stage":{"required_headers":{}},"response_stage":{}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usageMetadata.promptTokenCount"},"tokens_completion":{"type":"direct","path":"usageMetadata.candidatesTokenCount"},"tokens_total":{"type":"expression","formula":"usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount","fallback":"usageMetadata.totalTokenCount"},"cache_create_tokens":{"type":"default","value":0},"cache_read_tokens":{"type":"conditional","condition":"exists(usageMetadata.thoughtsTokenCount)","true_value":"usageMetadata.thoughtsTokenCount","false_value":0}}"#.into(),
                         r#"{"extraction_rules":[{"type":"url_regex","pattern":"(?:/gemini)?/v1beta/models/([^:/?]+):(?:stream)?[gG]enerateContent","priority":1,"description":"从URL路径提取模型名（支持流式和非流式端点）"},{"type":"url_regex","pattern":"/v1beta/models/([^:/?]+):generateContent","priority":2,"description":"标准generateContent端点模型提取"},{"type":"body_json","path":"model","priority":3,"description":"从请求body提取模型名"}],"fallback_model":"gemini-pro"}"#.into(),
@@ -184,7 +184,7 @@ impl MigrationTrait for Migration {
                         "anthropic".into(),
                         "claude-3.5-sonnet".into(),
                         "[\"api_key\", \"oauth\"]".into(),
-                        "Authorization: Bearer {key}".into(),
+                        "[\"Authorization: Bearer {key}\"]".into(),
                         r#"{"request_stage":{"required_headers":{"anthropic-version":"2023-06-01"}},"response_stage":{}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usage.input_tokens"},"tokens_completion":{"type":"direct","path":"usage.output_tokens"},"tokens_total":{"type":"expression","formula":"usage.input_tokens + usage.output_tokens","fallback":"usage.total_tokens"},"cache_create_tokens":{"type":"fallback","paths":["usage.cache_creation_input_tokens","0"]},"cache_read_tokens":{"type":"fallback","paths":["usage.cache_read_input_tokens","0"]}}"#.into(),
                         r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名"}],"fallback_model":"claude-3-sonnet"}"#.into(),

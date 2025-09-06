@@ -43,9 +43,9 @@ impl AuthenticationService {
     /// 从请求中提取API密钥（数据库驱动版本）
     ///
     /// 根据provider配置动态解析认证头:
-    /// 1. 使用AuthHeaderParser解析provider的auth_header_format
-    /// 2. 提取对应的头部名称
-    /// 3. 从请求头中查找该头部
+    /// 1. 支持数组格式的auth_header_format（多种认证头格式）
+    /// 2. 遍历所有配置的认证头格式
+    /// 3. 从请求头中查找匹配的头部
     /// 4. 使用fallback逻辑支持query参数
     pub async fn extract_api_key_from_request_with_provider(
         &self,
@@ -54,22 +54,43 @@ impl AuthenticationService {
     ) -> Result<String, ProxyError> {
         let req_header = session.req_header();
 
-        // 首先尝试使用provider配置的认证头格式
-        let header_name = AuthHeaderParser::extract_header_name(&provider.auth_header_format)
-            .map_err(|e| ProxyError::authentication(&format!("Invalid auth header format in provider config: {}", e)))?;
+        // 尝试从provider配置的所有认证头格式中提取头名称
+        let header_names = match AuthHeaderParser::extract_header_names_from_array(&provider.auth_header_format) {
+            Ok(names) => names,
+            Err(_) => {
+                // 如果不是数组格式，尝试作为单一格式解析（向后兼容）
+                match AuthHeaderParser::extract_header_name(&provider.auth_header_format) {
+                    Ok(name) => vec![name],
+                    Err(e) => {
+                        return Err(ProxyError::authentication(&format!(
+                            "Invalid auth header format in provider config: {}", e
+                        )));
+                    }
+                }
+            }
+        };
 
         tracing::debug!(
             provider_name = %provider.name,
             auth_header_format = %provider.auth_header_format,
-            extracted_header_name = %header_name,
-            "Extracted header name from provider auth format"
+            extracted_header_names = ?header_names,
+            "Extracted header names from provider auth format"
         );
 
-        // 查找对应的头部
-        if let Some(header_value) = req_header.headers.get(&header_name) {
-            if let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
-                // 使用配置的格式解析API密钥
-                return self.extract_key_from_auth_format(&provider.auth_header_format, header_str);
+        // 遍历所有配置的头名称，查找匹配的认证头
+        for header_name in &header_names {
+            if let Some(header_value) = req_header.headers.get(header_name) {
+                if let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
+                    // 尝试从当前头中提取API密钥
+                    if let Ok(api_key) = self.extract_key_from_auth_format_array(&provider.auth_header_format, header_name, header_str) {
+                        tracing::debug!(
+                            provider_name = %provider.name,
+                            header_name = %header_name,
+                            "API key extracted from header"
+                        );
+                        return Ok(api_key);
+                    }
+                }
             }
         }
 
@@ -86,8 +107,8 @@ impl AuthenticationService {
         }
 
         Err(ProxyError::authentication(&format!(
-            "Missing API key for provider '{}'. Expected header: {} with format: {}",
-            provider.name, header_name, provider.auth_header_format
+            "Missing API key for provider '{}'. Expected headers: {:?} with format: {}",
+            provider.name, header_names, provider.auth_header_format
         )))
     }
 
@@ -153,6 +174,56 @@ impl AuthenticationService {
         Err(ProxyError::authentication(&format!(
             "Could not extract API key from header value using format: {}",
             auth_format
+        )))
+    }
+
+    /// 从数组格式的认证配置中提取API密钥
+    ///
+    /// 支持多种认证头格式，找到匹配的格式并提取密钥
+    ///
+    /// # 参数
+    /// - `auth_formats_json`: JSON数组格式的认证头配置
+    /// - `header_name`: 当前找到的头部名称（小写）
+    /// - `header_value`: 头部值
+    ///
+    /// # 返回
+    /// - `Ok(String)`: 提取到的API密钥
+    /// - `Err(ProxyError)`: 提取失败
+    fn extract_key_from_auth_format_array(
+        &self,
+        auth_formats_json: &str,
+        header_name: &str,
+        header_value: &str,
+    ) -> Result<String, ProxyError> {
+        // 尝试解析JSON数组
+        let formats: Vec<String> = match serde_json::from_str(auth_formats_json) {
+            Ok(formats) => formats,
+            Err(_) => {
+                // 如果不是JSON数组，尝试作为单一格式处理（向后兼容）
+                return self.extract_key_from_auth_format(auth_formats_json, header_value);
+            }
+        };
+
+        // 遍历所有格式，找到匹配当前header_name的格式
+        for format in formats {
+            if let Ok(format_header_name) = AuthHeaderParser::extract_header_name(&format) {
+                if format_header_name == header_name {
+                    // 找到匹配的格式，尝试提取密钥
+                    if let Ok(api_key) = self.extract_key_from_auth_format(&format, header_value) {
+                        tracing::debug!(
+                            format = %format,
+                            header_name = %header_name,
+                            "Successfully extracted API key using matching format"
+                        );
+                        return Ok(api_key);
+                    }
+                }
+            }
+        }
+
+        Err(ProxyError::authentication(&format!(
+            "No matching auth format found for header '{}' in configured formats: {}",
+            header_name, auth_formats_json
         )))
     }
 

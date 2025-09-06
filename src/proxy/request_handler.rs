@@ -1406,12 +1406,12 @@ impl RequestHandler {
         provider_type: &provider_types::Model,
         api_key: &str,
     ) -> Result<(), ProxyError> {
-        // 直接使用数据库auth_header_format字段（原有逻辑）
+        // 使用智能解析支持数组格式的auth_header_format
         let auth_format = provider_type.auth_header_format.clone();
 
-        // 使用通用认证头解析器并提取字符串以避免生命周期问题
-        let (auth_name, auth_value) = match AuthHeaderParser::parse(&auth_format, api_key) {
-            Ok(header) => (header.name, header.value),
+        // 使用智能解析器支持数组和单一格式
+        let headers = match AuthHeaderParser::parse_smart(&auth_format, api_key) {
+            Ok(headers) => headers,
             Err(AuthParseError::InvalidFormat(format)) => {
                 let error = ProxyError::internal(format!(
                     "Invalid authentication header format in database: {}",
@@ -1435,26 +1435,30 @@ impl RequestHandler {
         // 清除所有可能的认证头，确保干净的状态
         self.clear_auth_headers(upstream_request);
 
-        // 设置正确的认证头
-        let static_header_name = get_static_header_name(&auth_name);
-        if let Err(e) = upstream_request.insert_header(static_header_name, &auth_value) {
-            let error = ProxyError::internal(format!(
-                "Failed to set authentication header '{}': {}",
-                auth_name, e
-            ));
-            self.tracing_service
-                .complete_trace_config_error(&ctx.request_id, &error.to_string())
-                .await?;
-            return Err(error);
+        // 设置所有认证头
+        let mut applied_headers = Vec::new();
+        for header in &headers {
+            let static_header_name = get_static_header_name(&header.name);
+            if let Err(e) = upstream_request.insert_header(static_header_name, &header.value) {
+                let error = ProxyError::internal(format!(
+                    "Failed to set authentication header '{}': {}",
+                    header.name, e
+                ));
+                self.tracing_service
+                    .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                    .await?;
+                return Err(error);
+            }
+            applied_headers.push(header.name.clone());
         }
 
         tracing::info!(
             request_id = %ctx.request_id,
             provider = %provider_type.name,
             auth_type = "api_key",
-            auth_header = %auth_name,
+            auth_headers = ?applied_headers,
             api_key_preview = %AuthUtils::sanitize_api_key(api_key),
-            "Applied API key authentication"
+            "Applied API key authentication with {} headers", headers.len()
         );
 
         Ok(())

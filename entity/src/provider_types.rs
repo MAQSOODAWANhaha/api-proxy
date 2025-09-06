@@ -84,6 +84,38 @@ impl Model {
         serde_json::from_str(&self.supported_auth_types)
     }
 
+    /// 获取认证头格式列表
+    pub fn get_auth_header_formats(&self) -> Result<Vec<String>, serde_json::Error> {
+        serde_json::from_str(&self.auth_header_format)
+    }
+
+    /// 为指定的API密钥生成所有认证头
+    pub fn generate_auth_headers(&self, api_key: &str) -> Result<Vec<(String, String)>, serde_json::Error> {
+        let formats = self.get_auth_header_formats()?;
+        let mut headers = Vec::new();
+        
+        for format in formats {
+            let header_value = format.replace("{key}", api_key);
+            if let Some((header_name, header_val)) = header_value.split_once(": ") {
+                headers.push((header_name.to_string(), header_val.to_string()));
+            }
+        }
+        
+        Ok(headers)
+    }
+
+    /// 检查是否支持标准Bearer认证
+    pub fn supports_bearer_auth(&self) -> bool {
+        self.get_auth_header_formats()
+            .map(|formats| {
+                formats.iter().any(|format| {
+                    format.starts_with("Authorization: Bearer") || 
+                    format.contains("Bearer {key}")
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// 检查是否支持指定的认证类型
     pub fn supports_auth_type(&self, auth_type: &str) -> bool {
         self.get_supported_auth_types()
@@ -248,7 +280,7 @@ impl Default for Model {
             token_mappings_json: None,
             model_extraction_json: None,
             supported_auth_types: "[\"api_key\"]".to_string(),
-            auth_header_format: "Authorization: Bearer {key}".to_string(),
+            auth_header_format: "[\"Authorization: Bearer {key}\"]".to_string(),
             auth_configs_json: None,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
