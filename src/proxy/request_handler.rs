@@ -7,7 +7,7 @@ use pingora_core::upstreams::peer::{HttpPeer, Peer};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
-use sea_orm::{DatabaseConnection, EntityTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +23,7 @@ use entity::{
     provider_types::{self, Entity as ProviderTypes},
     user_provider_keys::{self},
     user_service_apis::{self},
+    oauth_client_sessions::{self, Entity as OAuthClientSessions},
 };
 
 /// 从URL路径中提取provider名称
@@ -1143,7 +1144,33 @@ impl RequestHandler {
             }
             AuthType::OAuth => {
                 // 统一OAuth认证 - 支持所有OAuth 2.0提供商
-                self.apply_oauth_authentication(ctx, upstream_request, provider_type, api_key).await
+                // 对于OAuth，api_key实际包含session_id，需要查询实际的access_token
+                let session_id = api_key; // 为了代码清晰性重命名
+                
+                // 从oauth_client_sessions表查询actual access_token
+                let oauth_session = OAuthClientSessions::find()
+                    .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+                    .one(self.db.as_ref())
+                    .await
+                    .map_err(|e| {
+                        let error = ProxyError::internal(format!("Failed to query OAuth session: {}", e));
+                        error
+                    })?;
+                
+                let access_token = match oauth_session {
+                    Some(session) => {
+                        if let Some(access_token) = &session.access_token {
+                            access_token.clone()
+                        } else {
+                            return Err(ProxyError::internal("OAuth session has no access_token"));
+                        }
+                    }
+                    None => {
+                        return Err(ProxyError::internal("OAuth session not found"));
+                    }
+                };
+                
+                self.apply_oauth_authentication(ctx, upstream_request, provider_type, &access_token).await
             }
             AuthType::ServiceAccount => {
                 // Google服务账户认证 - JWT格式

@@ -37,6 +37,8 @@ pub struct ApiKeyInfo {
     pub user_id: i32,
     /// 提供商类型ID
     pub provider_type_id: i32,
+    /// 认证类型 (api_key, oauth)
+    pub auth_type: String,
     /// 密钥名称
     pub name: String,
     /// API 密钥 (通常是脱敏的)
