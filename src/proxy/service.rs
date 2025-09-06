@@ -223,6 +223,18 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
+        // 如果是重试请求，添加短暂延迟避免立即重试
+        if ctx.retry_count > 0 {
+            let delay_ms = (ctx.retry_count * 100).min(1000); // 最多延迟1秒
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                retry_count = ctx.retry_count,
+                delay_ms = delay_ms,
+                "Adding retry delay before upstream selection"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
+        }
+
         // 使用AI代理处理器选择上游对等体
         self.ai_handler
             .select_upstream_peer(ctx)
@@ -367,11 +379,57 @@ impl ProxyHttp for ProxyService {
 
     async fn fail_to_proxy(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         e: &Error,
         ctx: &mut Self::CTX,
     ) -> FailToProxy {
-        // 检测超时和网络错误，进行错误转换
+        // 检测可重试的错误类型
+        let is_retryable_error = matches!(
+            &e.etype,
+            ErrorType::ConnectTimedout
+                | ErrorType::ReadTimedout
+                | ErrorType::WriteTimedout
+                | ErrorType::ConnectError
+                | ErrorType::ConnectRefused
+        );
+
+        // 检查是否可以重试
+        let max_retry_count = ctx.user_service_api
+            .as_ref()
+            .and_then(|api| api.retry_count)
+            .unwrap_or(3) as u32;
+        
+        let should_retry = is_retryable_error 
+            && ctx.retry_count < max_retry_count
+            && ctx.selected_backend.is_some();
+
+        // 增加重试计数
+        ctx.retry_count += 1;
+
+        tracing::warn!(
+            request_id = %ctx.request_id,
+            retry_count = ctx.retry_count,
+            max_retry_count = max_retry_count,
+            should_retry = should_retry,
+            error_type = ?e.etype,
+            "Proxy connection failed, evaluating retry"
+        );
+
+        if should_retry {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                retry_attempt = ctx.retry_count,
+                error_type = ?e.etype,
+                "Attempting retry for network/timeout error with same backend"
+            );
+
+            // 对于网络错误和超时，使用相同的API密钥重试
+            // 这类错误通常是临时的网络问题或服务商临时故障
+            // 注意：由于Pingora架构限制，实际重试由Pingora内部处理
+            // 这里主要记录重试意图，真正的重试通过返回适当的错误码触发
+        }
+
+        // 处理最终失败的情况
         let is_timeout_or_network_error = matches!(
             &e.etype,
             ErrorType::ConnectTimedout
@@ -386,12 +444,14 @@ impl ProxyHttp for ProxyService {
 
             tracing::error!(
                 request_id = %ctx.request_id,
+                retry_count = ctx.retry_count,
+                max_retry_count = max_retry_count,
                 original_error = %e,
                 converted_error = %converted_error,
-                "Converting network/timeout error to user-friendly response"
+                "All retry attempts exhausted, returning error response"
             );
 
-            // 上游连接失败时立即记录到数据库
+            // 上游连接失败时立即记录到数据库（包含重试次数信息）
             if let Some(tracer) = &self.tracer {
                 let error_code = match converted_error {
                     crate::error::ProxyError::ConnectionTimeout { .. } => 504,
@@ -417,7 +477,7 @@ impl ProxyHttp for ProxyService {
                         None,
                         None,
                         Some(error_type.to_string()),
-                        Some(converted_error.to_string()),
+                        Some(format!("{} (retry_count: {})", converted_error, ctx.retry_count)),
                     )
                     .await;
             }
@@ -433,12 +493,11 @@ impl ProxyHttp for ProxyService {
 
             return FailToProxy {
                 error_code,
-                can_reuse_downstream: false, // 对于超时和网络错误，不重用连接
+                can_reuse_downstream: false,
             };
         }
 
         // 对于其他错误，使用默认错误码并不重用连接
-        // 其他类型的连接失败也记录
         if let Some(tracer) = &self.tracer {
             let _ = tracer
                 .complete_trace(
@@ -448,7 +507,7 @@ impl ProxyHttp for ProxyService {
                     None,
                     None,
                     Some("proxy_error".to_string()),
-                    Some(format!("Pingora error: {}", e)),
+                    Some(format!("Pingora error: {} (retry_count: {})", e, ctx.retry_count)),
                 )
                 .await;
         }

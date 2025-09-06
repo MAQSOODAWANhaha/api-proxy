@@ -82,13 +82,16 @@ impl ApiKeyPoolManager {
             return Err(ProxyError::internal("No provider keys configured in service API"));
         }
 
-        // 查询指定的API密钥
-        let user_keys = entity::user_provider_keys::Entity::find()
+        // 查询指定的API密钥，并应用基础筛选条件
+        let all_candidate_keys = entity::user_provider_keys::Entity::find()
             .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids))
             .filter(entity::user_provider_keys::Column::IsActive.eq(true))
             .all(&*self.db)
             .await
             .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;
+
+        // 应用更智能的筛选逻辑，考虑认证状态和过期时间
+        let user_keys = self.filter_valid_keys(&all_candidate_keys).await;
 
         if user_keys.is_empty() {
             return Err(ProxyError::internal("No active provider keys found for configured IDs"));
@@ -96,6 +99,9 @@ impl ApiKeyPoolManager {
 
         // 过滤健康的密钥
         let healthy_keys = self.filter_healthy_keys(&user_keys).await;
+        
+        // 记录密钥限制信息用于调试
+        self.log_key_limits(&user_keys).await;
         
         if healthy_keys.is_empty() {
             // 如果没有健康的密钥，记录警告并使用所有密钥（降级模式）
@@ -290,6 +296,114 @@ impl ApiKeyPoolManager {
         selector
     }
 
+    /// 过滤有效的API密钥 - 综合考虑认证状态、过期时间等条件
+    async fn filter_valid_keys(&self, keys: &[user_provider_keys::Model]) -> Vec<user_provider_keys::Model> {
+        let now = chrono::Utc::now().naive_utc();
+        
+        keys.iter()
+            .filter(|key| {
+                // 1. 检查认证状态
+                if let Some(auth_status) = &key.auth_status {
+                    match auth_status.as_str() {
+                        "authorized" => {}, // 认证成功，继续检查其他条件
+                        "pending" => {
+                            debug!(
+                                key_id = key.id,
+                                key_name = %key.name,
+                                "API key is pending authorization, skipping"
+                            );
+                            return false;
+                        },
+                        "expired" => {
+                            debug!(
+                                key_id = key.id,
+                                key_name = %key.name,
+                                "API key authorization has expired, skipping"
+                            );
+                            return false;
+                        },
+                        "error" => {
+                            debug!(
+                                key_id = key.id,
+                                key_name = %key.name,
+                                "API key has authorization error, skipping"
+                            );
+                            return false;
+                        },
+                        _ => {
+                            // 未知状态，保守地允许通过
+                            debug!(
+                                key_id = key.id,
+                                key_name = %key.name,
+                                unknown_status = %auth_status,
+                                "Unknown auth status, allowing key"
+                            );
+                        }
+                    }
+                }
+                
+                // 2. 检查过期时间
+                if let Some(expires_at) = key.expires_at {
+                    if now >= expires_at {
+                        debug!(
+                            key_id = key.id,
+                            key_name = %key.name,
+                            expires_at = %expires_at,
+                            "API key has expired, skipping"
+                        );
+                        return false;
+                    }
+                }
+                
+                // 3. 检查健康状态（如果不是"healthy"或"unknown"则跳过）
+                match key.health_status.as_str() {
+                    "healthy" | "unknown" => {
+                        // 健康或未知状态允许通过
+                        true
+                    },
+                    "unhealthy" | "error" => {
+                        debug!(
+                            key_id = key.id,
+                            key_name = %key.name,
+                            health_status = %key.health_status,
+                            "API key is unhealthy, skipping"
+                        );
+                        false
+                    },
+                    _ => {
+                        // 其他状态保守地允许通过
+                        debug!(
+                            key_id = key.id,
+                            key_name = %key.name,
+                            unknown_health = %key.health_status,
+                            "Unknown health status, allowing key"
+                        );
+                        true
+                    }
+                }
+            })
+            .cloned()
+            .collect()
+    }
+    
+    /// 记录密钥限制信息
+    async fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
+        for key in keys {
+            debug!(
+                key_id = key.id,
+                key_name = %key.name,
+                weight = ?key.weight,
+                max_requests_per_minute = ?key.max_requests_per_minute,
+                max_tokens_prompt_per_minute = ?key.max_tokens_prompt_per_minute,
+                max_requests_per_day = ?key.max_requests_per_day,
+                auth_status = ?key.auth_status,
+                expires_at = ?key.expires_at,
+                health_status = %key.health_status,
+                "API key limits and status information"
+            );
+        }
+    }
+    
     /// 过滤健康的API密钥
     async fn filter_healthy_keys(&self, keys: &[user_provider_keys::Model]) -> Vec<user_provider_keys::Model> {
         let healthy_key_ids = self.health_checker.get_healthy_keys().await;

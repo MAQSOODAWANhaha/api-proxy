@@ -7,7 +7,8 @@ use pingora_core::upstreams::peer::{HttpPeer, Peer};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QuerySelect};
+use sea_orm::prelude::Decimal;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -558,18 +559,62 @@ impl RequestHandler {
         Ok(())
     }
 
-    /// 检查速率限制 - 基于统一缓存的滑动窗口算法
+    /// 检查所有限制 - 包括速率限制、每日限制、过期时间等
     async fn check_rate_limit(
         &self,
         user_api: &user_service_apis::Model,
     ) -> Result<(), ProxyError> {
-        let rate_limit = user_api.max_request_per_min.unwrap_or(60); // 默认每分钟60次
-
-        if rate_limit <= 0 {
-            return Ok(()); // 无限制
+        // 1. 检查API过期时间
+        if let Some(expires_at) = &user_api.expires_at {
+            let now = chrono::Utc::now().naive_utc();
+            if now > *expires_at {
+                tracing::warn!(
+                    user_service_api_id = user_api.id,
+                    expires_at = %expires_at,
+                    "API has expired"
+                );
+                return Err(ProxyError::rate_limit("API has expired".to_string()));
+            }
         }
 
-        let cache_key = format!("rate_limit:service_api:{}:minute", user_api.id);
+        // 2. 检查每分钟请求数限制
+        if let Some(rate_limit) = user_api.max_request_per_min {
+            if rate_limit > 0 {
+                self.check_minute_rate_limit(user_api.id, rate_limit).await?;
+            }
+        }
+
+        // 3. 检查每日请求数限制
+        if let Some(daily_limit) = user_api.max_requests_per_day {
+            if daily_limit > 0 {
+                self.check_daily_request_limit(user_api.id, daily_limit).await?;
+            }
+        }
+
+        // 4. 检查每日token限制 (基于历史数据预检查)
+        if let Some(token_limit) = user_api.max_tokens_per_day {
+            if token_limit > 0 {
+                self.check_daily_token_limit(user_api.id, token_limit).await?;
+            }
+        }
+
+        // 5. 检查每日成本限制 (基于历史数据预检查)
+        if let Some(cost_limit) = user_api.max_cost_per_day {
+            if cost_limit > Decimal::ZERO {
+                self.check_daily_cost_limit(user_api.id, cost_limit).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 检查每分钟速率限制
+    async fn check_minute_rate_limit(
+        &self,
+        service_api_id: i32,
+        rate_limit: i32,
+    ) -> Result<(), ProxyError> {
+        let cache_key = format!("rate_limit:service_api:{}:minute", service_api_id);
 
         // 使用统一缓存的incr操作实现速率限制
         let current_count = self
@@ -590,10 +635,10 @@ impl RequestHandler {
 
         if current_count > rate_limit as i64 {
             tracing::warn!(
-                user_service_api_id = user_api.id,
+                service_api_id = service_api_id,
                 current_count = current_count,
                 rate_limit = rate_limit,
-                "Rate limit exceeded"
+                "Per-minute rate limit exceeded"
             );
 
             return Err(ProxyError::rate_limit(format!(
@@ -603,15 +648,185 @@ impl RequestHandler {
         }
 
         tracing::debug!(
-            user_service_api_id = user_api.id,
+            service_api_id = service_api_id,
             current_count = current_count,
             rate_limit = rate_limit,
             remaining = rate_limit as i64 - current_count,
-            "Rate limit check passed"
+            "Per-minute rate limit check passed"
         );
 
         Ok(())
     }
+
+    /// 检查每日请求数限制
+    async fn check_daily_request_limit(
+        &self,
+        service_api_id: i32,
+        daily_limit: i32,
+    ) -> Result<(), ProxyError> {
+        let today = chrono::Utc::now().date_naive();
+        let cache_key = format!("rate_limit:service_api:{}:day:{}", service_api_id, today);
+
+        // 使用统一缓存的incr操作实现每日限制
+        let current_count = self
+            .cache
+            .provider()
+            .incr(&cache_key, 1)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Cache incr error: {}", e)))?;
+
+        // 如果是第一次请求，设置过期时间为当天结束
+        if current_count == 1 {
+            let tomorrow = today + chrono::Duration::days(1);
+            let seconds_until_tomorrow = (tomorrow.and_hms_opt(0, 0, 0).unwrap() 
+                - chrono::Utc::now().naive_utc()).num_seconds().max(0) as u64;
+            
+            let _ = self
+                .cache
+                .provider()
+                .expire(&cache_key, Duration::from_secs(seconds_until_tomorrow))
+                .await;
+        }
+
+        if current_count > daily_limit as i64 {
+            tracing::warn!(
+                service_api_id = service_api_id,
+                current_count = current_count,
+                daily_limit = daily_limit,
+                date = %today,
+                "Daily request limit exceeded"
+            );
+
+            return Err(ProxyError::rate_limit(format!(
+                "Daily request limit exceeded: {} requests per day",
+                daily_limit
+            )));
+        }
+
+        tracing::debug!(
+            service_api_id = service_api_id,
+            current_count = current_count,
+            daily_limit = daily_limit,
+            remaining = daily_limit as i64 - current_count,
+            date = %today,
+            "Daily request limit check passed"
+        );
+
+        Ok(())
+    }
+
+    /// 检查每日token限制 (基于数据库实际统计)
+    async fn check_daily_token_limit(
+        &self,
+        service_api_id: i32,
+        token_limit: i32,
+    ) -> Result<(), ProxyError> {
+        let today = chrono::Utc::now().date_naive();
+        let today_start = today.and_hms_opt(0, 0, 0).unwrap();
+        let today_end = (today + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap();
+        
+        // 查询当天数据库中实际的token消耗
+        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+        
+        let total_tokens_used: Option<i64> = ProxyTracing::find()
+            .filter(Column::UserServiceApiId.eq(service_api_id))
+            .filter(Column::CreatedAt.gte(today_start))
+            .filter(Column::CreatedAt.lt(today_end))
+            .filter(Column::IsSuccess.eq(true))  // 只计算成功请求的token
+            .select_only()
+            .column_as(Column::TokensTotal.sum(), "total_tokens")
+            .into_tuple::<Option<i64>>()
+            .one(&*self.db)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Database query error: {}", e)))?
+            .flatten();
+
+        let current_usage = total_tokens_used.unwrap_or(0);
+
+        if current_usage >= token_limit as i64 {
+            tracing::warn!(
+                service_api_id = service_api_id,
+                current_usage = current_usage,
+                token_limit = token_limit,
+                date = %today,
+                "Daily token limit exceeded (database-verified)"
+            );
+
+            return Err(ProxyError::rate_limit(format!(
+                "Daily token limit exceeded: {} tokens per day (used: {})",
+                token_limit, current_usage
+            )));
+        }
+
+        tracing::debug!(
+            service_api_id = service_api_id,
+            current_usage = current_usage,
+            token_limit = token_limit,
+            remaining = token_limit as i64 - current_usage,
+            date = %today,
+            "Daily token limit check passed (database-verified)"
+        );
+
+        Ok(())
+    }
+
+    /// 检查每日成本限制 (基于数据库实际统计)
+    async fn check_daily_cost_limit(
+        &self,
+        service_api_id: i32,
+        cost_limit: Decimal,
+    ) -> Result<(), ProxyError> {
+        let today = chrono::Utc::now().date_naive();
+        let today_start = today.and_hms_opt(0, 0, 0).unwrap();
+        let today_end = (today + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap();
+        
+        // 查询当天数据库中实际的成本消耗
+        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+        
+        let total_cost_used: Option<f64> = ProxyTracing::find()
+            .filter(Column::UserServiceApiId.eq(service_api_id))
+            .filter(Column::CreatedAt.gte(today_start))
+            .filter(Column::CreatedAt.lt(today_end))
+            .filter(Column::IsSuccess.eq(true))  // 只计算成功请求的成本
+            .select_only()
+            .column_as(Column::Cost.sum(), "total_cost")
+            .into_tuple::<Option<f64>>()
+            .one(&*self.db)
+            .await
+            .map_err(|e| ProxyError::internal(format!("Database query error: {}", e)))?
+            .flatten();
+
+        let current_usage = total_cost_used
+            .map(|f| f.to_string().parse::<Decimal>().unwrap_or(Decimal::ZERO))
+            .unwrap_or(Decimal::ZERO);
+
+        if current_usage >= cost_limit {
+            tracing::warn!(
+                service_api_id = service_api_id,
+                current_usage = %current_usage.to_string(),
+                cost_limit = %cost_limit.to_string(),
+                date = %today,
+                "Daily cost limit exceeded (database-verified)"
+            );
+
+            return Err(ProxyError::rate_limit(format!(
+                "Daily cost limit exceeded: ${} per day (used: ${})",
+                cost_limit, current_usage
+            )));
+        }
+
+        tracing::debug!(
+            service_api_id = service_api_id,
+            current_usage = %current_usage.to_string(),
+            cost_limit = %cost_limit.to_string(),
+            remaining = %(cost_limit - current_usage).to_string(),
+            date = %today,
+            "Daily cost limit check passed (database-verified)"
+        );
+
+        Ok(())
+    }
+
 
     /// 获取提供商类型配置
     async fn get_provider_type(
