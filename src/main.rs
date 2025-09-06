@@ -64,11 +64,6 @@ fn build_cli() -> Command {
             .help("Override proxy server host")
             .value_name("HOST")
             .default_value("127.0.0.1"))
-        .arg(Arg::new("https_port")
-            .long("https-port")
-            .help("Override HTTPS port")
-            .value_name("PORT")
-            .value_parser(clap::value_parser!(u16)))
         .arg(Arg::new("database_url")
             .short('d')
             .long("database-url")
@@ -149,11 +144,6 @@ async fn run_config_check(matches: &ArgMatches) -> api_proxy::Result<()> {
         config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
         config.server.as_ref().map_or(8080, |s| s.port)
     );
-    if let Some(server) = &config.server {
-        if server.https_port > 0 {
-            info!("  HTTPS: {}:{}", server.host, server.https_port);
-        }
-    }
     info!("  Database: {}", config.database.url);
     info!("  Redis: {}", config.redis.url);
     info!(

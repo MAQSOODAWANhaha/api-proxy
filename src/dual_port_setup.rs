@@ -154,10 +154,6 @@ pub async fn initialize_shared_services(
             server.host = host.clone();
         }
 
-        if let Some(https_port) = matches.get_one::<u16>("https_port") {
-            info!("🔧 Overriding HTTPS port from CLI: {}", https_port);
-            server.https_port = *https_port;
-        }
 
         if let Some(workers) = matches.get_one::<u16>("workers") {
             info!("🔧 Overriding worker count from CLI: {}", workers);

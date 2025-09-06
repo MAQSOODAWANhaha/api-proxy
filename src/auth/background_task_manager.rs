@@ -88,10 +88,7 @@ impl BackgroundTaskManager {
 
     /// 初始化 OAuth 清理任务
     pub async fn setup_oauth_cleanup_task(&mut self, config: OAuthCleanupConfig) -> Result<()> {
-        if !config.enabled {
-            info!("OAuth cleanup task is disabled");
-            return Ok(());
-        }
+        // OAuth cleanup is always enabled - removed config.enabled check
 
         let cleanup_task = Arc::new(OAuthCleanupTask::new(self.db.clone(), config));
         self.oauth_cleanup_task = Some(cleanup_task);

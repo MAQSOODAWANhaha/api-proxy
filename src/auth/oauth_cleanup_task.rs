@@ -19,10 +19,7 @@ impl OAuthCleanupTask {
 
     /// 启动清理任务
     pub async fn start(&self) {
-        if !self.config.enabled {
-            info!("OAuth cleanup task is disabled");
-            return;
-        }
+        // OAuth cleanup is always enabled - removed config.enabled check
 
         info!(
             "Starting OAuth cleanup task, cleanup interval: {}s, pending expire: {}min",

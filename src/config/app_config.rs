@@ -23,18 +23,20 @@ pub struct AppConfig {
     pub oauth_cleanup: Option<OAuthCleanupConfig>,
 }
 
-/// 服务器配置
+/// 传统服务器配置 - 简化版（仅保留兼容性，推荐使用dual_port）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// HTTP监听地址
     pub host: String,
     /// HTTP监听端口
     pub port: u16,
-    /// HTTPS监听端口
-    pub https_port: u16,
     /// 工作线程数
+    #[serde(default = "default_workers")]
     pub workers: usize,
-    // Pingora配置已移除，超时配置现在从数据库获取
+}
+
+fn default_workers() -> usize {
+    num_cpus::get()
 }
 
 // PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
@@ -64,8 +66,6 @@ pub struct CacheConfig {
     pub memory_max_entries: usize,
     /// 默认过期时间（秒）
     pub default_ttl: u64,
-    /// 是否启用缓存
-    pub enabled: bool,
 }
 
 impl Default for CacheConfig {
@@ -74,7 +74,6 @@ impl Default for CacheConfig {
             cache_type: CacheType::Memory,
             memory_max_entries: 10000,
             default_ttl: 300,
-            enabled: true,
         }
     }
 }
@@ -123,8 +122,7 @@ impl Default for ServerConfig {
         Self {
             host: "0.0.0.0".to_string(),
             port: 8080,
-            https_port: 8443,
-            workers: num_cpus::get(),
+            workers: default_workers(),
         }
     }
 }
@@ -136,8 +134,6 @@ pub struct OAuthCleanupConfig {
     pub pending_expire_minutes: i32,
     /// 清理任务执行间隔（秒）
     pub cleanup_interval_seconds: u64,
-    /// 是否启用清理任务
-    pub enabled: bool,
     /// 单次清理的最大记录数
     pub max_cleanup_records: u64,
     /// 删除已过期记录的保留天数
@@ -149,7 +145,6 @@ impl Default for OAuthCleanupConfig {
         Self {
             pending_expire_minutes: 30, // 30分钟过期
             cleanup_interval_seconds: 300, // 5分钟执行一次
-            enabled: true,
             max_cleanup_records: 1000,
             expired_records_retention_days: 7, // 保留7天
         }
@@ -170,19 +165,13 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// 获取有效的服务器配置（优先使用双端口配置）
+    /// 获取有效的服务器配置（优先使用双端口配置）- 简化版
     pub fn get_server_config(&self) -> ServerConfig {
         if let Some(dual_port) = &self.dual_port {
             // 从双端口配置转换为传统配置（兼容性）
             ServerConfig {
                 host: dual_port.management.http.host.clone(),
                 port: dual_port.management.http.port,
-                https_port: dual_port
-                    .proxy
-                    .https
-                    .as_ref()
-                    .map(|https| https.port)
-                    .unwrap_or(0),
                 workers: dual_port.workers,
             }
         } else if let Some(server) = &self.server {
@@ -224,20 +213,8 @@ impl AppConfig {
         }
     }
 
-    /// 获取HTTPS代理端口
-    pub fn get_proxy_https_port(&self) -> Option<u16> {
-        if let Some(dual_port) = &self.dual_port {
-            dual_port.proxy.https.as_ref().map(|https| https.port)
-        } else if let Some(server) = &self.server {
-            if server.https_port > 0 {
-                Some(server.https_port)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
+    // 已删除：get_proxy_https_port() 方法
+    // 原因：不再支持HTTPS配置
 
     /// 验证配置的有效性
     pub fn validate(&self) -> Result<(), String> {
@@ -257,13 +234,10 @@ impl AppConfig {
             dual_port.validate()?;
         }
 
-        // 验证传统配置
+        // 验证传统配置 - 简化版
         if let Some(server) = &self.server {
             if server.port == 0 {
                 return Err(format!("Invalid server port: {}", server.port));
-            }
-            if server.https_port > 0 && server.https_port == server.port {
-                return Err(format!("Invalid HTTPS port: {}", server.https_port));
             }
             if server.workers == 0 {
                 return Err("Worker count must be greater than 0".to_string());
@@ -286,7 +260,7 @@ impl AppConfig {
         Ok(())
     }
 
-    /// 获取所有监听地址信息
+    /// 获取所有监听地址信息 - 简化版（仅HTTP）
     pub fn get_listener_info(&self) -> Vec<(String, String, String)> {
         if let Some(dual_port) = &self.dual_port {
             dual_port
@@ -295,20 +269,13 @@ impl AppConfig {
                 .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
                 .collect()
         } else if let Some(server) = &self.server {
-            let mut listeners = Vec::new();
-            listeners.push((
-                "server-http".to_string(),
-                format!("{}:{}", server.host, server.port),
-                "HTTP".to_string(),
-            ));
-            if server.https_port > 0 {
-                listeners.push((
-                    "server-https".to_string(),
-                    format!("{}:{}", server.host, server.https_port),
-                    "HTTPS".to_string(),
-                ));
-            }
-            listeners
+            vec![
+                (
+                    "server-http".to_string(),
+                    format!("{}:{}", server.host, server.port),
+                    "HTTP".to_string(),
+                )
+            ]
         } else {
             Vec::new()
         }

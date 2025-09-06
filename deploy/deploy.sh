@@ -786,16 +786,16 @@ prepare_environment() {
     mkdir -p "$SCRIPT_DIR/config"
     mkdir -p "$SCRIPT_DIR/logs/caddy"
     
-    # 设置配置文件
-    CONFIG_SOURCE="config.prod.toml"
+    # 设置配置文件路径 - 使用项目根目录的简化配置
+    CONFIG_SOURCE="$PROJECT_ROOT/config/config.prod.toml"
     log_info "使用生产环境配置: $CONFIG_SOURCE"
     
     # 检查配置文件是否存在
-    if [ ! -f "$SCRIPT_DIR/config/$CONFIG_SOURCE" ]; then
-        log_warning "配置文件 $CONFIG_SOURCE 不存在"
+    if [ ! -f "$CONFIG_SOURCE" ]; then
+        log_warning "配置文件 $CONFIG_SOURCE 不存在，将使用默认配置"
     fi
     
-    # 第1步：交互式收集用户输入
+    # 第1步：交互式收集用户输入（恢复TLS配置）
     interactive_tls_setup
     
     # 第2步：在生成新环境文件之前，先保存现有的安全密钥 - 关键修复点
@@ -899,7 +899,7 @@ EOF
 
     log_success "环境文件生成完成: $ENV_FILE"
     
-    # 第3步：验证生成的环境文件
+    # 第4步：验证生成的环境文件
     log_info "验证环境文件内容:"
     if [[ "$TLS_MODE" == "selfsigned" ]]; then
         log_info "  模式: 自签名证书"
@@ -910,7 +910,7 @@ EOF
         log_info "  邮箱: $CERT_EMAIL"
     fi
     
-    # 第4步：生成Caddy配置
+    # 第5步：生成Caddy配置
     setup_caddy_tls
     
     log_success "环境配置完成"

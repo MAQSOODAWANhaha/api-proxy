@@ -84,8 +84,7 @@ COPY --from=frontend-builder /app/web/dist /app/static
 RUN mkdir -p /app/data /app/certs /app/logs /app/config
 
 # 复制配置文件
-COPY config/ ./config/
-COPY config.toml ./
+COPY ../config/ ./config/
 
 # 设置权限
 RUN chown -R apiproxy:apiproxy /app
@@ -106,7 +105,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # 设置环境变量
 ENV RUST_LOG=info
 ENV RUST_BACKTRACE=1
-ENV API_PROXY_CONFIG_PATH=/app/config.toml
+ENV API_PROXY_CONFIG_PATH=/app/config/config.prod.toml
 ENV API_PROXY_DATA_DIR=/app/data
 ENV API_PROXY_STATIC_DIR=/app/static
 

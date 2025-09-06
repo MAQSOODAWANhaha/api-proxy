@@ -532,9 +532,9 @@ impl UnifiedCacheManager {
         &self.provider
     }
 
-    /// 检查缓存是否启用
-    pub fn is_enabled(&self, config: &CacheConfig) -> bool {
-        config.enabled
+    /// 检查缓存是否启用 - 缓存现在始终启用
+    pub fn is_enabled(&self, _config: &CacheConfig) -> bool {
+        true
     }
 
     /// 设置缓存值

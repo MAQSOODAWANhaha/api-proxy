@@ -48,29 +48,6 @@ impl ProxyServer {
         http_proxy.add_tcp(&builder.get_server_address());
         server.add_service(http_proxy);
 
-        // 如果启用了 HTTPS，添加 HTTPS 监听器
-        if builder.has_https_config() {
-            // 创建另一个代理服务实例用于HTTPS
-            let https_proxy_service = builder
-                .create_proxy_service(
-                    components.db.clone(),
-                    components.cache.clone(),
-                    components.provider_config_manager.clone(),
-                )
-                .await
-                .map_err(|e| {
-                    ProxyError::server_init(format!("Failed to create HTTPS proxy service: {}", e))
-                })?;
-
-            let _https_proxy = http_proxy_service(&server.configuration, https_proxy_service);
-
-            // 添加 TLS 配置
-            // 注意：这里需要根据实际的证书配置来设置
-            // https_proxy.add_tls(&format!("{}:{}", host, https_port), None);
-            // server.add_service(https_proxy);
-
-            tracing::info!("HTTPS listener will be configured when TLS certificates are available");
-        }
 
         self.server = Some(server);
 

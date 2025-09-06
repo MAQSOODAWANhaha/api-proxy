@@ -16,7 +16,7 @@ services:
       - proxy_data:/app/data
       - proxy_logs:/app/logs
       # 配置文件（可选，用于动态配置）
-      - ./config:/app/config:ro
+      - ../config:/app/config:ro
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1

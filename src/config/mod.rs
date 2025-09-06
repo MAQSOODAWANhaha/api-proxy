@@ -55,12 +55,6 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
             )));
         }
 
-        if server.https_port == 0 {
-            return Err(crate::error::ProxyError::config(format!(
-                "无效的HTTPS端口: {}",
-                server.https_port
-            )));
-        }
 
         if server.workers == 0 {
             return Err(crate::error::ProxyError::config("工作线程数必须大于0"));

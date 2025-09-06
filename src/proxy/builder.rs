@@ -207,15 +207,6 @@ impl ProxyServerBuilder {
         )
     }
 
-    /// 检查是否配置了HTTPS
-    pub fn has_https_config(&self) -> bool {
-        self.config.server.as_ref().map_or(0, |s| s.https_port) > 0
-    }
-
-    /// 获取HTTPS端口
-    pub fn get_https_port(&self) -> u16 {
-        self.config.server.as_ref().map_or(0, |s| s.https_port)
-    }
 }
 
 /// 代理服务器组件集合

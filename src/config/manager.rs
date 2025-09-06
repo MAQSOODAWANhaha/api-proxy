@@ -270,16 +270,6 @@ impl ConfigManager {
                     })?;
                 }
             }
-            ["server", "https", "port"] | ["server", "httpsport"] => {
-                if let Some(ref mut server) = config.server {
-                    server.https_port = value.parse().map_err(|e| {
-                        crate::error::ProxyError::config_with_source(
-                            format!("无效的HTTPS端口号: {}", value),
-                            e,
-                        )
-                    })?;
-                }
-            }
             ["server", "workers"] => {
                 if let Some(ref mut server) = config.server {
                     server.workers = value.parse().map_err(|e| {

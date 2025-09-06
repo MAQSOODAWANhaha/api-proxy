@@ -106,14 +106,6 @@ impl PingoraProxyServer {
         // 添加监听地址
         proxy_service.add_tcp(&builder.get_server_address());
 
-        // 已移除 TLS/HTTPS 支持，若配置了 https_port，仅记录告警
-        if self.config.server.as_ref().map_or(0, |s| s.https_port) > 0 {
-            let https_port = self.config.server.as_ref().map_or(0, |s| s.https_port);
-            tracing::warn!(
-                "HTTPS/TLS support is disabled. Configured https_port={} will be ignored",
-                https_port
-            );
-        }
 
         // 注册服务并启动
         server.add_service(proxy_service);
