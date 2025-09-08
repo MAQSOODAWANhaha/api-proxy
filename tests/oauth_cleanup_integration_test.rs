@@ -1,7 +1,7 @@
-use chrono::{Utc, Duration};
-use serial_test::serial;
-use sea_orm::{Database, DatabaseConnection, entity::*, query::*, Set};
+use chrono::{Duration, Utc};
 use migration::{Migrator, MigratorTrait};
+use sea_orm::{Database, DatabaseConnection, Set, entity::*, query::*};
+use serial_test::serial;
 
 use api_proxy::auth::OAuthCleanupTask;
 use api_proxy::config::OAuthCleanupConfig;
@@ -11,23 +11,23 @@ use entity::oauth_client_sessions;
 async fn create_test_db() -> DatabaseConnection {
     // 使用内存数据库避免权限问题
     let db_url = "sqlite::memory:";
-    
+
     let db = Database::connect(db_url).await.unwrap();
-    
+
     // 运行迁移
     Migrator::up(&db, None).await.unwrap();
-    
+
     db
 }
 
 /// 创建测试用的 OAuth 会话记录
 async fn create_test_session(
-    db: &DatabaseConnection, 
-    status: &str, 
-    created_minutes_ago: i64
+    db: &DatabaseConnection,
+    status: &str,
+    created_minutes_ago: i64,
 ) -> oauth_client_sessions::Model {
     let created_at = Utc::now() - Duration::minutes(created_minutes_ago);
-    
+
     let session = oauth_client_sessions::ActiveModel {
         session_id: Set(format!("test_session_{}", uuid::Uuid::new_v4())),
         user_id: Set(1),
@@ -51,7 +51,7 @@ async fn create_test_session(
         completed_at: Set(None),
         ..Default::default()
     };
-    
+
     session.insert(db).await.unwrap()
 }
 
@@ -59,7 +59,7 @@ async fn create_test_session(
 #[serial]
 async fn test_oauth_cleanup_basic_functionality() {
     let db = create_test_db().await;
-    
+
     // 创建测试数据：
     // - 2 个超过 30 分钟的 pending 会话（应该被清理）
     // - 1 个 20 分钟的 pending 会话（不应该被清理）
@@ -68,44 +68,48 @@ async fn test_oauth_cleanup_basic_functionality() {
     create_test_session(&db, "pending", 40).await; // 应该被清理
     create_test_session(&db, "pending", 20).await; // 不应该被清理
     create_test_session(&db, "completed", 50).await; // 不应该被清理
-    
+
     let config = OAuthCleanupConfig {
-        enabled: true,
         pending_expire_minutes: 30,
         cleanup_interval_seconds: 300,
         max_cleanup_records: 1000,
         expired_records_retention_days: 7,
     };
-    
+
     let cleanup_task = OAuthCleanupTask::new(db.clone(), config);
-    
+
     // 获取清理前的统计信息
     let stats_before = cleanup_task.get_cleanup_stats().await.unwrap();
     assert_eq!(stats_before.total_pending, 3);
     assert_eq!(stats_before.expired_pending, 2);
-    
+
     // 执行清理
     cleanup_task.cleanup_expired_sessions().await.unwrap();
-    
+
     // 获取清理后的统计信息
     let stats_after = cleanup_task.get_cleanup_stats().await.unwrap();
     assert_eq!(stats_after.total_pending, 1); // 只剩下 20 分钟的那个
     assert_eq!(stats_after.total_expired, 2); // 应该有 2 个被标记为 expired
     assert_eq!(stats_after.expired_pending, 0); // 不应该有过期的 pending 了
-    
+
     // 验证数据库中的记录状态
     let expired_sessions = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("expired"))
         .all(&db)
         .await
         .unwrap();
-    
+
     assert_eq!(expired_sessions.len(), 2);
-    
+
     // 验证错误消息被正确设置
     for session in expired_sessions {
         assert!(session.error_message.is_some());
-        assert!(session.error_message.unwrap().contains("Session expired after 30 minutes"));
+        assert!(
+            session
+                .error_message
+                .unwrap()
+                .contains("Session expired after 30 minutes")
+        );
     }
 }
 
@@ -113,7 +117,7 @@ async fn test_oauth_cleanup_basic_functionality() {
 #[serial]
 async fn test_cleanup_old_expired_sessions() {
     let db = create_test_db().await;
-    
+
     // 创建一个 8 天前被标记为 expired 的会话（应该被删除）
     let old_expired_time = Utc::now() - Duration::days(8);
     let old_session = oauth_client_sessions::ActiveModel {
@@ -140,7 +144,7 @@ async fn test_cleanup_old_expired_sessions() {
         ..Default::default()
     };
     old_session.insert(&db).await.unwrap();
-    
+
     // 创建一个 2 天前被标记为 expired 的会话（不应该被删除）
     let recent_expired_time = Utc::now() - Duration::days(2);
     let recent_session = oauth_client_sessions::ActiveModel {
@@ -167,17 +171,16 @@ async fn test_cleanup_old_expired_sessions() {
         ..Default::default()
     };
     recent_session.insert(&db).await.unwrap();
-    
+
     let config = OAuthCleanupConfig {
-        enabled: true,
         pending_expire_minutes: 30,
         cleanup_interval_seconds: 300,
         max_cleanup_records: 1000,
         expired_records_retention_days: 7,
     };
-    
+
     let cleanup_task = OAuthCleanupTask::new(db.clone(), config);
-    
+
     // 验证清理前有 2 个 expired 记录
     let expired_before = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("expired"))
@@ -185,10 +188,10 @@ async fn test_cleanup_old_expired_sessions() {
         .await
         .unwrap();
     assert_eq!(expired_before, 2);
-    
+
     // 执行清理（这会同时清理过期的 pending 会话和老的 expired 记录）
     cleanup_task.cleanup_expired_sessions().await.unwrap();
-    
+
     // 验证清理后只有 1 个 expired 记录（8天前的被删除了）
     let expired_after = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("expired"))
@@ -196,7 +199,7 @@ async fn test_cleanup_old_expired_sessions() {
         .await
         .unwrap();
     assert_eq!(expired_after, 1);
-    
+
     // 验证剩下的是2天前的那个
     let remaining_session = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("expired"))
@@ -211,25 +214,24 @@ async fn test_cleanup_old_expired_sessions() {
 #[serial]
 async fn test_cleanup_with_max_records_limit() {
     let db = create_test_db().await;
-    
+
     // 创建 5 个超过 30 分钟的 pending 会话
     for i in 0..5 {
         create_test_session(&db, "pending", 35 + i).await;
     }
-    
+
     let config = OAuthCleanupConfig {
-        enabled: true,
         pending_expire_minutes: 30,
         cleanup_interval_seconds: 300,
         max_cleanup_records: 3, // 限制每次最多清理 3 个
         expired_records_retention_days: 7,
     };
-    
+
     let cleanup_task = OAuthCleanupTask::new(db.clone(), config);
-    
+
     // 执行清理
     cleanup_task.cleanup_expired_sessions().await.unwrap();
-    
+
     // 验证只有 3 个被清理（由于 limit 限制）
     let expired_count = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("expired"))
@@ -237,7 +239,7 @@ async fn test_cleanup_with_max_records_limit() {
         .await
         .unwrap();
     assert_eq!(expired_count, 3);
-    
+
     let pending_count = oauth_client_sessions::Entity::find()
         .filter(oauth_client_sessions::Column::Status.eq("pending"))
         .count(&db)

@@ -12,7 +12,7 @@ use sea_orm::prelude::Decimal;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::{AuthHeaderParser, AuthParseError, AuthUtils, RefactoredUnifiedAuthManager, types::AuthType};
+use crate::auth::{AuthUtils, RefactoredUnifiedAuthManager, types::AuthType};
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
@@ -413,7 +413,7 @@ impl RequestHandler {
         let auth_start = std::time::Instant::now();
         let auth_result = self
             .auth_service
-            .authenticate(session, &ctx.request_id, &provider)
+            .authenticate_with_provider(session, &ctx.request_id, &provider)
             .await?;
         let _auth_duration = auth_start.elapsed();
 
@@ -1406,25 +1406,10 @@ impl RequestHandler {
         provider_type: &provider_types::Model,
         api_key: &str,
     ) -> Result<(), ProxyError> {
-        // 使用智能解析支持数组格式的auth_header_format
-        let auth_format = provider_type.auth_header_format.clone();
-
-        // 使用智能解析器支持数组和单一格式
-        let headers = match AuthHeaderParser::parse_smart(&auth_format, api_key) {
+        // 使用统一的出站认证头构建逻辑，为上游AI服务商构建正确的认证头
+        let auth_headers = match self.auth_service.build_outbound_auth_headers_for_upstream(provider_type, api_key) {
             Ok(headers) => headers,
-            Err(AuthParseError::InvalidFormat(format)) => {
-                let error = ProxyError::internal(format!(
-                    "Invalid authentication header format in database: {}",
-                    format
-                ));
-                self.tracing_service
-                    .complete_trace_config_error(&ctx.request_id, &error.to_string())
-                    .await?;
-                return Err(error);
-            }
-            Err(e) => {
-                let error =
-                    ProxyError::internal(format!("Authentication header parsing failed: {}", e));
+            Err(error) => {
                 self.tracing_service
                     .complete_trace_config_error(&ctx.request_id, &error.to_string())
                     .await?;
@@ -1436,29 +1421,29 @@ impl RequestHandler {
         self.clear_auth_headers(upstream_request);
 
         // 设置所有认证头
-        let mut applied_headers = Vec::new();
-        for header in &headers {
-            let static_header_name = get_static_header_name(&header.name);
-            if let Err(e) = upstream_request.insert_header(static_header_name, &header.value) {
+        let mut applied_header_names = Vec::new();
+        for (header_name, header_value) in &auth_headers {
+            let static_header_name = get_static_header_name(header_name);
+            if let Err(e) = upstream_request.insert_header(static_header_name, header_value) {
                 let error = ProxyError::internal(format!(
                     "Failed to set authentication header '{}': {}",
-                    header.name, e
+                    header_name, e
                 ));
                 self.tracing_service
                     .complete_trace_config_error(&ctx.request_id, &error.to_string())
                     .await?;
                 return Err(error);
             }
-            applied_headers.push(header.name.clone());
+            applied_header_names.push(header_name.clone());
         }
 
         tracing::info!(
             request_id = %ctx.request_id,
             provider = %provider_type.name,
             auth_type = "api_key",
-            auth_headers = ?applied_headers,
+            auth_headers = ?applied_header_names,
             api_key_preview = %AuthUtils::sanitize_api_key(api_key),
-            "Applied API key authentication with {} headers", headers.len()
+            "Applied API key authentication with {} headers", auth_headers.len()
         );
 
         Ok(())

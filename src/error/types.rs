@@ -1043,4 +1043,14 @@ impl From<crate::auth::types::AuthError> for ProxyError {
     }
 }
 
+// AuthParseError错误转换
+impl From<crate::auth::header_parser::AuthParseError> for ProxyError {
+    fn from(err: crate::auth::header_parser::AuthParseError) -> Self {
+        Self::Authentication {
+            message: format!("认证头解析失败: {}", err),
+            source: Some(anyhow::Error::new(err)),
+        }
+    }
+}
+
 // 空实现 - 不需要自引用转换

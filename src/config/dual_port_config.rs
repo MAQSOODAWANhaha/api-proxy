@@ -38,7 +38,6 @@ pub struct ProxyPortConfig {
     pub http: ListenerConfig,
 }
 
-
 /// 监听器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListenerConfig {
@@ -59,7 +58,6 @@ pub struct AccessControlConfig {
     /// 拒绝的 IP 地址范围
     pub denied_ips: Vec<String>,
 }
-
 
 // 已删除：LoadBalancingConfig 和 LoadBalancingStrategy
 // 原因：在实际代码中未使用，完全冗余
@@ -183,8 +181,6 @@ mod tests {
     fn test_dual_port_config_default() {
         let config = DualPortServerConfig::default();
 
-        assert!(config.management.enabled);
-        assert!(config.proxy.enabled);
         assert_eq!(config.management.http.port, 8080);
         assert_eq!(config.proxy.http.port, 8081);
     }

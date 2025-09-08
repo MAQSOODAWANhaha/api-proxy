@@ -103,18 +103,6 @@ impl AuthHeaderParser {
         }
     }
 
-    /// 验证认证头格式是否有效（不替换密钥）
-    pub fn validate_format(format: &str) -> Result<(), AuthParseError> {
-        let (_header_name, value_template) = Self::split_header_format(format)?;
-
-        if !value_template.contains("{key}") {
-            return Err(AuthParseError::MissingKeyPlaceholder(
-                value_template.to_string(),
-            ));
-        }
-
-        Ok(())
-    }
 
     /// 提取头名称（不包含值）
     pub fn extract_header_name(format: &str) -> Result<String, AuthParseError> {
@@ -127,10 +115,6 @@ impl AuthHeaderParser {
         Ok(header_name.to_lowercase())
     }
 
-    /// 构建标准格式的认证头字符串（用于配置迁移）
-    pub fn build_standard_format(header_name: &str, value_template: &str) -> String {
-        format!("{}: {}", header_name, value_template)
-    }
 
     /// 解析认证头格式数组，支持多种认证头格式
     ///
@@ -195,6 +179,114 @@ impl AuthHeaderParser {
         // 如果不是JSON数组，尝试作为单一格式解析
         let header = Self::parse(format_or_array, api_key)?;
         Ok(vec![header])
+    }
+
+    /// 从入站认证头值中解析API密钥（反向解析）
+    ///
+    /// 根据认证头格式模板，从实际的HTTP头值中提取API密钥
+    /// 
+    /// # 参数
+    /// - `format`: 认证头格式模板，如 "Authorization: Bearer {key}"
+    /// - `header_value`: 实际的HTTP头值，如 "Bearer sk-123456"
+    ///
+    /// # 返回
+    /// - `Ok(String)`: 成功提取的API密钥
+    /// - `Err(AuthParseError)`: 解析失败
+    ///
+    /// # 示例
+    /// ```rust
+    /// let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+    ///     "Authorization: Bearer {key}",
+    ///     "Bearer sk-123456"
+    /// ).unwrap();
+    /// assert_eq!(api_key, "sk-123456");
+    /// ```
+    pub fn parse_api_key_from_inbound_header_value(
+        format: &str,
+        header_value: &str,
+    ) -> Result<String, AuthParseError> {
+        let (_, value_template) = Self::split_header_format(format)?;
+
+        // 直接替换模式：{key}
+        if value_template.trim() == "{key}" {
+            return Ok(header_value.to_string());
+        }
+
+        // 前缀模式：处理 "Bearer {key}", "Token {key}" 等格式
+        if let Some(prefix) = value_template.strip_suffix("{key}") {
+            let prefix = prefix.trim();
+            if let Some(key) = header_value.strip_prefix(prefix) {
+                return Ok(key.trim().to_string()); // 去除提取的密钥两边的空格
+            }
+        }
+
+        // 后缀模式：处理 "{key} suffix" 格式  
+        if let Some(suffix) = value_template.strip_prefix("{key}") {
+            let suffix = suffix.trim();
+            if let Some(key) = header_value.strip_suffix(suffix) {
+                return Ok(key.trim().to_string()); // 去除提取的密钥两边的空格
+            }
+        }
+
+        // 中间模式：处理 "prefix {key} suffix" 格式
+        if let Some(key_start) = value_template.find("{key}") {
+            let prefix = &value_template[..key_start].trim();
+            let suffix = &value_template[key_start + 5..].trim(); // 5 = len("{key}")
+            
+            if header_value.starts_with(prefix) && header_value.ends_with(suffix) {
+                let key_start_pos = prefix.len();
+                let key_end_pos = header_value.len() - suffix.len();
+                if key_end_pos > key_start_pos {
+                    return Ok(header_value[key_start_pos..key_end_pos].trim().to_string()); // 去除提取的密钥两边的空格
+                }
+            }
+        }
+
+        Err(AuthParseError::InvalidFormat(format!(
+            "Could not extract API key from header value '{}' using format '{}'",
+            header_value, format
+        )))
+    }
+
+    /// 智能反向解析：从多种格式中提取API密钥
+    ///
+    /// 支持JSON数组格式和单一格式，自动匹配头名称并提取API密钥
+    ///
+    /// # 参数
+    /// - `formats_json`: JSON数组或单一格式字符串
+    /// - `header_name`: 实际的HTTP头名称（小写）
+    /// - `header_value`: 实际的HTTP头值
+    ///
+    /// # 返回
+    /// - `Ok(String)`: 成功提取的API密钥
+    /// - `Err(AuthParseError)`: 解析失败
+    pub fn parse_api_key_from_inbound_headers_smart(
+        formats_json: &str,
+        header_name: &str,
+        header_value: &str,
+    ) -> Result<String, AuthParseError> {
+        // 尝试解析为JSON数组格式
+        let formats: Vec<String> = match serde_json::from_str(formats_json) {
+            Ok(formats) => formats,
+            Err(_) => vec![formats_json.to_string()], // 单一格式回退
+        };
+
+        // 遍历所有格式，找到匹配的格式并提取密钥
+        for format in formats {
+            if let Ok(format_header_name) = Self::extract_header_name(&format) {
+                if format_header_name == header_name {
+                    // 找到匹配格式，进行反向解析
+                    if let Ok(api_key) = Self::parse_api_key_from_inbound_header_value(&format, header_value) {
+                        return Ok(api_key);
+                    }
+                }
+            }
+        }
+
+        Err(AuthParseError::InvalidFormat(format!(
+            "No matching auth format found for header '{}' in configured formats: {}",
+            header_name, formats_json
+        )))
     }
 }
 
@@ -272,13 +364,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_validate_format() {
-        assert!(AuthHeaderParser::validate_format("Authorization: Bearer {key}").is_ok());
-        assert!(AuthHeaderParser::validate_format("X-goog-api-key: {key}").is_ok());
-        assert!(AuthHeaderParser::validate_format("Bearer {key}").is_err());
-        assert!(AuthHeaderParser::validate_format("Authorization: Bearer").is_err());
-    }
 
     #[test]
     fn test_extract_header_name() {
@@ -292,17 +377,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_standard_format() {
-        assert_eq!(
-            AuthHeaderParser::build_standard_format("Authorization", "Bearer {key}"),
-            "Authorization: Bearer {key}"
-        );
-        assert_eq!(
-            AuthHeaderParser::build_standard_format("X-goog-api-key", "{key}"),
-            "X-goog-api-key: {key}"
-        );
-    }
 
     #[test]
     fn test_multiple_key_replacements() {
@@ -318,5 +392,92 @@ mod tests {
         let result = AuthHeaderParser::parse("  Authorization  :  Bearer {key}  ", "test").unwrap();
         assert_eq!(result.name, "authorization");
         assert_eq!(result.value, "Bearer test  "); // 保持值中的尾随空格
+    }
+
+    // 反向解析功能测试
+    #[test]
+    fn test_parse_api_key_from_inbound_header_value_direct() {
+        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+            "Authorization: {key}",
+            "sk-123456789"
+        ).unwrap();
+        assert_eq!(api_key, "sk-123456789");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_header_value_bearer() {
+        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+            "Authorization: Bearer {key}",
+            "Bearer sk-abcdef123"
+        ).unwrap();
+        assert_eq!(api_key, "sk-abcdef123");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_header_value_google() {
+        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+            "X-goog-api-key: {key}",
+            "AIza_google_key_xyz"
+        ).unwrap();
+        assert_eq!(api_key, "AIza_google_key_xyz");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_header_value_custom_prefix() {
+        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+            "X-API-Key: Token {key}",
+            "Token custom_token_456"
+        ).unwrap();
+        assert_eq!(api_key, "custom_token_456");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_headers_smart_single() {
+        let api_key = AuthHeaderParser::parse_api_key_from_inbound_headers_smart(
+            "Authorization: Bearer {key}",
+            "authorization",
+            "Bearer sk-test123"
+        ).unwrap();
+        assert_eq!(api_key, "sk-test123");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_headers_smart_json_array() {
+        let formats_json = r#"["Authorization: Bearer {key}", "X-goog-api-key: {key}"]"#;
+        
+        // 测试第一种格式
+        let api_key1 = AuthHeaderParser::parse_api_key_from_inbound_headers_smart(
+            formats_json,
+            "authorization",
+            "Bearer sk-test456"
+        ).unwrap();
+        assert_eq!(api_key1, "sk-test456");
+        
+        // 测试第二种格式
+        let api_key2 = AuthHeaderParser::parse_api_key_from_inbound_headers_smart(
+            formats_json,
+            "x-goog-api-key",
+            "AIza_google_789"
+        ).unwrap();
+        assert_eq!(api_key2, "AIza_google_789");
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_header_value_invalid_format() {
+        let result = AuthHeaderParser::parse_api_key_from_inbound_header_value(
+            "Authorization: Bearer {key}",
+            "Token sk-123456" // 不匹配格式
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_api_key_from_inbound_headers_smart_no_matching_header() {
+        let result = AuthHeaderParser::parse_api_key_from_inbound_headers_smart(
+            "Authorization: Bearer {key}",
+            "x-api-key", // 不匹配的头名称
+            "Bearer sk-123456"
+        );
+        assert!(result.is_err());
     }
 }
