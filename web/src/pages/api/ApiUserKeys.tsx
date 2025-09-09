@@ -702,7 +702,6 @@ const AddDialog: React.FC<{
             provider_type_id: firstProvider.id,
             provider: firstProvider.name 
           }))
-          setSelectedProviderType(firstProvider)
         }
       } else {
         console.error('[AddDialog] 获取服务商类型失败:', response.message)

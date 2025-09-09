@@ -3,7 +3,7 @@
 //! 提供自定义的日志格式化和配置功能，特别针对数据库查询日志的优化显示
 
 use std::env;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, fmt, EnvFilter, Layer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, fmt, EnvFilter};
 
 /// 优化的数据库查询日志格式化器
 pub struct DbQueryFormatter;
@@ -89,30 +89,14 @@ impl DbQueryFormatter {
     }
 }
 
-/// 自定义日志层，专门处理数据库查询日志
-pub struct DatabaseLogLayer;
-
-impl DatabaseLogLayer {
-    pub fn new() -> impl Layer<tracing_subscriber::Registry> {
-        fmt::layer()
-            .with_target(true)
-            .with_level(true)
-            .with_thread_ids(false)
-            .with_thread_names(false)
-            .with_file(false)
-            .with_line_number(false)
-            .compact()
-            .with_filter(EnvFilter::new("sqlx::query=info,sea_orm::query=info"))
-    }
-}
 
 /// 初始化优化的日志系统
 pub fn init_optimized_logging(log_level: Option<&String>) {
     let level = log_level.map_or("info", std::string::String::as_str);
     
-    // 默认配置：减少数据库查询的冗长日志
+    // 默认配置：完全禁止数据库查询的详细日志
     let default_filter = format!(
-        "{},api_proxy=debug,sqlx::query=warn,sea_orm::query=warn,sqlx::query::summary=info", 
+        "{},api_proxy=debug,sqlx::query=off,sea_orm::query=warn,sqlx=warn", 
         level
     );
     
@@ -137,24 +121,25 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
 
     // 启动提示
     if env::var("RUST_LOG").map_or(false, |v| {
-        v.contains("sqlx::query=info") || v.contains("sea_orm::query=info")
+        v.contains("sqlx::query=info") || v.contains("sqlx::query=debug")
     }) {
-        tracing::info!("🔍 Enhanced database query logging enabled");
+        tracing::info!("🔍 SQLx database query logging enabled");
     } else {
-        tracing::info!("📋 Database query logging minimized (set RUST_LOG=sqlx::query=info to enable)");
+        tracing::info!("📋 SQLx database query logging disabled for production performance");
     }
 }
 
 /// 环境变量设置指南
 pub fn print_logging_help() {
     println!("📋 日志配置指南:");
-    println!("  RUST_LOG=info                    # 标准日志级别");
-    println!("  RUST_LOG=debug                   # 调试级别");
-    println!("  RUST_LOG=sqlx::query=info        # 启用数据库查询日志");
-    println!("  RUST_LOG=sea_orm::query=info     # 启用Sea-ORM查询日志");
-    println!("  RUST_LOG=api_proxy=trace         # 应用详细追踪");
+    println!("  RUST_LOG=info                      # 标准日志级别");
+    println!("  RUST_LOG=debug                     # 调试级别");
+    println!("  RUST_LOG=info,sqlx::query=off      # 生产环境：禁止数据库查询日志");
+    println!("  RUST_LOG=info,sqlx::query=info     # 开发环境：启用数据库查询日志");
+    println!("  RUST_LOG=api_proxy=trace           # 应用详细追踪");
     println!();
     println!("💡 组合示例:");
-    println!("  RUST_LOG=info,sqlx::query=info   # 标准日志+数据库查询");
-    println!("  RUST_LOG=debug,sqlx::query=warn  # 调试模式但减少数据库日志");
+    println!("  RUST_LOG=info,sqlx::query=off      # 生产模式：性能优先");
+    println!("  RUST_LOG=debug,sqlx::query=info    # 调试模式：完整日志");
+    println!("  RUST_LOG=info,sqlx=warn            # 仅SQLx错误和警告");
 }

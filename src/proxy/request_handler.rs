@@ -27,14 +27,6 @@ use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
 };
 
-/// 从URL路径中提取provider名称
-///
-/// 解析格式: /{provider_name}/{api_path}
-/// 例如: /gemini/v1beta/models/gemini-2.5-flash:generateContent -> "gemini"
-fn extract_provider_name_from_path(path: &str) -> Option<&str> {
-    // 去掉开头的 '/' 然后获取第一个路径段
-    path.strip_prefix('/').and_then(|s| s.split('/').next())
-}
 
 /// 请求处理器 - 负责AI代理请求的完整处理流程
 ///
@@ -972,34 +964,14 @@ impl RequestHandler {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 重要: 从URI中去除provider前缀，恢复原始API路径
+        // Provider前缀逻辑已移除 - 直接使用原始路径
         let original_path = session.req_header().uri.path();
-        if let Some(provider_name) = extract_provider_name_from_path(original_path) {
-            let api_path = original_path
-                .strip_prefix(&format!("/{}", provider_name))
-                .unwrap_or(original_path);
-
-            // 重建URI，只保留API路径部分
-            let new_uri = if let Some(query) = session.req_header().uri.query() {
-                format!("{}?{}", api_path, query)
-            } else {
-                api_path.to_string()
-            };
-
-            // 更新上游请求的URI
-            upstream_request.set_uri(new_uri.parse().map_err(|e| {
-                ProxyError::internal(format!("Failed to parse new URI '{}': {}", new_uri, e))
-            })?);
-
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                original_path = %original_path,
-                provider_name = %provider_name,
-                api_path = %api_path,
-                new_uri = %new_uri,
-                "Stripped provider prefix from upstream request URI"
-            );
-        }
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            original_path = %original_path,
+            "Using original path without provider prefix processing"
+        );
 
         // 收集请求详情 - 委托给StatisticsService
         let request_stats_for_details = self.statistics_service.collect_request_stats(session);
