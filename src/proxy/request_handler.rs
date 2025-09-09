@@ -17,7 +17,7 @@ use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
-use crate::proxy::{AuthenticationService, ProviderResolver, StatisticsService, TracingService};
+use crate::proxy::{AuthenticationService, StatisticsService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
@@ -56,9 +56,7 @@ pub struct RequestHandler {
     provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥池管理器
     api_key_pool: Arc<ApiKeyPoolManager>,
-    /// 服务商解析器 - 负责从URL路径识别provider类型
-    provider_resolver: Arc<ProviderResolver>,
-    /// 认证服务 - 负责API密钥验证和提取
+    /// 认证服务 - 负责API密钥验证和完整provider配置获取
     auth_service: Arc<AuthenticationService>,
     /// 统计服务 - 负责请求/响应数据收集和分析
     statistics_service: Arc<StatisticsService>,
@@ -352,13 +350,8 @@ impl RequestHandler {
         ));
         let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
 
-        // 创建四个专门的服务
-        let provider_resolver = Arc::new(ProviderResolver::new(
-            db.clone(),
-            cache.clone(), // 直接使用UnifiedCacheManager
-        ));
-
-        let auth_service = Arc::new(AuthenticationService::new(auth_manager.clone()));
+        // 创建三个专门的服务（移除ProviderResolver，功能已集成到AuthenticationService）
+        let auth_service = Arc::new(AuthenticationService::new(auth_manager.clone(), db.clone()));
 
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
         let statistics_service = Arc::new(StatisticsService::new(pricing_calculator.clone()));
@@ -371,7 +364,6 @@ impl RequestHandler {
             _config,
             provider_config_manager,
             api_key_pool,
-            provider_resolver,
             auth_service,
             statistics_service,
             tracing_service,
@@ -391,29 +383,12 @@ impl RequestHandler {
             "Starting AI proxy request preparation using coordinator pattern"
         );
 
-        // 步骤0: Provider解析 - 从请求路径识别服务商类型
-        let provider_start = std::time::Instant::now();
-        let provider = self.provider_resolver.resolve_from_request(session).await?;
-        let _provider_duration = provider_start.elapsed();
-
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            provider_name = %provider.name,
-            provider_id = provider.id,
-            supported_auth_types = %provider.supported_auth_types,
-            auth_header_format = %provider.auth_header_format,
-            "Provider resolved from request path"
-        );
-
-        // 将provider信息存储到上下文中
-        ctx.provider_type = Some(provider.clone());
-        ctx.timeout_seconds = provider.timeout_seconds;
-
-        // 步骤1: 身份验证 - 委托给AuthenticationService使用provider配置
+        // 步骤1: 身份验证和完整配置获取 - 替代原来的步骤0+步骤1
+        // AuthenticationService现在会一次性获取所有必要信息，包括完整的provider配置
         let auth_start = std::time::Instant::now();
         let auth_result = self
             .auth_service
-            .authenticate_with_provider(session, &ctx.request_id, &provider)
+            .authenticate_and_replace_credentials(session, &ctx.request_id)
             .await?;
         let _auth_duration = auth_start.elapsed();
 
@@ -422,11 +397,13 @@ impl RequestHandler {
             .apply_auth_result_to_context(ctx, &auth_result);
         let user_service_api = ctx.user_service_api.as_ref().unwrap();
 
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
             user_id = user_service_api.user_id,
-            provider_type_id = user_service_api.provider_type_id,
-            "Authentication completed via AuthenticationService"
+            provider_name = %auth_result.provider_type.name,
+            provider_base_url = %auth_result.provider_type.base_url,
+            timeout_seconds = ctx.timeout_seconds.unwrap_or(30),
+            "Authentication and provider configuration completed successfully"
         );
 
         // 步骤2: 开始请求追踪 - 委托给TracingService
@@ -1064,6 +1041,18 @@ impl RequestHandler {
             }
         };
 
+        // 记录未认证之前的请求头信息
+        let client_headers_before_auth = self.extract_key_headers_from_request(session.req_header());
+        let upstream_headers_before_auth = self.extract_key_headers_from_request(upstream_request);
+        
+        tracing::info!(
+            request_id = %ctx.request_id,
+            stage = "before_auth",
+            client_headers = %client_headers_before_auth,
+            upstream_headers = %upstream_headers_before_auth,
+            "Headers before authentication"
+        );
+
         // 应用统一的数据库驱动认证
         self.apply_authentication(
             ctx,
@@ -1172,6 +1161,20 @@ impl RequestHandler {
             }
         }
 
+        // 记录认证后的头部信息变化
+        let client_headers_after_auth = self.extract_key_headers_from_request(session.req_header());
+        let upstream_headers_after_auth = self.extract_key_headers_from_request(upstream_request);
+        
+        tracing::info!(
+            request_id = %ctx.request_id,
+            stage = "after_auth",
+            client_headers = %client_headers_after_auth,
+            upstream_headers = %upstream_headers_after_auth,
+            provider = %provider_type.name,
+            backend_id = selected_backend.id,
+            "Headers after authentication and processing"
+        );
+
         // 注释掉可能导致问题的自定义头部
         // upstream_request.insert_header("x-request-id", &ctx.request_id)
         //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
@@ -1210,6 +1213,17 @@ impl RequestHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 记录响应头信息
+        let response_headers = self.extract_key_headers_from_response(upstream_response);
+        
+        tracing::info!(
+            request_id = %ctx.request_id,
+            stage = "response",
+            status = %upstream_response.status,
+            response_headers = %response_headers,
+            "HTTP Response headers received"
+        );
+
         // 收集响应详情 - 委托给StatisticsService
         self.statistics_service
             .collect_response_details(upstream_response, ctx);
@@ -1354,7 +1368,7 @@ impl RequestHandler {
         let parsed_auth_type = AuthType::from(auth_type.as_str());
         match parsed_auth_type {
             AuthType::ApiKey => {
-                // 传统API Key认证 - 使用provider的auth_header_format
+                // 传统API Key认证 - 根据provider类型使用相应的认证头
                 self.apply_api_key_authentication(ctx, upstream_request, provider_type, api_key).await
             }
             AuthType::OAuth => {
@@ -1558,6 +1572,72 @@ impl RequestHandler {
         upstream_request.remove_header("x-goog-api-key");
         upstream_request.remove_header("x-api-key");
         upstream_request.remove_header("api-key");
+    }
+
+    /// 获取关键头部信息用于日志记录 (RequestHeader 版本)
+    fn extract_key_headers_from_request(&self, req_header: &RequestHeader) -> String {
+        let mut key_headers = Vec::new();
+        
+        // 模仿现有代码的方式直接遍历头部
+        for (name, value) in req_header.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                let name_str = name.as_str().to_lowercase();
+                
+                match name_str.as_str() {
+                    "authorization" => {
+                        let sanitized = if value_str.len() > 20 {
+                            format!("{}***{}", &value_str[..10], &value_str[value_str.len()-4..])
+                        } else {
+                            "***".to_string()
+                        };
+                        key_headers.push(format!("auth: {}", sanitized));
+                    },
+                    "content-type" => key_headers.push(format!("content-type: {}", value_str)),
+                    "host" => key_headers.push(format!("host: {}", value_str)),
+                    "user-agent" => {
+                        let truncated = if value_str.len() > 50 {
+                            format!("{}...", &value_str[..47])
+                        } else {
+                            value_str.to_string()
+                        };
+                        key_headers.push(format!("user-agent: {}", truncated));
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        if key_headers.is_empty() {
+            "none".to_string()
+        } else {
+            key_headers.join(", ")
+        }
+    }
+
+    /// 获取关键头部信息用于日志记录 (ResponseHeader 版本)
+    fn extract_key_headers_from_response(&self, resp_header: &ResponseHeader) -> String {
+        let mut key_headers = Vec::new();
+        
+        // 模仿现有代码的方式直接遍历头部
+        for (name, value) in resp_header.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                let name_str = name.as_str().to_lowercase();
+                
+                match name_str.as_str() {
+                    "content-type" => key_headers.push(format!("content-type: {}", value_str)),
+                    "content-length" => key_headers.push(format!("content-length: {}", value_str)),
+                    "content-encoding" => key_headers.push(format!("content-encoding: {}", value_str)),
+                    "cache-control" => key_headers.push(format!("cache-control: {}", value_str)),
+                    _ => {}
+                }
+            }
+        }
+
+        if key_headers.is_empty() {
+            "none".to_string()
+        } else {
+            key_headers.join(", ")
+        }
     }
 
     /// 检测并转换Pingora错误为ProxyError

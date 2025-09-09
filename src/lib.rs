@@ -9,6 +9,7 @@ pub mod database;
 /// 双端口服务器设置和配置模块
 pub mod dual_port_setup;
 pub mod error;
+pub mod logging;
 pub mod management;
 pub mod pricing;
 pub mod providers;

@@ -64,8 +64,6 @@ pub struct ProviderConfig {
     pub model_extraction_json: Option<String>,
     /// 支持的认证类型列表
     pub supported_auth_types: Vec<AuthType>,
-    /// 认证头格式模板
-    pub auth_header_format: String,
     /// 认证配置详情
     pub auth_configs: Option<Vec<MultiAuthConfig>>,
 }
@@ -379,7 +377,6 @@ impl ProviderConfigManager {
             token_mappings_json: provider.token_mappings_json,
             model_extraction_json: provider.model_extraction_json,
             supported_auth_types,
-            auth_header_format: provider.auth_header_format,
             auth_configs,
         })
     }
@@ -532,7 +529,6 @@ mod tests {
             token_mappings_json: None,
             model_extraction_json: None,
             supported_auth_types: vec![AuthType::ApiKey],
-            auth_header_format: "Authorization: Bearer {key}".to_string(),
             auth_configs: None,
         };
         

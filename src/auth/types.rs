@@ -472,46 +472,12 @@ impl fmt::Display for PkceMethod {
 }
 
 /// 认证头格式
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuthHeaderFormat {
-    /// 头名称
-    pub header_name: String,
-    /// 值格式模板，使用{key}占位符
-    pub value_format: String,
-}
-
-impl Default for AuthHeaderFormat {
-    fn default() -> Self {
-        Self {
-            header_name: "Authorization".to_string(),
-            value_format: "Bearer {key}".to_string(),
-        }
-    }
-}
-
-impl AuthHeaderFormat {
-    /// 创建新的认证头格式
-    pub fn new(header_name: &str, value_format: &str) -> Self {
-        Self {
-            header_name: header_name.to_string(),
-            value_format: value_format.to_string(),
-        }
-    }
-
-    /// 格式化认证头值
-    pub fn format(&self, key: &str) -> String {
-        self.value_format.replace("{key}", key)
-    }
-}
 
 /// 多认证配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiAuthConfig {
     /// 认证类型
     pub auth_type: AuthType,
-    /// 认证头格式
-    #[serde(default)]
-    pub header_format: AuthHeaderFormat,
     /// 额外配置（JSON格式）
     #[serde(default)]
     pub extra_config: Option<serde_json::Value>,
@@ -519,10 +485,9 @@ pub struct MultiAuthConfig {
 
 impl MultiAuthConfig {
     /// 创建API密钥认证配置
-    pub fn api_key(header_name: &str, value_format: &str) -> Self {
+    pub fn api_key() -> Self {
         Self {
             auth_type: AuthType::ApiKey,
-            header_format: AuthHeaderFormat::new(header_name, value_format),
             extra_config: None,
         }
     }
@@ -537,7 +502,6 @@ impl MultiAuthConfig {
 
         Self {
             auth_type: AuthType::OAuth,
-            header_format: AuthHeaderFormat::default(),
             extra_config: Some(serde_json::Value::Object(config)),
         }
     }
@@ -680,20 +644,12 @@ mod tests {
         assert_eq!(AuthStatus::Revoked.to_string(), "revoked");
     }
 
-    #[test]
-    fn test_auth_header_format() {
-        let format = AuthHeaderFormat::new("X-API-Key", "{key}");
-        assert_eq!(format.format("test123"), "test123");
-
-        let format = AuthHeaderFormat::default();
-        assert_eq!(format.format("token123"), "Bearer token123");
-    }
 
     #[test]
     fn test_multi_auth_config_creation() {
-        let api_config = MultiAuthConfig::api_key("X-API-Key", "{key}");
+        let api_config = MultiAuthConfig::api_key();
         assert_eq!(api_config.auth_type, AuthType::ApiKey);
-        assert_eq!(api_config.header_format.header_name, "X-API-Key");
+        assert_eq!(api_config.extra_config, None);
 
         let oauth_config = MultiAuthConfig::oauth("client123", "secret456", "https://auth.example.com", "https://token.example.com");
         assert_eq!(oauth_config.auth_type, AuthType::OAuth);

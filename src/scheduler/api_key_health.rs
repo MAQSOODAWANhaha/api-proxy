@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use crate::proxy::types::ProviderId;
-use entity::{user_provider_keys, provider_types};
+use entity::{provider_types, user_provider_keys};
 
 /// API密钥健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +144,11 @@ impl ApiKeyHealthChecker {
     /// 创建新的API密钥健康检查器
     pub fn new(db: Arc<DatabaseConnection>, config: Option<ApiKeyHealthConfig>) -> Self {
         let client = Client::builder()
-            .timeout(config.as_ref().map_or(Duration::from_secs(30), |c| c.request_timeout))
+            .timeout(
+                config
+                    .as_ref()
+                    .map_or(Duration::from_secs(30), |c| c.request_timeout),
+            )
             .build()
             .expect("Failed to create HTTP client for API key health checking");
 
@@ -201,7 +205,9 @@ impl ApiKeyHealthChecker {
         let provider_info = provider_types::Entity::find_by_id(key_model.provider_type_id)
             .one(&*self.db)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Provider type not found: {}", key_model.provider_type_id))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Provider type not found: {}", key_model.provider_type_id)
+            })?;
 
         debug!(
             key_id = key_model.id,
@@ -211,10 +217,9 @@ impl ApiKeyHealthChecker {
         );
 
         // 使用数据库配置的健康检查逻辑
-        let result = self.check_provider_key(
-            &key_model.api_key,
-            &provider_info,
-        ).await;
+        let result = self
+            .check_provider_key(&key_model.api_key, &provider_info)
+            .await;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -262,8 +267,12 @@ impl ApiKeyHealthChecker {
         };
 
         // 更新健康状态
-        self.update_health_status(key_model.id, key_model.provider_type_id, check_result.clone())
-            .await?;
+        self.update_health_status(
+            key_model.id,
+            key_model.provider_type_id,
+            check_result.clone(),
+        )
+        .await?;
 
         Ok(check_result)
     }
@@ -280,12 +289,12 @@ impl ApiKeyHealthChecker {
         } else {
             format!("https://{}", provider_info.base_url)
         };
-        
+
         let health_check_path = provider_info
             .health_check_path
             .as_deref()
             .unwrap_or("/models");
-            
+
         let url = if health_check_path.starts_with("http") {
             // 如果health_check_path是完整URL，直接使用
             health_check_path.to_string()
@@ -303,22 +312,10 @@ impl ApiKeyHealthChecker {
             "Performing API key health check"
         );
 
-        // 从config_json中获取认证头格式
-        let auth_header_format = provider_info
-            .config_json
-            .as_deref()
-            .and_then(|json_str| {
-                serde_json::from_str::<serde_json::Value>(json_str).ok()
-            })
-            .and_then(|config| {
-                config.get("auth_header_format")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "Authorization: Bearer {key}".to_string());
-
         // 构建请求
-        let mut request = if provider_info.name == "anthropic" && health_check_path.contains("/messages") {
+        let mut request = if provider_info.name == "anthropic"
+            && health_check_path.contains("/messages")
+        {
             // Claude需要POST请求和payload
             let test_payload = serde_json::json!({
                 "model": provider_info.default_model.as_deref().unwrap_or("claude-3-haiku-20240307"),
@@ -326,7 +323,8 @@ impl ApiKeyHealthChecker {
                 "messages": [{"role": "user", "content": "test"}]
             });
 
-            let mut req = self.client
+            let mut req = self
+                .client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .json(&test_payload);
@@ -341,21 +339,13 @@ impl ApiKeyHealthChecker {
             self.client.get(&url)
         };
 
-        // 添加认证头（除了Gemini，因为它在URL中）
-        if provider_info.name != "gemini" && provider_info.name != "custom_gemini" {
-            if auth_header_format.contains(':') {
-                // 格式如 "Authorization: Bearer {key}" 或 "x-api-key: {key}"
-                let parts: Vec<&str> = auth_header_format.split(':').collect();
-                if parts.len() == 2 {
-                    let header_name = parts[0].trim();
-                    let header_value = parts[1].trim().replace("{key}", api_key);
-                    request = request.header(header_name, header_value);
-                }
-            } else {
-                // 简单格式如 "Bearer {key}"
-                let header_value = auth_header_format.replace("{key}", api_key);
-                request = request.header("Authorization", header_value);
-            }
+        // 添加认证头
+        if provider_info.name == "gemini" || provider_info.name == "custom_gemini" {
+            // Gemini使用X-goog-api-key头部
+            request = request.header("X-goog-api-key", api_key);
+        } else {
+            // 其他服务商使用Authorization Bearer头部
+            request = request.header("Authorization", format!("Bearer {}", api_key));
         }
 
         // 添加User-Agent
@@ -364,13 +354,13 @@ impl ApiKeyHealthChecker {
         // 发送请求
         let response = request.send().await?;
         let status_code = response.status().as_u16();
-        
+
         // 判断成功状态
         let success = match status_code {
             200..=299 => true,
-            401 => false, // 密钥无效
-            403 => false, // 权限不足
-            429 => false, // 配额耗尽
+            401 => false,           // 密钥无效
+            403 => false,           // 权限不足
+            429 => false,           // 配额耗尽
             _ => status_code < 500, // 4xx可能是配置问题，5xx是服务器问题
         };
 
@@ -387,7 +377,7 @@ impl ApiKeyHealthChecker {
     /// 分类错误类型
     fn categorize_error(&self, error: &anyhow::Error) -> ApiKeyErrorCategory {
         let error_string = error.to_string().to_lowercase();
-        
+
         if error_string.contains("unauthorized") || error_string.contains("invalid") {
             ApiKeyErrorCategory::InvalidKey
         } else if error_string.contains("quota") || error_string.contains("rate limit") {
@@ -411,21 +401,23 @@ impl ApiKeyHealthChecker {
         check_result: ApiKeyCheckResult,
     ) -> Result<()> {
         let mut health_map = self.health_status.write().await;
-        
-        let status = health_map.entry(key_id).or_insert_with(|| ApiKeyHealthStatus {
-            key_id,
-            provider_type_id,
-            provider_id: ProviderId::from_database_id(provider_type_id),
-            is_healthy: true,
-            last_check: None,
-            last_healthy: None,
-            consecutive_failures: 0,
-            consecutive_successes: 0,
-            avg_response_time_ms: 0,
-            health_score: 100.0,
-            last_error: None,
-            recent_results: Vec::new(),
-        });
+
+        let status = health_map
+            .entry(key_id)
+            .or_insert_with(|| ApiKeyHealthStatus {
+                key_id,
+                provider_type_id,
+                provider_id: ProviderId::from_database_id(provider_type_id),
+                is_healthy: true,
+                last_check: None,
+                last_healthy: None,
+                consecutive_failures: 0,
+                consecutive_successes: 0,
+                avg_response_time_ms: 0,
+                health_score: 100.0,
+                last_error: None,
+                recent_results: Vec::new(),
+            });
 
         // 更新检查时间
         status.last_check = Some(check_result.timestamp);
@@ -460,8 +452,12 @@ impl ApiKeyHealthChecker {
                 .filter(|r| r.is_success)
                 .map(|r| r.response_time_ms)
                 .sum();
-            let successful_count = status.recent_results.iter().filter(|r| r.is_success).count();
-            
+            let successful_count = status
+                .recent_results
+                .iter()
+                .filter(|r| r.is_success)
+                .count();
+
             if successful_count > 0 {
                 status.avg_response_time_ms = total_response_time / successful_count as u64;
             }
@@ -546,7 +542,7 @@ impl ApiKeyHealthChecker {
     /// 强制标记密钥为不健康
     pub async fn mark_key_unhealthy(&self, key_id: i32, reason: String) -> Result<()> {
         let mut health_map = self.health_status.write().await;
-        
+
         if let Some(status) = health_map.get_mut(&key_id) {
             status.is_healthy = false;
             status.consecutive_failures += 1;
@@ -555,7 +551,7 @@ impl ApiKeyHealthChecker {
 
             warn!(key_id = key_id, reason = %reason, "Manually marked API key as unhealthy");
         }
-        
+
         Ok(())
     }
 
@@ -565,7 +561,7 @@ impl ApiKeyHealthChecker {
         keys: Vec<user_provider_keys::Model>,
     ) -> Result<HashMap<i32, ApiKeyCheckResult>> {
         let mut results = HashMap::new();
-        
+
         // 并发执行所有检查
         let check_futures: Vec<_> = keys
             .iter()
@@ -604,7 +600,10 @@ impl ApiKeyHealthChecker {
             }
         }
 
-        debug!(checked_keys = results.len(), "Batch API key health check completed");
+        debug!(
+            checked_keys = results.len(),
+            "Batch API key health check completed"
+        );
         Ok(results)
     }
 }
@@ -618,8 +617,9 @@ impl ApiKeyHealthStatus {
             } else {
                 config.unhealthy_retry_interval
             };
-            
-            let next_check_time = last_check + chrono::Duration::from_std(interval).unwrap_or_default();
+
+            let next_check_time =
+                last_check + chrono::Duration::from_std(interval).unwrap_or_default();
             Utc::now() > next_check_time
         } else {
             // 从未检查过，立即检查
@@ -645,7 +645,7 @@ mod tests {
     async fn test_error_categorization() {
         let db = Arc::new(sea_orm::DatabaseConnection::Disconnected);
         let checker = ApiKeyHealthChecker::new(db, None);
-        
+
         let error = anyhow::anyhow!("unauthorized access");
         assert_eq!(
             checker.categorize_error(&error),
@@ -663,7 +663,7 @@ mod tests {
     async fn test_health_score_calculation() {
         let db = Arc::new(sea_orm::DatabaseConnection::Disconnected);
         let checker = ApiKeyHealthChecker::new(db, None);
-        
+
         let mut status = ApiKeyHealthStatus {
             key_id: 1,
             provider_type_id: 1,

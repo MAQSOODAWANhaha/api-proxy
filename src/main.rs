@@ -113,18 +113,7 @@ fn build_cli() -> Command {
 
 /// 带日志级别的初始化函数
 fn init_logging_with_level(log_level: Option<&String>) {
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-    let level = log_level.map_or("info", std::string::String::as_str);
-    let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| format!("{level},api_proxy=debug"));
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| log_filter.into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    api_proxy::logging::init_optimized_logging(log_level);
 }
 
 /// 配置检查函数
