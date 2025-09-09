@@ -121,7 +121,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:9090/api/health || exit 1
 
 # 设置环境变量
-ENV RUST_LOG=info
+ENV RUST_LOG=info,sqlx::query=off
 ENV RUST_BACKTRACE=1
 ENV API_PROXY_CONFIG_PATH=/app/config/config.prod.toml
 ENV API_PROXY_DATA_DIR=/app/data

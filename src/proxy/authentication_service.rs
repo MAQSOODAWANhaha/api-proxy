@@ -68,12 +68,82 @@ impl AuthenticationService {
         Self { auth_manager, db }
     }
 
-    /// 智能检测客户端认证信息
+    /// 智能检测并替换客户端认证信息
     ///
-    /// 从请求的各个可能位置检测认证信息：
-    /// 1. Query参数：key, access_token, api_key, apikey
-    /// 2. HTTP Headers：Authorization, X-API-Key, X-goog-api-key, X-OpenAI-Api-Key
-    pub fn detect_client_authorization(&self, session: &Session) -> Result<Authorization, ProxyError> {
+    /// 新的一步式处理流程：
+    /// 1. 从请求检测用户认证信息（Query参数或Headers）
+    /// 2. 验证用户API并获取关联的user_provider_keys
+    /// 3. 根据auth_type获取真实凭据（api_key或oauth access_token）
+    /// 4. 立即在请求中替换认证信息
+    /// 5. 返回认证结果
+    pub async fn detect_and_replace_client_authorization(
+        &self, 
+        session: &mut Session,
+        request_id: &str
+    ) -> Result<AuthenticationResult, ProxyError> {
+        tracing::debug!(
+            request_id = %request_id,
+            "Starting integrated authentication detection and credential replacement"
+        );
+
+        // 步骤1: 检测用户认证信息
+        let user_auth = self.detect_user_auth_from_request(session)?;
+
+        tracing::debug!(
+            request_id = %request_id,
+            auth_source = ?user_auth.source,
+            auth_location = %user_auth.location,
+            "User authentication detected"
+        );
+
+        // 步骤2: 验证用户API密钥并获取关联配置
+        let proxy_auth_result = self
+            .auth_manager
+            .authenticate_proxy_request(&user_auth.auth_value)
+            .await?;
+
+        // 步骤3: 根据auth_type获取真实凭据并立即替换
+        let selected_credential = self
+            .get_real_credential_and_replace_immediately(
+                session,
+                &user_auth,
+                &proxy_auth_result.user_api,
+                request_id
+            )
+            .await?;
+
+        // 步骤4: 获取完整provider配置
+        let provider_type = entity::provider_types::Entity::find_by_id(proxy_auth_result.provider_type_id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| ProxyError::database(&format!("Failed to query provider_types: {}", e)))?
+            .ok_or_else(|| ProxyError::internal(&format!("Provider type not found: {}", proxy_auth_result.provider_type_id)))?;
+
+        tracing::info!(
+            request_id = %request_id,
+            user_id = proxy_auth_result.user_id,
+            provider_type_id = proxy_auth_result.provider_type_id,
+            provider_name = %provider_type.name,
+            user_service_api_id = proxy_auth_result.user_api.id,
+            api_key_preview = %AuthUtils::sanitize_api_key(&user_auth.auth_value),
+            real_credential_preview = %AuthUtils::sanitize_api_key(&selected_credential),
+            "Integrated authentication successful with immediate credential replacement"
+        );
+
+        // 步骤5: 构造认证结果
+        Ok(AuthenticationResult {
+            user_service_api: proxy_auth_result.user_api.clone(),
+            user_id: proxy_auth_result.user_id,
+            provider_type_id: proxy_auth_result.provider_type_id,
+            provider_type,
+            api_key_preview: AuthUtils::sanitize_api_key(&user_auth.auth_value),
+            detected_auth: user_auth,
+            selected_credential,
+        })
+    }
+
+    /// 从请求中检测用户认证信息（内部辅助方法）
+    fn detect_user_auth_from_request(&self, session: &Session) -> Result<Authorization, ProxyError> {
         let req_header = session.req_header();
 
         // 1. 检测Query参数
@@ -144,90 +214,47 @@ impl AuthenticationService {
         ))
     }
 
-    /// 智能认证验证和凭据替换（替代authenticate_with_provider）
+    /// 智能认证验证和凭据替换（简化版：直接调用集成方法）
     ///
-    /// 新的认证流程：
-    /// 1. 智能检测客户端认证信息
-    /// 2. 验证user_service_apis表中的约束限制
-    /// 3. 从user_provider_keys表获取真实凭据
-    /// 4. 根据负载均衡策略选择最优凭据
-    /// 5. 在请求中原地替换认证信息
+    /// 简化的认证流程：
+    /// 1. 调用 detect_and_replace_client_authorization 完成所有认证和替换工作
+    /// 2. 返回认证结果
     pub async fn authenticate_and_replace_credentials(
         &self,
-        session: &Session,
+        session: &mut Session,
         request_id: &str,
     ) -> Result<AuthenticationResult, ProxyError> {
         tracing::debug!(
             request_id = %request_id,
-            "Starting intelligent authentication and credential replacement"
+            "Starting simplified authentication and credential replacement"
         );
 
-        // 步骤1: 智能检测客户端认证信息
-        let client_auth = self.detect_client_authorization(session)?;
-
-        tracing::debug!(
-            request_id = %request_id,
-            auth_source = ?client_auth.source,
-            auth_location = %client_auth.location,
-            "Client authentication detected"
-        );
-
-        // 步骤2: 使用统一认证管理器验证API密钥
-        let proxy_auth_result = self
-            .auth_manager
-            .authenticate_proxy_request(&client_auth.auth_value)
-            .await?;
-
-        // 步骤3: 获取真实凭据（从user_provider_keys表）
-        let selected_credential = self
-            .get_real_credential_for_user_api(&proxy_auth_result.user_api)
-            .await?;
+        // 一步完成：检测 + 验证 + 获取真实凭据 + 立即替换
+        let auth_result = self.detect_and_replace_client_authorization(session, request_id).await?;
 
         tracing::info!(
             request_id = %request_id,
-            user_id = proxy_auth_result.user_id,
-            provider_type_id = proxy_auth_result.provider_type_id,
-            user_service_api_id = proxy_auth_result.user_api.id,
-            api_key_preview = %AuthUtils::sanitize_api_key(&client_auth.auth_value),
-            real_credential_preview = %AuthUtils::sanitize_api_key(&selected_credential),
-            "Intelligent authentication successful with real credential selected"
+            user_id = auth_result.user_id,
+            provider_type_id = auth_result.provider_type_id,
+            provider_name = %auth_result.provider_type.name,
+            user_service_api_id = auth_result.user_service_api.id,
+            "Simplified authentication and credential replacement completed successfully"
         );
-
-        // 步骤4: 查询完整的provider配置（替代ProviderResolver功能）
-        let provider_type = entity::provider_types::Entity::find_by_id(proxy_auth_result.provider_type_id)
-            .one(self.db.as_ref())
-            .await
-            .map_err(|e| ProxyError::database(&format!("Failed to query provider_types: {}", e)))?
-            .ok_or_else(|| ProxyError::internal(&format!("Provider type not found: {}", proxy_auth_result.provider_type_id)))?;
-
-        tracing::debug!(
-            request_id = %request_id,
-            provider_name = %provider_type.name,
-            provider_base_url = %provider_type.base_url,
-            "Provider configuration loaded successfully"
-        );
-
-        // 步骤5: 构造认证结果
-        let auth_result = AuthenticationResult {
-            user_service_api: proxy_auth_result.user_api.clone(),
-            user_id: proxy_auth_result.user_id,
-            provider_type_id: proxy_auth_result.provider_type_id,
-            provider_type,
-            api_key_preview: AuthUtils::sanitize_api_key(&client_auth.auth_value),
-            detected_auth: client_auth,
-            selected_credential,
-        };
 
         Ok(auth_result)
     }
 
-    /// 从user_provider_keys表获取真实凭据
+    /// 根据auth_type获取真实凭据并立即在请求中替换
     ///
-    /// 根据user_service_api中配置的user_provider_keys_ids，
-    /// 查询user_provider_keys表获取真实API密钥，并根据负载均衡策略选择
-    async fn get_real_credential_for_user_api(
+    /// 关键改进：区别处理API Key和OAuth认证类型
+    /// - api_key: 直接使用user_provider_keys.api_key
+    /// - oauth: 使用user_provider_keys.api_key作为session_id查询oauth_client_sessions.access_token
+    async fn get_real_credential_and_replace_immediately(
         &self,
+        session: &mut Session,
+        detected_auth: &Authorization,
         user_api: &entity::user_service_apis::Model,
+        request_id: &str,
     ) -> Result<String, ProxyError> {
         // 步骤1: 解析user_provider_keys_ids JSON数组
         let provider_key_ids: Vec<i32> = user_api.user_provider_keys_ids
@@ -242,12 +269,13 @@ impl AuthenticationService {
         }
 
         tracing::debug!(
+            request_id = %request_id,
             user_api_id = user_api.id,
             provider_key_ids = ?provider_key_ids,
-            "Fetching real credentials from user_provider_keys table"
+            "Fetching real credentials from user_provider_keys table with auth_type handling"
         );
 
-        // 步骤2: 查询user_provider_keys表获取所有可用凭据
+        // 步骤2: 查询所有可用的user_provider_keys
         let provider_keys = entity::user_provider_keys::Entity::find()
             .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids))
             .filter(entity::user_provider_keys::Column::IsActive.eq(true))
@@ -262,33 +290,98 @@ impl AuthenticationService {
         // 步骤3: 根据调度策略选择最优凭据
         let selected_key = self.select_credential_by_strategy(user_api, &provider_keys).await?;
 
-        // 步骤4: 根据认证类型获取最终凭据
+        tracing::debug!(
+            request_id = %request_id,
+            selected_key_id = selected_key.id,
+            auth_type = %selected_key.auth_type,
+            "Selected credential by strategy"
+        );
+
+        // 步骤4: 根据认证类型获取真实凭据（核心逻辑）
         let real_credential = match selected_key.auth_type.as_str() {
             "api_key" => {
+                tracing::debug!(
+                    request_id = %request_id,
+                    key_id = selected_key.id,
+                    "Using API key authentication"
+                );
                 // 直接使用API密钥
                 selected_key.api_key.clone()
             }
             "oauth" => {
+                tracing::debug!(
+                    request_id = %request_id,
+                    key_id = selected_key.id,
+                    session_id = %selected_key.api_key,
+                    "Using OAuth authentication, fetching access token"
+                );
                 // OAuth类型：api_key字段存储的是session_id，需要查询oauth_client_sessions表
-                self.get_oauth_access_token(&selected_key.api_key).await?
+                self.get_oauth_access_token(&selected_key.api_key, request_id).await?
             }
             _ => {
                 return Err(ProxyError::internal(&format!(
-                    "Unsupported auth type: {}", selected_key.auth_type
+                    "Unsupported auth type '{}' for key_id={}", selected_key.auth_type, selected_key.id
                 )));
             }
         };
 
-        tracing::info!(
-            user_api_id = user_api.id,
+        // 步骤5: 验证凭据非空
+        if real_credential.is_empty() {
+            return Err(ProxyError::authentication(&format!(
+                "Retrieved credential is empty for auth_type='{}', key_id={}", 
+                selected_key.auth_type, selected_key.id
+            )));
+        }
+
+        tracing::debug!(
+            request_id = %request_id,
             selected_key_id = selected_key.id,
             auth_type = %selected_key.auth_type,
             credential_preview = %AuthUtils::sanitize_api_key(&real_credential),
-            "Real credential selected successfully"
+            "Real credential retrieved successfully"
         );
+
+        // 步骤6: 立即在请求中替换认证信息
+        self.replace_auth_immediately(session, detected_auth, &real_credential, request_id)?;
 
         Ok(real_credential)
     }
+
+    /// 立即在请求中替换认证信息
+    fn replace_auth_immediately(
+        &self,
+        session: &mut Session,
+        detected_auth: &Authorization,
+        real_credential: &str,
+        request_id: &str,
+    ) -> Result<(), ProxyError> {
+        tracing::debug!(
+            request_id = %request_id,
+            auth_source = ?detected_auth.source,
+            auth_location = %detected_auth.location,
+            "Immediately replacing authentication credential in request"
+        );
+
+        match &detected_auth.source {
+            AuthSource::Query => {
+                self.replace_query_param(session, &detected_auth.location, real_credential)?;
+            }
+            AuthSource::Header => {
+                self.replace_header_value(session, &detected_auth.location, real_credential)?;
+            }
+        }
+
+        tracing::info!(
+            request_id = %request_id,
+            auth_source = ?detected_auth.source,
+            auth_location = %detected_auth.location,
+            real_credential_preview = %AuthUtils::sanitize_api_key(real_credential),
+            "Authentication credential replaced immediately in request"
+        );
+
+        Ok(())
+    }
+
 
     /// 根据调度策略选择凭据
     async fn select_credential_by_strategy(
@@ -364,69 +457,126 @@ impl AuthenticationService {
     }
 
     /// 获取OAuth访问令牌
-    async fn get_oauth_access_token(&self, session_id: &str) -> Result<String, ProxyError> {
-        let oauth_session = entity::oauth_client_sessions::Entity::find()
-            .filter(entity::oauth_client_sessions::Column::SessionId.eq(session_id))
-            .filter(entity::oauth_client_sessions::Column::Status.eq("completed"))
-            .one(self.db.as_ref())
-            .await
-            .map_err(|e| ProxyError::database(&format!("Failed to query oauth_client_sessions: {}", e)))?;
-
-        match oauth_session {
-            Some(session) => {
-                if let Some(access_token) = session.access_token {
-                    // 检查令牌是否过期
-                    let now = chrono::Utc::now().naive_utc();
-                    if session.expires_at > now {
-                        Ok(access_token)
-                    } else {
-                        Err(ProxyError::authentication("OAuth access token has expired"))
-                    }
-                } else {
-                    Err(ProxyError::authentication("OAuth session has no access token"))
-                }
-            }
-            None => Err(ProxyError::authentication(&format!(
-                "OAuth session not found or not completed: {}", session_id
-            )))
-        }
-    }
-
-    /// 在请求中原地替换认证信息
-    ///
-    /// 根据检测到的认证信息位置，将原始凭据替换为真实凭据
-    pub fn replace_auth_in_request(
-        &self,
-        session: &mut Session,
-        auth_result: &AuthenticationResult,
-    ) -> Result<(), ProxyError> {
-        let detected_auth = &auth_result.detected_auth;
-        let real_credential = &auth_result.selected_credential;
-
+    async fn get_oauth_access_token(
+        &self, 
+        session_id: &str, 
+        request_id: &str
+    ) -> Result<String, ProxyError> {
         tracing::debug!(
-            auth_source = ?detected_auth.source,
-            auth_location = %detected_auth.location,
-            "Replacing authentication credential in request"
+            request_id = %request_id,
+            session_id = %session_id,
+            "Querying OAuth session for access token"
         );
 
-        match &detected_auth.source {
-            AuthSource::Query => {
-                self.replace_query_param(session, &detected_auth.location, real_credential)?;
+        // 查询oauth_client_sessions表
+        let oauth_session = entity::oauth_client_sessions::Entity::find()
+            .filter(entity::oauth_client_sessions::Column::SessionId.eq(session_id))
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    request_id = %request_id,
+                    session_id = %session_id,
+                    error = %e,
+                    "Database error while querying oauth_client_sessions"
+                );
+                ProxyError::database(&format!("Failed to query oauth_client_sessions: {}", e))
+            })?;
+
+        // 验证session存在
+        let session = match oauth_session {
+            Some(session) => session,
+            None => {
+                tracing::error!(
+                    request_id = %request_id,
+                    session_id = %session_id,
+                    "OAuth session not found in oauth_client_sessions table"
+                );
+                return Err(ProxyError::authentication(&format!(
+                    "OAuth session not found: {}", session_id
+                )));
             }
-            AuthSource::Header => {
-                self.replace_header_value(session, &detected_auth.location, real_credential)?;
+        };
+
+        tracing::debug!(
+            request_id = %request_id,
+            session_id = %session_id,
+            session_status = %session.status,
+            provider_name = %session.provider_name,
+            user_id = session.user_id,
+            "OAuth session found"
+        );
+
+        // 验证session状态
+        if session.status != "completed" {
+            tracing::error!(
+                request_id = %request_id,
+                session_id = %session_id,
+                session_status = %session.status,
+                "OAuth session is not in completed status"
+            );
+            return Err(ProxyError::authentication(&format!(
+                "OAuth session {} is not completed, current status: {}", 
+                session_id, session.status
+            )));
+        }
+
+        // 验证access_token存在
+        let access_token = match &session.access_token {
+            Some(token) => token,
+            None => {
+                tracing::error!(
+                    request_id = %request_id,
+                    session_id = %session_id,
+                    "OAuth session has no access_token field"
+                );
+                return Err(ProxyError::authentication(&format!(
+                    "OAuth session {} has no access_token", session_id
+                )));
             }
+        };
+
+        // 验证access_token非空
+        if access_token.is_empty() {
+            tracing::error!(
+                request_id = %request_id,
+                session_id = %session_id,
+                "OAuth session has empty access_token"
+            );
+            return Err(ProxyError::authentication(&format!(
+                "OAuth session {} has empty access_token", session_id
+            )));
+        }
+
+        // 检查令牌是否过期
+        let now = chrono::Utc::now().naive_utc();
+        if session.expires_at <= now {
+            tracing::error!(
+                request_id = %request_id,
+                session_id = %session_id,
+                expires_at = %session.expires_at,
+                current_time = %now,
+                "OAuth access token has expired"
+            );
+            return Err(ProxyError::authentication(&format!(
+                "OAuth access token has expired for session {}, expired at: {}", 
+                session_id, session.expires_at
+            )));
         }
 
         tracing::info!(
-            auth_source = ?detected_auth.source,
-            auth_location = %detected_auth.location,
-            real_credential_preview = %AuthUtils::sanitize_api_key(real_credential),
-            "Authentication credential replaced successfully"
+            request_id = %request_id,
+            session_id = %session_id,
+            provider_name = %session.provider_name,
+            expires_at = %session.expires_at,
+            access_token_preview = %AuthUtils::sanitize_api_key(access_token),
+            "OAuth access token retrieved successfully"
         );
 
-        Ok(())
+        Ok(access_token.clone())
     }
+
+
 
     /// 替换查询参数中的认证信息
     fn replace_query_param(

@@ -373,7 +373,7 @@ impl RequestHandler {
     /// 准备代理请求 - 协调器模式：委托给专门服务
     pub async fn prepare_proxy_request(
         &self,
-        session: &Session,
+        session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
         let start = std::time::Instant::now();
