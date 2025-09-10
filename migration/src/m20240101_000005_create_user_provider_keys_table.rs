@@ -96,6 +96,12 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(UserProviderKeys::ExpiresAt).timestamp())
                     .col(ColumnDef::new(UserProviderKeys::LastAuthCheck).timestamp())
+                    // Gemini 项目ID字段 - 支持Gemini Code Assist功能
+                    .col(
+                        ColumnDef::new(UserProviderKeys::ProjectId)
+                            .string_len(100)
+                            .null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_user_provider_keys_user_id")
@@ -184,6 +190,17 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // Gemini project_id 索引
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_project_id")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::ProjectId)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -215,6 +232,8 @@ enum UserProviderKeys {
     AuthStatus,
     ExpiresAt,
     LastAuthCheck,
+    // Gemini项目ID字段
+    ProjectId,
 }
 
 #[derive(DeriveIden)]

@@ -44,6 +44,7 @@ export interface AddProviderKeyForm {
   rateLimitPerMin: number
   tokenLimitPerDay: number
   enabled: boolean
+  projectId?: string  // Gemini 项目ID，用于 OAuth+project_id 模式
 }
 
 /** 组件属性（支持创建/编辑） */
@@ -87,6 +88,7 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
     rateLimitPerMin: 0,
     tokenLimitPerDay: 0,
     enabled: true,
+    projectId: '',
   }
 
   // 表单状态（简化实现，满足必填/非负数等校验）
@@ -234,6 +236,27 @@ const AddProviderKeyDialog: React.FC<AddProviderKeyDialogProps> = ({
               onChange={(e) => setField('apiKey', e.target.value)}
             />
           </div>
+
+          {/* Gemini 项目ID - 仅在选择 Gemini 时显示 */}
+          {form.provider === 'gemini' && (
+            <div className="space-y-2">
+              <Label htmlFor="project-id">
+                项目ID
+                <span className="text-xs text-muted-foreground ml-2">
+                  （可选，用于 Google Cloud Code Assist）
+                </span>
+              </Label>
+              <Input
+                id="project-id"
+                placeholder="请输入 Google Cloud 项目ID"
+                value={form.projectId || ''}
+                onChange={(e) => setField('projectId', e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                留空使用标准 Gemini API，填写则使用 Code Assist API
+              </p>
+            </div>
+          )}
 
           {/* 权重 */}
           <div className="space-y-2">

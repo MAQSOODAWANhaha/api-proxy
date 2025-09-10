@@ -95,6 +95,7 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
             <TableHead className="min-w-[160px]">名称</TableHead>
             <TableHead className="min-w-[140px]">服务商</TableHead>
             <TableHead className="min-w-[200px]">API 密钥</TableHead>
+            <TableHead className="min-w-[140px]">项目ID</TableHead>
             <TableHead className="min-w-[80px] text-right">权重</TableHead>
             <TableHead className="min-w-[140px] text-right">请求/分钟</TableHead>
             <TableHead className="min-w-[140px] text-right">Token/天</TableHead>
@@ -114,6 +115,9 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
                 <span className="rounded bg-muted px-2 py-0.5 text-sm text-foreground/70">
                   {maskKey(row.apiKey)}
                 </span>
+              </TableCell>
+              <TableCell className="text-foreground/70">
+                {row.projectId || '-'}
               </TableCell>
               <TableCell className="text-right tabular-nums">{row.weight}</TableCell>
               <TableCell className="text-right tabular-nums">{row.rateLimitPerMin}</TableCell>

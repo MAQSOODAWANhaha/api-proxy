@@ -274,13 +274,32 @@ impl TokenExchangeClient {
         token_url: &str,
         form_params: HashMap<String, String>,
     ) -> OAuthResult<TokenResponse> {
-        let response = self.http_client
-            .post(token_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .form(&form_params)
-            .send()
-            .await?;
+        // Claude需要使用JSON格式，其他提供商使用form格式
+        let is_claude_token_url = token_url.contains("console.anthropic.com");
+        
+        let response = if is_claude_token_url {
+            // Claude使用JSON格式 - 根据Wei-Shaw项目实现
+            self.http_client
+                .post(token_url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .header("User-Agent", "claude-cli/1.0.56 (external, cli)")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Referer", "https://claude.ai/")
+                .header("Origin", "https://claude.ai")
+                .json(&form_params)
+                .send()
+                .await?
+        } else {
+            // 其他提供商使用标准form格式
+            self.http_client
+                .post(token_url)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
+                .form(&form_params)
+                .send()
+                .await?
+        };
 
         let status = response.status();
         let text = response.text().await?;

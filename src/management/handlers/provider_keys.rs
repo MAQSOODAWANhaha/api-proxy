@@ -125,6 +125,7 @@ pub async fn get_provider_keys_list(
             "provider": provider_name,
             "name": provider_key.name,
             "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { provider_key.api_key.clone() },
+            "project_id": provider_key.project_id,
             "auth_type": provider_key.auth_type,
             "auth_status": provider_key.auth_status,
             "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
@@ -303,6 +304,8 @@ pub async fn create_provider_key(
         max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
         max_requests_per_day: Set(payload.max_requests_per_day),
         is_active: Set(payload.is_active.unwrap_or(true)),
+        // 简单保存project_id到数据库
+        project_id: Set(payload.project_id),
         health_status: Set("healthy".to_string()),
         created_at: Set(Utc::now().naive_utc()),
         updated_at: Set(Utc::now().naive_utc()),
@@ -596,6 +599,8 @@ pub async fn update_provider_key(
     active_model.max_tokens_prompt_per_minute = Set(payload.max_tokens_prompt_per_minute);
     active_model.max_requests_per_day = Set(payload.max_requests_per_day);
     active_model.is_active = Set(payload.is_active.unwrap_or(true));
+    // 简单更新project_id到数据库
+    active_model.project_id = Set(payload.project_id);
     active_model.updated_at = Set(Utc::now().naive_utc());
 
     let updated_key = match active_model.update(db).await {
@@ -1033,6 +1038,8 @@ pub struct CreateProviderKeyRequest {
     pub max_tokens_prompt_per_minute: Option<i32>,
     pub max_requests_per_day: Option<i32>,
     pub is_active: Option<bool>,
+    /// Gemini项目ID（仅适用于Google Gemini提供商的OAuth认证）
+    pub project_id: Option<String>,
 }
 
 /// 更新提供商密钥请求
@@ -1048,6 +1055,8 @@ pub struct UpdateProviderKeyRequest {
     pub max_tokens_prompt_per_minute: Option<i32>,
     pub max_requests_per_day: Option<i32>,
     pub is_active: Option<bool>,
+    /// Gemini项目ID（仅适用于Google Gemini提供商的OAuth认证）
+    pub project_id: Option<String>,
 }
 
 /// 用户提供商密钥查询参数

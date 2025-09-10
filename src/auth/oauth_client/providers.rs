@@ -256,9 +256,9 @@ impl OAuthProviderManager {
                 params.insert("include_granted_scopes".to_string(), "true".to_string());
             }
             "claude" => {
-                // Claude特定参数
+                // Claude特定参数 - 根据Wei-Shaw项目的实现
+                params.insert("code".to_string(), "true".to_string());
                 params.insert("response_type".to_string(), "code".to_string());
-                params.insert("grant_type".to_string(), "authorization_code".to_string());
             }
             "openai" => {
                 // OpenAI特定参数

@@ -260,6 +260,41 @@ pub struct DetailedRequestStats {
     pub cost_currency: Option<String>,
 }
 
+/// Gemini代理模式枚举 - 支持3种认证和路由模式
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeminiProxyMode {
+    /// 模式1: OAuth认证，无project_id - 路由到 generativelanguage.googleapis.com
+    OAuthWithoutProject,
+    /// 模式2: OAuth认证，有project_id - 路由到 cloudcode-pa.googleapis.com
+    OAuthWithProject(String),
+    /// 模式3: API Key认证 - 路由到 generativelanguage.googleapis.com
+    ApiKey,
+}
+
+impl GeminiProxyMode {
+    /// 获取对应的上游地址
+    pub fn upstream_host(&self) -> &'static str {
+        match self {
+            Self::OAuthWithoutProject => "generativelanguage.googleapis.com",
+            Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
+            Self::ApiKey => "generativelanguage.googleapis.com",
+        }
+    }
+    
+    /// 判断是否需要路径注入project_id
+    pub fn needs_path_injection(&self) -> bool {
+        matches!(self, Self::OAuthWithProject(_))
+    }
+    
+    /// 获取project_id（如果有）
+    pub fn project_id(&self) -> Option<&str> {
+        match self {
+            Self::OAuthWithProject(project_id) => Some(project_id),
+            _ => None,
+        }
+    }
+}
+
 /// 请求上下文
 #[derive(Debug, Clone)]
 pub struct ProxyContext {
@@ -524,6 +559,259 @@ impl RequestHandler {
             elapsed_ms = elapsed.as_millis(),
             "AI proxy request preparation completed"
         );
+
+        Ok(())
+    }
+
+    /// 动态识别Gemini代理模式
+    /// 
+    /// 根据用户密钥配置动态判断应该使用的代理模式：
+    /// - OAuth + 无project_id => 路由到 generativelanguage.googleapis.com
+    /// - OAuth + 有project_id => 路由到 cloudcode-pa.googleapis.com  
+    /// - API Key => 路由到 generativelanguage.googleapis.com
+    async fn identify_gemini_proxy_mode(&self, ctx: &ProxyContext) -> Result<GeminiProxyMode, ProxyError> {
+        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
+            ProxyError::internal("Backend not selected in context")
+        })?;
+        
+        let auth_type = &selected_backend.auth_type;
+        let project_id = &selected_backend.project_id;
+        
+        let mode = match auth_type.as_str() {
+            "oauth" => {
+                if let Some(project_id) = project_id {
+                    if !project_id.is_empty() {
+                        GeminiProxyMode::OAuthWithProject(project_id.clone())
+                    } else {
+                        GeminiProxyMode::OAuthWithoutProject
+                    }
+                } else {
+                    GeminiProxyMode::OAuthWithoutProject
+                }
+            }
+            "api_key" => GeminiProxyMode::ApiKey,
+            _ => {
+                // 其他认证类型（service_account, adc）默认使用API Key模式路由
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    auth_type = auth_type,
+                    "Unsupported auth_type for Gemini, defaulting to ApiKey mode"
+                );
+                GeminiProxyMode::ApiKey
+            }
+        };
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            auth_type = auth_type,
+            project_id = ?project_id,
+            identified_mode = ?mode,
+            "Gemini proxy mode identified"
+        );
+        
+        Ok(mode)
+    }
+    
+    /// 将project_id注入到API路径中
+    /// 
+    /// 将形如 `/v1/models` 的路径转换为 `/v1/projects/{project_id}/models`
+    /// 用于支持Google Cloud Code Assist API的路径格式
+    fn inject_project_id_into_path(&self, original_path: &str, project_id: &str) -> String {
+        // 检查路径是否以 /v1/ 开头
+        if original_path.starts_with("/v1/") {
+            // 提取 /v1/ 后面的部分
+            let remainder = &original_path[4..]; // 跳过 "/v1/"
+            format!("/v1/projects/{}/{}", project_id, remainder)
+        } else {
+            // 如果不是标准的 /v1/ 路径，直接返回原路径
+            tracing::warn!(
+                path = original_path,
+                project_id = project_id,
+                "Path does not start with /v1/, skipping project_id injection"
+            );
+            original_path.to_string()
+        }
+    }
+    
+    /// Gemini Query 参数修改器
+    /// 
+    /// 根据不同的代理模式为请求添加必要的 query 参数
+    async fn modify_gemini_query_parameters(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        gemini_mode: &GeminiProxyMode,
+    ) -> Result<(), ProxyError> {
+        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
+            ProxyError::internal("Backend not selected in context")
+        })?;
+
+        // 解析现有的查询参数
+        let uri = upstream_request.uri.clone();
+        let mut query_pairs: Vec<(String, String)> = Vec::new();
+        
+        // 保留原有的查询参数
+        if let Some(query) = uri.query() {
+            for pair in query.split('&') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    query_pairs.push((key.to_string(), value.to_string()));
+                }
+            }
+        }
+
+        // 根据代理模式添加特定参数
+        match gemini_mode {
+            GeminiProxyMode::ApiKey => {
+                // API Key 模式：添加 key 参数
+                query_pairs.push(("key".to_string(), selected_backend.api_key.clone()));
+            }
+            GeminiProxyMode::OAuthWithoutProject => {
+                // OAuth 无 project_id：一般不需要额外的 query 参数
+                // access_token 通过 Authorization header 传递
+            }
+            GeminiProxyMode::OAuthWithProject(project_id) => {
+                // OAuth 有 project_id：可能需要在某些 API 中添加 project_id 作为 query 参数
+                // 这取决于具体的 API 需求，暂时不添加
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    "OAuth with project_id mode - query handled via path injection"
+                );
+            }
+        }
+
+        // 重新构建 URI 如果有查询参数变更
+        if !query_pairs.is_empty() {
+            let query_string = query_pairs
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&");
+            
+            let new_uri_string = if uri.path().is_empty() {
+                format!("{}://{}/?{}", 
+                    uri.scheme_str().unwrap_or("https"),
+                    uri.authority().map(|a| a.as_str()).unwrap_or(""),
+                    query_string
+                )
+            } else {
+                format!("{}://{}{}?{}", 
+                    uri.scheme_str().unwrap_or("https"),
+                    uri.authority().map(|a| a.as_str()).unwrap_or(""),
+                    uri.path(),
+                    query_string
+                )
+            };
+            
+            let new_uri = new_uri_string.parse().map_err(|e| {
+                ProxyError::internal(format!("Failed to parse URI with query params: {}", e))
+            })?;
+            
+            upstream_request.set_uri(new_uri);
+            
+            tracing::info!(
+                request_id = %ctx.request_id,
+                gemini_mode = ?gemini_mode,
+                query_params_added = query_pairs.len(),
+                "Modified Gemini query parameters"
+            );
+        }
+
+        Ok(())
+    }
+    
+    /// Gemini Headers 修改器
+    /// 
+    /// 根据不同的代理模式添加 Google 特定的头部
+    async fn modify_gemini_headers(
+        &self,
+        ctx: &ProxyContext,
+        upstream_request: &mut RequestHeader,
+        gemini_mode: &GeminiProxyMode,
+    ) -> Result<(), ProxyError> {
+        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
+            ProxyError::internal("Backend not selected in context")
+        })?;
+
+        match gemini_mode {
+            GeminiProxyMode::ApiKey => {
+                // API Key 模式：添加 Google API Key 头部
+                if let Err(e) = upstream_request.insert_header("x-goog-api-key", &selected_backend.api_key) {
+                    return Err(ProxyError::internal(format!("Failed to set x-goog-api-key header: {}", e)));
+                }
+            }
+            GeminiProxyMode::OAuthWithoutProject => {
+                // OAuth 无 project_id：主要通过 Authorization header 处理，已在认证阶段设置
+            }
+            GeminiProxyMode::OAuthWithProject(project_id) => {
+                // OAuth 有 project_id：添加 x-goog-user-project 头部
+                if let Err(e) = upstream_request.insert_header("x-goog-user-project", project_id) {
+                    return Err(ProxyError::internal(format!("Failed to set x-goog-user-project header: {}", e)));
+                }
+                
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    "Added x-goog-user-project header for OAuth with project_id mode"
+                );
+            }
+        }
+
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            gemini_mode = ?gemini_mode,
+            "Applied Gemini header modifications"
+        );
+
+        Ok(())
+    }
+    
+    /// Gemini 请求体修改器
+    /// 
+    /// 处理JSON请求体的参数注入和转换
+    /// 注意：这是一个占位实现，实际的请求体修改需要在Pingora的请求体处理阶段完成
+    async fn modify_gemini_request_body(
+        &self,
+        ctx: &ProxyContext,
+        _session: &Session,
+        _upstream_request: &mut RequestHeader,
+        gemini_mode: &GeminiProxyMode,
+    ) -> Result<(), ProxyError> {
+        // 注意：在Pingora中修改请求体是复杂的，因为请求体可能是流式的
+        // 这里提供一个框架实现，实际的Body修改需要在请求体流处理阶段完成
+        
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            gemini_mode = ?gemini_mode,
+            "Body modifier placeholder - actual implementation requires stream processing"
+        );
+        
+        match gemini_mode {
+            GeminiProxyMode::OAuthWithProject(project_id) => {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    "Would inject project_id into request body for OAuth with project mode"
+                );
+                // 实际实现：
+                // 1. 读取请求体流
+                // 2. 解析JSON
+                // 3. 注入project_id字段
+                // 4. 重新序列化并设置请求体
+            }
+            GeminiProxyMode::ApiKey => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "API Key mode - no body modification needed"
+                );
+            }
+            GeminiProxyMode::OAuthWithoutProject => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "OAuth without project mode - no body modification needed"
+                );
+            }
+        }
 
         Ok(())
     }
@@ -881,11 +1169,28 @@ impl RequestHandler {
             }
         };
 
-        // 构建上游地址，确保使用HTTPS
-        let upstream_addr = if provider_type.base_url.contains(':') {
-            provider_type.base_url.clone()
+        // 动态确定上游地址 - 对Gemini进行特殊处理
+        let upstream_addr = if provider_type.name.to_lowercase().contains("gemini") {
+            // Gemini代理模式识别
+            let gemini_mode = self.identify_gemini_proxy_mode(ctx).await?;
+            let upstream_host = gemini_mode.upstream_host();
+            
+            tracing::info!(
+                request_id = %ctx.request_id,
+                provider = %provider_type.name,
+                gemini_mode = ?gemini_mode,
+                upstream_host = upstream_host,
+                "Identified Gemini proxy mode and upstream host"
+            );
+            
+            format!("{}:443", upstream_host)
         } else {
-            format!("{}:443", provider_type.base_url)
+            // 其他提供商使用配置中的base_url
+            if provider_type.base_url.contains(':') {
+                provider_type.base_url.clone()
+            } else {
+                format!("{}:443", provider_type.base_url)
+            }
         };
 
         tracing::debug!(
@@ -964,14 +1269,65 @@ impl RequestHandler {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // Provider前缀逻辑已移除 - 直接使用原始路径
+        // 获取原始路径
         let original_path = session.req_header().uri.path();
         
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            original_path = %original_path,
-            "Using original path without provider prefix processing"
-        );
+        // Gemini代理路径处理
+        if let Some(provider_type) = &ctx.provider_type {
+            if provider_type.name.to_lowercase().contains("gemini") {
+                let gemini_mode = self.identify_gemini_proxy_mode(ctx).await?;
+                
+                // 检查是否需要路径注入project_id
+                if gemini_mode.needs_path_injection() {
+                    if let Some(project_id) = gemini_mode.project_id() {
+                        // 将 /v1/models 转换为 /v1/projects/{project_id}/models
+                        let modified_path = self.inject_project_id_into_path(original_path, project_id);
+                        
+                        // 构建新的URI
+                        let new_uri = format!("{}{}", 
+                            upstream_request.uri.scheme_str().unwrap_or("https"),
+                            modified_path
+                        );
+                        
+                        let parsed_uri = new_uri.parse().map_err(|e| {
+                            ProxyError::internal(format!("Failed to parse modified URI: {}", e))
+                        })?;
+                        
+                        upstream_request.set_uri(parsed_uri);
+                        
+                        tracing::info!(
+                            request_id = %ctx.request_id,
+                            original_path = original_path,
+                            modified_path = modified_path,
+                            project_id = project_id,
+                            "Injected project_id into Gemini request path"
+                        );
+                    }
+                }
+                
+                // 处理 Query 参数
+                self.modify_gemini_query_parameters(ctx, upstream_request, &gemini_mode).await?;
+                
+                // 处理 Headers
+                self.modify_gemini_headers(ctx, upstream_request, &gemini_mode).await?;
+                
+                // 处理 Body（需要在后续实现时取消注释）
+                // self.modify_gemini_request_body(ctx, session, upstream_request, &gemini_mode).await?;
+                
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    gemini_mode = ?gemini_mode,
+                    final_path = upstream_request.uri.path(),
+                    "Applied Gemini proxy path processing"
+                );
+            } else {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    original_path = %original_path,
+                    "Using original path for non-Gemini provider"
+                );
+            }
+        }
 
         // 收集请求详情 - 委托给StatisticsService
         let request_stats_for_details = self.statistics_service.collect_request_stats(session);

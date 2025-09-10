@@ -28,6 +28,8 @@ pub struct Model {
     pub auth_status: Option<String>,           // 认证状态 (pending, authorized, expired, error)
     pub expires_at: Option<DateTime>,          // 认证过期时间
     pub last_auth_check: Option<DateTime>,     // 最后认证检查时间
+    // Gemini项目ID - 支持Gemini Code Assist功能（仅OAuth类型使用）
+    pub project_id: Option<String>,            // Google Cloud/Workspace项目ID
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }
