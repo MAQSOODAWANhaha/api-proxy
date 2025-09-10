@@ -205,6 +205,7 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
         max_requests_per_day: newKey.requestLimitPerDay || 0,
         is_active: newKey.status === 'active',
+        project_id: (newKey as any).project_id || null, // 添加 project_id 字段
       })
 
       if (response.success) {
@@ -247,6 +248,7 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
         max_requests_per_day: updatedKey.requestLimitPerDay,
         is_active: updatedKey.status === 'active',
+        project_id: (updatedKey as any).project_id || null, // 添加 project_id 字段
       })
 
       if (response.success) {
@@ -707,6 +709,7 @@ const AddDialog: React.FC<{
     tokenLimitPromptPerMinute: 0,
     requestLimitPerDay: 0,
     status: 'active' as 'active' | 'disabled',
+    project_id: '', // 新增 Gemini 项目ID字段
   })
 
   // 服务商类型状态管理
@@ -998,6 +1001,28 @@ const AddDialog: React.FC<{
           />
         </div>
 
+        {/* Gemini 项目ID - 仅在选择 Gemini 时显示 */}
+        {selectedProviderType && selectedProviderType.name === 'gemini' && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              项目ID
+              <span className="text-xs text-neutral-500 ml-2">
+                （可选，用于 Google Cloud Code Assist）
+              </span>
+            </label>
+            <input
+              type="text"
+              value={(formData as any).project_id || ''}
+              onChange={(e) => setFormData({ ...formData, project_id: e.target.value } as any)}
+              placeholder="请输入 Google Cloud 项目ID"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            />
+            <p className="text-xs text-neutral-600 mt-1">
+              留空使用标准 Gemini API，填写则使用 Code Assist API
+            </p>
+          </div>
+        )}
+
         {/* 权重 */}
         <div>
           <label className="block text-sm font-medium text-neutral-700 mb-1">权重</label>
@@ -1160,7 +1185,8 @@ const EditDialog: React.FC<{
   const [formData, setFormData] = useState({ 
     ...item, 
     auth_type: item.auth_type || 'api_key',
-    provider_type_id: item.provider_type_id || 0
+    provider_type_id: item.provider_type_id || 0,
+    project_id: (item as any).project_id || '' // 添加 project_id 字段
   })
 
   // 服务商类型状态管理
@@ -1415,6 +1441,28 @@ const EditDialog: React.FC<{
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>
+
+        {/* Gemini 项目ID - 仅在选择 Gemini 时显示 */}
+        {selectedProviderType && selectedProviderType.name === 'gemini' && (
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              项目ID
+              <span className="text-xs text-neutral-500 ml-2">
+                （可选，用于 Google Cloud Code Assist）
+              </span>
+            </label>
+            <input
+              type="text"
+              value={(formData as any).project_id || ''}
+              onChange={(e) => setFormData({ ...formData, project_id: e.target.value } as any)}
+              placeholder="请输入 Google Cloud 项目ID"
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            />
+            <p className="text-xs text-neutral-600 mt-1">
+              留空使用标准 Gemini API，填写则使用 Code Assist API
+            </p>
+          </div>
+        )}
 
         {/* 权重 */}
         <div>

@@ -282,7 +282,7 @@ impl TokenExchangeClient {
             self.http_client
                 .post(token_url)
                 .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
+                .header("Accept", "application/json, text/plain, */*")
                 .header("User-Agent", "claude-cli/1.0.56 (external, cli)")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .header("Referer", "https://claude.ai/")
