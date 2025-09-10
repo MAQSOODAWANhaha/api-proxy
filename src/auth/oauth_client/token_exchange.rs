@@ -6,7 +6,7 @@
 use super::providers::OAuthProviderManager;
 use super::session_manager::SessionManager;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
-// use entity::oauth_client_sessions; // 未使用
+use entity::oauth_client_sessions;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -100,7 +100,7 @@ impl TokenExchangeClient {
         }
 
         // 添加提供商特定参数
-        self.add_provider_specific_params(&mut form_params, &session.provider_name);
+        self.add_provider_specific_params(&mut form_params, &session.provider_name, &session);
 
         // 添加OAuth配置中的额外参数
         self.add_config_based_params(&mut form_params, provider_manager, &session.provider_name)
@@ -382,6 +382,7 @@ impl TokenExchangeClient {
         &self,
         form_params: &mut HashMap<String, String>,
         provider_name: &str,
+        session: &oauth_client_sessions::Model,
     ) {
         // 基于provider_name解析基础提供商名称
         let base_provider = if provider_name.contains(':') {
@@ -402,7 +403,10 @@ impl TokenExchangeClient {
                 form_params.insert("scope".to_string(), "openid profile email".to_string());
             }
             "claude" => {
-                form_params.insert("scope".to_string(), "user:inference".to_string());
+                // Claude需要特殊的参数
+                // form_params.insert("scope".to_string(), "user:inference".to_string());
+                form_params.insert("state".to_string(), session.state.clone());
+                form_params.insert("expires_in".to_string(), "31536000".to_string()); // 1年有效期
             }
             _ => {}
         }
