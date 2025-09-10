@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::auth::RefactoredUnifiedAuthManager;
 use crate::cache::UnifiedCacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
-use crate::proxy::request_handler::{RequestHandler, ProxyContext};
+use crate::proxy::request_handler::{ProxyContext, RequestHandler};
 use crate::trace::{UnifiedTraceSystem, immediate::ImmediateProxyTracer};
 use sea_orm::DatabaseConnection;
 
@@ -53,10 +53,7 @@ impl ProxyService {
         // 保留trace_system引用获取的即时写入tracer
         let tracer = trace_system.and_then(|ts| ts.immediate_tracer());
 
-        Ok(Self {
-            ai_handler,
-            tracer,
-        })
+        Ok(Self { ai_handler, tracer })
     }
 
     /// 检查是否为代理请求（透明代理设计）
@@ -142,11 +139,11 @@ impl ProxyHttp for ProxyService {
                 let timeout_seconds = ctx.timeout_seconds.unwrap_or(30) as u64;
                 // 下游超时设置为配置时间的2倍，确保有足够时间处理AI请求
                 let downstream_timeout_secs = timeout_seconds * 2;
-                
+
                 use std::time::Duration;
                 session.set_read_timeout(Some(Duration::from_secs(downstream_timeout_secs)));
                 session.set_write_timeout(Some(Duration::from_secs(downstream_timeout_secs)));
-                
+
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     configured_timeout_s = timeout_seconds,
@@ -379,7 +376,7 @@ impl ProxyHttp for ProxyService {
 
     async fn fail_to_proxy(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         e: &Error,
         ctx: &mut Self::CTX,
     ) -> FailToProxy {
@@ -394,12 +391,13 @@ impl ProxyHttp for ProxyService {
         );
 
         // 检查是否可以重试
-        let max_retry_count = ctx.user_service_api
+        let max_retry_count = ctx
+            .user_service_api
             .as_ref()
             .and_then(|api| api.retry_count)
             .unwrap_or(3) as u32;
-        
-        let should_retry = is_retryable_error 
+
+        let should_retry = is_retryable_error
             && ctx.retry_count < max_retry_count
             && ctx.selected_backend.is_some();
 
@@ -477,7 +475,10 @@ impl ProxyHttp for ProxyService {
                         None,
                         None,
                         Some(error_type.to_string()),
-                        Some(format!("{} (retry_count: {})", converted_error, ctx.retry_count)),
+                        Some(format!(
+                            "{} (retry_count: {})",
+                            converted_error, ctx.retry_count
+                        )),
                     )
                     .await;
             }
@@ -507,7 +508,10 @@ impl ProxyHttp for ProxyService {
                     None,
                     None,
                     Some("proxy_error".to_string()),
-                    Some(format!("Pingora error: {} (retry_count: {})", e, ctx.retry_count)),
+                    Some(format!(
+                        "Pingora error: {} (retry_count: {})",
+                        e, ctx.retry_count
+                    )),
                 )
                 .await;
         }
@@ -578,7 +582,12 @@ impl ProxyHttp for ProxyService {
                 ctx.response_details.finalize_body();
 
                 // 从响应体JSON中提取所有统计信息 - 使用StatisticsService
-                match self.ai_handler.statistics_service().extract_stats_from_response_body(ctx).await {
+                match self
+                    .ai_handler
+                    .statistics_service()
+                    .extract_stats_from_response_body(ctx)
+                    .await
+                {
                     Ok(new_stats) => {
                         // 更新上下文中的token使用信息
                         ctx.token_usage.prompt_tokens = new_stats.input_tokens;

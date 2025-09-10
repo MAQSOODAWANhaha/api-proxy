@@ -10,7 +10,7 @@ pub struct DbQueryFormatter;
 
 impl DbQueryFormatter {
     /// 格式化SQLx查询日志
-    pub fn format_sqlx_query(statement: &str, summary: &str, elapsed: f64, rows_affected: Option<u64>, rows_returned: Option<u64>) -> String {
+    pub fn format_sqlx_query(statement: &str, _summary: &str, elapsed: f64, rows_affected: Option<u64>, rows_returned: Option<u64>) -> String {
         // 清理和格式化SQL语句
         let clean_sql = Self::clean_sql_statement(statement);
         
