@@ -173,6 +173,14 @@ pub async fn exchange_token(
         return response::error(StatusCode::FORBIDDEN, "ACCESS_DENIED", "Session not found or access denied");
     }
 
+    // 添加详细日志记录
+    tracing::info!("🔄 开始OAuth令牌交换", {
+        user_id = %user_id,
+        session_id = %request.session_id,
+        auth_code_length = request.authorization_code.len(),
+        auth_code_prefix = %request.authorization_code.chars().take(10).collect::<String>()
+    });
+
     // 交换令牌
     match oauth_client.exchange_token(&request.session_id, &request.authorization_code).await {
         Ok(token_response) => {

@@ -279,6 +279,11 @@ impl TokenExchangeClient {
         
         let response = if is_claude_token_url {
             // Claude使用JSON格式 - 根据Wei-Shaw项目实现
+            tracing::debug!("🌟 发送Claude token exchange请求", {
+                url = %token_url,
+                params = ?form_params
+            });
+            
             self.http_client
                 .post(token_url)
                 .header("Content-Type", "application/json")

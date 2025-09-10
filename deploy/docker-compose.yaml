@@ -18,7 +18,7 @@ services:
       # 配置文件（可选，用于动态配置）
       - ../config:/app/config:ro
     environment:
-      - RUST_LOG=info,sqlx::query=off
+      - RUST_LOG=debug,api_proxy::auth::oauth_client=trace,sqlx::query=off
       - RUST_BACKTRACE=1
       - API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE:-config.prod.toml}
       - API_PROXY_DATA_DIR=/app/data
