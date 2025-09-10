@@ -82,11 +82,24 @@ impl TokenExchangeClient {
         // 获取提供商配置
         let config = provider_manager.get_config(&session.provider_name).await?;
 
+        // 提取真正的authorization code（移除fragment部分）
+        let actual_code = if authorization_code.contains('#') {
+            let parts: Vec<&str> = authorization_code.split('#').collect();
+            tracing::debug!(
+                "Authorization code contains fragment, using code part: {} -> {}",
+                authorization_code,
+                parts[0]
+            );
+            parts[0].to_string()
+        } else {
+            authorization_code.to_string()
+        };
+
         // 构建Token交换请求
         let mut form_params = HashMap::new();
         form_params.insert("grant_type".to_string(), "authorization_code".to_string());
         form_params.insert("client_id".to_string(), config.client_id.clone());
-        form_params.insert("code".to_string(), authorization_code.to_string());
+        form_params.insert("code".to_string(), actual_code);
         form_params.insert("redirect_uri".to_string(), config.redirect_uri.clone());
 
         // 添加客户端密钥（如果有）
