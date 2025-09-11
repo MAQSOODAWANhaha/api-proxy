@@ -338,7 +338,7 @@ impl TokenExchangeClient {
         if !status.is_success() {
             // 对于错误响应，先尝试解析为JSON，如果失败则获取文本内容
             let error_text = response.text().await?;
-            tracing::debug!(
+            tracing::info!(
                 "🌟 Token exchange error response: status={}, body={}",
                 status,
                 error_text
