@@ -334,11 +334,18 @@ impl TokenExchangeClient {
         };
 
         let status = response.status();
-        let text = response.text().await?;
 
         if !status.is_success() {
+            // 对于错误响应，先尝试解析为JSON，如果失败则获取文本内容
+            let error_text = response.text().await?;
+            tracing::debug!(
+                "🌟 Token exchange error response: status={}, body={}",
+                status,
+                error_text
+            );
+
             // 尝试解析错误响应
-            if let Ok(error_response) = serde_json::from_str::<TokenResponse>(&text) {
+            if let Ok(error_response) = serde_json::from_str::<TokenResponse>(&error_text) {
                 if let Some(error) = error_response.error {
                     return Err(OAuthError::TokenExchangeFailed(format!(
                         "{}: {}",
@@ -349,13 +356,45 @@ impl TokenExchangeClient {
             }
             return Err(OAuthError::TokenExchangeFailed(format!(
                 "HTTP {}: {}",
-                status, text
+                status, error_text
             )));
         }
 
-        // 解析成功响应
-        serde_json::from_str::<TokenResponse>(&text)
-            .map_err(|e| OAuthError::SerdeError(format!("Failed to parse token response: {}", e)))
+        // 先获取原始响应文本以便打印所有数据
+        let data = response
+            .text()
+            .await
+            .map_err(|e| OAuthError::SerdeError(format!("Failed to read response text: {}", e)))?;
+
+        // 打印完整的原始JSON响应（注意：生产环境中应该小心处理敏感信息）
+        tracing::info!(
+            "🌟 Token exchange complete raw response: status={}, body={}",
+            status,
+            data
+        );
+
+        // 解析为我们定义的TokenResponse结构体
+        let response = serde_json::from_str::<TokenResponse>(&data).map_err(|e| {
+            OAuthError::SerdeError(format!("Failed to parse token response: {}", e))
+        })?;
+
+        // 也尝试解析为通用的JSON Value以捕获所有字段
+        if let Ok(raw_json) = serde_json::from_str::<serde_json::Value>(&data) {
+            tracing::info!("🌟 Token response parsed as JSON Value: {:#}", raw_json);
+        }
+
+        // 打印结构化的关键信息
+        tracing::info!(
+            "🌟 Token exchange structured response: status={}, token_type={}, expires_in={:?}, has_refresh_token={}, has_id_token={}, scope={:?}",
+            status,
+            response.token_type,
+            response.expires_in,
+            response.refresh_token.is_some(),
+            response.id_token.is_some(),
+            response.scope
+        );
+
+        Ok(response)
     }
 
     /// 处理Token响应
