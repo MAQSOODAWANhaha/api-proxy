@@ -158,13 +158,13 @@ impl MigrationTrait for Migration {
                     .values_panic([
                         "gemini".into(),
                         "Google Gemini".into(),
-                        "generativelanguage.googleapis.com".into(),
+                        "cloudcode-pa.googleapis.com".into(),
                         "gemini".into(),
                         "gemini-2.5-flash".into(),
                         "[\"api_key\", \"oauth\", \"service_account\", \"adc\"]".into(),
                         r#"{"request_stage":{"required_headers":{}},"response_stage":{}}"#.into(),
                         r#"{"tokens_prompt":{"type":"direct","path":"usageMetadata.promptTokenCount"},"tokens_completion":{"type":"direct","path":"usageMetadata.candidatesTokenCount"},"tokens_total":{"type":"expression","formula":"usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount","fallback":"usageMetadata.totalTokenCount"},"cache_create_tokens":{"type":"default","value":0},"cache_read_tokens":{"type":"conditional","condition":"exists(usageMetadata.thoughtsTokenCount)","true_value":"usageMetadata.thoughtsTokenCount","false_value":0}}"#.into(),
-                        r#"{"extraction_rules":[{"type":"url_regex","pattern":"(?:/gemini)?/v1beta/models/([^:/?]+):(?:stream)?[gG]enerateContent","priority":1,"description":"从URL路径提取模型名（支持流式和非流式端点）"},{"type":"url_regex","pattern":"/v1beta/models/([^:/?]+):generateContent","priority":2,"description":"标准generateContent端点模型提取"},{"type":"body_json","path":"model","priority":3,"description":"从请求body提取模型名"}],"fallback_model":"gemini-pro"}"#.into(),
+                        r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名（最高优先级）"},{"type":"url_regex","pattern":"(?:/gemini)?/v1beta/models/([^:/?]+):(?:stream)?[gG]enerateContent","priority":2,"description":"从URL路径提取模型名（支持流式和非流式端点）"},{"type":"url_regex","pattern":"/v1beta/models/([^:/?]+):generateContent","priority":3,"description":"标准generateContent端点模型提取"},{"type":"url_regex","pattern":"/v1beta/models/([^:/?]+):([^/?]+)","priority":4,"description":"v1beta路径参数提取模型名"},{"type":"query_param","parameter":"model","priority":5,"description":"从query参数提取模型名"}],"fallback_model":"gemini-2.5-flash"}"#.into(),
                         r#"{"api_key": {}, "oauth": {"client_id": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com", "client_secret": "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", "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth", "token_url": "https://oauth2.googleapis.com/token", "redirect_uri": "https://codeassist.google.com/authcode", "scopes": "https://www.googleapis.com/auth/cloud-platform", "pkce_required": true, "access_type": "offline", "prompt": "select_account"}, "service_account": {"token_url": "https://oauth2.googleapis.com/token", "scopes": "https://www.googleapis.com/auth/cloud-platform"}, "adc": {"scopes": "https://www.googleapis.com/auth/cloud-platform"}}"#.into(),
                     ])
                     // Claude配置 - 支持API Key和OAuth2认证

@@ -7,8 +7,8 @@ use pingora_core::upstreams::peer::{HttpPeer, Peer};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QuerySelect};
 use sea_orm::prelude::Decimal;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,12 +21,11 @@ use crate::proxy::{AuthenticationService, StatisticsService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
+    oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
     user_provider_keys::{self},
     user_service_apis::{self},
-    oauth_client_sessions::{self, Entity as OAuthClientSessions},
 };
-
 
 /// 请求处理器 - 负责AI代理请求的完整处理流程
 ///
@@ -144,25 +143,27 @@ impl ResponseDetails {
                 return true;
             }
         }
-        
+
         // 检查响应体内容格式（如果已经finalized）
         if let Some(body) = &self.body {
             let first_few_lines: Vec<&str> = body.lines().take(5).collect();
-            let data_line_count = first_few_lines.iter()
+            let data_line_count = first_few_lines
+                .iter()
                 .filter(|line| line.trim().starts_with("data: "))
                 .count();
-            
+
             // 如果有多个"data: "开头的行，很可能是SSE格式
             return data_line_count > 1;
         }
-        
+
         false
     }
 
     /// 获取SSE响应中的有效数据行数量
     pub fn get_sse_data_line_count(&self) -> usize {
         if let Some(body) = &self.body {
-            return body.lines()
+            return body
+                .lines()
                 .filter(|line| line.trim().starts_with("data: ") && !line.contains("[DONE]"))
                 .count();
         }
@@ -199,14 +200,19 @@ impl ResponseDetails {
                         );
                     } else {
                         self.body = Some(body_str.clone());
-                        
+
                         // 检测是否为SSE格式并记录相关信息
-                        let is_sse = body_str.lines().any(|line| line.trim().starts_with("data: "));
+                        let is_sse = body_str
+                            .lines()
+                            .any(|line| line.trim().starts_with("data: "));
                         if is_sse {
-                            let data_line_count = body_str.lines()
-                                .filter(|line| line.trim().starts_with("data: ") && !line.contains("[DONE]"))
+                            let data_line_count = body_str
+                                .lines()
+                                .filter(|line| {
+                                    line.trim().starts_with("data: ") && !line.contains("[DONE]")
+                                })
                                 .count();
-                            
+
                             tracing::info!(
                                 body_size = original_str_len,
                                 is_sse_format = true,
@@ -275,17 +281,17 @@ impl GeminiProxyMode {
     /// 获取对应的上游地址
     pub fn upstream_host(&self) -> &'static str {
         match self {
-            Self::OAuthWithoutProject => "generativelanguage.googleapis.com",
+            Self::OAuthWithoutProject => "cloudcode-pa.googleapis.com",
             Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
             Self::ApiKey => "generativelanguage.googleapis.com",
         }
     }
-    
-    /// 判断是否需要路径注入project_id
-    pub fn needs_path_injection(&self) -> bool {
+
+    /// 判断是否需要请求体注入project_id（而不是路径注入）
+    pub fn needs_body_injection(&self) -> bool {
         matches!(self, Self::OAuthWithProject(_))
     }
-    
+
     /// 获取project_id（如果有）
     pub fn project_id(&self) -> Option<&str> {
         match self {
@@ -322,6 +328,8 @@ pub struct ProxyContext {
     pub selected_provider: Option<String>,
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
+    /// 请求体缓冲区 (用于request_body_filter中的数据收集)
+    pub body: Vec<u8>,
 }
 
 impl Default for ProxyContext {
@@ -339,6 +347,7 @@ impl Default for ProxyContext {
             response_details: ResponseDetails::default(),
             selected_provider: None,
             timeout_seconds: None,
+            body: Vec::new(),
         }
     }
 }
@@ -564,59 +573,87 @@ impl RequestHandler {
     }
 
     /// 动态识别Gemini代理模式
-    /// 
+    ///
     /// 根据用户密钥配置动态判断应该使用的代理模式：
-    /// - OAuth + 无project_id => 路由到 generativelanguage.googleapis.com
+    /// - OAuth + 无project_id => 路由到 cloudcode-pa.googleapis.com
     /// - OAuth + 有project_id => 路由到 cloudcode-pa.googleapis.com  
     /// - API Key => 路由到 generativelanguage.googleapis.com
-    async fn identify_gemini_proxy_mode(&self, ctx: &ProxyContext) -> Result<GeminiProxyMode, ProxyError> {
-        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
-            ProxyError::internal("Backend not selected in context")
-        })?;
-        
+    async fn identify_gemini_proxy_mode(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Result<GeminiProxyMode, ProxyError> {
+        let selected_backend = ctx
+            .selected_backend
+            .as_ref()
+            .ok_or_else(|| ProxyError::internal("Backend not selected in context"))?;
+
         let auth_type = &selected_backend.auth_type;
         let project_id = &selected_backend.project_id;
-        
+
         let mode = match auth_type.as_str() {
             "oauth" => {
+                // OAuth认证始终路由到 cloudcode-pa.googleapis.com
                 if let Some(project_id) = project_id {
                     if !project_id.is_empty() {
+                        // OAuth + 有project_id => 路由到 cloudcode-pa.googleapis.com，并在请求体中注入project字段
                         GeminiProxyMode::OAuthWithProject(project_id.clone())
                     } else {
+                        // OAuth + 无project_id => 路由到 cloudcode-pa.googleapis.com，不注入project字段
                         GeminiProxyMode::OAuthWithoutProject
                     }
                 } else {
+                    // OAuth + project_id为None => 路由到 cloudcode-pa.googleapis.com，不注入project字段
                     GeminiProxyMode::OAuthWithoutProject
                 }
             }
-            "api_key" => GeminiProxyMode::ApiKey,
+            "api_key" => {
+                // API Key认证路由到 generativelanguage.googleapis.com
+                GeminiProxyMode::ApiKey
+            }
             _ => {
-                // 其他认证类型（service_account, adc）默认使用API Key模式路由
+                // 其他认证类型（service_account, adc）默认使用API Key模式路由到 generativelanguage.googleapis.com
                 tracing::warn!(
                     request_id = %ctx.request_id,
                     auth_type = auth_type,
-                    "Unsupported auth_type for Gemini, defaulting to ApiKey mode"
+                    "Unsupported auth_type for Gemini, defaulting to ApiKey mode (generativelanguage.googleapis.com)"
                 );
                 GeminiProxyMode::ApiKey
             }
         };
-        
-        tracing::debug!(
+
+        let upstream_host = mode.upstream_host();
+        tracing::info!(
             request_id = %ctx.request_id,
             auth_type = auth_type,
             project_id = ?project_id,
             identified_mode = ?mode,
+            upstream_host = upstream_host,
             "Gemini proxy mode identified"
         );
-        
+
         Ok(mode)
     }
-    
+
     /// 将project_id注入到API路径中
-    /// 
+    ///
     /// 将形如 `/v1/models` 的路径转换为 `/v1/projects/{project_id}/models`
     /// 用于支持Google Cloud Code Assist API的路径格式
+    ///
+    /// 特殊处理：
+    /// - `v1internal:` 路径不需要project_id注入，直接返回原路径
+    /// - 标准 `/v1/` 路径会进行project_id注入
+    #[allow(dead_code)]
     fn inject_project_id_into_path(&self, original_path: &str, project_id: &str) -> String {
+        // 检查是否是 v1internal: 路径（如 /v1internal:loadCodeAssist）
+        if original_path.contains("v1internal:") {
+            tracing::debug!(
+                path = original_path,
+                project_id = project_id,
+                "Detected v1internal: path, skipping project_id injection"
+            );
+            return original_path.to_string();
+        }
+
         // 检查路径是否以 /v1/ 开头
         if original_path.starts_with("/v1/") {
             // 提取 /v1/ 后面的部分
@@ -632,188 +669,336 @@ impl RequestHandler {
             original_path.to_string()
         }
     }
-    
+
     /// Gemini Query 参数修改器
-    /// 
+    ///
     /// 根据不同的代理模式为请求添加必要的 query 参数
     async fn modify_gemini_query_parameters(
         &self,
         ctx: &ProxyContext,
-        upstream_request: &mut RequestHeader,
+        _upstream_request: &mut RequestHeader,
         gemini_mode: &GeminiProxyMode,
     ) -> Result<(), ProxyError> {
-        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
-            ProxyError::internal("Backend not selected in context")
-        })?;
-
-        // 解析现有的查询参数
-        let uri = upstream_request.uri.clone();
-        let mut query_pairs: Vec<(String, String)> = Vec::new();
-        
-        // 保留原有的查询参数
-        if let Some(query) = uri.query() {
-            for pair in query.split('&') {
-                if let Some((key, value)) = pair.split_once('=') {
-                    query_pairs.push((key.to_string(), value.to_string()));
-                }
-            }
-        }
-
-        // 根据代理模式添加特定参数
-        match gemini_mode {
-            GeminiProxyMode::ApiKey => {
-                // API Key 模式：添加 key 参数
-                query_pairs.push(("key".to_string(), selected_backend.api_key.clone()));
-            }
-            GeminiProxyMode::OAuthWithoutProject => {
-                // OAuth 无 project_id：一般不需要额外的 query 参数
-                // access_token 通过 Authorization header 传递
-            }
-            GeminiProxyMode::OAuthWithProject(project_id) => {
-                // OAuth 有 project_id：可能需要在某些 API 中添加 project_id 作为 query 参数
-                // 这取决于具体的 API 需求，暂时不添加
-                tracing::debug!(
-                    request_id = %ctx.request_id,
-                    project_id = project_id,
-                    "OAuth with project_id mode - query handled via path injection"
-                );
-            }
-        }
-
-        // 重新构建 URI 如果有查询参数变更
-        if !query_pairs.is_empty() {
-            let query_string = query_pairs
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
-            
-            let new_uri_string = if uri.path().is_empty() {
-                format!("{}://{}/?{}", 
-                    uri.scheme_str().unwrap_or("https"),
-                    uri.authority().map(|a| a.as_str()).unwrap_or(""),
-                    query_string
-                )
-            } else {
-                format!("{}://{}{}?{}", 
-                    uri.scheme_str().unwrap_or("https"),
-                    uri.authority().map(|a| a.as_str()).unwrap_or(""),
-                    uri.path(),
-                    query_string
-                )
-            };
-            
-            let new_uri = new_uri_string.parse().map_err(|e| {
-                ProxyError::internal(format!("Failed to parse URI with query params: {}", e))
-            })?;
-            
-            upstream_request.set_uri(new_uri);
-            
-            tracing::info!(
-                request_id = %ctx.request_id,
-                gemini_mode = ?gemini_mode,
-                query_params_added = query_pairs.len(),
-                "Modified Gemini query parameters"
-            );
-        }
+        tracing::info!(
+            request_id = %ctx.request_id,
+            gemini_mode = ?gemini_mode,
+            headers = ?_upstream_request.headers,
+            query = ?_upstream_request.uri.query(),
+            "Modifying Gemini query parameters"
+        );
 
         Ok(())
     }
-    
+
     /// Gemini Headers 修改器
-    /// 
+    ///
     /// 根据不同的代理模式添加 Google 特定的头部
     async fn modify_gemini_headers(
         &self,
         ctx: &ProxyContext,
-        upstream_request: &mut RequestHeader,
+        _upstream_request: &mut RequestHeader,
         gemini_mode: &GeminiProxyMode,
     ) -> Result<(), ProxyError> {
-        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
-            ProxyError::internal("Backend not selected in context")
-        })?;
-
-        match gemini_mode {
-            GeminiProxyMode::ApiKey => {
-                // API Key 模式：添加 Google API Key 头部
-                if let Err(e) = upstream_request.insert_header("x-goog-api-key", &selected_backend.api_key) {
-                    return Err(ProxyError::internal(format!("Failed to set x-goog-api-key header: {}", e)));
-                }
-            }
-            GeminiProxyMode::OAuthWithoutProject => {
-                // OAuth 无 project_id：主要通过 Authorization header 处理，已在认证阶段设置
-            }
-            GeminiProxyMode::OAuthWithProject(project_id) => {
-                // OAuth 有 project_id：添加 x-goog-user-project 头部
-                if let Err(e) = upstream_request.insert_header("x-goog-user-project", project_id) {
-                    return Err(ProxyError::internal(format!("Failed to set x-goog-user-project header: {}", e)));
-                }
-                
-                tracing::info!(
-                    request_id = %ctx.request_id,
-                    project_id = project_id,
-                    "Added x-goog-user-project header for OAuth with project_id mode"
-                );
-            }
-        }
-
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
             gemini_mode = ?gemini_mode,
-            "Applied Gemini header modifications"
+            headers = ?_upstream_request.headers,
+            query = ?_upstream_request.uri.query(),
+            "Modifying Gemini headers"
         );
 
         Ok(())
     }
-    
+
     /// Gemini 请求体修改器
-    /// 
-    /// 处理JSON请求体的参数注入和转换
-    /// 注意：这是一个占位实现，实际的请求体修改需要在Pingora的请求体处理阶段完成
+    ///
+    /// 根据路由匹配进行不同的请求体字段注入
+    /// 实现实际的请求体JSON修改，根据不同路由注入相应的project_id字段
     async fn modify_gemini_request_body(
         &self,
         ctx: &ProxyContext,
-        _session: &Session,
+        session: &Session,
         _upstream_request: &mut RequestHeader,
         gemini_mode: &GeminiProxyMode,
     ) -> Result<(), ProxyError> {
-        // 注意：在Pingora中修改请求体是复杂的，因为请求体可能是流式的
-        // 这里提供一个框架实现，实际的Body修改需要在请求体流处理阶段完成
-        
-        tracing::debug!(
+        // 获取当前请求路径和请求体数据用于分析
+        let request_path = session.req_header().uri.path();
+        let method = session.req_header().method.as_str();
+
+        // 打印请求体数据用于调试（注意：在实际生产环境中应该小心处理敏感数据）
+        tracing::info!(
             request_id = %ctx.request_id,
+            method = method,
+            path = request_path,
             gemini_mode = ?gemini_mode,
-            "Body modifier placeholder - actual implementation requires stream processing"
+            uri = %session.req_header().uri,
+            "=== GEMINI REQUEST BODY ANALYZER START ==="
         );
-        
-        match gemini_mode {
-            GeminiProxyMode::OAuthWithProject(project_id) => {
+
+        // 只有当使用OAuth且有project_id时才进行请求体修改
+        if let GeminiProxyMode::OAuthWithProject(project_id) = gemini_mode {
+            // TODO: 实际的请求体读取和修改逻辑
+            // 由于Pingora的架构限制，请求体的实际修改需要在request body处理阶段完成
+            // 这里我们记录需要进行的修改类型，供后续处理阶段使用
+
+            // 路由匹配和对应的请求体字段注入规划
+            let (route_type, fields_to_inject) = if request_path.contains("loadCodeAssist") {
+                // 路由1: /v1internal:loadCodeAssist 或 /v1beta/models/{model}:loadCodeAssist
+                // 需要注入: metadata.duetProject = project_id, body.cloudaicompanionProject = project_id
+                (
+                    "loadCodeAssist",
+                    vec!["metadata.duetProject", "body.cloudaicompanionProject"],
+                )
+            } else if request_path.contains("onboardUser") {
+                // 路由2: /v1internal:onboardUser 或 /v1beta/models/{model}:onboardUser
+                // 需要注入: body.cloudaicompanionProject = project_id
+                ("onboardUser", vec!["body.cloudaicompanionProject"])
+            } else if request_path.contains("generateContent")
+                && !request_path.contains("streamGenerateContent")
+            {
+                // 路由3: /v1internal:generateContent 或 /v1beta/models/{model}:generateContent
+                // 需要注入: body.project = project_id
+                ("generateContent", vec!["body.project"])
+            } else if request_path.contains("streamGenerateContent") {
+                // 路由4: /v1internal:streamGenerateContent 或 /v1beta/models/{model}:streamGenerateContent
+                // 需要注入: body.project = project_id
+                ("streamGenerateContent", vec!["body.project"])
+            } else {
+                // 其他路由不需要特殊处理
+                ("other", vec![])
+            };
+
+            if !fields_to_inject.is_empty() {
                 tracing::info!(
                     request_id = %ctx.request_id,
                     project_id = project_id,
-                    "Would inject project_id into request body for OAuth with project mode"
+                    route_type = route_type,
+                    fields_to_inject = ?fields_to_inject,
+                    "📋 Gemini request body modification plan"
                 );
-                // 实际实现：
-                // 1. 读取请求体流
+
+                // TODO: 在这里实现实际的JSON修改逻辑
+                // 步骤：
+                // 1. 读取完整的请求体数据
                 // 2. 解析JSON
-                // 3. 注入project_id字段
-                // 4. 重新序列化并设置请求体
-            }
-            GeminiProxyMode::ApiKey => {
+                // 3. 根据route_type和fields_to_inject规则修改JSON
+                // 4. 重新序列化JSON并设置到upstream request
+
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    route_type = route_type,
+                    modification_count = fields_to_inject.len(),
+                    "🔧 Project ID injection planned for Code Assist API request"
+                );
+
+                // 存储修改信息到上下文中，供请求体处理阶段使用
+                // 注意：这需要在ProxyContext中添加相应的字段来存储这些信息
                 tracing::debug!(
                     request_id = %ctx.request_id,
-                    "API Key mode - no body modification needed"
+                    project_id = project_id,
+                    route_type = route_type,
+                    fields = ?fields_to_inject,
+                    "Stored body modification plan in context for later processing"
+                );
+            } else {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    route_type = route_type,
+                    request_path = request_path,
+                    "No specific field injection needed for this Code Assist API route"
                 );
             }
-            GeminiProxyMode::OAuthWithoutProject => {
+        } else {
+            // 非OAuth或无project_id的情况
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                gemini_mode = ?gemini_mode,
+                "No body modification needed - not OAuth with project_id mode"
+            );
+        }
+
+        tracing::info!(
+            request_id = %ctx.request_id,
+            path = request_path,
+            "=== GEMINI REQUEST BODY ANALYZER END ==="
+        );
+
+        Ok(())
+    }
+
+    /// Google Code Assist API JSON请求体修改器 (公开方法供service.rs调用)
+    ///
+    /// 实际修改JSON对象，根据不同路由注入相应的project_id字段
+    pub async fn modify_gemini_request_body_json(
+        &self,
+        json_value: &mut serde_json::Value,
+        session: &Session,
+        ctx: &ProxyContext,
+    ) -> Result<bool, crate::error::ProxyError> {
+        // 获取当前请求路径
+        let request_path = session.req_header().uri.path();
+
+        // 识别Gemini代理模式 (复用现有逻辑)
+        let gemini_mode = self.identify_gemini_proxy_mode(ctx).await?;
+
+        // 只有当使用OAuth且有project_id时才进行请求体修改
+        if let crate::proxy::request_handler::GeminiProxyMode::OAuthWithProject(project_id) =
+            gemini_mode
+        {
+            // 根据路由类型进行不同的字段注入
+            let modified = if request_path.contains("loadCodeAssist") {
+                // 路由1: /v1internal:loadCodeAssist 或 /v1beta/models/{model}:loadCodeAssist
+                // 需要注入: metadata.duetProject = project_id, body.cloudaicompanionProject = project_id
+                self.inject_loadcodeassist_fields(json_value, &project_id, &ctx.request_id)
+            } else if request_path.contains("onboardUser") {
+                // 路由2: /v1internal:onboardUser 或 /v1beta/models/{model}:onboardUser
+                // 需要注入: body.cloudaicompanionProject = project_id
+                self.inject_onboarduser_fields(json_value, &project_id, &ctx.request_id)
+            } else if request_path.contains("generateContent")
+                && !request_path.contains("streamGenerateContent")
+            {
+                // 路由3: /v1internal:generateContent 或 /v1beta/models/{model}:generateContent
+                // 需要注入: body.project = project_id
+                self.inject_generatecontent_fields(json_value, &project_id, &ctx.request_id)
+            } else if request_path.contains("streamGenerateContent") {
+                // 路由4: /v1internal:streamGenerateContent 或 /v1beta/models/{model}:streamGenerateContent
+                // 需要注入: body.project = project_id
+                self.inject_generatecontent_fields(json_value, &project_id, &ctx.request_id)
+            } else {
+                // 其他路由不需要特殊处理
                 tracing::debug!(
                     request_id = %ctx.request_id,
-                    "OAuth without project mode - no body modification needed"
+                    route_path = request_path,
+                    "No field injection needed for this Code Assist API route"
+                );
+                false
+            };
+
+            if modified {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    project_id = project_id,
+                    route_path = request_path,
+                    "Successfully injected project_id fields into Google Code Assist request"
+                );
+            }
+
+            Ok(modified)
+        } else {
+            // 非OAuth或无project_id的情况
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                gemini_mode = ?gemini_mode,
+                "No JSON body modification needed - not OAuth with project_id mode"
+            );
+            Ok(false)
+        }
+    }
+
+    /// 为 loadCodeAssist API 注入字段
+    fn inject_loadcodeassist_fields(
+        &self,
+        json_value: &mut serde_json::Value,
+        project_id: &str,
+        request_id: &str,
+    ) -> bool {
+        let mut modified = false;
+
+        // 1. 注入 metadata.duetProject = project_id
+        if let Some(obj) = json_value.as_object_mut() {
+            let metadata = obj
+                .entry("metadata")
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(metadata_obj) = metadata.as_object_mut() {
+                metadata_obj.insert(
+                    "duetProject".to_string(),
+                    serde_json::Value::String(project_id.to_owned()),
+                );
+                modified = true;
+                tracing::debug!(
+                    request_id = %request_id,
+                    project_id = project_id,
+                    "Injected metadata.duetProject field"
+                );
+            }
+
+            // 2. 注入 body.cloudaicompanionProject = project_id
+            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
+            if let Some(body_obj) = body.as_object_mut() {
+                body_obj.insert(
+                    "cloudaicompanionProject".to_string(),
+                    serde_json::Value::String(project_id.to_owned()),
+                );
+                modified = true;
+                tracing::debug!(
+                    request_id = %request_id,
+                    project_id = project_id,
+                    "Injected body.cloudaicompanionProject field"
                 );
             }
         }
 
-        Ok(())
+        modified
+    }
+
+    /// 为 onboardUser API 注入字段
+    fn inject_onboarduser_fields(
+        &self,
+        json_value: &mut serde_json::Value,
+        project_id: &str,
+        request_id: &str,
+    ) -> bool {
+        let mut modified = false;
+
+        // 注入 body.cloudaicompanionProject = project_id
+        if let Some(obj) = json_value.as_object_mut() {
+            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
+            if let Some(body_obj) = body.as_object_mut() {
+                body_obj.insert(
+                    "cloudaicompanionProject".to_string(),
+                    serde_json::Value::String(project_id.to_owned()),
+                );
+                modified = true;
+                tracing::debug!(
+                    request_id = %request_id,
+                    project_id = project_id,
+                    "Injected body.cloudaicompanionProject field for onboardUser"
+                );
+            }
+        }
+
+        modified
+    }
+
+    /// 为 generateContent 和 streamGenerateContent API 注入字段
+    fn inject_generatecontent_fields(
+        &self,
+        json_value: &mut serde_json::Value,
+        project_id: &str,
+        request_id: &str,
+    ) -> bool {
+        let mut modified = false;
+
+        // 注入 body.project = project_id
+        if let Some(obj) = json_value.as_object_mut() {
+            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
+            if let Some(body_obj) = body.as_object_mut() {
+                body_obj.insert(
+                    "project".to_string(),
+                    serde_json::Value::String(project_id.to_owned()),
+                );
+                modified = true;
+                tracing::debug!(
+                    request_id = %request_id,
+                    project_id = project_id,
+                    "Injected body.project field for generateContent API"
+                );
+            }
+        }
+
+        modified
     }
 
     /// 检查所有限制 - 包括速率限制、每日限制、过期时间等
@@ -837,21 +1022,24 @@ impl RequestHandler {
         // 2. 检查每分钟请求数限制
         if let Some(rate_limit) = user_api.max_request_per_min {
             if rate_limit > 0 {
-                self.check_minute_rate_limit(user_api.id, rate_limit).await?;
+                self.check_minute_rate_limit(user_api.id, rate_limit)
+                    .await?;
             }
         }
 
         // 3. 检查每日请求数限制
         if let Some(daily_limit) = user_api.max_requests_per_day {
             if daily_limit > 0 {
-                self.check_daily_request_limit(user_api.id, daily_limit).await?;
+                self.check_daily_request_limit(user_api.id, daily_limit)
+                    .await?;
             }
         }
 
         // 4. 检查每日token限制 (基于历史数据预检查)
         if let Some(token_limit) = user_api.max_tokens_per_day {
             if token_limit > 0 {
-                self.check_daily_token_limit(user_api.id, token_limit).await?;
+                self.check_daily_token_limit(user_api.id, token_limit)
+                    .await?;
             }
         }
 
@@ -935,9 +1123,11 @@ impl RequestHandler {
         // 如果是第一次请求，设置过期时间为当天结束
         if current_count == 1 {
             let tomorrow = today + chrono::Duration::days(1);
-            let seconds_until_tomorrow = (tomorrow.and_hms_opt(0, 0, 0).unwrap() 
-                - chrono::Utc::now().naive_utc()).num_seconds().max(0) as u64;
-            
+            let seconds_until_tomorrow = (tomorrow.and_hms_opt(0, 0, 0).unwrap()
+                - chrono::Utc::now().naive_utc())
+            .num_seconds()
+            .max(0) as u64;
+
             let _ = self
                 .cache
                 .provider()
@@ -980,16 +1170,18 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         let today = chrono::Utc::now().date_naive();
         let today_start = today.and_hms_opt(0, 0, 0).unwrap();
-        let today_end = (today + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap();
-        
+        let today_end = (today + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
         // 查询当天数据库中实际的token消耗
-        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
-        
+        use entity::proxy_tracing::{Column, Entity as ProxyTracing};
+
         let total_tokens_used: Option<i64> = ProxyTracing::find()
             .filter(Column::UserServiceApiId.eq(service_api_id))
             .filter(Column::CreatedAt.gte(today_start))
             .filter(Column::CreatedAt.lt(today_end))
-            .filter(Column::IsSuccess.eq(true))  // 只计算成功请求的token
+            .filter(Column::IsSuccess.eq(true)) // 只计算成功请求的token
             .select_only()
             .column_as(Column::TokensTotal.sum(), "total_tokens")
             .into_tuple::<Option<i64>>()
@@ -1035,16 +1227,18 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         let today = chrono::Utc::now().date_naive();
         let today_start = today.and_hms_opt(0, 0, 0).unwrap();
-        let today_end = (today + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap();
-        
+        let today_end = (today + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
         // 查询当天数据库中实际的成本消耗
-        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
-        
+        use entity::proxy_tracing::{Column, Entity as ProxyTracing};
+
         let total_cost_used: Option<f64> = ProxyTracing::find()
             .filter(Column::UserServiceApiId.eq(service_api_id))
             .filter(Column::CreatedAt.gte(today_start))
             .filter(Column::CreatedAt.lt(today_end))
-            .filter(Column::IsSuccess.eq(true))  // 只计算成功请求的成本
+            .filter(Column::IsSuccess.eq(true)) // 只计算成功请求的成本
             .select_only()
             .column_as(Column::Cost.sum(), "total_cost")
             .into_tuple::<Option<f64>>()
@@ -1083,7 +1277,6 @@ impl RequestHandler {
 
         Ok(())
     }
-
 
     /// 获取提供商类型配置
     async fn get_provider_type(
@@ -1174,7 +1367,7 @@ impl RequestHandler {
             // Gemini代理模式识别
             let gemini_mode = self.identify_gemini_proxy_mode(ctx).await?;
             let upstream_host = gemini_mode.upstream_host();
-            
+
             tracing::info!(
                 request_id = %ctx.request_id,
                 provider = %provider_type.name,
@@ -1182,7 +1375,7 @@ impl RequestHandler {
                 upstream_host = upstream_host,
                 "Identified Gemini proxy mode and upstream host"
             );
-            
+
             format!("{}:443", upstream_host)
         } else {
             // 其他提供商使用配置中的base_url
@@ -1271,49 +1464,33 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         // 获取原始路径
         let original_path = session.req_header().uri.path();
-        
-        // Gemini代理路径处理
+
+        // Gemini代理处理
         if let Some(provider_type) = &ctx.provider_type {
             if provider_type.name.to_lowercase().contains("gemini") {
                 let gemini_mode = self.identify_gemini_proxy_mode(ctx).await?;
-                
-                // 检查是否需要路径注入project_id
-                if gemini_mode.needs_path_injection() {
-                    if let Some(project_id) = gemini_mode.project_id() {
-                        // 将 /v1/models 转换为 /v1/projects/{project_id}/models
-                        let modified_path = self.inject_project_id_into_path(original_path, project_id);
-                        
-                        // 构建新的URI
-                        let new_uri = format!("{}{}", 
-                            upstream_request.uri.scheme_str().unwrap_or("https"),
-                            modified_path
-                        );
-                        
-                        let parsed_uri = new_uri.parse().map_err(|e| {
-                            ProxyError::internal(format!("Failed to parse modified URI: {}", e))
-                        })?;
-                        
-                        upstream_request.set_uri(parsed_uri);
-                        
-                        tracing::info!(
-                            request_id = %ctx.request_id,
-                            original_path = original_path,
-                            modified_path = modified_path,
-                            project_id = project_id,
-                            "Injected project_id into Gemini request path"
-                        );
-                    }
-                }
-                
+
+                // 注意：不再进行路径注入，project_id 将在请求体处理阶段注入
+                // 路径保持原样，如 /v1internal:loadCodeAssist
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    original_path = original_path,
+                    gemini_mode = ?gemini_mode,
+                    "Gemini request - path unchanged, project_id injection will happen in request body"
+                );
+
                 // 处理 Query 参数
-                self.modify_gemini_query_parameters(ctx, upstream_request, &gemini_mode).await?;
-                
+                self.modify_gemini_query_parameters(ctx, upstream_request, &gemini_mode)
+                    .await?;
+
                 // 处理 Headers
-                self.modify_gemini_headers(ctx, upstream_request, &gemini_mode).await?;
-                
+                self.modify_gemini_headers(ctx, upstream_request, &gemini_mode)
+                    .await?;
+
                 // 处理 Body（需要在后续实现时取消注释）
-                // self.modify_gemini_request_body(ctx, session, upstream_request, &gemini_mode).await?;
-                
+                self.modify_gemini_request_body(ctx, session, upstream_request, &gemini_mode)
+                    .await?;
+
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     gemini_mode = ?gemini_mode,
@@ -1370,9 +1547,10 @@ impl RequestHandler {
         };
 
         // 记录未认证之前的请求头信息
-        let client_headers_before_auth = self.extract_key_headers_from_request(session.req_header());
+        let client_headers_before_auth =
+            self.extract_key_headers_from_request(session.req_header());
         let upstream_headers_before_auth = self.extract_key_headers_from_request(upstream_request);
-        
+
         tracing::info!(
             request_id = %ctx.request_id,
             stage = "before_auth",
@@ -1492,7 +1670,7 @@ impl RequestHandler {
         // 记录认证后的头部信息变化
         let client_headers_after_auth = self.extract_key_headers_from_request(session.req_header());
         let upstream_headers_after_auth = self.extract_key_headers_from_request(upstream_request);
-        
+
         tracing::info!(
             request_id = %ctx.request_id,
             stage = "after_auth",
@@ -1543,7 +1721,7 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         // 记录响应头信息
         let response_headers = self.extract_key_headers_from_response(upstream_response);
-        
+
         tracing::info!(
             request_id = %ctx.request_id,
             stage = "response",
@@ -1686,34 +1864,37 @@ impl RequestHandler {
         api_key: &str,
     ) -> Result<(), ProxyError> {
         // 获取用户配置的认证类型
-        let selected_backend = ctx.selected_backend.as_ref().ok_or_else(|| {
-            ProxyError::internal("Backend not selected in context")
-        })?;
-        
+        let selected_backend = ctx
+            .selected_backend
+            .as_ref()
+            .ok_or_else(|| ProxyError::internal("Backend not selected in context"))?;
+
         let auth_type = &selected_backend.auth_type;
-        
+
         // 根据认证类型应用不同的认证策略
         let parsed_auth_type = AuthType::from(auth_type.as_str());
         match parsed_auth_type {
             AuthType::ApiKey => {
                 // 传统API Key认证 - 根据provider类型使用相应的认证头
-                self.apply_api_key_authentication(ctx, upstream_request, provider_type, api_key).await
+                self.apply_api_key_authentication(ctx, upstream_request, provider_type, api_key)
+                    .await
             }
             AuthType::OAuth => {
                 // 统一OAuth认证 - 支持所有OAuth 2.0提供商
                 // 对于OAuth，api_key实际包含session_id，需要查询实际的access_token
                 let session_id = api_key; // 为了代码清晰性重命名
-                
+
                 // 从oauth_client_sessions表查询actual access_token
                 let oauth_session = OAuthClientSessions::find()
                     .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
                     .one(self.db.as_ref())
                     .await
                     .map_err(|e| {
-                        let error = ProxyError::internal(format!("Failed to query OAuth session: {}", e));
+                        let error =
+                            ProxyError::internal(format!("Failed to query OAuth session: {}", e));
                         error
                     })?;
-                
+
                 let access_token = match oauth_session {
                     Some(session) => {
                         if let Some(access_token) = &session.access_token {
@@ -1726,16 +1907,24 @@ impl RequestHandler {
                         return Err(ProxyError::internal("OAuth session not found"));
                     }
                 };
-                
-                self.apply_oauth_authentication(ctx, upstream_request, provider_type, &access_token).await
+
+                self.apply_oauth_authentication(ctx, upstream_request, provider_type, &access_token)
+                    .await
             }
             AuthType::ServiceAccount => {
                 // Google服务账户认证 - JWT格式
-                self.apply_service_account_authentication(ctx, upstream_request, provider_type, api_key).await
+                self.apply_service_account_authentication(
+                    ctx,
+                    upstream_request,
+                    provider_type,
+                    api_key,
+                )
+                .await
             }
             AuthType::Adc => {
                 // Google ADC认证 - 使用环境凭据
-                self.apply_adc_authentication(ctx, upstream_request, provider_type, api_key).await
+                self.apply_adc_authentication(ctx, upstream_request, provider_type, api_key)
+                    .await
             }
         }
     }
@@ -1749,7 +1938,10 @@ impl RequestHandler {
         api_key: &str,
     ) -> Result<(), ProxyError> {
         // 使用统一的出站认证头构建逻辑，为上游AI服务商构建正确的认证头
-        let auth_headers = match self.auth_service.build_outbound_auth_headers_for_upstream(provider_type, api_key) {
+        let auth_headers = match self
+            .auth_service
+            .build_outbound_auth_headers_for_upstream(provider_type, api_key)
+        {
             Ok(headers) => headers,
             Err(error) => {
                 self.tracing_service
@@ -1805,9 +1997,8 @@ impl RequestHandler {
         // OAuth 2.0标准使用Authorization: Bearer格式
         let auth_value = format!("Bearer {}", access_token);
         if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
-            let error = ProxyError::internal(format!(
-                "Failed to set OAuth authorization header: {}", e
-            ));
+            let error =
+                ProxyError::internal(format!("Failed to set OAuth authorization header: {}", e));
             self.tracing_service
                 .complete_trace_config_error(&ctx.request_id, &error.to_string())
                 .await?;
@@ -1825,7 +2016,6 @@ impl RequestHandler {
         Ok(())
     }
 
-
     /// 应用服务账户认证
     async fn apply_service_account_authentication(
         &self,
@@ -1841,7 +2031,8 @@ impl RequestHandler {
         let auth_value = format!("Bearer {}", jwt_token);
         if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
             let error = ProxyError::internal(format!(
-                "Failed to set service account authorization header: {}", e
+                "Failed to set service account authorization header: {}",
+                e
             ));
             self.tracing_service
                 .complete_trace_config_error(&ctx.request_id, &error.to_string())
@@ -1874,9 +2065,8 @@ impl RequestHandler {
         // ADC使用Authorization: Bearer格式
         let auth_value = format!("Bearer {}", token);
         if let Err(e) = upstream_request.insert_header("authorization", &auth_value) {
-            let error = ProxyError::internal(format!(
-                "Failed to set ADC authorization header: {}", e
-            ));
+            let error =
+                ProxyError::internal(format!("Failed to set ADC authorization header: {}", e));
             self.tracing_service
                 .complete_trace_config_error(&ctx.request_id, &error.to_string())
                 .await?;
@@ -1905,21 +2095,25 @@ impl RequestHandler {
     /// 获取关键头部信息用于日志记录 (RequestHeader 版本)
     fn extract_key_headers_from_request(&self, req_header: &RequestHeader) -> String {
         let mut key_headers = Vec::new();
-        
+
         // 模仿现有代码的方式直接遍历头部
         for (name, value) in req_header.headers.iter() {
             if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
                 let name_str = name.as_str().to_lowercase();
-                
+
                 match name_str.as_str() {
                     "authorization" => {
                         let sanitized = if value_str.len() > 20 {
-                            format!("{}***{}", &value_str[..10], &value_str[value_str.len()-4..])
+                            format!(
+                                "{}***{}",
+                                &value_str[..10],
+                                &value_str[value_str.len() - 4..]
+                            )
                         } else {
                             "***".to_string()
                         };
                         key_headers.push(format!("auth: {}", sanitized));
-                    },
+                    }
                     "content-type" => key_headers.push(format!("content-type: {}", value_str)),
                     "host" => key_headers.push(format!("host: {}", value_str)),
                     "user-agent" => {
@@ -1929,7 +2123,7 @@ impl RequestHandler {
                             value_str.to_string()
                         };
                         key_headers.push(format!("user-agent: {}", truncated));
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -1945,16 +2139,18 @@ impl RequestHandler {
     /// 获取关键头部信息用于日志记录 (ResponseHeader 版本)
     fn extract_key_headers_from_response(&self, resp_header: &ResponseHeader) -> String {
         let mut key_headers = Vec::new();
-        
+
         // 模仿现有代码的方式直接遍历头部
         for (name, value) in resp_header.headers.iter() {
             if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
                 let name_str = name.as_str().to_lowercase();
-                
+
                 match name_str.as_str() {
                     "content-type" => key_headers.push(format!("content-type: {}", value_str)),
                     "content-length" => key_headers.push(format!("content-length: {}", value_str)),
-                    "content-encoding" => key_headers.push(format!("content-encoding: {}", value_str)),
+                    "content-encoding" => {
+                        key_headers.push(format!("content-encoding: {}", value_str))
+                    }
                     "cache-control" => key_headers.push(format!("cache-control: {}", value_str)),
                     _ => {}
                 }

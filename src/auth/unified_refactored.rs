@@ -4,16 +4,20 @@
 //! 本文件将逐步替代unified.rs中的RefactoredUnifiedAuthManager God Object
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde_json::Value;
 use tracing::debug;
 
 use crate::auth::{
-    AuthContext, AuthError, AuthMethod, AuthResult, AuthService,
-    types::{AuthConfig, AuthType}, 
+    AuthContext,
+    AuthError,
+    AuthMethod,
+    AuthResult,
+    AuthService,
     strategies::traits::OAuthTokenResult,
     // oauth::OAuthSessionManager, // 已删除，使用oauth_client替代
+    types::{AuthConfig, AuthType},
 };
 use crate::cache::UnifiedCacheManager;
 use crate::error::Result;
@@ -23,7 +27,7 @@ use sea_orm::DatabaseConnection;
 ///
 /// 简化后直接使用核心AuthService，移除复杂的services层
 /// 保持向后兼容的API，内部直接委托给AuthService
-/// 
+///
 /// 职责：
 /// - 提供向后兼容的API接口
 /// - 委托给核心AuthService处理认证逻辑
@@ -57,13 +61,13 @@ pub struct AuthRequest {
 impl RefactoredUnifiedAuthManager {
     /// 创建重构后的统一认证管理器
     pub async fn new(
-        auth_service: Arc<AuthService>, 
+        auth_service: Arc<AuthService>,
         config: Arc<AuthConfig>,
         _db: Arc<DatabaseConnection>,
         _cache_manager: Arc<UnifiedCacheManager>,
     ) -> Result<Self> {
         // let oauth_session_manager = Arc::new(OAuthSessionManager::new(db.clone())); // 已删除
-        
+
         Ok(Self {
             auth_service,
             // oauth_session_manager, // 已删除
@@ -72,7 +76,7 @@ impl RefactoredUnifiedAuthManager {
     }
 
     /// 统一认证接口（保持向后兼容）
-    /// 
+    ///
     /// 现在委托给核心AuthService处理认证逻辑
     pub async fn authenticate(&self, request: AuthRequest) -> Result<AuthResult> {
         debug!(
@@ -111,11 +115,13 @@ impl RefactoredUnifiedAuthManager {
         let mut context = self.create_auth_context(request);
 
         // 直接使用AuthService进行认证
-        self.auth_service.authenticate(auth_header, &mut context).await
+        self.auth_service
+            .authenticate(auth_header, &mut context)
+            .await
     }
 
     /// API Key认证（重构版本）
-    /// 
+    ///
     /// 统一使用AuthService处理API密钥认证
     async fn authenticate_api_key(
         &self,
@@ -124,7 +130,9 @@ impl RefactoredUnifiedAuthManager {
     ) -> Result<AuthResult> {
         let auth_header = format!("ApiKey {}", api_key);
         let mut context = self.create_auth_context(request);
-        self.auth_service.authenticate(&auth_header, &mut context).await
+        self.auth_service
+            .authenticate(&auth_header, &mut context)
+            .await
     }
 
     /// 创建认证上下文
@@ -134,7 +142,6 @@ impl RefactoredUnifiedAuthManager {
         context.user_agent = request.user_agent.clone();
         context
     }
-
 
     /// 检查是否为公开路径
     fn is_public_path(&self, path: &str) -> bool {
@@ -160,15 +167,21 @@ impl RefactoredUnifiedAuthManager {
     }
 
     /// 代理端API密钥认证（保持向后兼容）
-    pub async fn authenticate_proxy_request(&self, api_key: &str) -> Result<crate::auth::proxy::ProxyAuthResult> {
+    pub async fn authenticate_proxy_request(
+        &self,
+        api_key: &str,
+    ) -> Result<crate::auth::proxy::ProxyAuthResult> {
         // 使用AuthService进行用户服务API认证
-        let user_api = self.auth_service.authenticate_user_service_api(api_key).await?;
-        
+        let user_api = self
+            .auth_service
+            .authenticate_user_service_api(api_key)
+            .await?;
+
         Ok(crate::auth::proxy::ProxyAuthResult {
-                    user_api: user_api.clone(),
-                    user_id: user_api.user_id,
-                    provider_type_id: user_api.provider_type_id,
-                })
+            user_api: user_api.clone(),
+            user_id: user_api.user_id,
+            provider_type_id: user_api.provider_type_id,
+        })
     }
 
     /// 验证代理端API密钥格式（保持向后兼容）
@@ -228,11 +241,12 @@ impl RefactoredUnifiedAuthManager {
         Err(AuthError::AuthMethodNotSupported {
             method: format!("{:?}", auth_type),
             port: "unified".to_string(),
-        }.into())
+        }
+        .into())
     }
 
     // 注意：以下OAuth方法已被弃用，请使用新的oauth_client模块
-    // 
+    //
     // /// OAuth会话创建
     // pub async fn create_oauth_session(
     //     &self,
@@ -325,23 +339,13 @@ pub async fn create_refactored_unified_auth_manager(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_is_public_path() {
         // 测试公开路径识别逻辑
-        let _public_paths = vec![
-            "/health",
-            "/metrics", 
-            "/api/health",
-            "/api/version",
-        ];
+        let _public_paths = vec!["/health", "/metrics", "/api/health", "/api/version"];
 
-        let _private_paths = vec![
-            "/api/admin",
-            "/proxy/openai",
-            "/api/users",
-        ];
+        let _private_paths = vec!["/api/admin", "/proxy/openai", "/api/users"];
 
         // 实际测试逻辑
     }

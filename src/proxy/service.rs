@@ -8,6 +8,7 @@ use pingora_core::protocols::Digest;
 use pingora_core::{ErrorType, prelude::*, upstreams::peer::HttpPeer};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -288,6 +289,128 @@ impl ProxyHttp for ProxyService {
                     _ => Error::new(ErrorType::InternalError),
                 }
             })
+    }
+
+    async fn request_body_filter(
+        &self,
+        session: &mut Session,
+        body_chunk: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<()> {
+        // 检查请求头，只处理 JSON 内容
+        let content_type = session
+            .req_header()
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if !content_type.contains("application/json") {
+            // 如果不是 JSON，则不进行任何处理，直接透传
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                content_type = %content_type,
+                "Non-JSON request body, passing through without modification"
+            );
+            return Ok(());
+        }
+
+        // `body_chunk` 是一个 Option<Bytes>，`end_of_stream` 表示是否为最后一块
+        // Some(bytes) 代表一个数据块
+        // end_of_stream=true 代表整个请求体已经接收完毕
+        if let Some(chunk) = body_chunk.take() {
+            // 将数据块追加到我们的缓冲区
+            ctx.body.extend_from_slice(&chunk);
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                chunk_size = chunk.len(),
+                total_buffer_size = ctx.body.len(),
+                end_of_stream = end_of_stream,
+                "Accumulated request body chunk"
+            );
+        }
+
+        if end_of_stream {
+            // body_chunk 是 None，表示请求体已经全部到达 ctx.body 中
+            tracing::info!(
+                request_id = %ctx.request_id,
+                original_body_size = ctx.body.len(),
+                "Complete request body received, applying Google Code Assist modifications"
+            );
+
+            // --- 这里是核心的Google Code Assist API修改逻辑 ---
+            let modified_body = match serde_json::from_slice::<Value>(&ctx.body) {
+                Ok(mut json_value) => {
+                    tracing::debug!(
+                        request_id = %ctx.request_id,
+                        "Successfully parsed request body as JSON, applying modifications"
+                    );
+
+                    // 调用AI处理器的Google Code Assist修改逻辑
+                    // 这会根据路由和OAuth配置注入相应的字段
+                    match self
+                        .ai_handler
+                        .modify_gemini_request_body_json(&mut json_value, session, ctx)
+                        .await
+                    {
+                        Ok(modified) => {
+                            if modified {
+                                tracing::info!(
+                                    request_id = %ctx.request_id,
+                                    "Request body successfully modified for Google Code Assist API"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    request_id = %ctx.request_id,
+                                    "No modifications needed for this request"
+                                );
+                            }
+
+                            // 将修改后的 JSON 对象序列化回 Vec<u8>
+                            serde_json::to_vec(&json_value).unwrap_or_else(|e| {
+                                tracing::error!(
+                                    request_id = %ctx.request_id,
+                                    error = %e,
+                                    "Failed to serialize modified JSON, using original body"
+                                );
+                                ctx.body.clone()
+                            })
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                "Failed to modify request body, using original"
+                            );
+                            ctx.body.clone()
+                        }
+                    }
+                }
+                Err(e) => {
+                    // 如果无法解析为 JSON，则保持原始 body 不变
+                    tracing::warn!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Failed to parse body as JSON, forwarding original body"
+                    );
+                    ctx.body.clone()
+                }
+            };
+
+            tracing::info!(
+                request_id = %ctx.request_id,
+                original_size = ctx.body.len(),
+                modified_size = modified_body.len(),
+                "Request body processing complete, sending to upstream"
+            );
+
+            // 将修改后的完整 body 放入 body_chunk 中
+            // Pingora 会将这个 Some(Bytes) 一次性发送给上游服务器
+            *body_chunk = Some(Bytes::from(modified_body));
+        }
+
+        Ok(())
     }
 
     async fn response_filter(
