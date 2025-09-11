@@ -3,16 +3,16 @@
 //! 管理OAuth客户端会话的完整生命周期，包括创建、更新、查询和删除
 //! 提供会话状态跟踪、自动过期清理和安全验证功能
 
-use super::{OAuthError, OAuthResult, OAuthProviderConfig, OAuthSessionInfo, OAuthTokenResponse};
 use super::pkce::PkceParams;
-use entity::{oauth_client_sessions, OAuthClientSessions};
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, 
-    QueryFilter, QueryOrder, Set, TransactionTrait
-};
-use uuid::Uuid;
+use super::{OAuthError, OAuthProviderConfig, OAuthResult, OAuthSessionInfo, OAuthTokenResponse};
 use chrono::{Duration, Utc};
+use entity::{OAuthClientSessions, oauth_client_sessions};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// 会话状态枚举
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +57,11 @@ impl SessionManager {
         Self { db }
     }
 
+    /// 获取数据库连接的引用
+    pub fn get_db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
     /// 创建新的OAuth会话
     pub async fn create_session(
         &self,
@@ -69,11 +74,11 @@ impl SessionManager {
     ) -> OAuthResult<oauth_client_sessions::Model> {
         // 生成PKCE参数
         let pkce = PkceParams::new();
-        
+
         // 生成唯一的会话ID和状态参数
         let session_id = Uuid::new_v4().to_string();
         let state = Uuid::new_v4().to_string();
-        
+
         // 计算过期时间（默认15分钟）
         let now = Utc::now().naive_utc();
         let expires_at = now + Duration::try_minutes(15).unwrap_or_default();
@@ -113,7 +118,8 @@ impl SessionManager {
             &params.name,
             params.description.as_deref(),
             config,
-        ).await
+        )
+        .await
     }
 
     /// 根据会话ID获取会话
@@ -125,12 +131,18 @@ impl SessionManager {
 
         match session {
             Some(session) => Ok(session),
-            None => Err(OAuthError::InvalidSession(format!("Session {} not found", session_id))),
+            None => Err(OAuthError::InvalidSession(format!(
+                "Session {} not found",
+                session_id
+            ))),
         }
     }
 
     /// 根据状态参数获取会话
-    pub async fn get_session_by_state(&self, state: &str) -> OAuthResult<oauth_client_sessions::Model> {
+    pub async fn get_session_by_state(
+        &self,
+        state: &str,
+    ) -> OAuthResult<oauth_client_sessions::Model> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::State.eq(state))
             .one(&self.db)
@@ -138,7 +150,10 @@ impl SessionManager {
 
         match session {
             Some(session) => Ok(session),
-            None => Err(OAuthError::InvalidSession(format!("Session with state {} not found", state))),
+            None => Err(OAuthError::InvalidSession(format!(
+                "Session with state {} not found",
+                state
+            ))),
         }
     }
 
@@ -150,15 +165,15 @@ impl SessionManager {
         error_message: Option<&str>,
     ) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
-        
+
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
         active_model.status = Set(status.clone().into());
         active_model.updated_at = Set(Utc::now().naive_utc());
-        
+
         if let Some(error) = error_message {
             active_model.error_message = Set(Some(error.to_string()));
         }
-        
+
         if status == SessionStatus::Completed {
             active_model.completed_at = Set(Some(Utc::now().naive_utc()));
         }
@@ -174,7 +189,7 @@ impl SessionManager {
         _authorization_code: &str,
     ) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
-        
+
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
         // authorization_code 字段已删除，不再持久化授权码（安全最佳实践）
         active_model.status = Set("exchanging".to_string());
@@ -191,7 +206,7 @@ impl SessionManager {
         token_response: &OAuthTokenResponse,
     ) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
-        
+
         // 计算令牌过期时间
         let expires_at = if let Some(expires_in) = token_response.expires_in {
             Utc::now().naive_utc() + Duration::try_seconds(expires_in as i64).unwrap_or_default()
@@ -223,7 +238,8 @@ impl SessionManager {
             .all(&self.db)
             .await?;
 
-        let session_infos = sessions.into_iter()
+        let session_infos = sessions
+            .into_iter()
             .map(|session| OAuthSessionInfo {
                 session_id: session.session_id,
                 user_id: session.user_id,
@@ -306,22 +322,24 @@ impl SessionManager {
     /// 删除会话
     pub async fn delete_session(&self, session_id: &str, user_id: i32) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
-        
+
         // 验证会话所有权
         if session.user_id != user_id {
-            return Err(OAuthError::InvalidSession("Session does not belong to user".to_string()));
+            return Err(OAuthError::InvalidSession(
+                "Session does not belong to user".to_string(),
+            ));
         }
 
         let active_model: oauth_client_sessions::ActiveModel = session.into();
         active_model.delete(&self.db).await?;
-        
+
         Ok(())
     }
 
     /// 清理过期会话
     pub async fn cleanup_expired_sessions(&self) -> OAuthResult<u64> {
         let now = Utc::now().naive_utc();
-        
+
         // 查找过期会话
         let expired_sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::ExpiresAt.lt(now))
@@ -330,34 +348,37 @@ impl SessionManager {
             .await?;
 
         let mut deleted_count = 0;
-        
+
         // 使用事务删除过期会话
         let txn = self.db.begin().await?;
-        
+
         for session in expired_sessions {
             let active_model: oauth_client_sessions::ActiveModel = session.into();
             active_model.delete(&txn).await?;
             deleted_count += 1;
         }
-        
+
         txn.commit().await?;
-        
+
         Ok(deleted_count)
     }
 
     /// 获取会话统计信息
-    pub async fn get_session_statistics(&self, user_id: Option<i32>) -> OAuthResult<SessionStatistics> {
+    pub async fn get_session_statistics(
+        &self,
+        user_id: Option<i32>,
+    ) -> OAuthResult<SessionStatistics> {
         let mut query = OAuthClientSessions::find();
-        
+
         if let Some(uid) = user_id {
             query = query.filter(oauth_client_sessions::Column::UserId.eq(uid));
         }
-        
+
         let sessions = query.all(&self.db).await?;
-        
+
         let mut stats = SessionStatistics::default();
         stats.total_sessions = sessions.len() as u64;
-        
+
         for session in sessions {
             match session.status.as_str() {
                 "pending" => stats.pending_sessions += 1,
@@ -366,11 +387,14 @@ impl SessionManager {
                 "expired" => stats.expired_sessions += 1,
                 _ => {}
             }
-            
+
             // 统计各提供商
-            *stats.provider_counts.entry(session.provider_name).or_insert(0) += 1;
+            *stats
+                .provider_counts
+                .entry(session.provider_name)
+                .or_insert(0) += 1;
         }
-        
+
         stats.last_updated = Utc::now();
         Ok(stats)
     }
@@ -386,20 +410,17 @@ impl SessionManager {
     }
 
     /// 获取有效的访问令牌
-    pub async fn get_valid_access_token(
-        &self,
-        session_id: &str,
-    ) -> OAuthResult<Option<String>> {
+    pub async fn get_valid_access_token(&self, session_id: &str) -> OAuthResult<Option<String>> {
         let session = self.get_session(session_id).await?;
-        
+
         if session.status != "completed" {
             return Ok(None);
         }
-        
+
         if session.is_expired() {
             return Ok(None);
         }
-        
+
         Ok(session.access_token)
     }
 
@@ -409,26 +430,26 @@ impl SessionManager {
         updates: Vec<(String, SessionStatus, Option<String>)>,
     ) -> OAuthResult<()> {
         let txn = self.db.begin().await?;
-        
+
         for (session_id, status, error_message) in updates {
             let session = OAuthClientSessions::find()
                 .filter(oauth_client_sessions::Column::SessionId.eq(&session_id))
                 .one(&txn)
                 .await?;
-                
+
             if let Some(session) = session {
                 let mut active_model: oauth_client_sessions::ActiveModel = session.into();
                 active_model.status = Set(status.into());
                 active_model.updated_at = Set(Utc::now().naive_utc());
-                
+
                 if let Some(error) = error_message {
                     active_model.error_message = Set(Some(error));
                 }
-                
+
                 active_model.update(&txn).await?;
             }
         }
-        
+
         txn.commit().await?;
         Ok(())
     }
@@ -463,13 +484,13 @@ impl Default for SessionStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_session_status_conversion() {
         let status = SessionStatus::Pending;
         let status_str: String = status.into();
         assert_eq!(status_str, "pending");
-        
+
         let status = SessionStatus::Completed;
         let status_str: String = status.into();
         assert_eq!(status_str, "completed");
@@ -494,7 +515,7 @@ mod tests {
             description: Some("Test description".to_string()),
             expires_in_minutes: Some(30),
         };
-        
+
         assert_eq!(params.user_id, 1);
         assert_eq!(params.provider_name, "google");
         assert_eq!(params.provider_type_id, Some(1));

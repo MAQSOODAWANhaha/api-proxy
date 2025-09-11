@@ -2,7 +2,7 @@
 //!
 //! 实现基于客户端轮询的OAuth 2.0 + PKCE流程
 //! 参考 Wei-Shaw/claude-relay-service 的实现方式
-//! 
+//!
 //! ## 核心特性
 //! - 使用公共OAuth客户端凭据（Gemini CLI、Claude、OpenAI等）
 //! - 标准化重定向URI，不依赖部署域名
@@ -10,19 +10,19 @@
 //! - PKCE安全保护，适合公共客户端场景
 //! - 支持多提供商的统一OAuth接口
 
-pub mod providers;
+pub mod auto_refresh;
 pub mod pkce;
 pub mod polling;
-pub mod token_exchange;
+pub mod providers;
 pub mod session_manager;
-pub mod auto_refresh;
+pub mod token_exchange;
 
-pub use providers::OAuthProviderManager;
+pub use auto_refresh::{AutoRefreshManager, RefreshPolicy};
 pub use pkce::{PkceChallenge, PkceVerifier};
 pub use polling::{OAuthPollingClient, PollingStatus};
-pub use token_exchange::{TokenExchangeClient, TokenResponse};
+pub use providers::OAuthProviderManager;
 pub use session_manager::{SessionManager, SessionStatus};
-pub use auto_refresh::{AutoRefreshManager, RefreshPolicy};
+pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,28 +33,28 @@ use std::sync::Arc;
 pub enum OAuthError {
     #[error("Provider not found: {0}")]
     ProviderNotFound(String),
-    
+
     #[error("Invalid session: {0}")]
     InvalidSession(String),
-    
+
     #[error("Session expired: {0}")]
     SessionExpired(String),
-    
+
     #[error("Token exchange failed: {0}")]
     TokenExchangeFailed(String),
-    
+
     #[error("PKCE verification failed")]
     PkceVerificationFailed,
-    
+
     #[error("Polling timeout")]
     PollingTimeout,
-    
+
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     #[error("Serde error: {0}")]
     SerdeError(String),
 }
@@ -177,14 +177,15 @@ impl OAuthClient {
         let session_manager = SessionManager::new((*db).clone());
         let polling_client = OAuthPollingClient::new();
         let token_exchange_client = TokenExchangeClient::new();
-        
+
         // 创建自动刷新管理器
         let auto_refresh_manager = AutoRefreshManager::new(
             session_manager.clone(),
             provider_manager.clone(),
             token_exchange_client.clone(),
+            (*db).clone(),
         );
-        
+
         Self {
             provider_manager,
             session_manager,
@@ -193,7 +194,7 @@ impl OAuthClient {
             auto_refresh_manager,
         }
     }
-    
+
     /// 开始OAuth授权流程
     pub async fn start_authorization(
         &self,
@@ -204,7 +205,7 @@ impl OAuthClient {
     ) -> OAuthResult<AuthorizeUrlResponse> {
         // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
-        
+
         // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
         let provider_type_id = if provider_name.contains(':') {
             // 这里可以通过数据库查询获取真正的provider_type_id
@@ -213,20 +214,25 @@ impl OAuthClient {
         } else {
             None
         };
-        
+
         // 创建会话
-        let session = self.session_manager.create_session(
-            user_id,
-            provider_name,
-            provider_type_id,
-            name,
-            description,
-            &config,
-        ).await?;
-        
+        let session = self
+            .session_manager
+            .create_session(
+                user_id,
+                provider_name,
+                provider_type_id,
+                name,
+                description,
+                &config,
+            )
+            .await?;
+
         // 生成授权URL
-        let authorize_url = self.provider_manager.build_authorize_url(&config, &session)?;
-        
+        let authorize_url = self
+            .provider_manager
+            .build_authorize_url(&config, &session)?;
+
         Ok(AuthorizeUrlResponse {
             authorize_url,
             session_id: session.session_id,
@@ -247,20 +253,25 @@ impl OAuthClient {
     ) -> OAuthResult<AuthorizeUrlResponse> {
         // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
-        
+
         // 创建会话
-        let session = self.session_manager.create_session(
-            user_id,
-            provider_name,
-            provider_type_id,
-            name,
-            description,
-            &config,
-        ).await?;
-        
+        let session = self
+            .session_manager
+            .create_session(
+                user_id,
+                provider_name,
+                provider_type_id,
+                name,
+                description,
+                &config,
+            )
+            .await?;
+
         // 生成授权URL
-        let authorize_url = self.provider_manager.build_authorize_url(&config, &session)?;
-        
+        let authorize_url = self
+            .provider_manager
+            .build_authorize_url(&config, &session)?;
+
         Ok(AuthorizeUrlResponse {
             authorize_url,
             session_id: session.session_id,
@@ -281,7 +292,7 @@ impl OAuthClient {
     ) -> OAuthResult<AuthorizeUrlResponse> {
         // 获取提供商配置
         let mut config = self.provider_manager.get_config(provider_name).await?;
-        
+
         // 合并用户提供的额外参数
         if let Some(user_params) = extra_params {
             // 只添加非空的用户参数，覆盖配置中的默认值
@@ -291,20 +302,18 @@ impl OAuthClient {
                 }
             }
         }
-        
+
         // 创建会话
-        let session = self.session_manager.create_session(
-            user_id,
-            provider_name,
-            None,
-            name,
-            description,
-            &config,
-        ).await?;
-        
+        let session = self
+            .session_manager
+            .create_session(user_id, provider_name, None, name, description, &config)
+            .await?;
+
         // 生成授权URL
-        let authorize_url = self.provider_manager.build_authorize_url(&config, &session)?;
-        
+        let authorize_url = self
+            .provider_manager
+            .build_authorize_url(&config, &session)?;
+
         Ok(AuthorizeUrlResponse {
             authorize_url,
             session_id: session.session_id,
@@ -313,47 +322,54 @@ impl OAuthClient {
             expires_at: session.expires_at.and_utc().timestamp(),
         })
     }
-    
+
     /// 轮询会话状态
     pub async fn poll_session(&self, session_id: &str) -> OAuthResult<PollingStatus> {
-        self.polling_client.poll_session(&self.session_manager, session_id).await
+        self.polling_client
+            .poll_session(&self.session_manager, session_id)
+            .await
     }
-    
+
     /// 完成Token交换
     pub async fn exchange_token(
         &self,
         session_id: &str,
         authorization_code: &str,
     ) -> OAuthResult<OAuthTokenResponse> {
-        self.token_exchange_client.exchange_token(
-            &self.provider_manager,
-            &self.session_manager,
-            session_id,
-            authorization_code,
-        ).await
+        self.token_exchange_client
+            .exchange_token(
+                &self.provider_manager,
+                &self.session_manager,
+                session_id,
+                authorization_code,
+            )
+            .await
     }
-    
+
     /// 获取用户的OAuth会话列表
     pub async fn list_user_sessions(&self, user_id: i32) -> OAuthResult<Vec<OAuthSessionInfo>> {
         self.session_manager.list_user_sessions(user_id).await
     }
-    
+
     /// 删除会话
     pub async fn delete_session(&self, session_id: &str, user_id: i32) -> OAuthResult<()> {
-        self.session_manager.delete_session(session_id, user_id).await
+        self.session_manager
+            .delete_session(session_id, user_id)
+            .await
     }
-    
+
     /// 刷新访问令牌
     pub async fn refresh_token(&self, session_id: &str) -> OAuthResult<OAuthTokenResponse> {
-        self.token_exchange_client.refresh_token(
-            &self.provider_manager,
-            &self.session_manager,
-            session_id,
-        ).await
+        self.token_exchange_client
+            .refresh_token(&self.provider_manager, &self.session_manager, session_id)
+            .await
     }
 
     /// 获取会话统计信息
-    pub async fn get_session_statistics(&self, user_id: Option<i32>) -> OAuthResult<session_manager::SessionStatistics> {
+    pub async fn get_session_statistics(
+        &self,
+        user_id: Option<i32>,
+    ) -> OAuthResult<session_manager::SessionStatistics> {
         self.session_manager.get_session_statistics(user_id).await
     }
 
@@ -363,8 +379,14 @@ impl OAuthClient {
     }
 
     /// 验证会话访问权限
-    pub async fn validate_session_access(&self, session_id: &str, user_id: i32) -> OAuthResult<bool> {
-        self.session_manager.validate_session_access(session_id, user_id).await
+    pub async fn validate_session_access(
+        &self,
+        session_id: &str,
+        user_id: i32,
+    ) -> OAuthResult<bool> {
+        self.session_manager
+            .validate_session_access(session_id, user_id)
+            .await
     }
 
     /// 列出支持的OAuth提供商
@@ -375,11 +397,13 @@ impl OAuthClient {
     // === 自动Token刷新相关方法 ===
 
     /// 智能获取有效的访问令牌
-    /// 
+    ///
     /// 如果token即将过期，会自动刷新后返回新token
     /// 推荐使用此方法替代直接访问session.access_token
     pub async fn get_valid_access_token(&self, session_id: &str) -> OAuthResult<Option<String>> {
-        self.auto_refresh_manager.get_valid_access_token(session_id, None).await
+        self.auto_refresh_manager
+            .get_valid_access_token(session_id, None)
+            .await
     }
 
     /// 带自定义刷新策略的智能token获取
@@ -388,33 +412,39 @@ impl OAuthClient {
         session_id: &str,
         policy: RefreshPolicy,
     ) -> OAuthResult<Option<String>> {
-        self.auto_refresh_manager.get_valid_access_token(session_id, Some(policy)).await
+        self.auto_refresh_manager
+            .get_valid_access_token(session_id, Some(policy))
+            .await
     }
 
     /// 批量刷新用户的即将过期token
-    /// 
+    ///
     /// 用于主动维护用户的所有OAuth会话
     pub async fn refresh_user_expiring_tokens(
         &self,
         user_id: i32,
         policy: Option<RefreshPolicy>,
     ) -> OAuthResult<Vec<(String, OAuthResult<OAuthTokenResponse>)>> {
-        self.auto_refresh_manager.refresh_expiring_sessions_for_user(user_id, policy).await
+        self.auto_refresh_manager
+            .refresh_expiring_sessions_for_user(user_id, policy)
+            .await
     }
 
     /// 批量获取多个会话的有效token
-    /// 
+    ///
     /// 会自动刷新需要刷新的token
     pub async fn batch_get_valid_tokens(
         &self,
         session_ids: Vec<String>,
         policy: Option<RefreshPolicy>,
     ) -> Vec<(String, OAuthResult<Option<String>>)> {
-        self.auto_refresh_manager.batch_refresh_tokens(session_ids, policy).await
+        self.auto_refresh_manager
+            .batch_refresh_tokens(session_ids, policy)
+            .await
     }
 
     /// 检查会话是否需要刷新token
-    /// 
+    ///
     /// 用于UI展示或批量处理前的预检查
     pub async fn check_session_needs_refresh(
         &self,
@@ -422,7 +452,7 @@ impl OAuthClient {
         threshold_seconds: Option<i64>,
     ) -> OAuthResult<bool> {
         let session = self.session_manager.get_session(session_id).await?;
-        
+
         if session.status != "completed" || session.refresh_token.is_none() {
             return Ok(false);
         }
