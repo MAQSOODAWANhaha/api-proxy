@@ -3,7 +3,7 @@
 //! 基于设计文档实现的AI代理处理器，负责身份验证、速率限制和转发策略
 
 use anyhow::Result;
-use pingora_core::upstreams::peer::{HttpPeer, Peer};
+use pingora_core::upstreams::peer::{HttpPeer, Peer, ALPN};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
@@ -776,7 +776,7 @@ impl RequestHandler {
             };
 
             if !fields_to_inject.is_empty() {
-                // 标记：本次请求将修改请求体
+                // 标记：本次请求将修改请求体（通用标记，不按路由分支）
                 ctx.will_modify_body = true;
                 tracing::info!(
                     request_id = %ctx.request_id,
@@ -1412,7 +1412,10 @@ impl RequestHandler {
 
         // 为所有提供商配置通用选项
         if let Some(options) = peer.get_mut_peer_options() {
-            // 已移除 ALPN 配置，使用默认协议选项
+            // 优先协商 HTTP/2，避免部分上游在 HTTP/1.1 下要求 Content-Length 的限制
+            // 注意：如 Pingora 版本不支持该字段，请根据实际 API 调整。
+            // 尝试设置 ALPN 优先顺序：h2 -> http/1.1（如该字段在当前版本不可用，请按版本调整或忽略）
+            options.alpn = ALPN::H2H1;
 
             // 设置动态超时配置
             options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));

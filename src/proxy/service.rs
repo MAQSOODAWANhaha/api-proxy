@@ -353,6 +353,7 @@ impl ProxyHttp for ProxyService {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
+        // 不再覆盖上游请求体；统一使用通用改写逻辑
         // 检查请求头，只处理 JSON 内容
         let content_type = session
             .req_header()
