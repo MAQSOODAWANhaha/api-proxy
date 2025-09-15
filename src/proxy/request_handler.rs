@@ -330,6 +330,8 @@ pub struct ProxyContext {
     pub timeout_seconds: Option<i32>,
     /// 请求体缓冲区 (用于request_body_filter中的数据收集)
     pub body: Vec<u8>,
+    /// 是否计划修改请求体（供上游头部处理决策使用）
+    pub will_modify_body: bool,
 }
 
 impl Default for ProxyContext {
@@ -348,6 +350,7 @@ impl Default for ProxyContext {
             selected_provider: None,
             timeout_seconds: None,
             body: Vec::new(),
+            will_modify_body: false,
         }
     }
 }
@@ -720,7 +723,7 @@ impl RequestHandler {
     /// 实现实际的请求体JSON修改，根据不同路由注入相应的project_id字段
     async fn modify_gemini_request_body(
         &self,
-        ctx: &ProxyContext,
+        ctx: &mut ProxyContext,
         session: &Session,
         _upstream_request: &mut RequestHeader,
         gemini_mode: &GeminiProxyMode,
@@ -773,6 +776,8 @@ impl RequestHandler {
             };
 
             if !fields_to_inject.is_empty() {
+                // 标记：本次请求将修改请求体
+                ctx.will_modify_body = true;
                 tracing::info!(
                     request_id = %ctx.request_id,
                     project_id = project_id,
@@ -806,6 +811,7 @@ impl RequestHandler {
                     "Stored body modification plan in context for later processing"
                 );
             } else {
+                ctx.will_modify_body = false;
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     project_id = project_id,
@@ -816,6 +822,7 @@ impl RequestHandler {
             }
         } else {
             // 非OAuth或无project_id的情况
+            ctx.will_modify_body = false;
             tracing::debug!(
                 request_id = %ctx.request_id,
                 gemini_mode = ?gemini_mode,
@@ -1710,9 +1717,58 @@ impl RequestHandler {
             "替换认证信息完成"
         );
 
-        // 当请求体可能被修改时，去除原始 Content-Length，避免长度不一致
-        // 让 Pingora 根据实际发送的 body 决定是否使用分块传输或设置新的长度
-        upstream_request.remove_header("content-length");
+        // Content-Length 处理策略：
+        // - 对将要修改请求体的路由（如 generateContent/streamGenerateContent/onboardUser），移除原始 Content-Length，避免长度不一致
+        // - 否则若方法为 POST/PUT/PATCH 且缺少 Content-Length/Transfer-Encoding，则显式设置 Content-Length: 0，避免上游 411
+        let method_upper = upstream_request.method.to_string().to_uppercase();
+        let path_for_len = upstream_request.uri.path().to_string();
+
+        if ctx.will_modify_body {
+            upstream_request.remove_header("content-length");
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                path = %path_for_len,
+                "将修改请求体，移除原始 Content-Length"
+            );
+        } else {
+            // 优先以下游客户端请求头为准判断是否“无请求体”
+            let has_cl_client = session
+                .req_header()
+                .headers
+                .get("content-length")
+                .is_some();
+            let has_te_client = session
+                .req_header()
+                .headers
+                .get("transfer-encoding")
+                .is_some();
+
+            // 其次再看当前上游请求头（通常与下游相同，除非我们前面改动过）
+            let has_cl = has_cl_client
+                || upstream_request.headers.get("content-length").is_some();
+            let has_te = has_te_client
+                || upstream_request.headers.get("transfer-encoding").is_some();
+            let is_body_method = matches!(method_upper.as_str(), "POST" | "PUT" | "PATCH");
+            if is_body_method && !has_cl && !has_te {
+                // 上游有些端点（如 cloudcode-pa）要求 Content-Length，即使没有请求体
+                if let Err(e) = upstream_request.insert_header("content-length", "0") {
+                    let error = ProxyError::internal(format!(
+                        "Failed to set content-length: 0 header: {}",
+                        e
+                    ));
+                    self.tracing_service
+                        .complete_trace_config_error(&ctx.request_id, &error.to_string())
+                        .await?;
+                    return Err(error);
+                }
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    method = %method_upper,
+                    path = %path_for_len,
+                    "无请求体路由，显式设置 Content-Length: 0"
+                );
+            }
+        }
 
         // 注释掉可能导致问题的自定义头部
         // upstream_request.insert_header("x-request-id", &ctx.request_id)
