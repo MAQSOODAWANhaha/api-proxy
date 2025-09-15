@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use pingora_core::upstreams::peer::{HttpPeer, Peer, ALPN};
+use url::form_urlencoded;
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
@@ -367,6 +368,48 @@ pub struct AuthResult {
 }
 
 impl RequestHandler {
+    /// 判断本次请求是否为 SSE（流式）请求：
+    /// - 下游或上游 Accept 包含 text/event-stream 或 application/stream+json
+    /// - URL 查询参数 alt=sse
+    /// - URL 查询参数 stream=true（通用流标识）
+    fn is_sse_request(&self, session: &Session, upstream_request: &RequestHeader) -> bool {
+        // 1) 检查 Accept 头（优先下游，然后上游）
+        let accept_downstream = session
+            .req_header()
+            .headers
+            .get("accept")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let accept_upstream = upstream_request
+            .headers
+            .get("accept")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let accept_sse = |v: &str| v.contains("text/event-stream") || v.contains("application/stream+json");
+        if accept_sse(&accept_downstream) || accept_sse(&accept_upstream) {
+            return true;
+        }
+
+        // 2) 检查查询参数（alt=sse 或 stream=true）
+        if let Some(query) = upstream_request.uri.query() {
+            let mut is_sse = false;
+            for (k, v) in form_urlencoded::parse(query.as_bytes()) {
+                let key = k.to_string().to_ascii_lowercase();
+                let val = v.to_string().to_ascii_lowercase();
+                if (key == "alt" && val == "sse") || (key == "stream" && (val == "1" || val == "true")) {
+                    is_sse = true;
+                    break;
+                }
+            }
+            if is_sse {
+                return true;
+            }
+        }
+
+        false
+    }
     /// 获取统计服务的引用 - 用于外部访问
     pub fn statistics_service(&self) -> &Arc<StatisticsService> {
         &self.statistics_service
@@ -767,9 +810,8 @@ impl RequestHandler {
                 // 需要注入: body.project = project_id
                 ("generateContent", vec!["body.project"])
             } else if request_path.contains("streamGenerateContent") {
-                // 路由4: /v1internal:streamGenerateContent 或 /v1beta/models/{model}:streamGenerateContent
-                // 需要注入: body.project = project_id
-                ("streamGenerateContent", vec!["body.project"])
+                // 路由4: 流式端点 - 为提高兼容性，不进行 project 字段注入，依赖账户默认项目
+                ("streamGenerateContent", vec![])
             } else {
                 // 其他路由不需要特殊处理
                 ("other", vec![])
@@ -874,9 +916,13 @@ impl RequestHandler {
                 // 需要注入: body.project = project_id
                 self.inject_generatecontent_fields(json_value, &project_id, &ctx.request_id)
             } else if request_path.contains("streamGenerateContent") {
-                // 路由4: /v1internal:streamGenerateContent 或 /v1beta/models/{model}:streamGenerateContent
-                // 需要注入: body.project = project_id
-                self.inject_generatecontent_fields(json_value, &project_id, &ctx.request_id)
+                // 路由4: 流式端点 - 为提高兼容性，不注入 project 字段
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    route_path = request_path,
+                    "Skip project injection for streamGenerateContent"
+                );
+                false
             } else {
                 // 其他路由不需要特殊处理
                 tracing::debug!(
@@ -1646,8 +1692,15 @@ impl RequestHandler {
         // 为所有AI服务添加标准头部（移除硬编码的Google特判）
         {
             // 确保有Accept头
+            let is_sse_endpoint = self.is_sse_request(session, upstream_request);
+
             if upstream_request.headers.get("accept").is_none() {
-                if let Err(e) = upstream_request.insert_header("accept", "application/json") {
+                let accept_value = if is_sse_endpoint {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                };
+                if let Err(e) = upstream_request.insert_header("accept", accept_value) {
                     let error = ProxyError::internal(format!("Failed to set accept header: {}", e));
                     // 头部设置失败时立即记录到数据库
                     self.tracing_service
@@ -1667,9 +1720,15 @@ impl RequestHandler {
                 .map(|s| s.contains("gzip") || s.contains("deflate"))
                 .unwrap_or(false);
 
-            if client_supports_compression
-                && upstream_request.headers.get("accept-encoding").is_none()
-            {
+            if is_sse_endpoint {
+                // 对于 SSE，移除任何压缩协商，确保事件流稳定
+                upstream_request.remove_header("accept-encoding");
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    "SSE endpoint detected, removed accept-encoding for stability"
+                );
+            } else if client_supports_compression
+                && upstream_request.headers.get("accept-encoding").is_none() {
                 if let Err(e) = upstream_request.insert_header("accept-encoding", "gzip, deflate") {
                     let error = ProxyError::internal(format!(
                         "Failed to set accept-encoding header: {}",
@@ -1686,7 +1745,7 @@ impl RequestHandler {
                     request_id = %ctx.request_id,
                     "Client supports compression, requesting compressed response from upstream"
                 );
-            } else {
+            } else if !is_sse_endpoint {
                 // 客户端不支持压缩，移除任何Accept-Encoding头，确保上游返回未压缩响应
                 upstream_request.remove_header("accept-encoding");
 
