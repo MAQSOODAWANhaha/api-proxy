@@ -1546,17 +1546,35 @@ impl RequestHandler {
             }
         };
 
-        // 记录未认证之前的请求头信息
+        // 记录未认证之前的请求头信息（关键头 + 全量头）
         let client_headers_before_auth =
             self.extract_key_headers_from_request(session.req_header());
         let upstream_headers_before_auth = self.extract_key_headers_from_request(upstream_request);
+        let client_all_headers = self.format_all_request_headers(session.req_header());
+        let upstream_all_headers_before = self.format_all_request_headers(upstream_request);
+
+        let client_all_headers_str = if client_all_headers.is_empty() {
+            "<none>".to_string()
+        } else {
+            format!("\n  - {}", client_all_headers.join("\n  - "))
+        };
+        let upstream_all_headers_before_str = if upstream_all_headers_before.is_empty() {
+            "<none>".to_string()
+        } else {
+            format!(
+                "\n  - {}",
+                upstream_all_headers_before.join("\n  - ")
+            )
+        };
 
         tracing::info!(
             request_id = %ctx.request_id,
             stage = "before_auth",
-            client_headers = %client_headers_before_auth,
-            upstream_headers = %upstream_headers_before_auth,
-            "Headers before authentication"
+            client_headers_key = %client_headers_before_auth,
+            upstream_headers_key = %upstream_headers_before_auth,
+            client_headers_all = %client_all_headers_str,
+            upstream_headers_all = %upstream_all_headers_before_str,
+            "=== 客户端与上游请求头（认证前） ==="
         );
 
         // 应用统一的数据库驱动认证
@@ -1685,29 +1703,26 @@ impl RequestHandler {
         // upstream_request.insert_header("x-request-id", &ctx.request_id)
         //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
 
-        // 添加详细的Pingora请求日志用于对比
+        // 添加详细的上游请求日志（更友好的多行格式）
+        let upstream_all_headers_after = self.format_all_request_headers(upstream_request);
+        let upstream_all_headers_after_str = if upstream_all_headers_after.is_empty() {
+            "<none>".to_string()
+        } else {
+            format!(
+                "\n  - {}",
+                upstream_all_headers_after.join("\n  - ")
+            )
+        };
+
         tracing::info!(
             request_id = %ctx.request_id,
             final_uri = %upstream_request.uri,
             method = %upstream_request.method,
-            "=== PINGORA REQUEST DETAILS ==="
-        );
-
-        // 记录所有Pingora请求头用于与reqwest对比
-        let mut pingora_headers = Vec::new();
-        for (name, value) in upstream_request.headers.iter() {
-            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
-                pingora_headers.push(format!("{}: {}", name.as_str(), value_str));
-            }
-        }
-
-        tracing::info!(
-            request_id = %ctx.request_id,
-            headers = ?pingora_headers,
             backend_key_id = selected_backend.id,
             provider = %provider_type.name,
             auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
-            "PINGORA HTTP REQUEST HEADERS"
+            headers = %upstream_all_headers_after_str,
+            "=== 上游HTTP请求详情 ==="
         );
 
         Ok(())
@@ -1719,15 +1734,22 @@ impl RequestHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 记录响应头信息
+        // 记录响应头信息（关键头 + 全量头）
         let response_headers = self.extract_key_headers_from_response(upstream_response);
+        let response_all_headers = self.format_all_response_headers(upstream_response);
+        let response_all_headers_str = if response_all_headers.is_empty() {
+            "<none>".to_string()
+        } else {
+            format!("\n  - {}", response_all_headers.join("\n  - "))
+        };
 
         tracing::info!(
             request_id = %ctx.request_id,
             stage = "response",
             status = %upstream_response.status,
-            response_headers = %response_headers,
-            "HTTP Response headers received"
+            response_headers_key = %response_headers,
+            response_headers_all = %response_all_headers_str,
+            "=== 上游HTTP响应头 ==="
         );
 
         // 收集响应详情 - 委托给StatisticsService
@@ -2134,6 +2156,46 @@ impl RequestHandler {
         } else {
             key_headers.join(", ")
         }
+    }
+
+    /// 将所有请求头格式化为人类可读的列表（会对敏感字段做脱敏）
+    fn format_all_request_headers(&self, req_header: &RequestHeader) -> Vec<String> {
+        let mut all = Vec::new();
+        for (name, value) in req_header.headers.iter() {
+            let name_str = name.as_str();
+            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+
+            let masked = match name_str.to_ascii_lowercase().as_str() {
+                "authorization" | "proxy-authorization" | "x-api-key" | "api-key"
+                | "x-goog-api-key" | "set-cookie" | "cookie" => {
+                    // 只保留前后少量字符，避免日志泄露敏感信息
+                    if value_str.len() > 16 {
+                        format!(
+                            "{}: {}...{}",
+                            name_str,
+                            &value_str[..8],
+                            &value_str[value_str.len().saturating_sub(4)..]
+                        )
+                    } else {
+                        format!("{}: ****", name_str)
+                    }
+                }
+                _ => format!("{}: {}", name_str, value_str),
+            };
+            all.push(masked);
+        }
+        all
+    }
+
+    /// 将所有响应头格式化为人类可读的列表
+    fn format_all_response_headers(&self, resp_header: &ResponseHeader) -> Vec<String> {
+        let mut all = Vec::new();
+        for (name, value) in resp_header.headers.iter() {
+            let name_str = name.as_str();
+            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+            all.push(format!("{}: {}", name_str, value_str));
+        }
+        all
     }
 
     /// 获取关键头部信息用于日志记录 (ResponseHeader 版本)

@@ -29,6 +29,60 @@ pub struct ProxyService {
 }
 
 impl ProxyService {
+    // 为日志限制请求/响应体的最大输出长度
+    const MAX_LOG_BODY_BYTES: usize = 32 * 1024; // 32KB
+
+    // 脱敏 JSON 中疑似敏感字段（key/token/secret/authorization/cookie 等）
+    fn sanitize_json_value(v: &mut Value) {
+        match v {
+            Value::Object(map) => {
+                for (k, val) in map.iter_mut() {
+                    let kl = k.to_ascii_lowercase();
+                    let is_sensitive = ["key", "token", "secret", "authorization", "cookie"]
+                        .iter()
+                        .any(|m| kl.contains(m));
+                    if is_sensitive {
+                        if let Value::String(s) = val {
+                            if s.len() > 8 {
+                                let masked = format!("{}...{}", &s[..4], &s[s.len().saturating_sub(4)..]);
+                                *val = Value::String(masked);
+                            } else {
+                                *val = Value::String("****".to_string());
+                            }
+                        } else {
+                            *val = Value::String("****".to_string());
+                        }
+                    } else {
+                        ProxyService::sanitize_json_value(val);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for item in arr.iter_mut() {
+                    ProxyService::sanitize_json_value(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn pretty_truncated(s: &str, max: usize) -> String {
+        if s.len() > max {
+            format!("{}\n...[truncated {} bytes]", &s[..max], s.len() - max)
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn pretty_json_bytes(bytes: &[u8], max: usize) -> Option<String> {
+        if let Ok(mut v) = serde_json::from_slice::<Value>(bytes) {
+            ProxyService::sanitize_json_value(&mut v);
+            let pretty = serde_json::to_string_pretty(&v).unwrap_or_else(|_| String::from("<json pretty error>"));
+            Some(ProxyService::pretty_truncated(&pretty, max))
+        } else {
+            None
+        }
+    }
     /// 创建新的代理服务实例 - 保持原有完整功能
     pub fn new(
         config: Arc<AppConfig>,
@@ -306,28 +360,32 @@ impl ProxyHttp for ProxyService {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        if !content_type.contains("application/json") {
-            // 如果不是 JSON，则不进行任何处理，直接透传
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                content_type = %content_type,
-                "Non-JSON request body, passing through without modification"
-            );
-            return Ok(());
-        }
+        let is_json = content_type.contains("application/json");
 
         // `body_chunk` 是一个 Option<Bytes>，`end_of_stream` 表示是否为最后一块
         // Some(bytes) 代表一个数据块
         // end_of_stream=true 代表整个请求体已经接收完毕
-        if let Some(chunk) = body_chunk.take() {
-            // 将数据块追加到我们的缓冲区
-            ctx.body.extend_from_slice(&chunk);
+        if is_json {
+            if let Some(chunk) = body_chunk.take() {
+                // JSON：拦截以便在结束时整体修改
+                ctx.body.extend_from_slice(&chunk);
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    chunk_size = chunk.len(),
+                    total_buffer_size = ctx.body.len(),
+                    end_of_stream = end_of_stream,
+                    "Accumulated JSON request body chunk"
+                );
+            }
+        } else if let Some(chunk) = body_chunk.as_ref() {
+            // 非JSON：透传，但复制一份用于日志
+            ctx.body.extend_from_slice(chunk);
             tracing::debug!(
                 request_id = %ctx.request_id,
                 chunk_size = chunk.len(),
                 total_buffer_size = ctx.body.len(),
                 end_of_stream = end_of_stream,
-                "Accumulated request body chunk"
+                "Observed non-JSON request body chunk (pass-through)"
             );
         }
 
@@ -339,7 +397,43 @@ impl ProxyHttp for ProxyService {
                 "Complete request body received, applying Google Code Assist modifications"
             );
 
-            // --- 这里是核心的Google Code Assist API修改逻辑 ---
+            // 记录原始请求体（人类可读 + 安全脱敏 + 长度限制）
+            let original_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES) {
+                pretty
+            } else if let Ok(text) = std::str::from_utf8(&ctx.body) {
+                ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
+            } else {
+                format!("<binary:{} bytes> {}", ctx.body.len(), hex::encode(&ctx.body[..ctx.body.len().min(1024)]))
+            };
+            tracing::info!(
+                request_id = %ctx.request_id,
+                size = ctx.body.len(),
+                content_type = %content_type,
+                body = %original_preview,
+                "=== 客户端请求体（原始） ==="
+            );
+
+            if !is_json {
+                // 非JSON：仅记录原始请求体，不做修改
+                let original_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES) {
+                    pretty
+                } else if let Ok(text) = std::str::from_utf8(&ctx.body) {
+                    ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
+                } else {
+                    format!("<binary:{} bytes> {}", ctx.body.len(), hex::encode(&ctx.body[..ctx.body.len().min(1024)]))
+                };
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    size = ctx.body.len(),
+                    content_type = %content_type,
+                    body = %original_preview,
+                    "=== 客户端请求体（原始，非JSON透传） ==="
+                );
+
+                return Ok(());
+            }
+
+            // --- 这里是核心的Google Code Assist API修改逻辑（JSON） ---
             let modified_body = match serde_json::from_slice::<Value>(&ctx.body) {
                 Ok(mut json_value) => {
                     tracing::debug!(
@@ -403,6 +497,25 @@ impl ProxyHttp for ProxyService {
                 original_size = ctx.body.len(),
                 modified_size = modified_body.len(),
                 "Request body processing complete, sending to upstream"
+            );
+
+            // 记录发送到上游的请求体（最终版本）
+            let final_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&modified_body, ProxyService::MAX_LOG_BODY_BYTES) {
+                pretty
+            } else if let Ok(text) = std::str::from_utf8(&modified_body) {
+                ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
+            } else {
+                format!(
+                    "<binary:{} bytes> {}",
+                    modified_body.len(),
+                    hex::encode(&modified_body[..modified_body.len().min(1024)])
+                )
+            };
+            tracing::info!(
+                request_id = %ctx.request_id,
+                size = modified_body.len(),
+                body = %final_preview,
+                "=== 上游请求体（最终） ==="
             );
 
             // 将修改后的完整 body 放入 body_chunk 中
@@ -703,6 +816,27 @@ impl ProxyHttp for ProxyService {
                     .unwrap_or(200);
 
                 ctx.response_details.finalize_body();
+
+                // 如果响应非2xx/3xx，打印响应体用于排查
+                if status_code >= 400 {
+                    let content_type = ctx
+                        .response_details
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "application/json".to_string());
+                    let body_preview = ctx
+                        .response_details
+                        .body
+                        .clone()
+                        .unwrap_or_else(|| "<empty>".to_string());
+                    tracing::error!(
+                        request_id = %ctx.request_id,
+                        status = status_code,
+                        content_type = %content_type,
+                        body = %ProxyService::pretty_truncated(&body_preview, 64 * 1024),
+                        "=== 上游响应体（失败） ==="
+                    );
+                }
 
                 // 从响应体JSON中提取所有统计信息 - 使用StatisticsService
                 match self
