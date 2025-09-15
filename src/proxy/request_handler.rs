@@ -414,9 +414,12 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         let start = std::time::Instant::now();
 
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
-            "Starting AI proxy request preparation using coordinator pattern"
+            method = %session.req_header().method,
+            path = %session.req_header().uri.path(),
+            flow = "before_auth",
+            "准备代理请求（认证前）"
         );
 
         // 步骤1: 身份验证和完整配置获取 - 替代原来的步骤0+步骤1
@@ -439,7 +442,8 @@ impl RequestHandler {
             provider_name = %auth_result.provider_type.name,
             provider_base_url = %auth_result.provider_type.base_url,
             timeout_seconds = ctx.timeout_seconds.unwrap_or(30),
-            "Authentication and provider configuration completed successfully"
+            flow = "after_auth",
+            "认证与服务商配置完成"
         );
 
         // 步骤2: 开始请求追踪 - 委托给TracingService
@@ -924,20 +928,17 @@ impl RequestHandler {
                 );
             }
 
-            // 2. 注入 body.cloudaicompanionProject = project_id
-            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
-            if let Some(body_obj) = body.as_object_mut() {
-                body_obj.insert(
-                    "cloudaicompanionProject".to_string(),
-                    serde_json::Value::String(project_id.to_owned()),
-                );
-                modified = true;
-                tracing::debug!(
-                    request_id = %request_id,
-                    project_id = project_id,
-                    "Injected body.cloudaicompanionProject field"
-                );
-            }
+            // 2. 注入 cloudaicompanionProject = project_id（顶层字段，非 body 下）
+            obj.insert(
+                "cloudaicompanionProject".to_string(),
+                serde_json::Value::String(project_id.to_owned()),
+            );
+            modified = true;
+            tracing::debug!(
+                request_id = %request_id,
+                project_id = project_id,
+                "Injected top-level cloudaicompanionProject field"
+            );
         }
 
         modified
@@ -952,21 +953,18 @@ impl RequestHandler {
     ) -> bool {
         let mut modified = false;
 
-        // 注入 body.cloudaicompanionProject = project_id
+        // 注入 cloudaicompanionProject = project_id（顶层字段）
         if let Some(obj) = json_value.as_object_mut() {
-            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
-            if let Some(body_obj) = body.as_object_mut() {
-                body_obj.insert(
-                    "cloudaicompanionProject".to_string(),
-                    serde_json::Value::String(project_id.to_owned()),
-                );
-                modified = true;
-                tracing::debug!(
-                    request_id = %request_id,
-                    project_id = project_id,
-                    "Injected body.cloudaicompanionProject field for onboardUser"
-                );
-            }
+            obj.insert(
+                "cloudaicompanionProject".to_string(),
+                serde_json::Value::String(project_id.to_owned()),
+            );
+            modified = true;
+            tracing::debug!(
+                request_id = %request_id,
+                project_id = project_id,
+                "Injected top-level cloudaicompanionProject field for onboardUser"
+            );
         }
 
         modified
@@ -981,21 +979,18 @@ impl RequestHandler {
     ) -> bool {
         let mut modified = false;
 
-        // 注入 body.project = project_id
+        // 注入 project = project_id（顶层字段）
         if let Some(obj) = json_value.as_object_mut() {
-            let body = obj.entry("body").or_insert_with(|| serde_json::json!({}));
-            if let Some(body_obj) = body.as_object_mut() {
-                body_obj.insert(
-                    "project".to_string(),
-                    serde_json::Value::String(project_id.to_owned()),
-                );
-                modified = true;
-                tracing::debug!(
-                    request_id = %request_id,
-                    project_id = project_id,
-                    "Injected body.project field for generateContent API"
-                );
-            }
+            obj.insert(
+                "project".to_string(),
+                serde_json::Value::String(project_id.to_owned()),
+            );
+            modified = true;
+            tracing::debug!(
+                request_id = %request_id,
+                project_id = project_id,
+                "Injected top-level project field for generateContent API"
+            );
         }
 
         modified
@@ -1465,6 +1460,14 @@ impl RequestHandler {
         // 获取原始路径
         let original_path = session.req_header().uri.path();
 
+        tracing::info!(
+            request_id = %ctx.request_id,
+            method = %session.req_header().method,
+            path = %original_path,
+            flow = "before_modify_request",
+            "修改请求信息前"
+        );
+
         // Gemini代理处理
         if let Some(provider_type) = &ctx.provider_type {
             if provider_type.name.to_lowercase().contains("gemini") {
@@ -1699,6 +1702,18 @@ impl RequestHandler {
             "Headers after authentication and processing"
         );
 
+        tracing::info!(
+            request_id = %ctx.request_id,
+            method = %upstream_request.method,
+            final_uri = %upstream_request.uri,
+            flow = "after_auth_replacement",
+            "替换认证信息完成"
+        );
+
+        // 当请求体可能被修改时，去除原始 Content-Length，避免长度不一致
+        // 让 Pingora 根据实际发送的 body 决定是否使用分块传输或设置新的长度
+        upstream_request.remove_header("content-length");
+
         // 注释掉可能导致问题的自定义头部
         // upstream_request.insert_header("x-request-id", &ctx.request_id)
         //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
@@ -1722,7 +1737,8 @@ impl RequestHandler {
             provider = %provider_type.name,
             auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
             headers = %upstream_all_headers_after_str,
-            "=== 上游HTTP请求详情 ==="
+            flow = "after_modify_request",
+            "修改请求信息后（上游HTTP请求详情）"
         );
 
         Ok(())
@@ -1751,6 +1767,17 @@ impl RequestHandler {
             response_headers_all = %response_all_headers_str,
             "=== 上游HTTP响应头 ==="
         );
+
+        // 如果状态码为 4xx/5xx，标记失败阶段（响应体会在后续阶段打印）
+        let status_code = upstream_response.status.as_u16();
+        if status_code >= 400 {
+            tracing::error!(
+                request_id = %ctx.request_id,
+                status = status_code,
+                flow = "response_failure",
+                "响应失败，稍后打印响应体"
+            );
+        }
 
         // 收集响应详情 - 委托给StatisticsService
         self.statistics_service

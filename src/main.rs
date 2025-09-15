@@ -15,7 +15,11 @@ async fn main() -> anyhow::Result<()> {
     let log_level = matches.get_one::<String>("log_level");
     init_logging_with_level(log_level);
 
-    info!("Starting AI Proxy Service v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        flow = "service_boot",
+        "启动 AI Proxy 服务"
+    );
 
     // 处理配置检查命令
     if matches.get_flag("check") {

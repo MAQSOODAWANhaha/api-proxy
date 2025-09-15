@@ -154,11 +154,12 @@ impl ProxyHttp for ProxyService {
         let path = session.req_header().uri.path();
         let method = session.req_header().method.as_str();
 
-        tracing::debug!(
+        tracing::info!(
             request_id = %ctx.request_id,
             method = %method,
             path = %path,
-            "Processing AI proxy request"
+            flow = "request_start",
+            "收到代理请求"
         );
 
         // 透明代理设计：仅处理代理请求，其他全部拒绝
