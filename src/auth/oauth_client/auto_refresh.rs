@@ -123,8 +123,13 @@ impl AutoRefreshManager {
                     "Failed to auto-refresh token for session {}: {}",
                     session_id, e
                 );
-                // 刷新失败，返回原token（可能已过期，由调用者处理）
-                Ok(session.access_token)
+                // 刷新失败：如已过期则返回None，否则返回当前token
+                let now = Utc::now().naive_utc();
+                if session.expires_at <= now {
+                    Ok(None)
+                } else {
+                    Ok(session.access_token)
+                }
             }
         }
     }
@@ -236,19 +241,12 @@ impl AutoRefreshManager {
         // 🔥 关键检查：验证该会话是否还有对应的user_provider_keys关联
         if !self.validate_session_association(&current_session).await? {
             warn!(
-                "Session {} 没有对应的user_provider_keys关联，自动删除",
+                "Session {} 没有对应的user_provider_keys关联，跳过刷新",
                 session_id
             );
-            // 删除孤立会话
-            if let Err(e) = self
-                .session_manager
-                .delete_session(session_id, current_session.user_id)
-                .await
-            {
-                warn!("删除孤立会话 {} 失败: {}", session_id, e);
-            }
+            // 不在刷新路径进行删除，交由后台清理任务处理
             return Err(OAuthError::InvalidSession(format!(
-                "Session {} is orphaned and has been deleted",
+                "Session {} is orphaned",
                 session_id
             )));
         }
@@ -256,6 +254,11 @@ impl AutoRefreshManager {
         if !self.should_refresh_token(&current_session, policy)? {
             debug!("Token for session {} was already refreshed", session_id);
             if let Some(token) = current_session.access_token {
+                // 清理锁映射
+                {
+                    let mut locks = self.refresh_locks.lock().await;
+                    locks.remove(session_id);
+                }
                 return Ok(OAuthTokenResponse {
                     session_id: session_id.to_string(),
                     access_token: token,
@@ -287,6 +290,11 @@ impl AutoRefreshManager {
                         "Successfully refreshed token for session {} on attempt {}",
                         session_id, attempt
                     );
+                    // 成功后清理锁映射
+                    {
+                        let mut locks = self.refresh_locks.lock().await;
+                        locks.remove(session_id);
+                    }
                     return Ok(token_response);
                 }
                 Err(e) => {
@@ -307,7 +315,7 @@ impl AutoRefreshManager {
             }
         }
 
-        // 清理锁（不再需要）
+        // 清理锁（失败路径）
         {
             let mut locks = self.refresh_locks.lock().await;
             locks.remove(session_id);

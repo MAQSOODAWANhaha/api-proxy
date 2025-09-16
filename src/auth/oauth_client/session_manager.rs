@@ -215,9 +215,17 @@ impl SessionManager {
             Utc::now().naive_utc() + Duration::try_hours(1).unwrap_or_default()
         };
 
+        // 先保存会话中的原 refresh_token，再转换为 ActiveModel
+        let existing_refresh = session.refresh_token.clone();
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
         active_model.access_token = Set(Some(token_response.access_token.clone()));
-        active_model.refresh_token = Set(token_response.refresh_token.clone());
+        // 仅当响应中包含新的 refresh_token 时才覆盖；否则保留会话中已有的 refresh_token
+        let effective_refresh_token = if token_response.refresh_token.is_some() {
+            token_response.refresh_token.clone()
+        } else {
+            existing_refresh
+        };
+        active_model.refresh_token = Set(effective_refresh_token);
         active_model.id_token = Set(token_response.id_token.clone());
         active_model.token_type = Set(Some(token_response.token_type.clone()));
         active_model.expires_in = Set(token_response.expires_in);
