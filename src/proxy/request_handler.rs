@@ -304,6 +304,10 @@ pub struct ProxyContext {
     pub will_modify_body: bool,
     /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
     pub resolved_credential: Option<ResolvedCredential>,
+    /// SSE 行缓冲（用于流式分块行合并）
+    pub sse_line_buffer: String,
+    /// SSE 阶段观测到的 usageMetadata（最新一次覆盖）
+    pub sse_usage_agg: Option<SseUsageAgg>,
 }
 
 impl Default for ProxyContext {
@@ -324,6 +328,8 @@ impl Default for ProxyContext {
             body: Vec::new(),
             will_modify_body: false,
             resolved_credential: None,
+            sse_line_buffer: String::new(),
+            sse_usage_agg: None,
         }
     }
 }
@@ -335,6 +341,14 @@ pub enum ResolvedCredential {
     ApiKey(String),
     /// OAuth 访问令牌
     OAuthAccessToken(String),
+}
+
+/// SSE usage 统计聚合（latest-wins）
+#[derive(Debug, Clone, Default)]
+pub struct SseUsageAgg {
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
 }
 
 /// 认证结果

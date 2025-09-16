@@ -44,7 +44,8 @@ impl ProxyService {
                     if is_sensitive {
                         if let Value::String(s) = val {
                             if s.len() > 8 {
-                                let masked = format!("{}...{}", &s[..4], &s[s.len().saturating_sub(4)..]);
+                                let masked =
+                                    format!("{}...{}", &s[..4], &s[s.len().saturating_sub(4)..]);
                                 *val = Value::String(masked);
                             } else {
                                 *val = Value::String("****".to_string());
@@ -77,7 +78,8 @@ impl ProxyService {
     fn pretty_json_bytes(bytes: &[u8], max: usize) -> Option<String> {
         if let Ok(mut v) = serde_json::from_slice::<Value>(bytes) {
             ProxyService::sanitize_json_value(&mut v);
-            let pretty = serde_json::to_string_pretty(&v).unwrap_or_else(|_| String::from("<json pretty error>"));
+            let pretty = serde_json::to_string_pretty(&v)
+                .unwrap_or_else(|_| String::from("<json pretty error>"));
             Some(ProxyService::pretty_truncated(&pretty, max))
         } else {
             None
@@ -192,20 +194,29 @@ impl ProxyHttp for ProxyService {
         // 使用管道：认证 + 其余准备（追踪/限流/配置/密钥选择）
         // Phase A: 先做认证
         let auth_pipeline = crate::proxy::pipeline::PipelineBuilder::new()
-            .step(std::sync::Arc::new(crate::proxy::pipeline::AuthenticationStep::new(
-                self.ai_handler.auth_service().clone(),
-            )))
+            .step(std::sync::Arc::new(
+                crate::proxy::pipeline::AuthenticationStep::new(
+                    self.ai_handler.auth_service().clone(),
+                ),
+            ))
             .build();
 
         if let Err(e) = auth_pipeline.execute(session, ctx).await {
             tracing::error!(request_id = %ctx.request_id, error = %e, "Authentication failed");
-            let _ = self.ai_handler.tracing_service().complete_trace_with_error(&ctx.request_id, &e).await;
+            let _ = self
+                .ai_handler
+                .tracing_service()
+                .complete_trace_with_error(&ctx.request_id, &e)
+                .await;
             return match e {
                 crate::error::ProxyError::Authentication { .. } => {
                     let msg = format!(r#"{{"error":"{}","code":"AUTH_ERROR"}}"#, e);
                     Err(Error::explain(ErrorType::HTTPStatus(401), msg))
                 }
-                _ => Err(Error::explain(ErrorType::HTTPStatus(500), r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#)),
+                _ => Err(Error::explain(
+                    ErrorType::HTTPStatus(500),
+                    r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#,
+                )),
             };
         }
 
@@ -213,36 +224,44 @@ impl ProxyHttp for ProxyService {
         if let Some(user_api) = ctx.user_service_api.as_ref() {
             let method = session.req_header().method.as_str();
             let path = Some(session.req_header().uri.path().to_string());
-            let req_stats = self.ai_handler.statistics_service().collect_request_stats(session);
+            let req_stats = self
+                .ai_handler
+                .statistics_service()
+                .collect_request_stats(session);
             let client_ip = req_stats.client_ip.clone();
             let user_agent = req_stats.user_agent.clone();
-            if let Err(e) = self.ai_handler.tracing_service().start_trace(
-                &ctx.request_id,
-                user_api.id,
-                Some(user_api.user_id),
-                method,
-                path,
-                Some(client_ip),
-                user_agent,
-            ).await {
+            if let Err(e) = self
+                .ai_handler
+                .tracing_service()
+                .start_trace(
+                    &ctx.request_id,
+                    user_api.id,
+                    Some(user_api.user_id),
+                    method,
+                    path,
+                    Some(client_ip),
+                    user_agent,
+                )
+                .await
+            {
                 tracing::warn!(request_id = %ctx.request_id, error = %e, "Failed to start trace");
             }
         }
 
         // Phase B: 其余准备（限流、配置、密钥选择）
         let prep_pipeline = crate::proxy::pipeline::PipelineBuilder::new()
-            .step(std::sync::Arc::new(crate::proxy::pipeline::RateLimitStepReal::new(
-                self.ai_handler.clone(),
-            )))
-            .step(std::sync::Arc::new(crate::proxy::pipeline::ProviderConfigStep::new(
-                self.ai_handler.clone(),
-            )))
-            .step(std::sync::Arc::new(crate::proxy::pipeline::ApiKeySelectionStep::new(
-                self.ai_handler.clone(),
-            )))
-            .step(std::sync::Arc::new(crate::proxy::pipeline::CredentialResolutionStep::new(
-                self.ai_handler.clone(),
-            )))
+            .step(std::sync::Arc::new(
+                crate::proxy::pipeline::RateLimitStepReal::new(self.ai_handler.clone()),
+            ))
+            .step(std::sync::Arc::new(
+                crate::proxy::pipeline::ProviderConfigStep::new(self.ai_handler.clone()),
+            ))
+            .step(std::sync::Arc::new(
+                crate::proxy::pipeline::ApiKeySelectionStep::new(self.ai_handler.clone()),
+            ))
+            .step(std::sync::Arc::new(
+                crate::proxy::pipeline::CredentialResolutionStep::new(self.ai_handler.clone()),
+            ))
             .build();
 
         match prep_pipeline.execute(session, ctx).await {
@@ -286,11 +305,18 @@ impl ProxyHttp for ProxyService {
                 }
 
                 // 统一更新扩展追踪信息（成功路径）：provider_type_id / user_provider_key_id
-                if let (Some(pt), Some(backend)) = (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref()) {
+                if let (Some(pt), Some(backend)) =
+                    (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref())
+                {
                     if let Err(err) = self
                         .ai_handler
                         .tracing_service()
-                        .update_extended_trace_info(&ctx.request_id, Some(pt.id), None, Some(backend.id))
+                        .update_extended_trace_info(
+                            &ctx.request_id,
+                            Some(pt.id),
+                            None,
+                            Some(backend.id),
+                        )
                         .await
                     {
                         tracing::warn!(request_id = %ctx.request_id, error = %err, "Failed to update extended trace info");
@@ -538,12 +564,18 @@ impl ProxyHttp for ProxyService {
             );
 
             // 记录原始请求体（人类可读 + 安全脱敏 + 长度限制）
-            let original_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES) {
+            let original_preview = if let Some(pretty) =
+                ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES)
+            {
                 pretty
             } else if let Ok(text) = std::str::from_utf8(&ctx.body) {
                 ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
             } else {
-                format!("<binary:{} bytes> {}", ctx.body.len(), hex::encode(&ctx.body[..ctx.body.len().min(1024)]))
+                format!(
+                    "<binary:{} bytes> {}",
+                    ctx.body.len(),
+                    hex::encode(&ctx.body[..ctx.body.len().min(1024)])
+                )
             };
             tracing::info!(
                 request_id = %ctx.request_id,
@@ -555,12 +587,18 @@ impl ProxyHttp for ProxyService {
 
             if !is_json || !should_modify {
                 // 非JSON或无需修改：仅记录原始请求体，保持透传，不重写 body_chunk
-                let original_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES) {
+                let original_preview = if let Some(pretty) =
+                    ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES)
+                {
                     pretty
                 } else if let Ok(text) = std::str::from_utf8(&ctx.body) {
                     ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
                 } else {
-                    format!("<binary:{} bytes> {}", ctx.body.len(), hex::encode(&ctx.body[..ctx.body.len().min(1024)]))
+                    format!(
+                        "<binary:{} bytes> {}",
+                        ctx.body.len(),
+                        hex::encode(&ctx.body[..ctx.body.len().min(1024)])
+                    )
                 };
                 tracing::info!(
                     request_id = %ctx.request_id,
@@ -641,7 +679,9 @@ impl ProxyHttp for ProxyService {
             );
 
             // 记录发送到上游的请求体（最终版本）
-            let final_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&modified_body, ProxyService::MAX_LOG_BODY_BYTES) {
+            let final_preview = if let Some(pretty) =
+                ProxyService::pretty_json_bytes(&modified_body, ProxyService::MAX_LOG_BODY_BYTES)
+            {
                 pretty
             } else if let Ok(text) = std::str::from_utf8(&modified_body) {
                 ProxyService::pretty_truncated(text, ProxyService::MAX_LOG_BODY_BYTES)
@@ -721,6 +761,116 @@ impl ProxyHttp for ProxyService {
                 total_size = ctx.response_details.body_chunks.len(),
                 "Collected response body chunk"
             );
+
+            // 在SSE场景下，增量解析 usageMetadata（latest-wins）
+            let is_sse = ctx
+                .response_details
+                .content_type
+                .as_deref()
+                .map(|ct| ct.contains("text/event-stream") || ct.contains("application/stream"))
+                .unwrap_or(false);
+
+            if is_sse {
+                if let Ok(chunk_str) = std::str::from_utf8(data) {
+                    // 追加到行缓冲
+                    ctx.sse_line_buffer.push_str(chunk_str);
+
+                    // 按行拆分，保留最后一个不完整行
+                    let buf = std::mem::take(&mut ctx.sse_line_buffer);
+                    let mut lines: Vec<&str> = buf.split('\n').collect();
+                    let incomplete = lines.pop().unwrap_or("");
+                    ctx.sse_line_buffer = incomplete.to_string();
+
+                    // 简单递归查找 usageMetadata
+                    fn find_usage<'a>(v: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+                        if let Some(u) = v.get("usageMetadata") {
+                            return Some(u);
+                        }
+                        match v {
+                            serde_json::Value::Object(map) => {
+                                for (_k, val) in map {
+                                    if let Some(u) = find_usage(val) {
+                                        return Some(u);
+                                    }
+                                }
+                                None
+                            }
+                            serde_json::Value::Array(arr) => {
+                                for val in arr {
+                                    if let Some(u) = find_usage(val) {
+                                        return Some(u);
+                                    }
+                                }
+                                None
+                            }
+                            _ => None,
+                        }
+                    }
+
+                    for line in lines {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
+                        let payload = line[6..].trim();
+                        if payload == "[DONE]" {
+                            continue;
+                        }
+
+                        tracing::info!(
+                            request_id = %ctx.request_id,
+                            preview = %Self::pretty_truncated(payload, 51200),
+                            "SSE payload preview"
+                        );
+
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(payload) {
+                            let finish = json_val
+                                .get("candidates")
+                                .and_then(|c| c.get(0))
+                                .and_then(|c0| c0.get("finishReason"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let has_usage = json_val.get("usageMetadata").is_some();
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                has_usage = has_usage,
+                                finish_reason = finish,
+                                "SSE JSON parsed"
+                            );
+                            if let Some(usage) = find_usage(&json_val) {
+                                let p = usage
+                                    .get("promptTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                let c = usage
+                                    .get("candidatesTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                let t = usage
+                                    .get("totalTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                ctx.sse_usage_agg =
+                                    Some(crate::proxy::request_handler::SseUsageAgg {
+                                        prompt_tokens: p,
+                                        completion_tokens: c,
+                                        total_tokens: t,
+                                    });
+                                tracing::info!(
+                                    request_id = %ctx.request_id,
+                                    prompt = ?p,
+                                    completion = ?c,
+                                    total = ?t,
+                                    "SSE usageMetadata updated (latest-wins)"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(None)
@@ -986,8 +1136,51 @@ impl ProxyHttp for ProxyService {
                     .extract_stats_from_response_body(ctx)
                     .await
                 {
-                    Ok(new_stats) => {
-                        // 更新上下文中的token使用信息
+                    Ok(mut new_stats) => {
+                        // 若有 SSE 聚合，优先使用（latest-wins）
+                        if let Some(agg) = ctx.sse_usage_agg.clone() {
+                            new_stats.input_tokens = agg.prompt_tokens.or(new_stats.input_tokens);
+                            new_stats.output_tokens =
+                                agg.completion_tokens.or(new_stats.output_tokens);
+                            new_stats.total_tokens = Some(
+                                agg.total_tokens
+                                    .or_else(|| match (agg.prompt_tokens, agg.completion_tokens) {
+                                        (Some(p), Some(c)) => Some(p + c),
+                                        (Some(p), None) => Some(p),
+                                        (None, Some(c)) => Some(c),
+                                        (None, None) => new_stats.total_tokens,
+                                    })
+                                    .unwrap_or(0),
+                            );
+
+                            // 覆盖成本：基于聚合后的 token 重算（若有模型与provider_type）
+                            if let (Some(model), Some(provider)) =
+                                (new_stats.model_name.clone(), ctx.provider_type.as_ref())
+                            {
+                                let usage_now = crate::proxy::request_handler::TokenUsage {
+                                    prompt_tokens: new_stats.input_tokens,
+                                    completion_tokens: new_stats.output_tokens,
+                                    total_tokens: new_stats.total_tokens.unwrap_or(0),
+                                    model_used: Some(model.clone()),
+                                };
+                                if let Ok((cost, currency)) = self
+                                    .ai_handler
+                                    .statistics_service()
+                                    .calculate_cost_direct(
+                                        &model,
+                                        provider.id,
+                                        &usage_now,
+                                        &ctx.request_id,
+                                    )
+                                    .await
+                                {
+                                    new_stats.cost = cost;
+                                    new_stats.cost_currency = currency;
+                                }
+                            }
+                        }
+
+                        // 更新上下文中的token使用信息（使用合并后的 new_stats）
                         ctx.token_usage.prompt_tokens = new_stats.input_tokens;
                         ctx.token_usage.completion_tokens = new_stats.output_tokens;
                         ctx.token_usage.total_tokens = new_stats.total_tokens.unwrap_or(0);
@@ -999,11 +1192,16 @@ impl ProxyHttp for ProxyService {
                             let _ = self
                                 .ai_handler
                                 .tracing_service()
-                                .update_extended_trace_info(&ctx.request_id, None, Some(model), None)
+                                .update_extended_trace_info(
+                                    &ctx.request_id,
+                                    None,
+                                    Some(model),
+                                    None,
+                                )
                                 .await;
                         }
 
-                        // 使用完整的统计信息完成追踪
+                        // 使用合并后的统计信息完成追踪
                         if let Err(e) = tracer
                             .complete_trace_with_stats(
                                 &ctx.request_id,

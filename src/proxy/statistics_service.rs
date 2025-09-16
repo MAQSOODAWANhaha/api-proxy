@@ -50,10 +50,88 @@ pub struct StatisticsService {
 }
 
 impl StatisticsService {
+    /// 在任意层级查找并归一化 usageMetadata 到顶层，便于通用提取器工作
+    pub fn normalize_usage_metadata(&self, mut root: serde_json::Value) -> serde_json::Value {
+        // 如果顶层已存在，直接返回
+        if root.get("usageMetadata").is_some() {
+            return root;
+        }
+
+        // 深度优先在任意层级查找包含 token 计数字段的对象
+        fn dfs_find(obj: &serde_json::Value) -> Option<serde_json::Map<String, serde_json::Value>> {
+            match obj {
+                serde_json::Value::Object(map) => {
+                    let mut acc: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+                    for key in [
+                        "promptTokenCount",
+                        "candidatesTokenCount",
+                        "totalTokenCount",
+                    ] {
+                        if let Some(v) = map.get(key) {
+                            acc.insert(key.to_string(), v.clone());
+                        }
+                    }
+
+                    if !acc.is_empty() {
+                        return Some(acc);
+                    }
+
+                    // 递归遍历子对象/数组
+                    for (_k, v) in map.iter() {
+                        if let Some(found) = dfs_find(v) { return Some(found); }
+                    }
+                    None
+                }
+                serde_json::Value::Array(arr) => {
+                    for v in arr {
+                        if let Some(found) = dfs_find(v) { return Some(found); }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        if let Some(meta) = dfs_find(&root) {
+            if let Some(root_map) = root.as_object_mut() {
+                root_map.insert("usageMetadata".to_string(), serde_json::Value::Object(meta));
+            }
+        }
+
+        root
+    }
     /// 创建新的统计服务
     pub fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
         Self {
             pricing_calculator,
+        }
+    }
+
+    /// 直接根据给定的 TokenUsage 计算成本（用于 SSE 聚合覆盖后重算）
+    pub async fn calculate_cost_direct(
+        &self,
+        model: &str,
+        provider_type_id: i32,
+        usage: &TokenUsage,
+        request_id: &str,
+    ) -> Result<(Option<f64>, Option<String>), ProxyError> {
+        let pricing_usage = crate::pricing::TokenUsage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            cache_create_tokens: None,
+            cache_read_tokens: None,
+        };
+        match self
+            .pricing_calculator
+            .calculate_cost(model, provider_type_id, &pricing_usage, request_id)
+            .await
+        {
+            Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
+            Err(e) => {
+                tracing::warn!(request_id = %request_id, error = %e, "Failed to calculate cost (direct)");
+                Ok((None, None))
+            }
         }
     }
     
@@ -306,9 +384,10 @@ impl StatisticsService {
                     // 记录最后一条 JSON
                     last_json = Some(json_value.clone());
 
-                    // 如包含 usageMetadata（Gemini/Google 常见字段），则记录为候选
-                    if json_value.get("usageMetadata").is_some() {
-                        last_with_usage = Some(json_value.clone());
+                    // 归一化 usageMetadata 后再判断
+                    let normalized = self.normalize_usage_metadata(json_value.clone());
+                    if normalized.get("usageMetadata").is_some() {
+                        last_with_usage = Some(normalized);
                     }
 
                     tracing::debug!(
@@ -411,7 +490,7 @@ impl StatisticsService {
                 );
                 
                 match self.parse_sse_response(response_body) {
-                    Ok(json) => json,
+                    Ok(json) => self.normalize_usage_metadata(json),
                     Err(e) => {
                         tracing::warn!(
                             request_id = %ctx.request_id,
@@ -446,7 +525,7 @@ impl StatisticsService {
                             provider = %provider_type.name,
                             "Successfully parsed traditional streaming response"
                         );
-                        json
+                        self.normalize_usage_metadata(json)
                     }
                     None => {
                         // 如果流式解析失败，尝试作为单个JSON解析（兼容非流式响应）
@@ -457,7 +536,7 @@ impl StatisticsService {
                                     provider = %provider_type.name,
                                     "Successfully parsed single JSON response"
                                 );
-                                json
+                                self.normalize_usage_metadata(json)
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -622,7 +701,7 @@ impl StatisticsService {
                 );
                 
                 match self.parse_sse_response(response_body) {
-                    Ok(json) => json,
+                    Ok(json) => self.normalize_usage_metadata(json),
                     Err(e) => {
                         tracing::warn!(
                             request_id = %ctx.request_id,
@@ -646,10 +725,10 @@ impl StatisticsService {
                 }
 
                 match last_json {
-                    Some(json) => json,
+                    Some(json) => self.normalize_usage_metadata(json),
                     None => {
                         match serde_json::from_str(response_body) {
-                            Ok(json) => json,
+                            Ok(json) => self.normalize_usage_metadata(json),
                             Err(e) => {
                                 tracing::warn!(
                                     request_id = %ctx.request_id,
