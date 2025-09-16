@@ -817,7 +817,7 @@ impl RequestHandler {
                 ("other", vec![])
             };
 
-            if !fields_to_inject.is_empty() {
+            if !fields_to_inject.is_empty() || route_type == "countTokens" {
                 // 标记：本次请求将修改请求体（通用标记，不按路由分支）
                 ctx.will_modify_body = true;
                 tracing::info!(
@@ -909,6 +909,10 @@ impl RequestHandler {
                 // 路由2: /v1internal:onboardUser 或 /v1beta/models/{model}:onboardUser
                 // 需要注入: body.cloudaicompanionProject = project_id
                 self.inject_onboarduser_fields(json_value, &project_id, &ctx.request_id)
+            } else if request_path.contains("countTokens") {
+                // 路由5: /v1internal:countTokens 或 /v1beta/models/{model}:countTokens
+                // 需要标准化请求体结构: { request: { model: "models/{model}", contents: [...] } }
+                self.inject_counttokens_fields(json_value, &ctx.request_id)
             } else if request_path.contains("generateContent")
                 && !request_path.contains("streamGenerateContent")
             {
@@ -1043,6 +1047,68 @@ impl RequestHandler {
                 request_id = %request_id,
                 project_id = project_id,
                 "Injected top-level project field for generateContent API"
+            );
+        }
+
+        modified
+    }
+
+    /// 为 countTokens API 标准化请求体结构
+    /// 目标结构: { "request": { "model": "models/{model}", "contents": [...] } }
+    fn inject_counttokens_fields(
+        &self,
+        json_value: &mut serde_json::Value,
+        request_id: &str,
+    ) -> bool {
+        let mut modified = false;
+
+        // 确保有一个对象
+        if let Some(root) = json_value.as_object_mut() {
+            // 提取已有的 request 对象或创建新的
+            let mut request_obj = if let Some(request_val) = root.get_mut("request") {
+                if let Some(obj) = request_val.as_object_mut() {
+                    obj.clone()
+                } else {
+                    serde_json::Map::new()
+                }
+            } else {
+                serde_json::Map::new()
+            };
+
+            // 处理 model 字段：优先从 request.model，其次从根 model
+            if let Some(model_val) = request_obj.get("model").and_then(|v| v.as_str())
+                .or_else(|| root.get("model").and_then(|v| v.as_str()))
+            {
+                let model_str = if model_val.starts_with("models/") {
+                    model_val.to_string()
+                } else {
+                    format!("models/{}", model_val)
+                };
+                request_obj.insert("model".to_string(), serde_json::Value::String(model_str));
+                modified = true;
+            }
+
+            // 处理 contents：优先从 request.contents，其次从根 contents
+            if let Some(contents_val) = request_obj.get("contents").cloned()
+                .or_else(|| root.get("contents").cloned())
+            {
+                request_obj.insert("contents".to_string(), contents_val);
+                modified = true;
+            }
+
+            // 将标准化的 request 对象写回根
+            root.insert("request".to_string(), serde_json::Value::Object(request_obj));
+        }
+
+        if modified {
+            tracing::info!(
+                request_id = %request_id,
+                "Standardized countTokens request body structure"
+            );
+        } else {
+            tracing::debug!(
+                request_id = %request_id,
+                "No changes made for countTokens request body"
             );
         }
 
