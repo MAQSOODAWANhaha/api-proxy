@@ -367,16 +367,19 @@ impl ProxyHttp for ProxyService {
         // `body_chunk` 是一个 Option<Bytes>，`end_of_stream` 表示是否为最后一块
         // Some(bytes) 代表一个数据块
         // end_of_stream=true 代表整个请求体已经接收完毕
-        if is_json {
+        // 仅当需要修改请求体时（ctx.will_modify_body=true）才拦截并重写；否则一律透传，避免与 Content-Length 不一致
+        let should_modify = ctx.will_modify_body && is_json;
+
+        if is_json && should_modify {
             if let Some(chunk) = body_chunk.take() {
-                // JSON：拦截以便在结束时整体修改
+                // JSON 且需要修改：拦截以便在结束时整体修改
                 ctx.body.extend_from_slice(&chunk);
                 tracing::debug!(
                     request_id = %ctx.request_id,
                     chunk_size = chunk.len(),
                     total_buffer_size = ctx.body.len(),
                     end_of_stream = end_of_stream,
-                    "Accumulated JSON request body chunk"
+                    "Accumulated JSON request body chunk (will modify)"
                 );
             }
         } else if let Some(chunk) = body_chunk.as_ref() {
@@ -387,7 +390,7 @@ impl ProxyHttp for ProxyService {
                 chunk_size = chunk.len(),
                 total_buffer_size = ctx.body.len(),
                 end_of_stream = end_of_stream,
-                "Observed non-JSON request body chunk (pass-through)"
+                "Observed request body chunk (pass-through)"
             );
         }
 
@@ -396,7 +399,8 @@ impl ProxyHttp for ProxyService {
             tracing::info!(
                 request_id = %ctx.request_id,
                 original_body_size = ctx.body.len(),
-                "Complete request body received, applying Google Code Assist modifications"
+                will_modify_body = should_modify,
+                "Complete request body received"
             );
 
             // 记录原始请求体（人类可读 + 安全脱敏 + 长度限制）
@@ -415,8 +419,8 @@ impl ProxyHttp for ProxyService {
                 "=== 客户端请求体（原始） ==="
             );
 
-            if !is_json {
-                // 非JSON：仅记录原始请求体，不做修改
+            if !is_json || !should_modify {
+                // 非JSON或无需修改：仅记录原始请求体，保持透传，不重写 body_chunk
                 let original_preview = if let Some(pretty) = ProxyService::pretty_json_bytes(&ctx.body, ProxyService::MAX_LOG_BODY_BYTES) {
                     pretty
                 } else if let Ok(text) = std::str::from_utf8(&ctx.body) {
@@ -429,7 +433,7 @@ impl ProxyHttp for ProxyService {
                     size = ctx.body.len(),
                     content_type = %content_type,
                     body = %original_preview,
-                    "=== 客户端请求体（原始，非JSON透传） ==="
+                    "=== 客户端请求体（原样透传） ==="
                 );
 
                 return Ok(());
@@ -456,22 +460,23 @@ impl ProxyHttp for ProxyService {
                                     request_id = %ctx.request_id,
                                     "Request body successfully modified for Google Code Assist API"
                                 );
+                                // 将修改后的 JSON 对象序列化回 Vec<u8>
+                                serde_json::to_vec(&json_value).unwrap_or_else(|e| {
+                                    tracing::error!(
+                                        request_id = %ctx.request_id,
+                                        error = %e,
+                                        "Failed to serialize modified JSON, using original body"
+                                    );
+                                    ctx.body.clone()
+                                })
                             } else {
+                                // 标记了 will_modify，但最终无需修改：为了安全仍以原文透传，避免改变 Content-Length 语义
                                 tracing::debug!(
                                     request_id = %ctx.request_id,
-                                    "No modifications needed for this request"
-                                );
-                            }
-
-                            // 将修改后的 JSON 对象序列化回 Vec<u8>
-                            serde_json::to_vec(&json_value).unwrap_or_else(|e| {
-                                tracing::error!(
-                                    request_id = %ctx.request_id,
-                                    error = %e,
-                                    "Failed to serialize modified JSON, using original body"
+                                    "No modifications needed after parse; forwarding original body"
                                 );
                                 ctx.body.clone()
-                            })
+                            }
                         }
                         Err(e) => {
                             tracing::error!(
