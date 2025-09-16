@@ -7,7 +7,7 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Token字段映射类型
 #[derive(Debug, Clone, PartialEq)]
@@ -450,7 +450,12 @@ impl TokenFieldExtractor {
             }
         }
 
-        warn!(formula = %formula, "Failed to parse expression");
+        // 在实际线上环境中，很多提供商/路由并不会提供表达式涉及的字段，属于正常情况。
+        // 记录为 info，避免误报错误，同时方便定位配置缺失场景；上层会做 0/回退处理。
+        info!(
+            formula = %formula,
+            "Expression not applicable (missing inputs); using fallback/zero"
+        );
         None
     }
 

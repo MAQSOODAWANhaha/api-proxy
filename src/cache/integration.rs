@@ -45,7 +45,7 @@ pub struct UserApiConfig {
     pub timeout_seconds: Option<i32>,
     pub max_request_per_min: Option<i32>,
     pub max_requests_per_day: Option<i32>,
-    pub max_tokens_per_day: Option<i32>,
+    pub max_tokens_per_day: Option<i64>,
     pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
 }
 

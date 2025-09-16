@@ -61,8 +61,8 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(UserServiceApis::MaxRequestsPerDay).integer())
                     .col(
                         ColumnDef::new(UserServiceApis::MaxTokensPerDay)
-                            .integer()
-                            .default(10000000),
+                            .big_integer() // 改为 BIGINT，支持更大日配额（单位：token）
+                            .default(10_000_000),
                     )
                     .col(ColumnDef::new(UserServiceApis::MaxCostPerDay).decimal_len(10, 4))
                     .col(ColumnDef::new(UserServiceApis::ExpiresAt).timestamp())

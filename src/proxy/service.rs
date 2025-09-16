@@ -156,30 +156,44 @@ impl ProxyHttp for ProxyService {
         let path = session.req_header().uri.path();
         let method = session.req_header().method.as_str();
 
+        // 收集部分客户端信息用于日志
+        let req_stats = self.ai_handler.statistics_service().collect_request_stats(session);
         tracing::info!(
+            event = "downstream_request_start",
+            component = "service",
             request_id = %ctx.request_id,
             method = %method,
             path = %path,
-            flow = "request_start",
-            "收到代理请求"
+            client_ip = %req_stats.client_ip,
+            user_agent = ?req_stats.user_agent,
+            "收到下游请求"
         );
 
         // 透明代理设计：仅处理代理请求，其他全部拒绝
         if !self.is_proxy_request(path) {
             if self.is_management_request(path) {
                 tracing::warn!(
+                    event = "wrong_port",
+                    component = "service",
                     request_id = %ctx.request_id,
                     path = %path,
-                    "Management API request received on proxy port - should use port 9090"
+                    "管理接口请求被发送到代理端口，应使用管理端口(默认: 9090)"
                 );
                 return Err(Error::explain(
                     ErrorType::HTTPStatus(404),
-                    r#"{"error":"Management APIs are available on management port (default: 9090)","code":"WRONG_PORT"}"#,
+                    r#"{"error":"请使用管理端口访问管理接口(默认端口: 9090)","code":"WRONG_PORT"}"#,
                 ));
             } else {
+                tracing::warn!(
+                    event = "not_proxy_endpoint",
+                    component = "service",
+                    request_id = %ctx.request_id,
+                    path = %path,
+                    "非代理端点：该端口仅处理 AI 代理请求"
+                );
                 return Err(Error::explain(
                     ErrorType::HTTPStatus(404),
-                    r#"{"error":"Unknown endpoint - this port handles AI proxy requests (any format)","code":"NOT_PROXY_ENDPOINT"}"#,
+                    r#"{"error":"该端口仅处理 AI 代理请求(非管理/非静态)","code":"NOT_PROXY_ENDPOINT"}"#,
                 ));
             }
         }
@@ -202,7 +216,13 @@ impl ProxyHttp for ProxyService {
             .build();
 
         if let Err(e) = auth_pipeline.execute(session, ctx).await {
-            tracing::error!(request_id = %ctx.request_id, error = %e, "Authentication failed");
+            tracing::error!(
+                event = "auth_fail",
+                component = "service",
+                request_id = %ctx.request_id,
+                error = %e,
+                "认证失败"
+            );
             let _ = self
                 .ai_handler
                 .tracing_service()
@@ -218,6 +238,18 @@ impl ProxyHttp for ProxyService {
                     r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#,
                 )),
             };
+        }
+
+        // 认证成功日志
+        if let Some(user_api) = ctx.user_service_api.as_ref() {
+            tracing::info!(
+                event = "auth_ok",
+                component = "service",
+                request_id = %ctx.request_id,
+                user_service_api_id = user_api.id,
+                user_id = user_api.user_id,
+                "认证通过"
+            );
         }
 
         // 顶层开始追踪（统一副作用）
@@ -282,9 +314,11 @@ impl ProxyHttp for ProxyService {
                     "Set downstream timeouts from database configuration"
                 );
 
-                tracing::debug!(
+                tracing::info!(
+                    event = "prep_ok",
+                    component = "service",
                     request_id = %ctx.request_id,
-                    "AI proxy request preparation completed successfully - using Pingora native proxy"
+                    "代理准备完成"
                 );
 
                 // 汇总成功准备信息（provider/backend/strategy/timeout）
@@ -294,13 +328,16 @@ impl ProxyHttp for ProxyService {
                     ctx.user_service_api.as_ref(),
                 ) {
                     tracing::info!(
+                        event = "prep_detail",
+                        component = "service",
                         request_id = %ctx.request_id,
                         user_id = user_api.user_id,
                         provider = %pt.name,
+                        provider_type_id = pt.id,
                         backend_key_id = backend.id,
                         strategy = %user_api.scheduling_strategy.as_deref().unwrap_or("round_robin"),
                         timeout_s = ctx.timeout_seconds.unwrap_or(30),
-                        "Proxy preparation done: provider/backend/strategy/timeout"
+                        "准备详情：提供商/后端/策略/超时"
                     );
                 }
 
@@ -329,9 +366,11 @@ impl ProxyHttp for ProxyService {
             }
             Err(e) => {
                 tracing::error!(
+                    event = "prep_fail",
+                    component = "service",
                     request_id = %ctx.request_id,
                     error = %e,
-                    "AI proxy request preparation failed"
+                    "代理准备失败"
                 );
 
                 // 统一错误追踪：由顶层在捕获错误后决定副作用
@@ -556,7 +595,7 @@ impl ProxyHttp for ProxyService {
 
         if end_of_stream {
             // body_chunk 是 None，表示请求体已经全部到达 ctx.body 中
-            tracing::info!(
+            tracing::debug!(
                 request_id = %ctx.request_id,
                 original_body_size = ctx.body.len(),
                 will_modify_body = should_modify,
@@ -577,7 +616,7 @@ impl ProxyHttp for ProxyService {
                     hex::encode(&ctx.body[..ctx.body.len().min(1024)])
                 )
             };
-            tracing::info!(
+            tracing::debug!(
                 request_id = %ctx.request_id,
                 size = ctx.body.len(),
                 content_type = %content_type,
@@ -600,7 +639,7 @@ impl ProxyHttp for ProxyService {
                         hex::encode(&ctx.body[..ctx.body.len().min(1024)])
                     )
                 };
-                tracing::info!(
+                tracing::debug!(
                     request_id = %ctx.request_id,
                     size = ctx.body.len(),
                     content_type = %content_type,
@@ -671,7 +710,7 @@ impl ProxyHttp for ProxyService {
                 }
             };
 
-            tracing::info!(
+            tracing::debug!(
                 request_id = %ctx.request_id,
                 original_size = ctx.body.len(),
                 modified_size = modified_body.len(),
@@ -692,11 +731,13 @@ impl ProxyHttp for ProxyService {
                     hex::encode(&modified_body[..modified_body.len().min(1024)])
                 )
             };
-            tracing::info!(
+            tracing::debug!(
+                event = "upstream_request_body",
+                component = "service",
                 request_id = %ctx.request_id,
                 size = modified_body.len(),
-                body = %final_preview,
-                "=== 上游请求体（最终） ==="
+                body_preview = %final_preview,
+                "上游请求体（最终预览）"
             );
 
             // 将修改后的完整 body 放入 body_chunk 中
@@ -719,9 +760,11 @@ impl ProxyHttp for ProxyService {
             .await
             .map_err(|e| {
                 tracing::error!(
+                    event = "fail",
+                    component = "service",
                     request_id = %ctx.request_id,
                     error = %e,
-                    "Failed to filter upstream response"
+                    "处理上游响应头失败"
                 );
                 Error::new(ErrorType::InternalError)
             })?;
@@ -731,11 +774,13 @@ impl ProxyHttp for ProxyService {
         let status_code = upstream_response.status.as_u16();
 
         tracing::info!(
+            event = "upstream_response_complete",
+            component = "service",
             request_id = %ctx.request_id,
-            status = status_code,
+            status_code = status_code,
             response_time_ms = response_time.as_millis(),
             tokens_used = ctx.tokens_used,
-            "AI proxy response processed"
+            "上游响应处理完成"
         );
 
         Ok(())
@@ -821,9 +866,11 @@ impl ProxyHttp for ProxyService {
                         }
 
                         tracing::info!(
+                            event = "sse_chunk",
+                            component = "service",
                             request_id = %ctx.request_id,
-                            preview = %Self::pretty_truncated(payload, 51200),
-                            "SSE payload preview"
+                            preview = %Self::pretty_truncated(payload, 512),
+                            "SSE 行预览"
                         );
 
                         if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(payload) {
@@ -835,10 +882,12 @@ impl ProxyHttp for ProxyService {
                                 .unwrap_or("");
                             let has_usage = json_val.get("usageMetadata").is_some();
                             tracing::info!(
+                                event = "sse_chunk_parsed",
+                                component = "service",
                                 request_id = %ctx.request_id,
                                 has_usage = has_usage,
                                 finish_reason = finish,
-                                "SSE JSON parsed"
+                                "SSE JSON 解析结果"
                             );
                             if let Some(usage) = find_usage(&json_val) {
                                 let p = usage
@@ -860,11 +909,13 @@ impl ProxyHttp for ProxyService {
                                         total_tokens: t,
                                     });
                                 tracing::info!(
+                                    event = "sse_usage_update",
+                                    component = "service",
                                     request_id = %ctx.request_id,
-                                    prompt = ?p,
-                                    completion = ?c,
-                                    total = ?t,
-                                    "SSE usageMetadata updated (latest-wins)"
+                                    tokens_prompt = ?p,
+                                    tokens_completion = ?c,
+                                    tokens_total = ?t,
+                                    "SSE 使用量更新（取最新）"
                                 );
                             }
                         }
@@ -886,12 +937,14 @@ impl ProxyHttp for ProxyService {
         _digest: Option<&Digest>,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        tracing::debug!(
+        tracing::info!(
+            event = "upstream_connected",
+            component = "service",
             request_id = %ctx.request_id,
             reused = reused,
             peer_addr = ?peer._address,
             sni = %peer.sni,
-            "Connected to upstream - monitoring protocol negotiation"
+            "已连接上游"
         );
 
         // 这里可以获取协商的协议信息
@@ -932,20 +985,24 @@ impl ProxyHttp for ProxyService {
         ctx.retry_count += 1;
 
         tracing::warn!(
+            event = "fail",
+            component = "service",
             request_id = %ctx.request_id,
+            error_type = ?e.etype,
             retry_count = ctx.retry_count,
             max_retry_count = max_retry_count,
             should_retry = should_retry,
-            error_type = ?e.etype,
-            "Proxy connection failed, evaluating retry"
+            "代理失败，评估是否重试"
         );
 
         if should_retry {
             tracing::info!(
+                event = "retry",
+                component = "service",
                 request_id = %ctx.request_id,
                 retry_attempt = ctx.retry_count,
                 error_type = ?e.etype,
-                "Attempting retry for network/timeout error with same backend"
+                "对网络/超时错误执行重试（相同后端）"
             );
 
             // 对于网络错误和超时，使用相同的API密钥重试
@@ -968,12 +1025,14 @@ impl ProxyHttp for ProxyService {
             let converted_error = self.ai_handler.convert_pingora_error(e, ctx);
 
             tracing::error!(
+                event = "fail_final",
+                component = "service",
                 request_id = %ctx.request_id,
                 retry_count = ctx.retry_count,
                 max_retry_count = max_retry_count,
                 original_error = %e,
                 converted_error = %converted_error,
-                "All retry attempts exhausted, returning error response"
+                "重试已用尽，返回错误响应"
             );
 
             // 上游连接失败时立即记录到数据库（包含重试次数信息）
@@ -1202,6 +1261,7 @@ impl ProxyHttp for ProxyService {
                         }
 
                         // 使用合并后的统计信息完成追踪
+                        let cc = new_stats.cost_currency.clone();
                         if let Err(e) = tracer
                             .complete_trace_with_stats(
                                 &ctx.request_id,
@@ -1214,7 +1274,7 @@ impl ProxyHttp for ProxyService {
                                 new_stats.cache_create_tokens,
                                 new_stats.cache_read_tokens,
                                 new_stats.cost,
-                                new_stats.cost_currency,
+                                cc.clone(),
                             )
                             .await
                         {
@@ -1224,6 +1284,20 @@ impl ProxyHttp for ProxyService {
                                 "Failed to store complete trace with stats"
                             );
                         }
+                        let cost_val = new_stats.cost;
+                        let currency_val = cc;
+                        tracing::info!(
+                            event = "stats_ok",
+                            component = "service",
+                            request_id = %ctx.request_id,
+                            tokens_prompt = ?new_stats.input_tokens,
+                            tokens_completion = ?new_stats.output_tokens,
+                            tokens_total = ?new_stats.total_tokens,
+                            model_used = ?new_stats.model_name,
+                            cost = ?cost_val,
+                            cost_currency = ?currency_val,
+                            "统计与计费完成"
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(

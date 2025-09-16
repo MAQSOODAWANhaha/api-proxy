@@ -603,7 +603,7 @@ impl RequestHandler {
     async fn check_daily_token_limit(
         &self,
         service_api_id: i32,
-        token_limit: i32,
+        token_limit: i64,
     ) -> Result<(), ProxyError> {
         let today = chrono::Utc::now().date_naive();
         let today_start = today.and_hms_opt(0, 0, 0).unwrap();
@@ -629,7 +629,7 @@ impl RequestHandler {
 
         let current_usage = total_tokens_used.unwrap_or(0);
 
-        if current_usage >= token_limit as i64 {
+        if current_usage >= token_limit {
             tracing::warn!(
                 service_api_id = service_api_id,
                 current_usage = current_usage,
@@ -648,7 +648,7 @@ impl RequestHandler {
             service_api_id = service_api_id,
             current_usage = current_usage,
             token_limit = token_limit,
-            remaining = token_limit as i64 - current_usage,
+            remaining = token_limit - current_usage,
             date = %today,
             "Daily token limit check passed (database-verified)"
         );
@@ -1270,15 +1270,17 @@ impl RequestHandler {
         };
 
         tracing::info!(
+            event = "upstream_request_ready",
+            component = "request_handler",
             request_id = %ctx.request_id,
-            final_uri = %upstream_request.uri,
             method = %upstream_request.method,
-            backend_key_id = selected_backend.id,
+            final_uri = %upstream_request.uri,
             provider = %provider_type.name,
+            provider_type_id = provider_type.id,
+            backend_key_id = selected_backend.id,
             auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
-            headers = %upstream_all_headers_after_str,
-            flow = "after_modify_request",
-            "修改请求信息后（上游HTTP请求详情）"
+            upstream_headers = %upstream_all_headers_after_str,
+            "上游请求已构建"
         );
 
         Ok(())
@@ -1300,21 +1302,23 @@ impl RequestHandler {
         };
 
         tracing::info!(
+            event = "upstream_response_headers",
+            component = "request_handler",
             request_id = %ctx.request_id,
-            stage = "response",
-            status = %upstream_response.status,
+            status_code = %upstream_response.status.as_u16(),
             response_headers_key = %response_headers,
-            response_headers_all = %response_all_headers_str,
-            "=== 上游HTTP响应头 ==="
+            response_headers = %response_all_headers_str,
+            "收到上游响应头"
         );
 
         // 如果状态码为 4xx/5xx，标记失败阶段（响应体会在后续阶段打印）
         let status_code = upstream_response.status.as_u16();
         if status_code >= 400 {
             tracing::error!(
+                event = "fail",
+                component = "request_handler",
                 request_id = %ctx.request_id,
-                status = status_code,
-                flow = "response_failure",
+                status_code = status_code,
                 "响应失败，稍后打印响应体"
             );
         }

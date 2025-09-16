@@ -52,8 +52,8 @@ pub struct CreateUserServiceKeyRequest {
     pub max_request_per_min: Option<i32>,
     /// 每日最大请求数
     pub max_requests_per_day: Option<i32>,
-    /// 每日最大Token数
-    pub max_tokens_per_day: Option<i32>,
+    /// 每日最大Token数（单位：token，支持大整数）
+    pub max_tokens_per_day: Option<i64>,
     /// 每日最大费用
     pub max_cost_per_day: Option<Decimal>,
     /// 过期时间(ISO 8601格式)
@@ -81,8 +81,8 @@ pub struct UpdateUserServiceKeyRequest {
     pub max_request_per_min: Option<i32>,
     /// 每日最大请求数
     pub max_requests_per_day: Option<i32>,
-    /// 每日最大Token数
-    pub max_tokens_per_day: Option<i32>,
+    /// 每日最大Token数（单位：token，支持大整数）
+    pub max_tokens_per_day: Option<i64>,
     /// 每日最大费用
     pub max_cost_per_day: Option<Decimal>,
     /// 过期时间(ISO 8601格式)
@@ -172,8 +172,8 @@ pub struct UserServiceKeyDetailResponse {
     pub max_request_per_min: Option<i32>,
     /// 每日最大请求数
     pub max_requests_per_day: Option<i32>,
-    /// 每日最大Token数
-    pub max_tokens_per_day: Option<i32>,
+    /// 每日最大Token数（单位：token，支持大整数）
+    pub max_tokens_per_day: Option<i64>,
     /// 每日最大费用
     pub max_cost_per_day: Option<Decimal>,
     /// 过期时间
