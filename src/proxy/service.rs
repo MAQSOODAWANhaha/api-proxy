@@ -189,7 +189,63 @@ impl ProxyHttp for ProxyService {
 
         // 使用AI代理处理器进行身份验证、速率限制和转发策略
         // 这会设置 ctx.timeout_seconds 从数据库配置
-        match self.ai_handler.prepare_proxy_request(session, ctx).await {
+        // 使用管道：认证 + 其余准备（追踪/限流/配置/密钥选择）
+        // Phase A: 先做认证
+        let auth_pipeline = crate::proxy::pipeline::PipelineBuilder::new()
+            .step(std::sync::Arc::new(crate::proxy::pipeline::AuthenticationStep::new(
+                self.ai_handler.auth_service().clone(),
+            )))
+            .build();
+
+        if let Err(e) = auth_pipeline.execute(session, ctx).await {
+            tracing::error!(request_id = %ctx.request_id, error = %e, "Authentication failed");
+            let _ = self.ai_handler.tracing_service().complete_trace_with_error(&ctx.request_id, &e).await;
+            return match e {
+                crate::error::ProxyError::Authentication { .. } => {
+                    let msg = format!(r#"{{"error":"{}","code":"AUTH_ERROR"}}"#, e);
+                    Err(Error::explain(ErrorType::HTTPStatus(401), msg))
+                }
+                _ => Err(Error::explain(ErrorType::HTTPStatus(500), r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#)),
+            };
+        }
+
+        // 顶层开始追踪（统一副作用）
+        if let Some(user_api) = ctx.user_service_api.as_ref() {
+            let method = session.req_header().method.as_str();
+            let path = Some(session.req_header().uri.path().to_string());
+            let req_stats = self.ai_handler.statistics_service().collect_request_stats(session);
+            let client_ip = req_stats.client_ip.clone();
+            let user_agent = req_stats.user_agent.clone();
+            if let Err(e) = self.ai_handler.tracing_service().start_trace(
+                &ctx.request_id,
+                user_api.id,
+                Some(user_api.user_id),
+                method,
+                path,
+                Some(client_ip),
+                user_agent,
+            ).await {
+                tracing::warn!(request_id = %ctx.request_id, error = %e, "Failed to start trace");
+            }
+        }
+
+        // Phase B: 其余准备（限流、配置、密钥选择）
+        let prep_pipeline = crate::proxy::pipeline::PipelineBuilder::new()
+            .step(std::sync::Arc::new(crate::proxy::pipeline::RateLimitStepReal::new(
+                self.ai_handler.clone(),
+            )))
+            .step(std::sync::Arc::new(crate::proxy::pipeline::ProviderConfigStep::new(
+                self.ai_handler.clone(),
+            )))
+            .step(std::sync::Arc::new(crate::proxy::pipeline::ApiKeySelectionStep::new(
+                self.ai_handler.clone(),
+            )))
+            .step(std::sync::Arc::new(crate::proxy::pipeline::CredentialResolutionStep::new(
+                self.ai_handler.clone(),
+            )))
+            .build();
+
+        match prep_pipeline.execute(session, ctx).await {
             Ok(_) => {
                 // 使用数据库配置的超时时间设置下游超时
                 let timeout_seconds = ctx.timeout_seconds.unwrap_or(30) as u64;
@@ -212,9 +268,38 @@ impl ProxyHttp for ProxyService {
                     "AI proxy request preparation completed successfully - using Pingora native proxy"
                 );
 
+                // 汇总成功准备信息（provider/backend/strategy/timeout）
+                if let (Some(pt), Some(backend), Some(user_api)) = (
+                    ctx.provider_type.as_ref(),
+                    ctx.selected_backend.as_ref(),
+                    ctx.user_service_api.as_ref(),
+                ) {
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        user_id = user_api.user_id,
+                        provider = %pt.name,
+                        backend_key_id = backend.id,
+                        strategy = %user_api.scheduling_strategy.as_deref().unwrap_or("round_robin"),
+                        timeout_s = ctx.timeout_seconds.unwrap_or(30),
+                        "Proxy preparation done: provider/backend/strategy/timeout"
+                    );
+                }
+
+                // 统一更新扩展追踪信息（成功路径）：provider_type_id / user_provider_key_id
+                if let (Some(pt), Some(backend)) = (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref()) {
+                    if let Err(err) = self
+                        .ai_handler
+                        .tracing_service()
+                        .update_extended_trace_info(&ctx.request_id, Some(pt.id), None, Some(backend.id))
+                        .await
+                    {
+                        tracing::warn!(request_id = %ctx.request_id, error = %err, "Failed to update extended trace info");
+                    }
+                }
+
                 // 返回 false 让 Pingora 继续处理请求转发
                 // 后续由 upstream_peer, upstream_request_filter, response_filter 等方法完成代理
-                Ok(false)
+                return Ok(false);
             }
             Err(e) => {
                 tracing::error!(
@@ -223,8 +308,15 @@ impl ProxyHttp for ProxyService {
                     "AI proxy request preparation failed"
                 );
 
+                // 统一错误追踪：由顶层在捕获错误后决定副作用
+                let _ = self
+                    .ai_handler
+                    .tracing_service()
+                    .complete_trace_with_error(&ctx.request_id, &e)
+                    .await;
+
                 // 根据错误类型返回相应的HTTP状态码
-                match e {
+                return match e {
                     crate::error::ProxyError::Authentication { .. } => {
                         let msg = format!(r#"{{"error":"{}","code":"AUTH_ERROR"}}"#, e);
                         Err(Error::explain(ErrorType::HTTPStatus(401), msg))
@@ -266,7 +358,7 @@ impl ProxyHttp for ProxyService {
                         ErrorType::HTTPStatus(500),
                         r#"{"error":"Internal server error","code":"INTERNAL_ERROR"}"#,
                     )),
-                }
+                };
             }
         }
     }
@@ -293,6 +385,32 @@ impl ProxyHttp for ProxyService {
             .select_upstream_peer(ctx)
             .await
             .map_err(|e| {
+                // 统一错误追踪（异步，不阻塞）：上游选择失败
+                let req_id = ctx.request_id.clone();
+                let tracer = self.ai_handler.tracing_service().clone();
+                let (code, etype, msg) = match &e {
+                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => (
+                        504,
+                        "connection_timeout".to_string(),
+                        format!("Connection timeout after {}s", timeout_seconds),
+                    ),
+                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => (
+                        504,
+                        "read_timeout".to_string(),
+                        format!("Read timeout after {}s", timeout_seconds),
+                    ),
+                    crate::error::ProxyError::Network { message, .. } => (
+                        502,
+                        "network_error".to_string(),
+                        format!("Network error: {}", message),
+                    ),
+                    _ => (500, "upstream_error".to_string(), e.to_string()),
+                };
+                tokio::spawn(async move {
+                    let _ = tracer
+                        .complete_trace_failure(&req_id, code, Some(etype), Some(msg))
+                        .await;
+                });
                 match e {
                     crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => {
                         Error::explain(
@@ -336,6 +454,22 @@ impl ProxyHttp for ProxyService {
                     error = %e,
                     "Failed to filter upstream request"
                 );
+                // 统一错误追踪（异步）
+                let req_id = ctx.request_id.clone();
+                let tracer = self.ai_handler.tracing_service().clone();
+                let (code, etype, msg) = match &e {
+                    crate::error::ProxyError::Network { message, .. } => (
+                        502,
+                        "network_error".to_string(),
+                        format!("Network error: {}", message),
+                    ),
+                    _ => (500, "request_filter_error".to_string(), e.to_string()),
+                };
+                tokio::spawn(async move {
+                    let _ = tracer
+                        .complete_trace_failure(&req_id, code, Some(etype), Some(msg))
+                        .await;
+                });
                 match e {
                     crate::error::ProxyError::Network { .. } => Error::explain(
                         ErrorType::HTTPStatus(502),
@@ -451,7 +585,7 @@ impl ProxyHttp for ProxyService {
                     // 这会根据路由和OAuth配置注入相应的字段
                     match self
                         .ai_handler
-                        .modify_gemini_request_body_json(&mut json_value, session, ctx)
+                        .modify_provider_request_body_json(&mut json_value, session, ctx)
                         .await
                     {
                         Ok(modified) => {
@@ -859,6 +993,15 @@ impl ProxyHttp for ProxyService {
                         ctx.token_usage.total_tokens = new_stats.total_tokens.unwrap_or(0);
                         ctx.token_usage.model_used = new_stats.model_name.clone();
                         ctx.tokens_used = ctx.token_usage.total_tokens;
+
+                        // 统一更新扩展追踪中的模型信息（成功路径）
+                        if let Some(model) = new_stats.model_name.clone() {
+                            let _ = self
+                                .ai_handler
+                                .tracing_service()
+                                .update_extended_trace_info(&ctx.request_id, None, Some(model), None)
+                                .await;
+                        }
 
                         // 使用完整的统计信息完成追踪
                         if let Err(e) = tracer

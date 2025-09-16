@@ -67,7 +67,7 @@ fn response_body_filter(&self, body: &mut Option<Bytes>, ctx: &mut Self::CTX) {
 
 **技术方案**:
 
-1. **引入流式上下文管理**:
+1. **引入流式上下文管理**（保持与 Pipeline/ProxyService 兼容）:
 ```rust
 pub struct StreamingResponseContext {
     pub token_extractor: TokenFieldExtractor,

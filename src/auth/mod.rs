@@ -21,6 +21,7 @@ pub mod smart_api_key_provider; // 智能API密钥提供者
 pub mod strategies;
 pub mod strategy_manager;
 pub mod types;
+pub mod rate_limit_dist; // 分布式限流器
 // pub mod unified; // 已删除，使用services架构替代
 pub mod unified_refactored; // 重构后的统一认证管理器
 pub mod utils;

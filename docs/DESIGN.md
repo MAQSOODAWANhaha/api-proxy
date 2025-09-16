@@ -938,17 +938,11 @@ impl ProxyHttp for UnifiedProxyService {
             },
             RouteType::AIProxy => {
                 // 处理AI代理请求
-                match self.ai_proxy_handler.prepare_proxy_request(session, ctx).await {
-                    Ok(_) => Ok(false), // 继续代理流程
-                    Err(e) => {
-                        tracing::error!(
-                            request_id = %ctx.request_id,
-                            error = %e,
-                            "AI proxy preparation failed"
-                        );
-                        self.send_error_response(session, e).await;
-                        Ok(true)
-                    }
+                // 使用 Pipeline 执行准备（认证→限流→配置→选 key）；错误在顶层统一映射
+                let prep = build_pipeline();
+                match prep.execute(session, ctx).await {
+                    Ok(_) => Ok(false),
+                    Err(e) => { self.send_error_response(session, e).await; Ok(true) }
                 }
             }
         }
@@ -1148,16 +1142,7 @@ impl AIProxyHandler {
         Self { app_state }
     }
 
-    pub async fn prepare_proxy_request(
-        &self,
-        session: &Session,
-        ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
-        // 1. 提取并验证API密钥
-        let api_key = self.extract_api_key(session)?;
-        let user_service_api = self.authenticate_api_key(&api_key).await?;
-        ctx.user_service_api = Some(user_service_api.clone());
-
+    // 旧式 prepare_proxy_request 已废弃：改为 ProxyService + Pipeline
         // 2. 检查速率限制
         self.check_rate_limit(&user_service_api).await?;
 

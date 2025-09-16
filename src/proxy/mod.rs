@@ -6,7 +6,7 @@ pub mod types;
 pub mod server;
 pub mod service;
 pub mod statistics;
-// 中间件功能已集成到RequestHandler中
+// 统一通过 ProxyService + Pipeline 调度；RequestHandler 提供纯业务方法
 pub mod request_handler;
 pub mod provider_adapter;
 pub mod request_forwarder;
@@ -14,7 +14,9 @@ pub mod builder;
 pub mod pingora_proxy;
 pub mod authentication_service;
 pub mod statistics_service;
+pub mod provider_strategy;
 pub mod tracing_service;
+pub mod pipeline;
 pub use request_handler::{RequestHandler, ProxyContext};
 pub use provider_adapter::ProviderAdapter;
 pub use request_forwarder::RequestForwarder;

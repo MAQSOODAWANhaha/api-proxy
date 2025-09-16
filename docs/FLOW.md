@@ -88,25 +88,24 @@ flowchart TD
             CheckProxyReq -->|否| ReturnError["返回404/管理端口提示"]
             CheckProxyReq -->|是| HandleCORS{"method == OPTIONS?"}
             HandleCORS -->|是| Return200["返回200 CORS响应"]
-            HandleCORS -->|否| PrepareProxy["ai_handler.prepare_proxy_request()"]
+            HandleCORS -->|否| AuthPhase["身份验证<br/>AuthenticationStep"]
+            AuthPhase --> StartTrace["开始追踪<br/>TracingService::start_trace()"]
+            StartTrace --> PrepareProxy["Pipeline 执行 (限流→配置→选 key)"]
         end
         
-        subgraph PrepareProxyDetail["prepare_proxy_request 协调器模式"]
-            PrepareProxy --> Step0["步骤0: 服务商解析<br/>ProviderResolver::resolve_from_request()"]
-            Step0 --> Step1["步骤1: 身份验证<br/>AuthenticationService::authenticate_with_provider()"]
+        subgraph PrepareProxyDetail["Pipeline 模式（准备阶段）"]
+            PrepareProxy --> Step2["步骤2: 速率限制检查<br/>RateLimitStepReal"]
             
             subgraph AuthFlow["🔐 认证流程详细"]
-                Step1 --> ParseKey["parse_inbound_api_key_from_client()<br/>解析客户端认证头"]
+                AuthPhase --> ParseKey["parse_inbound_api_key_from_client()<br/>解析客户端认证头"]
                 ParseKey --> ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
                 ExtractHeaders --> UnifiedAuth["RefactoredUnifiedAuthManager<br/>.authenticate_proxy_request()"]
                 UnifiedAuth --> VerifyMatch["验证provider类型匹配"]
                 VerifyMatch --> AuthResult["构造AuthenticationResult"]
             end
             
-            Step1 --> Step2["步骤2: 开始追踪<br/>TracingService::start_trace()"]
-            Step2 --> Step3["步骤3: 速率限制检查<br/>check_rate_limit()"]
-            Step3 --> Step4["步骤4: 获取Provider配置<br/>从ctx.provider_type获取"]
-            Step4 --> Step5["步骤5: API密钥选择<br/>select_api_key()"]
+            Step2 --> Step3["步骤3: 获取Provider配置<br/>ProviderConfigStep"]
+            Step3 --> Step4["步骤4: API密钥选择<br/>ApiKeySelectionStep"]
             
             subgraph LoadBalance["⚖️ 负载均衡详细"]
                 Step5 --> CreateSelectionCtx["创建SelectionContext"]
@@ -122,7 +121,7 @@ flowchart TD
                 HealthBest --> SelectedKey
             end
             
-            Step5 --> UpdateTrace["更新扩展追踪信息"]
+            Step4 --> UpdateTrace["ProxyService 统一更新扩展追踪信息<br/>(provider_type_id / user_provider_key_id)"]
         end
         
         PrepareProxy --> UpstreamPeer["upstream_peer(session, ctx)<br/>选择上游节点"]
@@ -130,7 +129,7 @@ flowchart TD
         subgraph UpstreamSelection["🎯 上游选择"]
             UpstreamPeer --> CheckRetry{"ctx.retry_count > 0?"}
             CheckRetry -->|是| AddDelay["添加重试延迟"]
-            CheckRetry -->|否| SelectUpstream["使用provider.base_url构建HttpPeer"]
+            CheckRetry -->|否| SelectUpstream["ProviderStrategy 选择 host 或回退 base_url"]
             AddDelay --> SelectUpstream
             SelectUpstream --> BuildPeer["HttpPeer::new(upstream_addr, TLS)"]
         end

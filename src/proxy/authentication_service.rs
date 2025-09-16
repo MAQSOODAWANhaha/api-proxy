@@ -244,6 +244,35 @@ impl AuthenticationService {
         Ok(auth_result)
     }
 
+    /// 仅进行入口 API Key 认证（不做上游密钥选择、不替换凭证）
+    pub async fn authenticate_entry_api(
+        &self,
+        session: &mut Session,
+        request_id: &str,
+    ) -> Result<entity::user_service_apis::Model, ProxyError> {
+        tracing::debug!(request_id = %request_id, "Authenticating entry API key only");
+
+        // 检测用户携带的认证信息（query/header）
+        let user_auth = self.detect_user_auth_from_request(session)?;
+
+        // 验证用户服务 API 密钥
+        let proxy_auth_result = self
+            .auth_manager
+            .authenticate_proxy_request(&user_auth.auth_value)
+            .await?;
+
+        tracing::info!(
+            request_id = %request_id,
+            user_id = proxy_auth_result.user_id,
+            provider_type_id = proxy_auth_result.provider_type_id,
+            user_service_api_id = proxy_auth_result.user_api.id,
+            api_key_preview = %AuthUtils::sanitize_api_key(&user_auth.auth_value),
+            "Entry API authentication success (no credential replacement)"
+        );
+
+        Ok(proxy_auth_result.user_api)
+    }
+
     /// 根据auth_type获取真实凭据并立即在请求中替换
     ///
     /// 关键改进：区别处理API Key和OAuth认证类型

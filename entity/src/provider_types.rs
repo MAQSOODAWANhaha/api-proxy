@@ -149,12 +149,11 @@ impl Model {
                 }
                 
                 // 验证redirect_uri（如果存在）
-                if let Some(ref redirect_uri) = config.redirect_uri {
-                    if !redirect_uri.is_empty() {
-                        if let Err(e) = url::Url::parse(redirect_uri) {
-                            return Err(format!("Invalid redirect_uri: {}", e));
-                        }
-                    }
+                if let Some(ref redirect_uri) = config.redirect_uri
+                    && !redirect_uri.is_empty()
+                    && let Err(e) = url::Url::parse(redirect_uri)
+                {
+                    return Err(format!("Invalid redirect_uri: {}", e));
                 }
                 
                 // 验证scopes格式
@@ -220,12 +219,11 @@ impl Model {
     /// 替换动态参数
     pub fn replace_dynamic_params(&self, oauth_config: &mut OAuthConfig, params: &std::collections::HashMap<String, String>) {
         // 替换project_id等动态参数
-        if let Some(ref mut project_id) = oauth_config.project_id {
-            if project_id == "{dynamic_project_id}" {
-                if let Some(actual_project_id) = params.get("project_id") {
-                    *project_id = actual_project_id.clone();
-                }
-            }
+        if let Some(ref mut project_id) = oauth_config.project_id
+            && project_id == "{dynamic_project_id}"
+            && let Some(actual_project_id) = params.get("project_id")
+        {
+            *project_id = actual_project_id.clone();
         }
     }
 }
