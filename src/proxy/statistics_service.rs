@@ -288,59 +288,48 @@ impl StatisticsService {
 
     /// 解析SSE(Server-Sent Events)格式的响应体
     /// 
-    /// SSE响应格式为多行"data: {...}"，需要提取每行的JSON数据并返回最后一个完整的JSON对象
+    /// 改进：遍历所有 data: 行，优先返回包含 usageMetadata 的最后一条；
+    /// 若未出现 usageMetadata，则回退为最后一条有效 JSON。
     fn parse_sse_response(&self, response_body: &str) -> Result<serde_json::Value, ProxyError> {
-        let mut last_json = None;
-        
-        // 按行分割响应体，处理每个"data: "行
+        let mut last_json: Option<serde_json::Value> = None;
+        let mut last_with_usage: Option<serde_json::Value> = None;
+
         for line in response_body.lines() {
             let line = line.trim();
-            
-            // 跳过空行和非data行
-            if line.is_empty() || !line.starts_with("data: ") {
-                continue;
-            }
-            
-            // 提取"data: "后面的JSON字符串
-            let json_str = &line[6..]; // 跳过"data: "前缀
-            
-            // 跳过SSE结束标记
-            if json_str == "[DONE]" {
-                break;
-            }
-            
-            // 尝试解析JSON
+            if line.is_empty() || !line.starts_with("data: ") { continue; }
+
+            let json_str = &line[6..];
+            if json_str == "[DONE]" { break; }
+
             match serde_json::from_str::<serde_json::Value>(json_str) {
                 Ok(json_value) => {
-                    last_json = Some(json_value);
+                    // 记录最后一条 JSON
+                    last_json = Some(json_value.clone());
+
+                    // 如包含 usageMetadata（Gemini/Google 常见字段），则记录为候选
+                    if json_value.get("usageMetadata").is_some() {
+                        last_with_usage = Some(json_value.clone());
+                    }
+
                     tracing::debug!(
-                        json_preview = %if json_str.len() > 200 { 
-                            format!("{}...", &json_str[..200]) 
-                        } else { 
-                            json_str.to_string() 
-                        },
-                        "Successfully parsed SSE data line"
+                        has_usage = %json_value.get("usageMetadata").is_some(),
+                        json_preview = %if json_str.len() > 200 { format!("{}...", &json_str[..200]) } else { json_str.to_string() },
+                        "Parsed SSE data line"
                     );
                 }
                 Err(e) => {
                     tracing::debug!(
-                        line = %if json_str.len() > 200 { 
-                            format!("{}...", &json_str[..200]) 
-                        } else { 
-                            json_str.to_string() 
-                        },
+                        line = %if json_str.len() > 200 { format!("{}...", &json_str[..200]) } else { json_str.to_string() },
                         error = %e,
                         "Failed to parse SSE data line as JSON, continuing"
                     );
-                    // 继续处理其他行，不中断整个解析过程
                 }
             }
         }
-        
-        match last_json {
-            Some(json) => Ok(json),
-            None => Err(ProxyError::internal("No valid JSON data found in SSE response"))
-        }
+
+        if let Some(json) = last_with_usage { return Ok(json); }
+        if let Some(json) = last_json { return Ok(json); }
+        Err(ProxyError::internal("No valid JSON data found in SSE response"))
     }
 
     /// 检测响应体是否为SSE格式
@@ -505,20 +494,40 @@ impl StatisticsService {
         };
 
         // 使用TokenFieldExtractor从响应体JSON中提取token信息
-        let prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
-        let completion_tokens =
+        let mut prompt_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
+        let mut completion_tokens =
             token_extractor.extract_token_u32(&response_json, "tokens_completion");
-        let total_tokens = token_extractor
-            .extract_token_u32(&response_json, "tokens_total")
-            .unwrap_or_else(|| {
-                // 如果没有配置total_tokens字段，尝试通过prompt + completion计算
-                match (prompt_tokens, completion_tokens) {
-                    (Some(p), Some(c)) => p + c,
-                    (Some(p), None) => p,
-                    (None, Some(c)) => c,
-                    (None, None) => 0,
+        let mut total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total");
+
+        // 额外容错：Gemini SSE 可能只提供 usageMetadata.totalTokenCount
+        if total_tokens.is_none() {
+            if let Some(usage) = response_json.get("usageMetadata") {
+                if let Some(tt) = usage.get("totalTokenCount").and_then(|v| v.as_u64()) {
+                    total_tokens = Some(tt as u32);
                 }
-            });
+                // 若缺失 completion，则用 total - prompt 估算（有 prompt 时）
+                if completion_tokens.is_none() && prompt_tokens.is_some() {
+                    if let Some(tt) = total_tokens {
+                        let p = prompt_tokens.unwrap_or(0);
+                        if tt >= p { completion_tokens = Some(tt - p); }
+                    }
+                }
+                // 若缺失 prompt，则用 total - completion 估算（有 completion 时）
+                if prompt_tokens.is_none() && completion_tokens.is_some() {
+                    if let Some(tt) = total_tokens {
+                        let c = completion_tokens.unwrap_or(0);
+                        if tt >= c { prompt_tokens = Some(tt - c); }
+                    }
+                }
+            }
+        }
+
+        let total_tokens = total_tokens.unwrap_or_else(|| match (prompt_tokens, completion_tokens) {
+            (Some(p), Some(c)) => p + c,
+            (Some(p), None) => p,
+            (None, Some(c)) => c,
+            (None, None) => 0,
+        });
 
         // 提取模型信息（使用数据驱动的ModelExtractor）
         let model_used = self
@@ -671,18 +680,24 @@ impl StatisticsService {
         };
 
         // 提取基础的token信息
-        let input_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
-        let output_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
-        let total_tokens = token_extractor
-            .extract_token_u32(&response_json, "tokens_total")
-            .or_else(|| {
-                match (input_tokens, output_tokens) {
-                    (Some(i), Some(o)) => Some(i + o),
-                    (Some(i), None) => Some(i),
-                    (None, Some(o)) => Some(o),
-                    (None, None) => None,
+        let mut input_tokens = token_extractor.extract_token_u32(&response_json, "tokens_prompt");
+        let mut output_tokens = token_extractor.extract_token_u32(&response_json, "tokens_completion");
+        let mut total_tokens = token_extractor.extract_token_u32(&response_json, "tokens_total");
+
+        // 额外容错：Gemini SSE 仅有 totalTokenCount 的情况
+        if total_tokens.is_none() {
+            if let Some(usage) = response_json.get("usageMetadata") {
+                if let Some(tt) = usage.get("totalTokenCount").and_then(|v| v.as_u64()) {
+                    total_tokens = Some(tt as u32);
                 }
-            });
+                if output_tokens.is_none() && input_tokens.is_some() {
+                    if let Some(tt) = total_tokens { let p = input_tokens.unwrap_or(0); if tt >= p { output_tokens = Some(tt - p); } }
+                }
+                if input_tokens.is_none() && output_tokens.is_some() {
+                    if let Some(tt) = total_tokens { let c = output_tokens.unwrap_or(0); if tt >= c { input_tokens = Some(tt - c); } }
+                }
+            }
+        }
 
         // 提取缓存相关的token信息（如果配置了的话）
         let cache_create_tokens = token_extractor.extract_token_u32(&response_json, "cache_creation_input_tokens");
