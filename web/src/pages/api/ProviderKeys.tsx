@@ -213,12 +213,14 @@ const ProviderKeysPage: React.FC = () => {
         await fetchData()
         await fetchDashboardStats()
         setDialogType(null)
+        toast.success('创建密钥成功')
       } else {
         throw new Error(response.error?.message || '创建密钥失败')
       }
     } catch (error) {
       console.error('添加密钥失败:', error)
-      alert(error instanceof Error ? error.message : '添加密钥失败')
+      const msg = error instanceof Error ? error.message : '添加密钥失败'
+      toast.error(msg)
     }
   }
 
@@ -257,12 +259,14 @@ const ProviderKeysPage: React.FC = () => {
         await fetchDashboardStats()
         setDialogType(null)
         setSelectedItem(null)
+        toast.success('更新密钥成功')
       } else {
         throw new Error(response.error?.message || '更新密钥失败')
       }
     } catch (error) {
       console.error('编辑密钥失败:', error)
-      alert(error instanceof Error ? error.message : '编辑密钥失败')
+      const msg = error instanceof Error ? error.message : '编辑密钥失败'
+      toast.error(msg)
     }
   }
 
@@ -278,12 +282,14 @@ const ProviderKeysPage: React.FC = () => {
           await fetchDashboardStats()
           setDialogType(null)
           setSelectedItem(null)
+          toast.success('删除密钥成功')
         } else {
           throw new Error(response.error?.message || '删除密钥失败')
         }
       } catch (error) {
         console.error('删除密钥失败:', error)
-        alert(error instanceof Error ? error.message : '删除密钥失败')
+        const msg = error instanceof Error ? error.message : '删除密钥失败'
+        toast.error(msg)
       }
     }
   }
@@ -862,7 +868,7 @@ const AddDialog: React.FC<{
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
     if (formData.auth_type.includes('oauth') && oauthStatus !== 'success') {
-      alert('请先完成OAuth授权流程')
+      toast.info('请先完成OAuth授权流程')
       return
     }
     onSubmit(formData)
@@ -1304,7 +1310,7 @@ const EditDialog: React.FC<{
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
     if (formData.auth_type.includes('oauth') && oauthStatus !== 'success') {
-      alert('请先完成OAuth授权流程')
+      toast.info('请先完成OAuth授权流程')
       return
     }
     onSubmit(formData)
