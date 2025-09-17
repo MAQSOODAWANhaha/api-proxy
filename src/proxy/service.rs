@@ -647,6 +647,16 @@ impl ProxyHttp for ProxyService {
                     "=== 客户端请求体（原样透传） ==="
                 );
 
+                // 统一输出最终要发送的请求体（即便未修改）
+                tracing::info!(
+                    event = "upstream_request_body_final",
+                    component = "service",
+                    request_id = %ctx.request_id,
+                    size = ctx.body.len(),
+                    body_preview = %original_preview,
+                    "上游请求体（最终）"
+                );
+
                 return Ok(());
             }
 
@@ -738,6 +748,16 @@ impl ProxyHttp for ProxyService {
                 size = modified_body.len(),
                 body_preview = %final_preview,
                 "上游请求体（最终预览）"
+            );
+
+            // 额外输出一份 info 级别日志，便于线上排查（带限长与脱敏预览）
+            tracing::info!(
+                event = "upstream_request_body_final",
+                component = "service",
+                request_id = %ctx.request_id,
+                size = modified_body.len(),
+                body_preview = %final_preview,
+                "上游请求体（最终）"
             );
 
             // 将修改后的完整 body 放入 body_chunk 中

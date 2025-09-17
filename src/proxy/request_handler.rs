@@ -1269,12 +1269,22 @@ impl RequestHandler {
             )
         };
 
+        // 计算上游可读 URL（用于排查：host + path），仅用于日志
+        let upstream_host_for_log = upstream_request
+            .headers
+            .get("host")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .unwrap_or("<unknown-host>");
+        let upstream_url_for_log = format!("https://{}{}", upstream_host_for_log, upstream_request.uri);
+
         tracing::info!(
             event = "upstream_request_ready",
             component = "request_handler",
             request_id = %ctx.request_id,
             method = %upstream_request.method,
             final_uri = %upstream_request.uri,
+            upstream_host = %upstream_host_for_log,
+            upstream_url = %upstream_url_for_log,
             provider = %provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
