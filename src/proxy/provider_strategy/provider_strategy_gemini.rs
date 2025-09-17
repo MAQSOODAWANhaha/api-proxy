@@ -31,6 +31,14 @@ impl GeminiProxyMode {
 #[derive(Default)]
 pub struct GeminiStrategy;
 
+fn normalize_resource_project(project_id: &str) -> String {
+    if project_id.starts_with("projects/") {
+        project_id.to_owned()
+    } else {
+        format!("projects/{}", project_id)
+    }
+}
+
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
     fn name(&self) -> &'static str { "gemini" }
@@ -61,6 +69,26 @@ impl ProviderStrategy for GeminiStrategy {
         // 最小示例：为部分上游补充常见 UA/Client 头，避免上游行为差异
         let _ = upstream_request.insert_header("x-client-vendor", "api-proxy");
         let _ = upstream_request.insert_header("x-client-product", "pingora");
+        // Google 端常见要求：OAuth 用户凭证需要携带计费项目用于配额记账
+        if let Some(backend) = ctx.selected_backend.as_ref() {
+            if backend.auth_type.as_str() == "oauth" {
+                if let Some(pid) = &backend.project_id {
+                    if !pid.is_empty() {
+                        // 计费/配额项目
+                        let _ = upstream_request.insert_header("x-goog-user-project", pid.as_str());
+
+                        // 对 generateContent/streamGenerateContent 额外设置 x-goog-request-params，
+                        // 便于上游在未读取 body 时即可进行资源路由与校验
+                        let path = session.req_header().uri.path();
+                        if path.contains("generateContent") {
+                            let resource = normalize_resource_project(pid);
+                            let header_val = format!("project={}", resource);
+                            let _ = upstream_request.insert_header("x-goog-request-params", header_val);
+                        }
+                    }
+                }
+            }
+        }
 
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
         if let Some(backend) = ctx.selected_backend.as_ref() {
@@ -71,6 +99,7 @@ impl ProviderStrategy for GeminiStrategy {
                         let need = path.contains("loadCodeAssist")
                             || path.contains("onboardUser")
                             || path.contains("countTokens")
+                            || path.contains("streamGenerateContent")
                             || (path.contains("generateContent") && !path.contains("streamGenerateContent"));
                         ctx.will_modify_body = need;
                     }
@@ -100,6 +129,8 @@ impl ProviderStrategy for GeminiStrategy {
         } else if request_path.contains("countTokens") {
             inject_counttokens_fields(json_value, &ctx.request_id)
         } else if request_path.contains("generateContent") && !request_path.contains("streamGenerateContent") {
+            inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
+        } else if request_path.contains("streamGenerateContent") {
             inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
         } else {
             false
@@ -165,10 +196,8 @@ fn inject_generatecontent_fields(
     request_id: &str,
 ) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
-        obj.insert(
-            "project".to_string(),
-            serde_json::Value::String(project_id.to_owned()),
-        );
+        let resource = normalize_resource_project(project_id);
+        obj.insert("project".to_string(), serde_json::Value::String(resource));
         tracing::debug!(request_id = %request_id, project_id = project_id, "Injected top-level project (generateContent)");
         return true;
     }
@@ -278,7 +307,7 @@ mod tests {
         let mut v = serde_json::json!({});
         let changed = inject_generatecontent_fields(&mut v, "p", "req");
         assert!(changed);
-        assert_eq!(v["project"], "p");
+        assert_eq!(v["project"], "projects/p");
     }
 
     #[test]
