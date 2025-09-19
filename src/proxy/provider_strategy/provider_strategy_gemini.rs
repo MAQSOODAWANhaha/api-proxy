@@ -7,9 +7,9 @@ use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 
 use crate::error::ProxyError;
-use crate::proxy::ProxyContext;
 use crate::logging::LogComponent;
-use crate::{proxy_info, proxy_debug};
+use crate::proxy::ProxyContext;
+use crate::{proxy_debug, proxy_info};
 
 use super::ProviderStrategy;
 
@@ -33,28 +33,30 @@ impl GeminiProxyMode {
 #[derive(Default)]
 pub struct GeminiStrategy;
 
-fn normalize_resource_project(project_id: &str) -> String {
-    if project_id.starts_with("projects/") {
-        project_id.to_owned()
-    } else {
-        format!("projects/{}", project_id)
-    }
-}
-
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
-    fn name(&self) -> &'static str { "gemini" }
+    fn name(&self) -> &'static str {
+        "gemini"
+    }
 
     async fn select_upstream_host(
         &self,
         ctx: &crate::proxy::ProxyContext,
     ) -> Result<Option<String>, ProxyError> {
-        let Some(backend) = ctx.selected_backend.as_ref() else { return Ok(None) };
+        let Some(backend) = ctx.selected_backend.as_ref() else {
+            return Ok(None);
+        };
         let mode = match backend.auth_type.as_str() {
             "oauth" => {
                 if let Some(pid) = &backend.project_id {
-                    if !pid.is_empty() { GeminiProxyMode::OAuthWithProject(pid.clone()) } else { GeminiProxyMode::OAuthWithoutProject }
-                } else { GeminiProxyMode::OAuthWithoutProject }
+                    if !pid.is_empty() {
+                        GeminiProxyMode::OAuthWithProject(pid.clone())
+                    } else {
+                        GeminiProxyMode::OAuthWithoutProject
+                    }
+                } else {
+                    GeminiProxyMode::OAuthWithoutProject
+                }
             }
             "api_key" => GeminiProxyMode::ApiKey,
             _ => GeminiProxyMode::ApiKey,
@@ -76,9 +78,10 @@ impl ProviderStrategy for GeminiStrategy {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
                         if path.contains("generateContent") {
-                            let resource = normalize_resource_project(pid);
-                            let header_val = format!("project={}", resource);
-                            let _ = upstream_request.insert_header("x-goog-request-params", header_val);
+                            // 使用原始项目ID格式，不添加 projects/ 前缀
+                            let header_val = format!("project={}", pid);
+                            let _ =
+                                upstream_request.insert_header("x-goog-request-params", header_val);
                         }
                     }
                 }
@@ -95,7 +98,8 @@ impl ProviderStrategy for GeminiStrategy {
                             || path.contains("onboardUser")
                             || path.contains("countTokens")
                             || path.contains("streamGenerateContent")
-                            || (path.contains("generateContent") && !path.contains("streamGenerateContent"));
+                            || (path.contains("generateContent")
+                                && !path.contains("streamGenerateContent"));
                         ctx.will_modify_body = need;
                     }
                 }
@@ -111,9 +115,15 @@ impl ProviderStrategy for GeminiStrategy {
         json_value: &mut serde_json::Value,
     ) -> Result<bool, ProxyError> {
         // 仅当 OAuth 且有 project_id 时注入
-        let Some(backend) = ctx.selected_backend.as_ref() else { return Ok(false) };
-        let Some(project_id) = backend.project_id.as_ref() else { return Ok(false) };
-        if backend.auth_type.as_str() != "oauth" || project_id.is_empty() { return Ok(false) }
+        let Some(backend) = ctx.selected_backend.as_ref() else {
+            return Ok(false);
+        };
+        let Some(project_id) = backend.project_id.as_ref() else {
+            return Ok(false);
+        };
+        if backend.auth_type.as_str() != "oauth" || project_id.is_empty() {
+            return Ok(false);
+        }
 
         let request_path = session.req_header().uri.path();
 
@@ -123,7 +133,9 @@ impl ProviderStrategy for GeminiStrategy {
             inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
         } else if request_path.contains("countTokens") {
             inject_counttokens_fields(json_value, &ctx.request_id)
-        } else if request_path.contains("generateContent") && !request_path.contains("streamGenerateContent") {
+        } else if request_path.contains("generateContent")
+            && !request_path.contains("streamGenerateContent")
+        {
             inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
         } else if request_path.contains("streamGenerateContent") {
             inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
@@ -155,7 +167,9 @@ fn inject_loadcodeassist_fields(
     request_id: &str,
 ) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
-        let metadata = obj.entry("metadata").or_insert_with(|| serde_json::json!({}));
+        let metadata = obj
+            .entry("metadata")
+            .or_insert_with(|| serde_json::json!({}));
         if let Some(metadata_obj) = metadata.as_object_mut() {
             metadata_obj.insert(
                 "duetProject".to_string(),
@@ -208,8 +222,11 @@ fn inject_generatecontent_fields(
     request_id: &str,
 ) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
-        let resource = normalize_resource_project(project_id);
-        obj.insert("project".to_string(), serde_json::Value::String(resource));
+        // 直接使用项目ID，不添加 projects/ 前缀
+        obj.insert(
+            "project".to_string(),
+            serde_json::Value::String(project_id.to_string()),
+        );
         proxy_debug!(
             request_id,
             LogStage::RequestModify,
@@ -223,30 +240,46 @@ fn inject_generatecontent_fields(
     false
 }
 
-fn inject_counttokens_fields(
-    json_value: &mut serde_json::Value,
-    request_id: &str,
-) -> bool {
+fn inject_counttokens_fields(json_value: &mut serde_json::Value, request_id: &str) -> bool {
     let mut modified = false;
     if let Some(root) = json_value.as_object_mut() {
         let mut request_obj = if let Some(request_val) = root.get_mut("request") {
-            if let Some(obj) = request_val.as_object_mut() { obj.clone() } else { serde_json::Map::new() }
-        } else { serde_json::Map::new() };
+            if let Some(obj) = request_val.as_object_mut() {
+                obj.clone()
+            } else {
+                serde_json::Map::new()
+            }
+        } else {
+            serde_json::Map::new()
+        };
 
-        if let Some(model_val) = request_obj.get("model").and_then(|v| v.as_str())
+        if let Some(model_val) = request_obj
+            .get("model")
+            .and_then(|v| v.as_str())
             .or_else(|| root.get("model").and_then(|v| v.as_str()))
         {
-            let model_str = if model_val.starts_with("models/") { model_val.to_string() } else { format!("models/{}", model_val) };
+            let model_str = if model_val.starts_with("models/") {
+                model_val.to_string()
+            } else {
+                format!("models/{}", model_val)
+            };
             request_obj.insert("model".to_string(), serde_json::Value::String(model_str));
             modified = true;
         }
 
-        if let Some(contents_val) = request_obj.get("contents").cloned().or_else(|| root.get("contents").cloned()) {
+        if let Some(contents_val) = request_obj
+            .get("contents")
+            .cloned()
+            .or_else(|| root.get("contents").cloned())
+        {
             request_obj.insert("contents".to_string(), contents_val);
             modified = true;
         }
 
-        root.insert("request".to_string(), serde_json::Value::Object(request_obj));
+        root.insert(
+            "request".to_string(),
+            serde_json::Value::Object(request_obj),
+        );
     }
 
     if modified {
