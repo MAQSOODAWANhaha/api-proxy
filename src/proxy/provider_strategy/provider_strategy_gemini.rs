@@ -71,16 +71,12 @@ impl ProviderStrategy for GeminiStrategy {
         // 最小示例：为部分上游补充常见 UA/Client 头，避免上游行为差异
         let _ = upstream_request.insert_header("x-client-vendor", "api-proxy");
         let _ = upstream_request.insert_header("x-client-product", "pingora");
-        // Google 端常见要求：OAuth 用户凭证需要携带计费项目用于配额记账
+        // 对 generateContent/streamGenerateContent 额外设置 x-goog-request-params，
+        // 便于上游在未读取 body 时即可进行资源路由与校验
         if let Some(backend) = ctx.selected_backend.as_ref() {
             if backend.auth_type.as_str() == "oauth" {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
-                        // 计费/配额项目
-                        let _ = upstream_request.insert_header("x-goog-user-project", pid.as_str());
-
-                        // 对 generateContent/streamGenerateContent 额外设置 x-goog-request-params，
-                        // 便于上游在未读取 body 时即可进行资源路由与校验
                         let path = session.req_header().uri.path();
                         if path.contains("generateContent") {
                             let resource = normalize_resource_project(pid);
