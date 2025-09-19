@@ -98,8 +98,7 @@ impl ProviderStrategy for GeminiStrategy {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
-                        let need = path.contains("loadCodeAssist")
-                            || path.contains("onboardUser")
+                        let need = path.contains("onboardUser")
                             || path.contains("countTokens")
                             || path.contains("streamGenerateContent")
                             || (path.contains("generateContent") && !path.contains("streamGenerateContent"));
@@ -124,9 +123,7 @@ impl ProviderStrategy for GeminiStrategy {
 
         let request_path = session.req_header().uri.path();
 
-        let modified = if request_path.contains("loadCodeAssist") {
-            inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
-        } else if request_path.contains("onboardUser") {
+        let modified = if request_path.contains("onboardUser") {
             inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
         } else if request_path.contains("countTokens") {
             inject_counttokens_fields(json_value, &ctx.request_id)
