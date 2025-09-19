@@ -65,13 +65,7 @@ pub struct OAuthConfig {
     pub redirect_uri: Option<String>,
     pub scopes: String,
     pub pkce_required: bool,
-    // 额外参数
-    pub access_type: Option<String>,
-    pub prompt: Option<String>,
-    pub project_id: Option<String>,
-    pub response_type: Option<String>,
-    pub grant_type: Option<String>,
-    // 通用额外参数支持
+    // 通用额外参数支持 - 包含所有OAuth参数
     #[serde(default)]
     pub extra_params: Option<std::collections::HashMap<String, String>>,
 }
@@ -218,12 +212,14 @@ impl Model {
 
     /// 替换动态参数
     pub fn replace_dynamic_params(&self, oauth_config: &mut OAuthConfig, params: &std::collections::HashMap<String, String>) {
-        // 替换project_id等动态参数
-        if let Some(ref mut project_id) = oauth_config.project_id
-            && project_id == "{dynamic_project_id}"
-            && let Some(actual_project_id) = params.get("project_id")
-        {
-            *project_id = actual_project_id.clone();
+        // 替换extra_params中的动态参数
+        if let Some(ref mut extra_params) = oauth_config.extra_params {
+            if let Some(project_id) = extra_params.get_mut("project_id")
+                && project_id == "{dynamic_project_id}"
+                && let Some(actual_project_id) = params.get("project_id")
+            {
+                *project_id = actual_project_id.clone();
+            }
         }
     }
 }

@@ -29,16 +29,24 @@ impl OAuthProviderManager {
 
     /// 获取提供商配置
     pub async fn get_config(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
+        tracing::debug!("🔍 [OAuth] 获取提供商配置: provider_name={}", provider_name);
+
         // 先检查缓存
         if let Some(config) = self.get_from_cache(provider_name) {
+            tracing::debug!("✅ [OAuth] 从缓存获取配置成功: provider_name={}", provider_name);
             return Ok(config);
         }
+
+        tracing::debug!("📡 [OAuth] 从数据库加载配置: provider_name={}", provider_name);
 
         // 从数据库加载
         let config = self.load_from_db(provider_name).await?;
 
         // 更新缓存
         self.update_cache(provider_name.to_string(), config.clone());
+
+        tracing::debug!("💾 [OAuth] 配置加载完成并缓存: provider_name={}, client_id={}, authorize_url={}",
+            provider_name, config.client_id, config.authorize_url);
 
         Ok(config)
     }
@@ -71,6 +79,9 @@ impl OAuthProviderManager {
         config: &OAuthProviderConfig,
         session: &entity::oauth_client_sessions::Model,
     ) -> OAuthResult<String> {
+        tracing::debug!("🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
+            config.provider_name, session.session_id);
+
         let mut url = Url::parse(&config.authorize_url)
             .map_err(|e| OAuthError::NetworkError(format!("Invalid authorize URL: {}", e)))?;
 
@@ -79,29 +90,49 @@ impl OAuthProviderManager {
         let mut params = vec![
             ("client_id", config.client_id.as_str()),
             ("redirect_uri", config.redirect_uri.as_str()),
-            ("response_type", "code"),
             ("state", &session.state),
             ("scope", &scope),
         ];
+
+        // 添加response_type，优先使用配置中的值，否则使用默认值
+        let response_type = config.extra_params
+            .get("response_type")
+            .map(|s| s.as_str())
+            .unwrap_or("code");
+        params.push(("response_type", response_type));
+
+        tracing::debug!("⚙️ [OAuth] 基础参数: client_id={}, redirect_uri={}, response_type={}, scopes={}",
+            config.client_id, config.redirect_uri, response_type, scope);
 
         // PKCE参数
         if config.pkce_required {
             params.push(("code_challenge", &session.code_challenge));
             params.push(("code_challenge_method", "S256"));
+            tracing::debug!("🔐 [OAuth] PKCE参数已添加: code_challenge_method=S256");
         }
 
-        // 额外参数
+        // 额外参数（排除已经添加的参数）
+        let already_added = params.iter().map(|(k, _)| *k).collect::<std::collections::HashSet<_>>();
         let extra_params: Vec<(&str, &str)> = config
             .extra_params
             .iter()
+            .filter(|(k, _)| !already_added.contains(k.as_str()))
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        params.extend(extra_params);
+
+        if !extra_params.is_empty() {
+            tracing::debug!("📋 [OAuth] 额外参数: {:?}", extra_params);
+            params.extend(extra_params);
+        }
 
         // 设置查询参数
         url.query_pairs_mut().extend_pairs(params);
 
-        Ok(url.to_string())
+        let final_url = url.to_string();
+        tracing::debug!("🌐 [OAuth] 授权URL构建完成: session_id={}, url_length={}",
+            session.session_id, final_url.len());
+
+        Ok(final_url)
     }
 
     /// 刷新缓存
@@ -205,53 +236,33 @@ impl OAuthProviderManager {
             .map(|s| s.to_string())
             .collect();
 
-        // 构建额外参数
+        // 构建额外参数 - 完全数据库驱动
         let mut extra_params = HashMap::new();
 
-        // 添加传统的特定参数（向后兼容）
-        if let Some(access_type) = oauth_config.access_type {
-            extra_params.insert("access_type".to_string(), access_type);
-        }
-        if let Some(prompt) = oauth_config.prompt {
-            extra_params.insert("prompt".to_string(), prompt);
-        }
-        if let Some(response_type) = oauth_config.response_type {
-            extra_params.insert("response_type".to_string(), response_type);
-        }
-        if let Some(grant_type) = oauth_config.grant_type {
-            extra_params.insert("grant_type".to_string(), grant_type);
-        }
-
-        // 添加通用extra_params（新增支持）
+        // 直接使用数据库配置的extra_params，包含所有需要的参数
         if let Some(ref config_extra_params) = oauth_config.extra_params {
             extra_params.extend(config_extra_params.clone());
+            tracing::debug!("📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
+                extra_params.len(), extra_params.keys().collect::<Vec<_>>());
+        } else {
+            tracing::debug!("📊 [OAuth] 数据库中没有配置extra_params");
         }
 
-        // 创建基础配置对象
-        let base_config = OAuthProviderConfig {
+        // 创建最终配置对象
+        Ok(OAuthProviderConfig {
             provider_name: format!("{}:{}", model.name, oauth_type),
             client_id: oauth_config.client_id,
             client_secret: oauth_config.client_secret,
             authorize_url: oauth_config.authorize_url,
             token_url: oauth_config.token_url,
             redirect_uri: oauth_config.redirect_uri.unwrap_or_default(),
-            scopes: scopes.clone(),
-            pkce_required: oauth_config.pkce_required,
-            extra_params: extra_params.clone(),
-        };
-
-        // 添加提供商特定的额外参数
-        let provider_params = self.build_extra_params(&base_config);
-        extra_params.extend(provider_params);
-
-        Ok(OAuthProviderConfig {
             scopes,
+            pkce_required: oauth_config.pkce_required,
             extra_params,
-            ..base_config
         })
     }
 
-    /// 构建特定提供商的额外参数
+    /// 保留原有的build_extra_params方法用于向后兼容
     /// 现在从数据库配置中读取，而不是硬编码
     fn build_extra_params(&self, config: &OAuthProviderConfig) -> HashMap<String, String> {
         // 直接从配置中返回 extra_params，实现数据库驱动
