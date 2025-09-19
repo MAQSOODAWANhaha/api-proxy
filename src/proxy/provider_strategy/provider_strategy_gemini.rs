@@ -68,9 +68,6 @@ impl ProviderStrategy for GeminiStrategy {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 最小示例：为部分上游补充常见 UA/Client 头，避免上游行为差异
-        let _ = upstream_request.insert_header("x-client-vendor", "api-proxy");
-        let _ = upstream_request.insert_header("x-client-product", "pingora");
         // 对 generateContent/streamGenerateContent 额外设置 x-goog-request-params，
         // 便于上游在未读取 body 时即可进行资源路由与校验
         if let Some(backend) = ctx.selected_backend.as_ref() {
@@ -94,7 +91,8 @@ impl ProviderStrategy for GeminiStrategy {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
-                        let need = path.contains("onboardUser")
+                        let need = path.contains("loadCodeAssist")
+                            || path.contains("onboardUser")
                             || path.contains("countTokens")
                             || path.contains("streamGenerateContent")
                             || (path.contains("generateContent") && !path.contains("streamGenerateContent"));
@@ -119,7 +117,9 @@ impl ProviderStrategy for GeminiStrategy {
 
         let request_path = session.req_header().uri.path();
 
-        let modified = if request_path.contains("onboardUser") {
+        let modified = if request_path.contains("loadCodeAssist") {
+            inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
+        } else if request_path.contains("onboardUser") {
             inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
         } else if request_path.contains("countTokens") {
             inject_counttokens_fields(json_value, &ctx.request_id)
