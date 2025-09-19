@@ -63,6 +63,7 @@ mod tests {
         extra_params.insert("response_type".to_string(), "code".to_string());
         extra_params.insert("id_token_add_organizations".to_string(), "true".to_string());
         extra_params.insert("codex_cli_simplified_flow".to_string(), "true".to_string());
+        extra_params.insert("originator".to_string(), "codex_cli_rs".to_string());
 
         OAuthConfig {
             client_id: "test_client_id".to_string(),
@@ -141,6 +142,7 @@ mod tests {
         // 验证额外参数
         assert_eq!(params.get("id_token_add_organizations"), Some(&"true".to_string()));
         assert_eq!(params.get("codex_cli_simplified_flow"), Some(&"true".to_string()));
+        assert_eq!(params.get("originator"), Some(&"codex_cli_rs".to_string()));
 
         // 关键测试：验证没有重复参数
         let param_counts: HashMap<&String, usize> = params.iter().map(|(k, _)| (k, 1)).collect();
@@ -149,7 +151,7 @@ mod tests {
         }
 
         // 验证参数总数（基础参数 + PKCE参数 + 额外参数）
-        let expected_params = 9; // client_id, redirect_uri, state, scope, response_type, code_challenge, code_challenge_method, id_token_add_organizations, codex_cli_simplified_flow
+        let expected_params = 10; // client_id, redirect_uri, state, scope, response_type, code_challenge, code_challenge_method, id_token_add_organizations, codex_cli_simplified_flow, originator
         assert_eq!(params.len(), expected_params, "URL应该包含 {} 个参数，但包含了 {} 个", expected_params, params.len());
     }
 
@@ -366,9 +368,10 @@ mod tests {
         assert!(config.pkce_required);
         assert_eq!(config.extra_params.get("response_type"), Some(&"code".to_string()));
         assert_eq!(config.extra_params.get("id_token_add_organizations"), Some(&"true".to_string()));
+        assert_eq!(config.extra_params.get("originator"), Some(&"codex_cli_rs".to_string()));
 
         // 验证没有重复参数
-        assert_eq!(config.extra_params.len(), 3); // response_type, id_token_add_organizations, codex_cli_simplified_flow
+        assert_eq!(config.extra_params.len(), 4); // response_type, id_token_add_organizations, codex_cli_simplified_flow, originator
     }
 
     /// 创建Claude OAuth配置（多scope测试）
