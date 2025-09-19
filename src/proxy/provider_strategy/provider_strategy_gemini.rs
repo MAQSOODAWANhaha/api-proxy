@@ -8,6 +8,8 @@ use pingora_proxy::Session;
 
 use crate::error::ProxyError;
 use crate::proxy::ProxyContext;
+use crate::logging::LogComponent;
+use crate::{proxy_info, proxy_debug};
 
 use super::ProviderStrategy;
 
@@ -137,11 +139,14 @@ impl ProviderStrategy for GeminiStrategy {
         };
 
         if modified {
-            tracing::info!(
-                request_id = %ctx.request_id,
+            proxy_info!(
+                &ctx.request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "project_fields_injected",
+                "Gemini策略将项目字段注入到请求JSON中",
                 project_id = project_id,
-                route_path = request_path,
-                "Gemini strategy injected project fields into request JSON"
+                route_path = request_path
             );
         }
 
@@ -163,7 +168,14 @@ fn inject_loadcodeassist_fields(
                 "duetProject".to_string(),
                 serde_json::Value::String(project_id.to_owned()),
             );
-            tracing::debug!(request_id = %request_id, project_id = project_id, "Injected metadata.duetProject");
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "duet_project_injected",
+                "注入metadata.duetProject",
+                project_id = project_id
+            );
         }
         obj.insert(
             "cloudaicompanionProject".to_string(),
@@ -184,7 +196,14 @@ fn inject_onboarduser_fields(
             "cloudaicompanionProject".to_string(),
             serde_json::Value::String(project_id.to_owned()),
         );
-        tracing::debug!(request_id = %request_id, project_id = project_id, "Injected cloudaicompanionProject (onboardUser)");
+        proxy_debug!(
+            request_id,
+            LogStage::RequestModify,
+            LogComponent::GeminiStrategy,
+            "cloudaicompanion_project_injected_onboard",
+            "注入cloudaicompanionProject (onboardUser)",
+            project_id = project_id
+        );
         return true;
     }
     false
@@ -198,7 +217,14 @@ fn inject_generatecontent_fields(
     if let Some(obj) = json_value.as_object_mut() {
         let resource = normalize_resource_project(project_id);
         obj.insert("project".to_string(), serde_json::Value::String(resource));
-        tracing::debug!(request_id = %request_id, project_id = project_id, "Injected top-level project (generateContent)");
+        proxy_debug!(
+            request_id,
+            LogStage::RequestModify,
+            LogComponent::GeminiStrategy,
+            "top_level_project_injected",
+            "注入顶层项目字段 (generateContent)",
+            project_id = project_id
+        );
         return true;
     }
     false
@@ -231,7 +257,13 @@ fn inject_counttokens_fields(
     }
 
     if modified {
-        tracing::info!(request_id = %request_id, "Standardized countTokens request body structure");
+        proxy_info!(
+            request_id,
+            LogStage::RequestModify,
+            LogComponent::GeminiStrategy,
+            "count_tokens_standardized",
+            "标准化countTokens请求体结构",
+        );
     }
     modified
 }

@@ -7,6 +7,7 @@
 //! - `authentication_service`/`tracing_service`/`statistics`：关注点分离的协作服务（统计服务已迁移至 `src/statistics/`）
 //! - `provider_strategy`: 提供商特定的最小策略扩展（如 Gemini 注入）
 //! - `types`: 轻量通用类型
+//! - `logging`: 统一日志工具和格式标准
 
 pub mod service;
 pub mod statistics;

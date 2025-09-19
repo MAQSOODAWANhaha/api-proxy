@@ -108,6 +108,85 @@ impl ProxyService {
         }
     }
 
+    /// 格式化请求头为人类可读的字符串（带脱敏处理）
+    pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
+        let mut formatted = Vec::new();
+        for (name, value) in headers.headers.iter() {
+            let name_str = name.as_str();
+            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+
+            let masked = match name_str.to_ascii_lowercase().as_str() {
+                "authorization"
+                | "proxy-authorization"
+                | "x-api-key"
+                | "api-key"
+                | "x-goog-api-key"
+                | "set-cookie"
+                | "cookie" => {
+                    // 只保留前后少量字符，避免日志泄露敏感信息
+                    if value_str.len() > 16 {
+                        format!(
+                            "{}: {}...{}",
+                            name_str,
+                            &value_str[..8],
+                            &value_str[value_str.len().saturating_sub(4)..]
+                        )
+                    } else {
+                        format!("{}: ****", name_str)
+                    }
+                }
+                _ => format!("{}: {}", name_str, value_str),
+            };
+            formatted.push(masked);
+        }
+        formatted.join("\n  ")
+    }
+
+    /// 格式化响应头为人类可读的字符串
+    pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String {
+        let mut formatted = Vec::new();
+        for (name, value) in headers.headers.iter() {
+            let name_str = name.as_str();
+            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+
+            // 对敏感的响应头也进行脱敏处理
+            let masked = match name_str.to_ascii_lowercase().as_str() {
+                "set-cookie" => {
+                    // 对set-cookie进行部分脱敏
+                    if value_str.len() > 20 {
+                        let parts: Vec<&str> = value_str.split(';').collect();
+                        if let Some(first_part) = parts.first() {
+                            if first_part.contains('=') {
+                                let cookie_parts: Vec<&str> = first_part.split('=').collect();
+                                if let Some(name) = cookie_parts.first() {
+                                    let name_str = name;
+                                    let value = &cookie_parts[1..].join("=");
+                                    if value.len() > 8 {
+                                        let masked_value = format!("{}...{}", &value[..4], &value[value.len().saturating_sub(4)..]);
+                                        format!("{}: {}={}", name_str, masked_value, cookie_parts[1..].join("="))
+                                    } else {
+                                        format!("{}: ****; {}", name_str, cookie_parts[1..].join("="))
+                                    }
+                                } else {
+                                    format!("{}: ****", name_str)
+                                }
+                            } else {
+                                format!("{}: ****", name_str)
+                            }
+                        } else {
+                            format!("{}: ****", name_str)
+                        }
+                    } else {
+                        format!("{}: ****", name_str)
+                    }
+                }
+                _ => format!("{}: {}", name_str, value_str),
+            };
+            formatted.push(masked);
+        }
+        formatted.join("\n  ")
+    }
+
     // 运行 early_request_filter 阶段所有服务
     async fn run_early_services(
         &self,
@@ -1258,6 +1337,11 @@ impl ProxyHttp for ProxyService {
 
         // 收集部分客户端信息用于日志
         let req_stats = self.ai_handler.statistics_service().collect_request_stats(session);
+
+        // 记录原始请求信息
+        let request_url = session.req_header().uri.to_string();
+        let request_headers = ProxyService::format_request_headers(&session.req_header());
+
         info!(
             event = "downstream_request_start",
             component = COMPONENT,
@@ -1267,6 +1351,17 @@ impl ProxyHttp for ProxyService {
             client_ip = %req_stats.client_ip,
             user_agent = ?req_stats.user_agent,
             "收到下游请求"
+        );
+
+        // === 原始请求信息日志 ===
+        info!(
+            request_id = %ctx.request_id,
+            stage = "原始请求",
+            method = %method,
+            url = %request_url,
+            headers = %request_headers,
+            "=== 原始请求信息 ===\n  方法: {}\n  URL: {}\n  请求头:\n  {}",
+            method, request_url, request_headers
         );
 
         // 透明代理设计：仅处理代理请求，其他全部拒绝
@@ -1383,6 +1478,19 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
+        // === 响应头信息日志 ===
+        let response_headers = ProxyService::format_response_headers(&upstream_response);
+
+        info!(
+            request_id = %ctx.request_id,
+            stage = "响应头信息",
+            status = %upstream_response.status,
+            status_code = upstream_response.status.as_u16(),
+            headers = %response_headers,
+            "=== 响应头信息 ===\n  状态码: {}\n  响应头:\n  {}",
+            upstream_response.status.as_u16(), response_headers
+        );
+
         for svc in &self.response_header_services {
             svc.exec(&self.ai_handler, upstream_response, ctx).await?;
         }
@@ -1468,29 +1576,41 @@ impl ProxyHttp for ProxyService {
                 ErrorType::ConnectError | ErrorType::ConnectRefused
             );
 
-            // 获取更多的上下文信息
-            let request_info = format!(
-                "method={} uri={} headers={:?}",
-                session.req_header().method,
-                session.req_header().uri,
-                session.req_header().headers
-            );
+            // 获取更多详细的上下文信息
+            let request_url = session.req_header().uri.to_string();
+            let request_headers = ProxyService::format_request_headers(&session.req_header());
+            let request_method = session.req_header().method.as_str();
 
+            // === 响应失败详细信息 ===
             error!(
                 request_id = %ctx.request_id,
-                error = %error,
+                stage = "响应失败",
                 error_type = ?error.etype,
                 error_source = ?error.esource,
-                error_context = ?error.context,
+                error_message = %error,
                 duration_ms = duration.as_millis(),
-                request_info = %request_info,
+                "=== 请求失败详细信息 ===\n  失败原因: {}\n  请求方法: {}\n  请求URL: {}\n  错误类型: {:?}\n  错误来源: {:?}\n  错误上下文: {:?}\n  持续时间: {}ms",
+                error, request_method, request_url, error.etype, error.esource, error.context, duration.as_millis()
+            );
+
+            // 提供更多上下文信息
+            error!(
+                request_id = %ctx.request_id,
+                stage = "失败上下文",
+                request_headers = %request_headers,
                 selected_backend = ?ctx.selected_backend.as_ref().map(|b| format!("id={} key_preview={}", b.id,
                     if b.api_key.len() > 8 { format!("{}***{}", &b.api_key[..4], &b.api_key[b.api_key.len()-4..]) } else { "***".to_string() })),
                 provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
                 timeout_seconds = ?ctx.timeout_seconds,
                 is_timeout_error = is_timeout_error,
                 is_network_error = is_network_error,
-                "AI proxy request failed with detailed context"
+                "=== 失败上下文详情 ===\n  请求头:\n  {}\n  选中的后端: {:?}\n  服务商类型: {:?}\n  超时设置: {:?}秒\n  是否超时错误: {}\n  是否网络错误: {}",
+                request_headers,
+                ctx.selected_backend.as_ref().map(|b| b.id),
+                ctx.provider_type.as_ref().map(|p| &p.name),
+                ctx.timeout_seconds,
+                is_timeout_error,
+                is_network_error
             );
 
             // 如果是超时或网络错误，使用AI处理器进行错误转换

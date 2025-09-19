@@ -8,7 +8,6 @@ use crate::{
     providers::DynamicAdapterManager,
     proxy::PingoraProxyServer,
 };
-use clap::ArgMatches;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -26,12 +25,12 @@ pub struct SharedServices {
 }
 
 /// 双端口服务器启动函数
-pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
+pub async fn run_dual_port_servers() -> Result<()> {
     info!("🚀 Starting dual-port architecture servers...");
 
     // 初始化共享资源
     let (config, db, shared_services, trace_system) =
-        initialize_shared_services(matches).await?;
+        initialize_shared_services().await?;
 
     // 创建管理服务器配置 - 使用dual_port配置或默认值
     let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
@@ -126,9 +125,7 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
 }
 
 /// 初始化共享服务资源
-pub async fn initialize_shared_services(
-    matches: &ArgMatches,
-) -> Result<(
+pub async fn initialize_shared_services() -> Result<(
     Arc<AppConfig>,
     Arc<DatabaseConnection>,
     SharedServices,
@@ -137,31 +134,7 @@ pub async fn initialize_shared_services(
     // 加载配置
     info!("📋 Loading configuration...");
     let config_manager = ConfigManager::new().await?;
-    let mut config = config_manager.get_config().await;
-
-    // 应用命令行参数覆盖
-    if let Some(server) = config.server.as_mut() {
-        if let Some(port) = matches.get_one::<u16>("port") {
-            info!("🔧 Overriding proxy port from CLI: {}", port);
-            server.port = *port;
-        }
-
-        if let Some(host) = matches.get_one::<String>("host") {
-            info!("🔧 Overriding proxy host from CLI: {}", host);
-            server.host = host.clone();
-        }
-
-
-        if let Some(workers) = matches.get_one::<u16>("workers") {
-            info!("🔧 Overriding worker count from CLI: {}", workers);
-            server.workers = *workers as usize;
-        }
-    }
-
-    if let Some(database_url) = matches.get_one::<String>("database_url") {
-        info!("🔧 Overriding database URL from CLI");
-        config.database.url = database_url.clone();
-    }
+    let config = config_manager.get_config().await;
 
     info!("✅ Configuration loaded successfully");
 

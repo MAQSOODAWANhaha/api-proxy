@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use crate::error::ProxyError;
 use crate::proxy::ProxyContext;
+use crate::logging::LogComponent;
+use crate::{proxy_warn, proxy_debug, proxy_info};
 use crate::trace::immediate::ImmediateProxyTracer;
 
 /// 代理端追踪服务
@@ -51,18 +53,24 @@ impl TracingService {
                 )
                 .await
             {
-                tracing::warn!(
-                    request_id = %request_id,
-                    error = %e,
-                    "Failed to start immediate trace"
+                proxy_warn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::TracingService,
+                    "trace_start_failed",
+                    "即时追踪启动失败",
+                    error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!("Failed to start trace: {}", e)));
             }
 
-            tracing::debug!(
-                request_id = %request_id,
-                user_service_api_id = user_service_api_id,
-                "Successfully started request trace"
+            proxy_debug!(
+                request_id,
+                LogStage::RequestStart,
+                LogComponent::TracingService,
+                "trace_started",
+                "请求追踪启动成功",
+                user_service_api_id = user_service_api_id
             );
         }
 
@@ -89,20 +97,26 @@ impl TracingService {
                 )
                 .await
             {
-                tracing::warn!(
-                    request_id = %request_id,
-                    error = %e,
-                    "Failed to update extended trace info"
+                proxy_warn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::TracingService,
+                    "trace_update_failed",
+                    "扩展追踪信息更新失败",
+                    error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!("Failed to update trace: {}", e)));
             }
 
-            tracing::debug!(
-                request_id = %request_id,
-                provider_type_id = ?provider_type_id,
-                model_used = ?model_used,
-                user_provider_key_id = ?user_provider_key_id,
-                "Successfully updated extended trace info"
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::TracingService,
+                "trace_info_updated",
+                "扩展追踪信息更新成功",
+                provider_type_id =provider_type_id,
+                model_used =model_used,
+                user_provider_key_id =user_provider_key_id
             );
         }
 
@@ -134,22 +148,28 @@ impl TracingService {
                 )
                 .await
             {
-                tracing::warn!(
-                    request_id = %request_id,
-                    error = %e,
-                    "Failed to complete trace for successful request"
+                proxy_warn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::TracingService,
+                    "success_trace_complete_failed",
+                    "成功请求追踪完成失败",
+                    error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!("Failed to complete trace: {}", e)));
             }
 
-            tracing::info!(
-                request_id = %request_id,
+            proxy_info!(
+                request_id,
+                LogStage::Response,
+                LogComponent::TracingService,
+                "success_trace_completed",
+                "成功请求追踪完成",
                 status_code = status_code,
-                tokens_prompt = ?tokens_prompt,
-                tokens_completion = ?tokens_completion,
-                tokens_total = ?tokens_total,
-                model_used = ?model_used,
-                "Successfully completed trace for successful request"
+                tokens_prompt =tokens_prompt,
+                tokens_completion =tokens_completion,
+                tokens_total =tokens_total,
+                model_used =model_used
             );
         }
 
@@ -179,20 +199,26 @@ impl TracingService {
                 )
                 .await
             {
-                tracing::warn!(
-                    request_id = %request_id,
-                    error = %e,
-                    "Failed to complete trace for failed request"
+                proxy_warn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::TracingService,
+                    "failure_trace_complete_failed",
+                    "失败请求追踪完成失败",
+                    error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!("Failed to complete trace: {}", e)));
             }
 
-            tracing::info!(
-                request_id = %request_id,
+            proxy_info!(
+                request_id,
+                LogStage::ResponseFailure,
+                LogComponent::TracingService,
+                "failure_trace_completed",
+                "失败请求追踪完成",
                 status_code = status_code,
-                error_type = ?error_type,
-                error_message = ?error_message,
-                "Successfully completed trace for failed request"
+                error_type =error_type,
+                error_message =error_message
             );
         }
 

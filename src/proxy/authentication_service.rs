@@ -12,6 +12,8 @@ use axum::http::Uri;
 use crate::auth::{AuthUtils, AuthManager};
 use crate::error::ProxyError;
 use crate::proxy::ProxyContext;
+use crate::logging::{LogComponent, sanitize_api_key};
+use crate::{proxy_debug, proxy_info};
 use entity;
 
 /// 认证信息来源类型
@@ -19,6 +21,15 @@ use entity;
 pub enum AuthSource {
     Query,     // 查询参数
     Header,    // 头部
+}
+
+impl std::fmt::Display for AuthSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthSource::Query => write!(f, "query"),
+            AuthSource::Header => write!(f, "header"),
+        }
+    }
 }
 
 /// 检测到的认证信息
@@ -81,19 +92,25 @@ impl AuthenticationService {
         session: &mut Session,
         request_id: &str
     ) -> Result<AuthenticationResult, ProxyError> {
-        tracing::debug!(
-            request_id = %request_id,
-            "Starting integrated authentication detection and credential replacement"
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "start_detection",
+            "开始认证检测和凭据替换",
         );
 
         // 步骤1: 检测用户认证信息
         let user_auth = self.detect_user_auth_from_request(session)?;
 
-        tracing::debug!(
-            request_id = %request_id,
-            auth_source = ?user_auth.source,
-            auth_location = %user_auth.location,
-            "User authentication detected"
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "auth_detected",
+            "检测到用户认证信息",
+            auth_source = format!("{:?}", user_auth.source),
+            auth_location = user_auth.location,
         );
 
         // 步骤2: 验证用户API密钥并获取关联配置
@@ -119,15 +136,18 @@ impl AuthenticationService {
             .map_err(|e| ProxyError::database(&format!("Failed to query provider_types: {}", e)))?
             .ok_or_else(|| ProxyError::internal(&format!("Provider type not found: {}", proxy_auth_result.provider_type_id)))?;
 
-        tracing::info!(
-            request_id = %request_id,
+        proxy_info!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "auth_success",
+            "认证成功完成",
             user_id = proxy_auth_result.user_id,
             provider_type_id = proxy_auth_result.provider_type_id,
-            provider_name = %provider_type.name,
+            provider_name = provider_type.name,
             user_service_api_id = proxy_auth_result.user_api.id,
-            api_key_preview = %AuthUtils::sanitize_api_key(&user_auth.auth_value),
-            real_credential_preview = %AuthUtils::sanitize_api_key(&selected_credential),
-            "Integrated authentication successful with immediate credential replacement"
+            api_key_preview = AuthUtils::sanitize_api_key(&user_auth.auth_value),
+            real_credential_preview = AuthUtils::sanitize_api_key(&selected_credential)
         );
 
         // 步骤5: 构造认证结果
@@ -225,7 +245,7 @@ impl AuthenticationService {
         request_id: &str,
     ) -> Result<AuthenticationResult, ProxyError> {
         tracing::debug!(
-            request_id = %request_id,
+            request_id = request_id,
             "Starting simplified authentication and credential replacement"
         );
 
@@ -233,10 +253,10 @@ impl AuthenticationService {
         let auth_result = self.detect_and_replace_client_authorization(session, request_id).await?;
 
         tracing::info!(
-            request_id = %request_id,
+            request_id = request_id,
             user_id = auth_result.user_id,
             provider_type_id = auth_result.provider_type_id,
-            provider_name = %auth_result.provider_type.name,
+            provider_name = auth_result.provider_type.name,
             user_service_api_id = auth_result.user_service_api.id,
             "Simplified authentication and credential replacement completed successfully"
         );
@@ -250,7 +270,7 @@ impl AuthenticationService {
         session: &mut Session,
         request_id: &str,
     ) -> Result<entity::user_service_apis::Model, ProxyError> {
-        tracing::debug!(request_id = %request_id, "Authenticating entry API key only");
+        tracing::debug!(request_id = request_id, "Authenticating entry API key only");
 
         // 检测用户携带的认证信息（query/header）
         let user_auth = self.detect_user_auth_from_request(session)?;
@@ -262,11 +282,11 @@ impl AuthenticationService {
             .await?;
 
         tracing::info!(
-            request_id = %request_id,
+            request_id = request_id,
             user_id = proxy_auth_result.user_id,
             provider_type_id = proxy_auth_result.provider_type_id,
             user_service_api_id = proxy_auth_result.user_api.id,
-            api_key_preview = %AuthUtils::sanitize_api_key(&user_auth.auth_value),
+            api_key_preview = AuthUtils::sanitize_api_key(&user_auth.auth_value),
             "Entry API authentication success (no credential replacement)"
         );
 
@@ -298,9 +318,9 @@ impl AuthenticationService {
         }
 
         tracing::debug!(
-            request_id = %request_id,
+            request_id = request_id,
             user_api_id = user_api.id,
-            provider_key_ids = ?provider_key_ids,
+            provider_key_ids = format!("{:?}", provider_key_ids),
             "Fetching real credentials from user_provider_keys table with auth_type handling"
         );
 
@@ -320,9 +340,9 @@ impl AuthenticationService {
         let selected_key = self.select_credential_by_strategy(user_api, &provider_keys).await?;
 
         tracing::debug!(
-            request_id = %request_id,
+            request_id = request_id,
             selected_key_id = selected_key.id,
-            auth_type = %selected_key.auth_type,
+            auth_type = selected_key.auth_type,
             "Selected credential by strategy"
         );
 
@@ -330,7 +350,7 @@ impl AuthenticationService {
         let real_credential = match selected_key.auth_type.as_str() {
             "api_key" => {
                 tracing::debug!(
-                    request_id = %request_id,
+                    request_id = request_id,
                     key_id = selected_key.id,
                     "Using API key authentication"
                 );
@@ -339,9 +359,9 @@ impl AuthenticationService {
             }
             "oauth" => {
                 tracing::debug!(
-                    request_id = %request_id,
+                    request_id = request_id,
                     key_id = selected_key.id,
-                    session_id = %selected_key.api_key,
+                    session_id = selected_key.api_key,
                     "Using OAuth authentication, fetching access token"
                 );
                 // OAuth类型：api_key字段存储的是session_id，需要查询oauth_client_sessions表
@@ -363,10 +383,10 @@ impl AuthenticationService {
         }
 
         tracing::debug!(
-            request_id = %request_id,
+            request_id = request_id,
             selected_key_id = selected_key.id,
-            auth_type = %selected_key.auth_type,
-            credential_preview = %AuthUtils::sanitize_api_key(&real_credential),
+            auth_type = selected_key.auth_type,
+            credential_preview = AuthUtils::sanitize_api_key(&real_credential),
             "Real credential retrieved successfully"
         );
 
@@ -384,11 +404,14 @@ impl AuthenticationService {
         real_credential: &str,
         request_id: &str,
     ) -> Result<(), ProxyError> {
-        tracing::debug!(
-            request_id = %request_id,
-            auth_source = ?detected_auth.source,
-            auth_location = %detected_auth.location,
-            "Immediately replacing authentication credential in request"
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "replace_credential",
+            "开始替换认证凭据",
+            auth_source = format!("{:?}", detected_auth.source),
+            auth_location = detected_auth.location
         );
 
         match &detected_auth.source {
@@ -400,12 +423,22 @@ impl AuthenticationService {
             }
         }
 
-        tracing::info!(
-            request_id = %request_id,
-            auth_source = ?detected_auth.source,
-            auth_location = %detected_auth.location,
-            real_credential_preview = %AuthUtils::sanitize_api_key(real_credential),
-            "Authentication credential replaced immediately in request"
+        // === 认证替换后请求信息日志 ===
+        let request_url = session.req_header().uri.to_string();
+        let request_headers = crate::logging::format_request_headers(&session.req_header());
+
+        proxy_info!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "credential_replaced",
+            "认证信息替换完成",
+            auth_source = format!("{:?}", detected_auth.source),
+            auth_location = detected_auth.location,
+            real_credential_preview = sanitize_api_key(real_credential),
+            method = session.req_header().method.to_string(),
+            url = request_url,
+            headers = request_headers
         );
 
         Ok(())
@@ -492,8 +525,8 @@ impl AuthenticationService {
         request_id: &str
     ) -> Result<String, ProxyError> {
         tracing::debug!(
-            request_id = %request_id,
-            session_id = %session_id,
+            request_id = request_id,
+            session_id = session_id,
             "Querying OAuth session for access token"
         );
 
@@ -504,9 +537,9 @@ impl AuthenticationService {
             .await
             .map_err(|e| {
                 tracing::error!(
-                    request_id = %request_id,
-                    session_id = %session_id,
-                    error = %e,
+                    request_id = request_id,
+                    session_id = session_id,
+                    error = format!("{:?}", e),
                     "Database error while querying oauth_client_sessions"
                 );
                 ProxyError::database(&format!("Failed to query oauth_client_sessions: {}", e))
@@ -517,8 +550,8 @@ impl AuthenticationService {
             Some(session) => session,
             None => {
                 tracing::error!(
-                    request_id = %request_id,
-                    session_id = %session_id,
+                    request_id = request_id,
+                    session_id = session_id,
                     "OAuth session not found in oauth_client_sessions table"
                 );
                 return Err(ProxyError::authentication(&format!(
@@ -528,10 +561,10 @@ impl AuthenticationService {
         };
 
         tracing::debug!(
-            request_id = %request_id,
-            session_id = %session_id,
-            session_status = %session.status,
-            provider_name = %session.provider_name,
+            request_id = request_id,
+            session_id = session_id,
+            session_status = session.status,
+            provider_name = session.provider_name,
             user_id = session.user_id,
             "OAuth session found"
         );
@@ -539,9 +572,9 @@ impl AuthenticationService {
         // 验证session状态
         if session.status != "completed" {
             tracing::error!(
-                request_id = %request_id,
-                session_id = %session_id,
-                session_status = %session.status,
+                request_id = request_id,
+                session_id = session_id,
+                session_status = session.status,
                 "OAuth session is not in completed status"
             );
             return Err(ProxyError::authentication(&format!(
@@ -555,8 +588,8 @@ impl AuthenticationService {
             Some(token) => token,
             None => {
                 tracing::error!(
-                    request_id = %request_id,
-                    session_id = %session_id,
+                    request_id = request_id,
+                    session_id = session_id,
                     "OAuth session has no access_token field"
                 );
                 return Err(ProxyError::authentication(&format!(
@@ -568,8 +601,8 @@ impl AuthenticationService {
         // 验证access_token非空
         if access_token.is_empty() {
             tracing::error!(
-                request_id = %request_id,
-                session_id = %session_id,
+                request_id = request_id,
+                session_id = session_id,
                 "OAuth session has empty access_token"
             );
             return Err(ProxyError::authentication(&format!(
@@ -581,10 +614,10 @@ impl AuthenticationService {
         let now = chrono::Utc::now().naive_utc();
         if session.expires_at <= now {
             tracing::error!(
-                request_id = %request_id,
-                session_id = %session_id,
-                expires_at = %session.expires_at,
-                current_time = %now,
+                request_id = request_id,
+                session_id = session_id,
+                expires_at = session.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                current_time = now.format("%Y-%m-%d %H:%M:%S").to_string(),
                 "OAuth access token has expired"
             );
             return Err(ProxyError::authentication(&format!(
@@ -594,11 +627,11 @@ impl AuthenticationService {
         }
 
         tracing::info!(
-            request_id = %request_id,
-            session_id = %session_id,
-            provider_name = %session.provider_name,
-            expires_at = %session.expires_at,
-            access_token_preview = %AuthUtils::sanitize_api_key(access_token),
+            request_id = request_id,
+            session_id = session_id,
+            provider_name = session.provider_name,
+            expires_at = session.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            access_token_preview = AuthUtils::sanitize_api_key(access_token),
             "OAuth access token retrieved successfully"
         );
 
@@ -672,8 +705,8 @@ impl AuthenticationService {
         
         tracing::debug!(
             param_name = param_name,
-            new_value_preview = %AuthUtils::sanitize_api_key(new_value),
-            new_query = %new_query,
+            new_value_preview = AuthUtils::sanitize_api_key(new_value),
+            new_query = new_query,
             "Query parameter replaced successfully"
         );
         
@@ -722,7 +755,7 @@ impl AuthenticationService {
         
         tracing::debug!(
             header_name = header_name,
-            new_value_preview = %AuthUtils::sanitize_api_key(&final_value),
+            new_value_preview = AuthUtils::sanitize_api_key(&final_value),
             "Header value replaced successfully"
         );
         
@@ -750,8 +783,8 @@ impl AuthenticationService {
         
         tracing::debug!(
             user_id = auth_result.user_id,
-            provider_name = %auth_result.provider_type.name,
-            provider_base_url = %auth_result.provider_type.base_url,
+            provider_name = auth_result.provider_type.name,
+            provider_base_url = auth_result.provider_type.base_url,
             timeout_seconds = ctx.timeout_seconds.unwrap_or(30),
             "Authentication result applied to context with complete provider configuration"
         );
@@ -768,7 +801,7 @@ impl AuthenticationService {
         // 3. 每天token使用量限制
 
         tracing::debug!(
-            request_id = %ctx.request_id,
+            request_id = ctx.request_id,
             user_service_api_id = ctx.user_service_api.as_ref().map(|api| api.id),
             "Rate limit check passed (placeholder implementation)"
         );
@@ -808,8 +841,8 @@ impl AuthenticationService {
         }
 
         tracing::debug!(
-            provider_name = %provider.name,
-            generated_headers = ?auth_headers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            provider_name = provider.name,
+            generated_headers = format!("{:?}", auth_headers.iter().map(|(name, _)| name).collect::<Vec<_>>()),
             "Generated authentication headers using provider-specific logic"
         );
 

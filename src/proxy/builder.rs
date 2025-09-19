@@ -7,6 +7,8 @@ use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::proxy::service::ProxyService;
+use crate::logging::LogComponent;
+use crate::proxy_info;
 use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -49,17 +51,35 @@ impl ProxyServerBuilder {
     /// 创建或获取数据库连接
     pub async fn ensure_database(&mut self) -> Result<Arc<DatabaseConnection>> {
         if let Some(db) = &self.db {
-            tracing::info!("使用共享数据库连接");
+            proxy_info!(
+                "server_builder",
+                LogStage::RequestStart,
+                LogComponent::Builder,
+                "using_shared_db",
+                "使用共享数据库连接",
+            );
             return Ok(db.clone());
         }
 
-        tracing::info!("设置数据库路径");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "setting_db_path",
+            "设置数据库路径",
+        );
         self.config
             .database
             .ensure_database_path()
             .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {}", e)))?;
 
-        tracing::info!("创建数据库连接");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "creating_db_connection",
+            "创建数据库连接",
+        );
         let db_url = self
             .config
             .database
@@ -82,7 +102,13 @@ impl ProxyServerBuilder {
             return Ok(cache.clone());
         }
 
-        tracing::info!("创建统一缓存管理器");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "creating_cache_manager",
+            "创建统一缓存管理器",
+        );
         let cache = Arc::new(
             CacheManager::new(&self.config.cache, &self.config.redis.url)
                 .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {}", e)))?,
@@ -102,7 +128,13 @@ impl ProxyServerBuilder {
             return manager.clone();
         }
 
-        tracing::info!("创建服务商配置管理器");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "creating_provider_config_manager",
+            "创建服务商配置管理器",
+        );
         let manager = Arc::new(ProviderConfigManager::new(db, cache));
         self.provider_config_manager = Some(manager.clone());
         manager
@@ -140,7 +172,13 @@ impl ProxyServerBuilder {
             cache,
         ).await?;
 
-        tracing::info!("统一认证管理器创建完成");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "auth_manager_created",
+            "统一认证管理器创建完成",
+        );
         Ok(Arc::new(auth_manager))
     }
 
@@ -151,12 +189,18 @@ impl ProxyServerBuilder {
         cache: Arc<CacheManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
-        tracing::info!("创建AI代理服务");
+        proxy_info!(
+            "server_builder",
+            LogStage::RequestStart,
+            LogComponent::Builder,
+            "creating_ai_proxy_service",
+            "创建AI代理服务",
+        );
 
         // 创建统一认证管理器
         let auth_manager = self.create_auth_manager(db.clone(), cache.clone())
             .await
-            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
+            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败",))?;
 
         ProxyService::new(
             self.config.clone(),

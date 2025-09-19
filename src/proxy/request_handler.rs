@@ -18,6 +18,8 @@ use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::{AuthManager, AuthUtils};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
+use crate::{proxy_debug, proxy_info, proxy_warn};
+use crate::logging::LogComponent;
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::{AuthenticationService, TracingService};
@@ -244,7 +246,7 @@ impl ResponseDetails {
                     tracing::info!(
                         raw_size = original_chunks_len,
                         encoded_size = truncated_chunks.len(),
-                        utf8_error = %utf8_error,
+                        utf8_error = format!("{:?}", utf8_error),
                         "Response body finalized as hex-encoded binary data"
                     );
                 }
@@ -528,14 +530,27 @@ impl RequestHandler {
         &self,
         user_api: &user_service_apis::Model,
     ) -> Result<(), ProxyError> {
+        self.check_rate_limit_with_id(user_api, "unknown").await
+    }
+
+    /// 检查所有限制 - 包括速率限制、每日限制、过期时间等（带request_id版本）
+    pub(crate) async fn check_rate_limit_with_id(
+        &self,
+        user_api: &user_service_apis::Model,
+        request_id: &str,
+    ) -> Result<(), ProxyError> {
         // 1. 检查API过期时间
         if let Some(expires_at) = &user_api.expires_at {
             let now = chrono::Utc::now().naive_utc();
             if now > *expires_at {
-                tracing::warn!(
+                proxy_warn!(
+                    request_id,
+                    LogStage::Authentication,
+                    LogComponent::RequestHandler,
+                    "api_expired",
+                    "API已过期",
                     user_service_api_id = user_api.id,
-                    expires_at = %expires_at,
-                    "API has expired"
+                    expires_at = expires_at.format("%Y-%m-%d %H:%M:%S").to_string()
                 );
                 return Err(ProxyError::rate_limit("API has expired".to_string()));
             }
@@ -552,12 +567,16 @@ impl RequestHandler {
                     .await
                     .map_err(|e| ProxyError::internal(format!("Rate limiter error: {}", e)))?;
                 if !out.allowed {
-                    tracing::warn!(
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Authentication,
+                        LogComponent::RequestHandler,
+                        "rate_limit_exceeded_per_minute",
+                        "每分钟速率限制超出（分布式）",
                         service_api_id = user_api.id,
                         user_id = user_api.user_id,
                         current = out.current,
-                        limit = out.limit,
-                        "Per-minute rate limit exceeded (Distributed)"
+                        limit = out.limit
                     );
                     return Err(ProxyError::rate_limit(format!(
                         "Rate limit exceeded: {} requests per minute",
@@ -574,12 +593,16 @@ impl RequestHandler {
                     .await
                     .map_err(|e| ProxyError::internal(format!("Rate limiter error: {}", e)))?;
                 if !out.allowed {
-                    tracing::warn!(
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Authentication,
+                        LogComponent::RequestHandler,
+                        "daily_limit_exceeded",
+                        "每日请求限制超出（分布式）",
                         service_api_id = user_api.id,
                         user_id = user_api.user_id,
                         current = out.current,
-                        limit = out.limit,
-                        "Daily request limit exceeded (Distributed)"
+                        limit = out.limit
                     );
                     return Err(ProxyError::rate_limit(format!(
                         "Daily request limit exceeded: {} requests per day",
@@ -592,7 +615,7 @@ impl RequestHandler {
         // 4. 检查每日token限制 (基于历史数据预检查)
         if let Some(token_limit) = user_api.max_tokens_per_day {
             if token_limit > 0 {
-                self.check_daily_token_limit(user_api.id, token_limit)
+                self.check_daily_token_limit(user_api.id, token_limit, request_id)
                     .await?;
             }
         }
@@ -600,7 +623,7 @@ impl RequestHandler {
         // 5. 检查每日成本限制 (基于历史数据预检查)
         if let Some(cost_limit) = user_api.max_cost_per_day {
             if cost_limit > Decimal::ZERO {
-                self.check_daily_cost_limit(user_api.id, cost_limit).await?;
+                self.check_daily_cost_limit(user_api.id, cost_limit, request_id).await?;
             }
         }
 
@@ -614,6 +637,7 @@ impl RequestHandler {
         &self,
         service_api_id: i32,
         token_limit: i64,
+        request_id: &str,
     ) -> Result<(), ProxyError> {
         let today = chrono::Utc::now().date_naive();
         let today_start = today.and_hms_opt(0, 0, 0).unwrap();
@@ -640,12 +664,16 @@ impl RequestHandler {
         let current_usage = total_tokens_used.unwrap_or(0);
 
         if current_usage >= token_limit {
-            tracing::warn!(
+            proxy_warn!(
+                request_id,
+                LogStage::Authentication,
+                LogComponent::RequestHandler,
+                "daily_token_limit_exceeded",
+                "每日token限制超出（数据库验证）",
                 service_api_id = service_api_id,
                 current_usage = current_usage,
                 token_limit = token_limit,
-                date = %today,
-                "Daily token limit exceeded (database-verified)"
+                date = today.format("%Y-%m-%d").to_string()
             );
 
             return Err(ProxyError::rate_limit(format!(
@@ -654,13 +682,17 @@ impl RequestHandler {
             )));
         }
 
-        tracing::debug!(
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::RequestHandler,
+            "daily_token_check_passed",
+            "每日token限制检查通过（数据库验证）",
             service_api_id = service_api_id,
             current_usage = current_usage,
             token_limit = token_limit,
             remaining = token_limit - current_usage,
-            date = %today,
-            "Daily token limit check passed (database-verified)"
+            date = today.format("%Y-%m-%d").to_string()
         );
 
         Ok(())
@@ -671,6 +703,7 @@ impl RequestHandler {
         &self,
         service_api_id: i32,
         cost_limit: Decimal,
+        request_id: &str,
     ) -> Result<(), ProxyError> {
         let today = chrono::Utc::now().date_naive();
         let today_start = today.and_hms_opt(0, 0, 0).unwrap();
@@ -699,12 +732,16 @@ impl RequestHandler {
             .unwrap_or(Decimal::ZERO);
 
         if current_usage >= cost_limit {
-            tracing::warn!(
+            proxy_warn!(
+                request_id,
+                LogStage::Authentication,
+                LogComponent::RequestHandler,
+                "daily_cost_limit_exceeded",
+                "每日成本限制超出（数据库验证）",
                 service_api_id = service_api_id,
-                current_usage = %current_usage.to_string(),
-                cost_limit = %cost_limit.to_string(),
-                date = %today,
-                "Daily cost limit exceeded (database-verified)"
+                current_usage = current_usage.to_string(),
+                cost_limit = cost_limit.to_string(),
+                date = today.format("%Y-%m-%d").to_string()
             );
 
             return Err(ProxyError::rate_limit(format!(
@@ -713,13 +750,17 @@ impl RequestHandler {
             )));
         }
 
-        tracing::debug!(
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::RequestHandler,
+            "daily_cost_check_passed",
+            "每日成本限制检查通过（数据库验证）",
             service_api_id = service_api_id,
-            current_usage = %current_usage.to_string(),
-            cost_limit = %cost_limit.to_string(),
-            remaining = %(cost_limit - current_usage).to_string(),
-            date = %today,
-            "Daily cost limit check passed (database-verified)"
+            current_usage = current_usage.to_string(),
+            cost_limit = cost_limit.to_string(),
+            remaining = (cost_limit - current_usage).to_string(),
+            date = today.format("%Y-%m-%d").to_string()
         );
 
         Ok(())
@@ -765,7 +806,14 @@ impl RequestHandler {
         session_id: &str,
         request_id: &str,
     ) -> Result<String, ProxyError> {
-        tracing::debug!(request_id = %request_id, session_id = %session_id, "Resolving OAuth access token");
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::RequestHandler,
+            "resolve_oauth_token",
+            "解析OAuth访问令牌",
+            session_id = session_id
+        );
 
         let oauth_session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
@@ -799,13 +847,16 @@ impl RequestHandler {
             )));
         }
 
-        tracing::info!(
-            request_id = %request_id,
-            session_id = %session_id,
-            provider_name = %session.provider_name,
-            expires_at = %session.expires_at,
-            access_token_preview = %AuthUtils::sanitize_api_key(&token),
-            "Resolved OAuth access token"
+        proxy_info!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::RequestHandler,
+            "oauth_token_resolved",
+            "OAuth访问令牌解析成功",
+            session_id = session_id,
+            provider_name = session.provider_name,
+            expires_at = session.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            access_token_preview = AuthUtils::sanitize_api_key(&token)
         );
 
         Ok(token)
@@ -831,14 +882,17 @@ impl RequestHandler {
             .select_api_key_from_service_api(user_service_api, &context)
             .await?;
 
-        tracing::debug!(
-            request_id = %request_id,
+        proxy_debug!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::RequestHandler,
+            "api_key_selected",
+            "API密钥选择完成（使用ApiKeyPoolManager）",
             user_id = user_service_api.user_id,
             provider_type_id = user_service_api.provider_type_id,
             selected_key_id = result.selected_key.id,
-            strategy = %result.strategy.as_str(),
-            reason = %result.reason,
-            "API key selection completed using ApiKeyPoolManager"
+            strategy = result.strategy.as_str(),
+            reason = result.reason
         );
 
         Ok(result.selected_key)
@@ -881,18 +935,24 @@ impl RequestHandler {
             }
         });
 
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            upstream = %upstream_addr,
-            provider = %provider_type.name,
-            "Selected upstream peer"
+        proxy_debug!(
+            &ctx.request_id,
+            LogStage::UpstreamRequest,
+            LogComponent::RequestHandler,
+            "upstream_peer_selected",
+            "上游节点选择完成",
+            upstream = upstream_addr,
+            provider = provider_type.name
         );
 
         // Upstream address no longer stored in simplified trace schema
-        tracing::info!(
-            request_id = %ctx.request_id,
-            upstream_addr = %upstream_addr,
-            "Selected upstream address (not stored in trace)"
+        proxy_info!(
+            &ctx.request_id,
+            LogStage::UpstreamRequest,
+            LogComponent::RequestHandler,
+            "upstream_address_selected",
+            "上游地址选择完成（不存储在追踪中）",
+            upstream_addr = upstream_addr
         );
 
         // 创建基础peer
@@ -922,14 +982,17 @@ impl RequestHandler {
             options.h2_ping_interval = Some(Duration::from_secs(30));
             options.max_h2_streams = 100;
 
-            tracing::debug!(
-                request_id = %ctx.request_id,
-                provider = %provider_type.name,
+            proxy_debug!(
+                &ctx.request_id,
+                LogStage::UpstreamRequest,
+                LogComponent::RequestHandler,
+                "peer_options_configured",
+                "配置通用peer选项（动态超时）",
+                provider = provider_type.name,
                 provider_id = provider_type.id,
                 connection_timeout_s = connection_timeout_secs,
                 total_timeout_s = total_timeout_secs,
-                read_timeout_s = read_timeout_secs,
-                "Configured universal peer options with dynamic timeout"
+                read_timeout_s = read_timeout_secs
             );
         } else {
             // 为其他服务商也应用动态超时配置
@@ -940,8 +1003,8 @@ impl RequestHandler {
                 options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
 
                 tracing::debug!(
-                    request_id = %ctx.request_id,
-                    provider = %provider_type.name,
+                    request_id = ctx.request_id,
+                    provider = provider_type.name,
                     connection_timeout_s = connection_timeout_secs,
                     total_timeout_s = total_timeout_secs,
                     read_timeout_s = read_timeout_secs,
@@ -964,9 +1027,9 @@ impl RequestHandler {
         let original_path = session.req_header().uri.path();
 
         tracing::info!(
-            request_id = %ctx.request_id,
-            method = %session.req_header().method,
-            path = %original_path,
+            request_id = ctx.request_id,
+            method = session.req_header().method.to_string(),
+            path = original_path,
             flow = "before_modify_request",
             "修改请求信息前"
         );
@@ -983,9 +1046,9 @@ impl RequestHandler {
                         .await
                     {
                         tracing::debug!(
-                            request_id = %ctx.request_id,
-                            provider = %provider_name,
-                            error = %e,
+                            request_id = ctx.request_id,
+                            provider = provider_name,
+                            error = format!("{:?}", e),
                             "Provider strategy modify_request returned error, continue with default path"
                         );
                     }
@@ -997,8 +1060,8 @@ impl RequestHandler {
         if let Some(provider_type) = &ctx.provider_type {
             if !provider_type.name.to_lowercase().contains("gemini") {
                 tracing::debug!(
-                    request_id = %ctx.request_id,
-                    original_path = %original_path,
+                    request_id = ctx.request_id,
+                    original_path = original_path,
                     "Using original path for non-Gemini provider"
                 );
             }
@@ -1014,7 +1077,7 @@ impl RequestHandler {
         // Request size no longer stored in simplified trace schema
         if ctx.request_details.body_size.is_some() {
             tracing::info!(
-                request_id = %ctx.request_id,
+                request_id = ctx.request_id,
                 request_size = ?ctx.request_details.body_size,
                 "Request size collected (not stored in trace)"
             );
@@ -1053,12 +1116,12 @@ impl RequestHandler {
         };
 
         tracing::debug!(
-            request_id = %ctx.request_id,
+            request_id = ctx.request_id,
             stage = "before_auth",
-            client_headers_key = %client_headers_before_auth,
-            upstream_headers_key = %upstream_headers_before_auth,
-            client_headers_all = %client_all_headers_str,
-            upstream_headers_all = %upstream_all_headers_before_str,
+            client_headers_key = client_headers_before_auth,
+            upstream_headers_key = upstream_headers_before_auth,
+            client_headers_all = client_all_headers_str,
+            upstream_headers_all = upstream_all_headers_before_str,
             "Client and upstream headers (before auth)"
         );
 
@@ -1083,11 +1146,11 @@ impl RequestHandler {
                     applied.push(header_name.clone());
                 }
                 tracing::info!(
-                    request_id = %ctx.request_id,
-                    provider = %provider_type.name,
+                    request_id = ctx.request_id,
+                    provider = provider_type.name,
                     auth_type = "api_key",
                     auth_headers = ?applied,
-                    api_key_preview = %AuthUtils::sanitize_api_key(&api_key),
+                    api_key_preview = AuthUtils::sanitize_api_key(&api_key),
                     "Applied API key authentication"
                 );
             }
@@ -1103,10 +1166,10 @@ impl RequestHandler {
                         ))
                     })?;
                 tracing::info!(
-                    request_id = %ctx.request_id,
-                    provider = %provider_type.name,
+                    request_id = ctx.request_id,
+                    provider = provider_type.name,
                     auth_type = "oauth",
-                    access_token_preview = %AuthUtils::sanitize_api_key(&access_token),
+                    access_token_preview = AuthUtils::sanitize_api_key(&access_token),
                     "Applied OAuth access token"
                 );
             }
@@ -1181,7 +1244,7 @@ impl RequestHandler {
                 // 对于 SSE，移除任何压缩协商，确保事件流稳定
                 upstream_request.remove_header("accept-encoding");
                 tracing::debug!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     "SSE endpoint detected, removed accept-encoding for stability"
                 );
             } else if client_supports_compression
@@ -1196,7 +1259,7 @@ impl RequestHandler {
                 }
 
                 tracing::debug!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     "Client supports compression, requesting compressed response from upstream"
                 );
             } else if !is_sse_endpoint {
@@ -1204,7 +1267,7 @@ impl RequestHandler {
                 upstream_request.remove_header("accept-encoding");
 
                 tracing::debug!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     client_supports_compression = client_supports_compression,
                     "Client doesn't support compression, requesting uncompressed response from upstream"
                 );
@@ -1216,19 +1279,19 @@ impl RequestHandler {
         let upstream_headers_after_auth = self.extract_key_headers_from_request(upstream_request);
 
         tracing::debug!(
-            request_id = %ctx.request_id,
+            request_id = ctx.request_id,
             stage = "after_auth",
-            client_headers = %client_headers_after_auth,
-            upstream_headers = %upstream_headers_after_auth,
-            provider = %provider_type.name,
+            client_headers = client_headers_after_auth,
+            upstream_headers = upstream_headers_after_auth,
+            provider = provider_type.name,
             backend_id = selected_backend.id,
             "Headers after authentication and processing"
         );
 
         tracing::debug!(
-            request_id = %ctx.request_id,
-            method = %upstream_request.method,
-            final_uri = %upstream_request.uri,
+            request_id = ctx.request_id,
+            method = upstream_request.method.to_string(),
+            final_uri = upstream_request.uri.to_string(),
             flow = "after_auth_replacement",
             "Authentication replacement finished"
         );
@@ -1242,8 +1305,8 @@ impl RequestHandler {
         if ctx.will_modify_body {
             upstream_request.remove_header("content-length");
             tracing::debug!(
-                request_id = %ctx.request_id,
-                path = %path_for_len,
+                request_id = ctx.request_id,
+                path = path_for_len,
                 "将修改请求体，移除原始 Content-Length"
             );
         } else {
@@ -1270,9 +1333,9 @@ impl RequestHandler {
                     return Err(error);
                 }
                 tracing::debug!(
-                    request_id = %ctx.request_id,
-                    method = %method_upper,
-                    path = %path_for_len,
+                    request_id = ctx.request_id,
+                    method = method_upper,
+                    path = path_for_len,
                     "无请求体路由，显式设置 Content-Length: 0"
                 );
             }
@@ -1302,16 +1365,16 @@ impl RequestHandler {
         tracing::info!(
             event = "upstream_request_ready",
             component = "request_handler",
-            request_id = %ctx.request_id,
-            method = %upstream_request.method,
-            final_uri = %upstream_request.uri,
-            upstream_host = %upstream_host_for_log,
-            upstream_url = %upstream_url_for_log,
-            provider = %provider_type.name,
+            request_id = ctx.request_id,
+            method = upstream_request.method.to_string(),
+            final_uri = upstream_request.uri.to_string(),
+            upstream_host = upstream_host_for_log,
+            upstream_url = upstream_url_for_log,
+            provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
-            auth_preview = %AuthUtils::sanitize_api_key(&selected_backend.api_key),
-            upstream_headers = %upstream_all_headers_after_str,
+            auth_preview = AuthUtils::sanitize_api_key(&selected_backend.api_key),
+            upstream_headers = upstream_all_headers_after_str,
             "上游请求已构建"
         );
 
@@ -1336,10 +1399,10 @@ impl RequestHandler {
         tracing::info!(
             event = "upstream_response_headers",
             component = "request_handler",
-            request_id = %ctx.request_id,
-            status_code = %upstream_response.status.as_u16(),
-            response_headers_key = %response_headers,
-            response_headers = %response_all_headers_str,
+            request_id = ctx.request_id,
+            status_code = upstream_response.status.as_u16(),
+            response_headers_key = response_headers,
+            response_headers = response_all_headers_str,
             "收到上游响应头"
         );
 
@@ -1349,7 +1412,7 @@ impl RequestHandler {
             tracing::error!(
                 event = "fail",
                 component = "request_handler",
-                request_id = %ctx.request_id,
+                request_id = ctx.request_id,
                 status_code = status_code,
                 "响应失败，稍后打印响应体"
             );
@@ -1388,7 +1451,7 @@ impl RequestHandler {
 
         // 日志记录响应信息
         tracing::info!(
-            request_id = %ctx.request_id,
+            request_id = ctx.request_id,
             status = upstream_response.status.as_u16(),
             content_type = content_type,
             content_encoding = ?content_encoding,
@@ -1402,7 +1465,7 @@ impl RequestHandler {
         // 对于压缩响应，确保完整透传所有相关头部
         if content_encoding.is_some() {
             tracing::debug!(
-                request_id = %ctx.request_id,
+                request_id = ctx.request_id,
                 encoding = ?content_encoding,
                 "Preserving compressed response with all headers"
             );
@@ -1413,7 +1476,7 @@ impl RequestHandler {
         // 对于流式响应，确保支持chunk传输
         if is_streaming {
             tracing::debug!(
-                request_id = %ctx.request_id,
+                request_id = ctx.request_id,
                 "Configuring for streaming response"
             );
             // 保持流式传输相关头部
@@ -1454,7 +1517,7 @@ impl RequestHandler {
         }
 
         tracing::debug!(
-            request_id = %ctx.request_id,
+            request_id = ctx.request_id,
             status = upstream_response.status.as_u16(),
             tokens_used = ctx.tokens_used,
             preserved_encoding = ?content_encoding,
@@ -1616,7 +1679,7 @@ impl RequestHandler {
         match &error.etype {
             ErrorType::ConnectTimedout => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     timeout_seconds = timeout_secs,
                     "Connection timeout to upstream provider"
@@ -1631,7 +1694,7 @@ impl RequestHandler {
             }
             ErrorType::ReadTimedout => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     timeout_seconds = timeout_secs,
                     "Read timeout from upstream provider"
@@ -1646,7 +1709,7 @@ impl RequestHandler {
             }
             ErrorType::WriteTimedout => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     timeout_seconds = timeout_secs,
                     "Write timeout to upstream provider"
@@ -1661,7 +1724,7 @@ impl RequestHandler {
             }
             ErrorType::ConnectError => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     "Failed to connect to upstream provider"
                 );
@@ -1672,7 +1735,7 @@ impl RequestHandler {
             }
             ErrorType::ConnectRefused => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     "Connection refused by upstream provider"
                 );
@@ -1683,7 +1746,7 @@ impl RequestHandler {
             }
             ErrorType::HTTPStatus(status) if *status >= 500 => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     status = *status,
                     "Upstream provider returned server error"
@@ -1695,7 +1758,7 @@ impl RequestHandler {
             }
             _ => {
                 tracing::error!(
-                    request_id = %ctx.request_id,
+                    request_id = ctx.request_id,
                     provider = provider_name,
                     error_type = ?error.etype,
                     error_source = ?error.esource,

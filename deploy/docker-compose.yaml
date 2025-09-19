@@ -18,9 +18,18 @@ services:
       # 配置文件（可选，用于动态配置）
       - ../config:/app/config:ro
     environment:
-      # 生产环境建议使用 info，调试时可改为 debug/trace
-      - RUST_LOG=info,sqlx::query=off
+      # 日志模式配置 - 通过简单的环境变量选择预设模式
+      #
+      # 使用示例:
+      # LOG_MODE=production    # 生产环境: 性能优先，关闭数据库查询日志
+      # LOG_MODE=development  # 开发环境: 详细日志，启用数据库查询
+      # LOG_MODE=testing      # 测试环境: 最小日志输出
+      #
+      # 启动命令示例:
+      # LOG_MODE=development docker-compose up
+      - LOG_MODE=${LOG_MODE:-production}
       - RUST_BACKTRACE=1
+      # 其他配置
       - API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE:-config.prod.toml}
       - API_PROXY_DATA_DIR=/app/data
       - API_PROXY_STATIC_DIR=/app/static
