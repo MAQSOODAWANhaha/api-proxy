@@ -77,11 +77,30 @@ impl ProviderStrategy for GeminiStrategy {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
+                        let path_for_log = path.to_string();
                         if path.contains("generateContent") {
                             // 使用原始项目ID格式，不添加 projects/ 前缀
                             let header_val = format!("project={}", pid);
                             let _ =
-                                upstream_request.insert_header("x-goog-request-params", header_val);
+                                upstream_request.insert_header("x-goog-request-params", &header_val);
+                            proxy_info!(
+                                &ctx.request_id,
+                                LogStage::RequestModify,
+                                LogComponent::GeminiStrategy,
+                                "x_goog_request_params_added",
+                                "添加 x-goog-request-params 头",
+                                path = path_for_log,
+                                header_val = header_val
+                            );
+                        } else {
+                            proxy_debug!(
+                                &ctx.request_id,
+                                LogStage::RequestModify,
+                                LogComponent::GeminiStrategy,
+                                "x_goog_request_params_skipped",
+                                "路径不包含generateContent，跳过添加x-goog-request-params头",
+                                path = path_for_log
+                            );
                         }
                     }
                 }
@@ -144,15 +163,28 @@ impl ProviderStrategy for GeminiStrategy {
         };
 
         if modified {
-            proxy_info!(
-                &ctx.request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "project_fields_injected",
-                "Gemini策略将项目字段注入到请求JSON中",
-                project_id = project_id,
-                route_path = request_path
-            );
+            if let Ok(json_str) = serde_json::to_string_pretty(json_value) {
+                proxy_info!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::GeminiStrategy,
+                    "project_fields_injected",
+                    "Gemini策略将项目字段注入到请求JSON中",
+                    project_id = project_id,
+                    route_path = request_path,
+                    modified_json = json_str
+                );
+            } else {
+                proxy_info!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::GeminiStrategy,
+                    "project_fields_injected",
+                    "Gemini策略将项目字段注入到请求JSON中",
+                    project_id = project_id,
+                    route_path = request_path
+                );
+            }
         }
 
         Ok(modified)
@@ -181,7 +213,8 @@ fn inject_loadcodeassist_fields(
                 LogComponent::GeminiStrategy,
                 "duet_project_injected",
                 "注入metadata.duetProject",
-                project_id = project_id
+                project_id = project_id,
+                location = "metadata.duetProject"
             );
         }
         obj.insert(
@@ -209,7 +242,8 @@ fn inject_onboarduser_fields(
             LogComponent::GeminiStrategy,
             "cloudaicompanion_project_injected_onboard",
             "注入cloudaicompanionProject (onboardUser)",
-            project_id = project_id
+            project_id = project_id,
+            location = "top_level"
         );
         return true;
     }
@@ -222,20 +256,39 @@ fn inject_generatecontent_fields(
     request_id: &str,
 ) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
-        // 直接使用项目ID，不添加 projects/ 前缀
-        obj.insert(
-            "project".to_string(),
-            serde_json::Value::String(project_id.to_string()),
-        );
-        proxy_debug!(
-            request_id,
-            LogStage::RequestModify,
-            LogComponent::GeminiStrategy,
-            "top_level_project_injected",
-            "注入顶层项目字段 (generateContent)",
-            project_id = project_id
-        );
-        return true;
+        // 将 project 字段添加到 request 对象内部
+        if let Some(request_obj) = obj.get_mut("request").and_then(|v| v.as_object_mut()) {
+            request_obj.insert(
+                "project".to_string(),
+                serde_json::Value::String(project_id.to_string()),
+            );
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "project_injected_into_request",
+                "将project字段注入到request对象内部",
+                project_id = project_id,
+                location = "request.object"
+            );
+            return true;
+        } else {
+            // 如果 request 对象不存在，在顶层添加 project 字段
+            obj.insert(
+                "project".to_string(),
+                serde_json::Value::String(project_id.to_string()),
+            );
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "project_injected_at_top",
+                "在顶层注入project字段 (request对象不存在)",
+                project_id = project_id,
+                location = "top_level"
+            );
+            return true;
+        }
     }
     false
 }
@@ -289,6 +342,8 @@ fn inject_counttokens_fields(json_value: &mut serde_json::Value, request_id: &st
             LogComponent::GeminiStrategy,
             "count_tokens_standardized",
             "标准化countTokens请求体结构",
+            action = "standardize_count_tokens",
+            result = "wrapped_in_request_object"
         );
     }
     modified
@@ -365,7 +420,7 @@ mod tests {
         let mut v = serde_json::json!({});
         let changed = inject_generatecontent_fields(&mut v, "p", "req");
         assert!(changed);
-        assert_eq!(v["project"], "projects/p");
+        assert_eq!(v["project"], "p");
     }
 
     #[test]
