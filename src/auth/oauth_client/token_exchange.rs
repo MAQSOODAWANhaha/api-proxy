@@ -378,11 +378,7 @@ impl TokenExchangeClient {
             OAuthError::SerdeError(format!("Failed to parse token response: {}", e))
         })?;
 
-        // 也尝试解析为通用的JSON Value以捕获所有字段
-        if let Ok(raw_json) = serde_json::from_str::<serde_json::Value>(&data) {
-            tracing::info!("🌟 Token response parsed as JSON Value: {:#}", raw_json);
-        }
-
+  
         // 打印结构化的关键信息
         tracing::info!(
             "🌟 Token exchange structured response: status={}, token_type={}, expires_in={:?}, has_refresh_token={}, has_id_token={}, scope={:?}",

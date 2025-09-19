@@ -256,39 +256,54 @@ fn inject_generatecontent_fields(
     request_id: &str,
 ) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
-        // 将 project 字段添加到 request 对象内部
-        if let Some(request_obj) = obj.get_mut("request").and_then(|v| v.as_object_mut()) {
-            request_obj.insert(
-                "project".to_string(),
-                serde_json::Value::String(project_id.to_string()),
-            );
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "project_injected_into_request",
-                "将project字段注入到request对象内部",
-                project_id = project_id,
-                location = "request.object"
-            );
-            return true;
-        } else {
-            // 如果 request 对象不存在，在顶层添加 project 字段
+        // 根据Google Gemini CLI实现，正确的格式是：
+        // {
+        //   "model": "gemini-2.5-flash",
+        //   "project": "project-id",
+        //   "user_prompt_id": "uuid",
+        //   "request": {
+        //     "contents": [...],
+        //     "generationConfig": {...}
+        //   }
+        // }
+
+        // 确保有顶层project字段
+        obj.insert(
+            "project".to_string(),
+            serde_json::Value::String(project_id.to_string()),
+        );
+
+        // 确保有user_prompt_id字段
+        if !obj.contains_key("user_prompt_id") {
             obj.insert(
-                "project".to_string(),
-                serde_json::Value::String(project_id.to_string()),
+                "user_prompt_id".to_string(),
+                serde_json::Value::String(request_id.to_string()),
             );
+        }
+
+        // 如果request对象存在，project已经在request外部设置
+        if obj.get_mut("request").and_then(|v| v.as_object_mut()).is_some() {
             proxy_debug!(
                 request_id,
                 LogStage::RequestModify,
                 LogComponent::GeminiStrategy,
-                "project_injected_at_top",
-                "在顶层注入project字段 (request对象不存在)",
+                "project_injected_outside_request",
+                "将project字段注入到request对象外部（Google标准格式）",
                 project_id = project_id,
                 location = "top_level"
             );
-            return true;
+        } else {
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "project_injected_at_top_no_request",
+                "在顶层注入project字段（无request对象）",
+                project_id = project_id,
+                location = "top_level"
+            );
         }
+        return true;
     }
     false
 }
