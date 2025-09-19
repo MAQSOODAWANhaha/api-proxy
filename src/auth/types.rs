@@ -3,6 +3,7 @@
 //! 定义认证相关的数据结构和常量
 
 use chrono::{DateTime, Utc};
+use entity::user_service_apis;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -114,6 +115,17 @@ impl JwtClaims {
     pub fn user_id(&self) -> Result<i32, std::num::ParseIntError> {
         self.sub.parse()
     }
+}
+
+/// 代理端认证结果（原位于 auth/proxy.rs）
+#[derive(Debug, Clone)]
+pub struct ProxyAuthResult {
+    /// 用户服务API信息
+    pub user_api: user_service_apis::Model,
+    /// 用户ID
+    pub user_id: i32,
+    /// 服务商类型ID
+    pub provider_type_id: i32,
 }
 
 /// 认证令牌类型

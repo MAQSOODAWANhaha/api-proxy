@@ -17,7 +17,7 @@ use crate::auth::{
     permissions::{Permission, PermissionChecker},
     types::{AuditEventType, AuditLogEntry, AuditResult, AuthConfig, TokenType, UserInfo},
 };
-use crate::cache::abstract_cache::UnifiedCacheManager;
+use crate::cache::abstract_cache::CacheManager;
 use crate::cache::keys::CacheKeyBuilder;
 use crate::error::Result;
 
@@ -61,7 +61,7 @@ pub struct AuthService {
     #[allow(dead_code)]
     config: Arc<AuthConfig>,
     /// Cache manager for token blacklist
-    cache_manager: Option<Arc<UnifiedCacheManager>>,
+    cache_manager: Option<Arc<CacheManager>>,
     /// Audit log cache
     audit_cache: tokio::sync::RwLock<Vec<AuditLogEntry>>,
 }
@@ -90,7 +90,7 @@ impl AuthService {
         api_key_manager: Arc<ApiKeyManager>,
         db: Arc<DatabaseConnection>,
         config: Arc<AuthConfig>,
-        cache_manager: Arc<UnifiedCacheManager>,
+        cache_manager: Arc<CacheManager>,
     ) -> Self {
         Self {
             jwt_manager,

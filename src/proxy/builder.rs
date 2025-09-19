@@ -2,12 +2,12 @@
 //!
 //! 提供统一的服务器初始化逻辑，避免代码重复
 
-use crate::auth::{AuthService, RefactoredUnifiedAuthManager};
-use crate::cache::UnifiedCacheManager;
+use crate::auth::{AuthService, AuthManager};
+use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::proxy::service::ProxyService;
-use crate::trace::UnifiedTraceSystem;
+use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
@@ -17,9 +17,9 @@ use std::sync::Arc;
 pub struct ProxyServerBuilder {
     config: Arc<AppConfig>,
     db: Option<Arc<DatabaseConnection>>,
-    cache: Option<Arc<UnifiedCacheManager>>,
+    cache: Option<Arc<CacheManager>>,
     provider_config_manager: Option<Arc<ProviderConfigManager>>,
-    trace_system: Option<Arc<UnifiedTraceSystem>>,
+    trace_system: Option<Arc<TraceSystem>>,
 }
 
 impl ProxyServerBuilder {
@@ -41,7 +41,7 @@ impl ProxyServerBuilder {
     }
 
     /// 设置追踪系统
-    pub fn with_trace_system(mut self, trace_system: Arc<UnifiedTraceSystem>) -> Self {
+    pub fn with_trace_system(mut self, trace_system: Arc<TraceSystem>) -> Self {
         self.trace_system = Some(trace_system);
         self
     }
@@ -77,14 +77,14 @@ impl ProxyServerBuilder {
     }
 
     /// 创建或获取统一缓存管理器
-    pub fn ensure_cache(&mut self) -> Result<Arc<UnifiedCacheManager>> {
+    pub fn ensure_cache(&mut self) -> Result<Arc<CacheManager>> {
         if let Some(cache) = &self.cache {
             return Ok(cache.clone());
         }
 
         tracing::info!("创建统一缓存管理器");
         let cache = Arc::new(
-            UnifiedCacheManager::new(&self.config.cache, &self.config.redis.url)
+            CacheManager::new(&self.config.cache, &self.config.redis.url)
                 .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {}", e)))?,
         );
 
@@ -96,7 +96,7 @@ impl ProxyServerBuilder {
     pub fn ensure_provider_config_manager(
         &mut self,
         db: Arc<DatabaseConnection>,
-        cache: Arc<UnifiedCacheManager>,
+        cache: Arc<CacheManager>,
     ) -> Arc<ProviderConfigManager> {
         if let Some(manager) = &self.provider_config_manager {
             return manager.clone();
@@ -112,8 +112,8 @@ impl ProxyServerBuilder {
     async fn create_auth_manager(
         &self,
         db: Arc<DatabaseConnection>,
-        cache: Arc<UnifiedCacheManager>,
-    ) -> Result<Arc<RefactoredUnifiedAuthManager>> {
+        cache: Arc<CacheManager>,
+    ) -> Result<Arc<AuthManager>> {
         // 创建认证配置 - 使用默认配置
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
         
@@ -133,7 +133,7 @@ impl ProxyServerBuilder {
         ));
         
         // 创建统一认证管理器
-        let auth_manager = RefactoredUnifiedAuthManager::new(
+        let auth_manager = AuthManager::new(
             auth_service,
             auth_config,
             db,
@@ -148,7 +148,7 @@ impl ProxyServerBuilder {
     pub async fn create_proxy_service(
         &self,
         db: Arc<DatabaseConnection>,
-        cache: Arc<UnifiedCacheManager>,
+        cache: Arc<CacheManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
         tracing::info!("创建AI代理服务");
@@ -215,8 +215,8 @@ impl ProxyServerBuilder {
 pub struct ProxyServerComponents {
     pub config: Arc<AppConfig>,
     pub db: Arc<DatabaseConnection>,
-    pub cache: Arc<UnifiedCacheManager>,
+    pub cache: Arc<CacheManager>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub proxy_service: ProxyService,
-    pub trace_system: Option<Arc<UnifiedTraceSystem>>,
+    pub trace_system: Option<Arc<TraceSystem>>,
 }

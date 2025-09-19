@@ -1,11 +1,10 @@
 //! # AI代理请求处理器
 //!
 //! 提供纯业务能力（选择上游、过滤请求/响应、统计等）。
-//! 认证/追踪/限流的副作用与编排由 ProxyService + Pipeline 统一处理。
+//! 认证/追踪/限流等副作用由 ProxyService 统一编排（已移除 Pipeline/Flow 概念）。
 
 use anyhow::Result;
-use pingora_core::upstreams::peer::{HttpPeer, Peer, ALPN};
-use url::form_urlencoded;
+use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
@@ -13,15 +12,17 @@ use sea_orm::prelude::Decimal;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 use std::sync::Arc;
 use std::time::Duration;
+use url::form_urlencoded;
 
-use crate::auth::{AuthUtils, RefactoredUnifiedAuthManager};
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
-use crate::cache::UnifiedCacheManager;
+use crate::auth::{AuthManager, AuthUtils};
+use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
-use crate::proxy::{AuthenticationService, StatisticsService, TracingService};
+use crate::proxy::{AuthenticationService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
+use crate::statistics::service::StatisticsService;
 use crate::trace::immediate::ImmediateProxyTracer;
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
@@ -38,12 +39,12 @@ use entity::{
 /// - 统计数据提取
 /// - 构建上游认证头
 ///
-/// 编排（认证/追踪/限流/错误追踪）由 ProxyService + Pipeline 负责
+/// 编排（认证/追踪/限流/错误追踪）由 ProxyService 负责
 pub struct RequestHandler {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
     /// 统一缓存管理器
-    cache: Arc<UnifiedCacheManager>,
+    cache: Arc<CacheManager>,
     /// 配置 (未来使用)
     _config: Arc<AppConfig>,
     /// 服务商配置管理器
@@ -364,7 +365,9 @@ pub struct AuthResult {
 
 impl RequestHandler {
     /// 获取认证服务引用（用于外部管道步骤）
-    pub fn auth_service(&self) -> &Arc<AuthenticationService> { &self.auth_service }
+    pub fn auth_service(&self) -> &Arc<AuthenticationService> {
+        &self.auth_service
+    }
     /// 判断本次请求是否为 SSE（流式）请求：
     /// - 下游或上游 Accept 包含 text/event-stream 或 application/stream+json
     /// - URL 查询参数 alt=sse
@@ -384,7 +387,8 @@ impl RequestHandler {
             .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let accept_sse = |v: &str| v.contains("text/event-stream") || v.contains("application/stream+json");
+        let accept_sse =
+            |v: &str| v.contains("text/event-stream") || v.contains("application/stream+json");
         if accept_sse(&accept_downstream) || accept_sse(&accept_upstream) {
             return true;
         }
@@ -395,7 +399,9 @@ impl RequestHandler {
             for (k, v) in form_urlencoded::parse(query.as_bytes()) {
                 let key = k.to_string().to_ascii_lowercase();
                 let val = v.to_string().to_ascii_lowercase();
-                if (key == "alt" && val == "sse") || (key == "stream" && (val == "1" || val == "true")) {
+                if (key == "alt" && val == "sse")
+                    || (key == "stream" && (val == "1" || val == "true"))
+                {
                     is_sse = true;
                     break;
                 }
@@ -424,11 +430,11 @@ impl RequestHandler {
     /// 现在RequestHandler作为协调器，将认证、统计和追踪职责委托给专门的服务
     pub fn new(
         db: Arc<DatabaseConnection>,
-        cache: Arc<UnifiedCacheManager>,
+        cache: Arc<CacheManager>,
         _config: Arc<AppConfig>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
         provider_config_manager: Arc<ProviderConfigManager>,
-        auth_manager: Arc<RefactoredUnifiedAuthManager>,
+        auth_manager: Arc<AuthManager>,
     ) -> Self {
         let health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
             db.clone(),
@@ -456,9 +462,9 @@ impl RequestHandler {
         }
     }
 
-    // 旧式入口 prepare_proxy_request 已删除，统一走 ProxyService + Pipeline
+    // 旧式入口 prepare_proxy_request 已删除，统一走 ProxyService
 
-    // 旧式入口 prepare_proxy_request/prepare_after_auth 已删除，统一走 ProxyService + Pipeline
+    // 旧式入口 prepare_proxy_request/prepare_after_auth 已删除，统一走 ProxyService
 
     /// 动态识别Gemini代理模式
     ///
@@ -496,9 +502,13 @@ impl RequestHandler {
     ) -> Result<bool, crate::error::ProxyError> {
         // 统一入口：由 ProviderStrategy 处理各提供商的 JSON 注入/改写
         if let Some(pt) = &ctx.provider_type {
-            if let Some(name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&pt.name) {
+            if let Some(name) =
+                crate::proxy::provider_strategy::ProviderRegistry::match_name(&pt.name)
+            {
                 if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
-                    return strategy.modify_request_body_json(session, ctx, json_value).await;
+                    return strategy
+                        .modify_request_body_json(session, ctx, json_value)
+                        .await;
                 }
             }
         }
@@ -761,7 +771,9 @@ impl RequestHandler {
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ProxyError::database(&format!("Failed to query oauth_client_sessions: {}", e)))?;
+            .map_err(|e| {
+                ProxyError::database(&format!("Failed to query oauth_client_sessions: {}", e))
+            })?;
 
         let session = oauth_session.ok_or_else(|| {
             ProxyError::authentication(format!("OAuth session not found: {}", session_id))
@@ -782,7 +794,8 @@ impl RequestHandler {
         let now = chrono::Utc::now().naive_utc();
         if session.expires_at <= now {
             return Err(ProxyError::authentication(format!(
-                "OAuth access token expired at {}", session.expires_at
+                "OAuth access token expired at {}",
+                session.expires_at
             )));
         }
 
@@ -838,15 +851,23 @@ impl RequestHandler {
     ) -> Result<Box<HttpPeer>, ProxyError> {
         let provider_type = match ctx.provider_type.as_ref() {
             Some(provider_type) => provider_type,
-            None => { return Err(ProxyError::internal("Provider type not set")); }
+            None => {
+                return Err(ProxyError::internal("Provider type not set"));
+            }
         };
 
         // 优先由 ProviderStrategy 决定上游地址（便于迁移提供商特定逻辑）
         let mut upstream_addr: Option<String> = None;
-        if let Some(name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_type.name) {
+        if let Some(name) =
+            crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_type.name)
+        {
             if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
                 if let Ok(Some(host)) = strategy.select_upstream_host(ctx).await {
-                    upstream_addr = Some(if host.contains(':') { host } else { format!("{}:443", host) });
+                    upstream_addr = Some(if host.contains(':') {
+                        host
+                    } else {
+                        format!("{}:443", host)
+                    });
                 }
             }
         }
@@ -952,7 +973,9 @@ impl RequestHandler {
 
         // 先尝试使用可插拔 ProviderStrategy 做最小改写（不改变现有行为）
         if let Some(provider_name) = ctx.provider_type.as_ref().map(|p| p.name.clone()) {
-            if let Some(name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name) {
+            if let Some(name) =
+                crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
+            {
                 if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
                     // 忽略策略内部的无害改写失败，避免影响主流程
                     if let Err(e) = strategy
@@ -999,12 +1022,16 @@ impl RequestHandler {
 
         let selected_backend = match ctx.selected_backend.as_ref() {
             Some(backend) => backend,
-            None => { return Err(ProxyError::internal("Backend not selected")); }
+            None => {
+                return Err(ProxyError::internal("Backend not selected"));
+            }
         };
 
         let provider_type = match ctx.provider_type.as_ref() {
             Some(provider_type) => provider_type,
-            None => { return Err(ProxyError::internal("Provider type not set")); }
+            None => {
+                return Err(ProxyError::internal("Provider type not set"));
+            }
         };
 
         // 记录未认证之前的请求头信息（关键头 + 全量头）
@@ -1022,10 +1049,7 @@ impl RequestHandler {
         let upstream_all_headers_before_str = if upstream_all_headers_before.is_empty() {
             "<none>".to_string()
         } else {
-            format!(
-                "\n  - {}",
-                upstream_all_headers_before.join("\n  - ")
-            )
+            format!("\n  - {}", upstream_all_headers_before.join("\n  - "))
         };
 
         tracing::debug!(
@@ -1050,10 +1074,12 @@ impl RequestHandler {
                     let static_header_name = get_static_header_name(header_name);
                     upstream_request
                         .insert_header(static_header_name, header_value)
-                        .map_err(|e| ProxyError::internal(format!(
-                            "Failed to set authentication header '{}': {}",
-                            header_name, e
-                        )))?;
+                        .map_err(|e| {
+                            ProxyError::internal(format!(
+                                "Failed to set authentication header '{}': {}",
+                                header_name, e
+                            ))
+                        })?;
                     applied.push(header_name.clone());
                 }
                 tracing::info!(
@@ -1070,10 +1096,12 @@ impl RequestHandler {
                 let auth_value = format!("Bearer {}", access_token);
                 upstream_request
                     .insert_header("authorization", &auth_value)
-                    .map_err(|e| ProxyError::internal(format!(
-                        "Failed to set OAuth authorization header: {}",
-                        e
-                    )))?;
+                    .map_err(|e| {
+                        ProxyError::internal(format!(
+                            "Failed to set OAuth authorization header: {}",
+                            e
+                        ))
+                    })?;
                 tracing::info!(
                     request_id = %ctx.request_id,
                     provider = %provider_type.name,
@@ -1157,7 +1185,8 @@ impl RequestHandler {
                     "SSE endpoint detected, removed accept-encoding for stability"
                 );
             } else if client_supports_compression
-                && upstream_request.headers.get("accept-encoding").is_none() {
+                && upstream_request.headers.get("accept-encoding").is_none()
+            {
                 if let Err(e) = upstream_request.insert_header("accept-encoding", "gzip, deflate") {
                     let error = ProxyError::internal(format!(
                         "Failed to set accept-encoding header: {}",
@@ -1219,11 +1248,7 @@ impl RequestHandler {
             );
         } else {
             // 优先以下游客户端请求头为准判断是否“无请求体”
-            let has_cl_client = session
-                .req_header()
-                .headers
-                .get("content-length")
-                .is_some();
+            let has_cl_client = session.req_header().headers.get("content-length").is_some();
             let has_te_client = session
                 .req_header()
                 .headers
@@ -1231,10 +1256,9 @@ impl RequestHandler {
                 .is_some();
 
             // 其次再看当前上游请求头（通常与下游相同，除非我们前面改动过）
-            let has_cl = has_cl_client
-                || upstream_request.headers.get("content-length").is_some();
-            let has_te = has_te_client
-                || upstream_request.headers.get("transfer-encoding").is_some();
+            let has_cl = has_cl_client || upstream_request.headers.get("content-length").is_some();
+            let has_te =
+                has_te_client || upstream_request.headers.get("transfer-encoding").is_some();
             let is_body_method = matches!(method_upper.as_str(), "POST" | "PUT" | "PATCH");
             if is_body_method && !has_cl && !has_te {
                 // 上游有些端点（如 cloudcode-pa）要求 Content-Length，即使没有请求体
@@ -1243,7 +1267,7 @@ impl RequestHandler {
                         "Failed to set content-length: 0 header: {}",
                         e
                     ));
-                return Err(error);
+                    return Err(error);
                 }
                 tracing::debug!(
                     request_id = %ctx.request_id,
@@ -1263,10 +1287,7 @@ impl RequestHandler {
         let upstream_all_headers_after_str = if upstream_all_headers_after.is_empty() {
             "<none>".to_string()
         } else {
-            format!(
-                "\n  - {}",
-                upstream_all_headers_after.join("\n  - ")
-            )
+            format!("\n  - {}", upstream_all_headers_after.join("\n  - "))
         };
 
         // 计算上游可读 URL（用于排查：host + path），仅用于日志
@@ -1275,7 +1296,8 @@ impl RequestHandler {
             .get("host")
             .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
             .unwrap_or("<unknown-host>");
-        let upstream_url_for_log = format!("https://{}{}", upstream_host_for_log, upstream_request.uri);
+        let upstream_url_for_log =
+            format!("https://{}{}", upstream_host_for_log, upstream_request.uri);
 
         tracing::info!(
             event = "upstream_request_ready",
@@ -1512,8 +1534,13 @@ impl RequestHandler {
             let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
 
             let masked = match name_str.to_ascii_lowercase().as_str() {
-                "authorization" | "proxy-authorization" | "x-api-key" | "api-key"
-                | "x-goog-api-key" | "set-cookie" | "cookie" => {
+                "authorization"
+                | "proxy-authorization"
+                | "x-api-key"
+                | "api-key"
+                | "x-goog-api-key"
+                | "set-cookie"
+                | "cookie" => {
                     // 只保留前后少量字符，避免日志泄露敏感信息
                     if value_str.len() > 16 {
                         format!(

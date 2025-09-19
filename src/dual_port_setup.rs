@@ -1,13 +1,12 @@
 /// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
 use crate::{
     ProxyError,
-    auth::{RefactoredUnifiedAuthManager, service::AuthService},
+    auth::{AuthManager, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
     management::server::{ManagementConfig, ManagementServer},
     providers::DynamicAdapterManager,
     proxy::PingoraProxyServer,
-    statistics::service::StatisticsService,
 };
 use clap::ArgMatches;
 use sea_orm::DatabaseConnection;
@@ -17,9 +16,8 @@ use tracing::{error, info};
 /// 共享服务结构体
 pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
-    pub unified_auth_manager: Arc<RefactoredUnifiedAuthManager>,
+    pub unified_auth_manager: Arc<AuthManager>,
     pub adapter_manager: Arc<DynamicAdapterManager>,
-    pub statistics_service: Arc<StatisticsService>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
     pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
@@ -74,7 +72,6 @@ pub async fn run_dual_port_servers(matches: &ArgMatches) -> Result<()> {
         db.clone(),
         shared_services.auth_service.clone(),
         shared_services.adapter_manager.clone(),
-        shared_services.statistics_service.clone(),
         shared_services.provider_config_manager.clone(),
         Some(shared_services.api_key_health_checker.clone()),
         Some(shared_services.oauth_client.clone()),
@@ -135,7 +132,7 @@ pub async fn initialize_shared_services(
     Arc<AppConfig>,
     Arc<DatabaseConnection>,
     SharedServices,
-    Arc<crate::trace::UnifiedTraceSystem>,
+    Arc<crate::trace::TraceSystem>,
 )> {
     // 加载配置
     info!("📋 Loading configuration...");
@@ -204,16 +201,11 @@ pub async fn initialize_shared_services(
         db.clone(),
         auth_config.clone(),
     ));
-    let auth_service = Arc::new(AuthService::new(
-        jwt_manager.clone(),
-        api_key_manager.clone(),
-        db.clone(),
-        auth_config.clone(),
-    ));
+    // 注意：认证服务在后续会统一创建一次
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
-        crate::cache::abstract_cache::UnifiedCacheManager::new(
+        crate::cache::abstract_cache::CacheManager::new(
             &config_arc.cache,
             &config_arc.redis.url,
         )
@@ -236,7 +228,7 @@ pub async fn initialize_shared_services(
     ));
 
     // 创建认证服务
-    let _auth_service = Arc::new(AuthService::new(
+    let auth_service = Arc::new(AuthService::new(
         jwt_manager,
         api_key_manager,
         db.clone(),
@@ -244,7 +236,7 @@ pub async fn initialize_shared_services(
     ));
 
     // 创建统一认证管理器
-    let unified_auth_manager = Arc::new(RefactoredUnifiedAuthManager::new(
+    let unified_auth_manager = Arc::new(AuthManager::new(
         auth_service.clone(),
         auth_config,
         db.clone(),
@@ -253,15 +245,12 @@ pub async fn initialize_shared_services(
 
     // unified_auth_manager已经是Arc类型
 
-    let statistics_service = Arc::new(StatisticsService::new(
-        config_arc.clone(),
-        unified_cache_manager.clone(),
-    ));
+    // 统计数据直接查 proxy_tracing 表，无需单独统计服务
 
     // 初始化统一追踪系统 - 这是关键的缺失组件!
     info!("🔍 Initializing unified trace system...");
     let tracer_config = crate::trace::immediate::ImmediateTracerConfig::default();
-    let trace_system = Arc::new(crate::trace::UnifiedTraceSystem::new_immediate(
+    let trace_system = Arc::new(crate::trace::TraceSystem::new_immediate(
         db.clone(),
         tracer_config,
     ));
@@ -318,7 +307,6 @@ pub async fn initialize_shared_services(
         auth_service,
         unified_auth_manager,
         adapter_manager,
-        statistics_service,
         provider_config_manager,
         api_key_health_checker,
         oauth_client,

@@ -123,15 +123,11 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
                 (status, Json(error_response)).into_response()
             }
             ApiResponse::AppError(error) => {
-                // 将ProxyError转换为相应的HTTP状态码和错误信息
-                let (status, code) = error.to_http_response_parts();
-
+                // 统一使用新的 as_http_parts() 映射，保持管理端响应包裹结构不变
+                let (status, code, message) = error.as_http_parts();
                 let error_response = ErrorResponse {
                     success: false,
-                    error: ErrorInfo {
-                        code: code.to_string(),
-                        message: error.to_string(),
-                    },
+                    error: ErrorInfo { code: code.to_string(), message },
                     timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
@@ -167,5 +163,12 @@ pub fn error(status: StatusCode, code: &str, message: &str) -> axum::response::R
 
 /// # 便捷函数：应用错误响应
 pub fn app_error(error: ProxyError) -> axum::response::Response {
-    ApiResponse::<()>::AppError(error).into_response()
+    // 与 IntoResponse(AppError) 分支一致：用 as_http_parts() 保持包裹结构
+    let (status, code, message) = error.as_http_parts();
+    let body = ErrorResponse {
+        success: false,
+        error: ErrorInfo { code: code.to_string(), message },
+        timestamp: Utc::now(),
+    };
+    (status, Json(body)).into_response()
 }

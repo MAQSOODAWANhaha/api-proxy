@@ -9,7 +9,7 @@ use std::sync::Arc;
 use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
 use axum::http::Uri;
 
-use crate::auth::{AuthUtils, RefactoredUnifiedAuthManager};
+use crate::auth::{AuthUtils, AuthManager};
 use crate::error::ProxyError;
 use crate::proxy::ProxyContext;
 use entity;
@@ -54,17 +54,17 @@ pub struct AuthenticationResult {
 /// 代理端认证适配器
 ///
 /// 轻量级适配器，仅提供HTTP请求解析和认证委托
-/// 所有实际认证逻辑都由RefactoredUnifiedAuthManager处理
+/// 所有实际认证逻辑都由统一认证管理器处理
 pub struct AuthenticationService {
     /// 统一认证管理器
-    auth_manager: Arc<RefactoredUnifiedAuthManager>,
+    auth_manager: Arc<AuthManager>,
     /// 数据库连接（用于获取真实凭据）
     db: Arc<DatabaseConnection>,
 }
 
 impl AuthenticationService {
     /// 创建新的认证适配器
-    pub fn new(auth_manager: Arc<RefactoredUnifiedAuthManager>, db: Arc<DatabaseConnection>) -> Self {
+    pub fn new(auth_manager: Arc<AuthManager>, db: Arc<DatabaseConnection>) -> Self {
         Self { auth_manager, db }
     }
 

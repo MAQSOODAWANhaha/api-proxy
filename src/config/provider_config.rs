@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 
-use crate::cache::UnifiedCacheManager;
+use crate::cache::CacheManager;
 use crate::auth::types::{AuthType, MultiAuthConfig};
 use crate::error::{ProxyError, Result};
 use entity::provider_types::{self, Entity as ProviderTypes};
@@ -21,7 +21,7 @@ pub struct ProviderConfigManager {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
     /// 缓存管理器
-    cache: Arc<UnifiedCacheManager>,
+    cache: Arc<CacheManager>,
     /// 配置缓存
     #[allow(dead_code)]
     config_cache: Arc<RwLock<HashMap<String, ProviderConfig>>>,
@@ -70,7 +70,7 @@ pub struct ProviderConfig {
 
 impl ProviderConfigManager {
     /// 创建新的配置管理器
-    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<UnifiedCacheManager>) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>, cache: Arc<CacheManager>) -> Self {
         Self {
             db,
             cache,
@@ -450,7 +450,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = UnifiedCacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config, "test").unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 
@@ -477,7 +477,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = UnifiedCacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config, "test").unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 
@@ -506,7 +506,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = UnifiedCacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config, "test").unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 

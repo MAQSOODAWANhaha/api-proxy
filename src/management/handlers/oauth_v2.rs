@@ -12,7 +12,7 @@ use crate::auth::oauth_client::{
 use crate::management::{response, server::AppState};
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -72,11 +72,7 @@ pub async fn start_authorization(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -95,18 +91,12 @@ pub async fn start_authorization(
         .await
     {
         Ok(authorize_response) => response::success(authorize_response),
-        Err(OAuthError::ProviderNotFound(provider)) => response::error(
-            StatusCode::BAD_REQUEST,
-            "UNSUPPORTED_PROVIDER",
-            &format!("Unsupported OAuth provider: {}", provider),
+        Err(OAuthError::ProviderNotFound(provider)) => crate::manage_error!(
+            crate::proxy_err!(business, "Unsupported OAuth provider: {}", provider)
         ),
         Err(e) => {
             tracing::error!("Failed to start OAuth authorization: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "START_AUTH_FAILED",
-                "Failed to start authorization",
-            )
+            crate::manage_error!(crate::proxy_err!(internal, "Failed to start authorization"))
         }
     }
 }
@@ -121,11 +111,7 @@ pub async fn poll_session(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -138,28 +124,18 @@ pub async fn poll_session(
         .await
         .unwrap_or(false)
     {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "ACCESS_DENIED",
-            "Session not found or access denied",
-        );
+        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
     }
 
     // 轮询会话状态
     match oauth_client.poll_session(&query.session_id).await {
         Ok(polling_status) => response::success(polling_status),
-        Err(OAuthError::InvalidSession(_)) => response::error(
-            StatusCode::NOT_FOUND,
-            "SESSION_NOT_FOUND",
-            "Session not found",
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
+            crate::proxy_err!(business, "Session not found: {}", query.session_id)
         ),
         Err(e) => {
             tracing::error!("Failed to poll session: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "POLL_FAILED",
-                "Failed to poll session",
-            )
+            crate::manage_error!(crate::proxy_err!(internal, "Failed to poll session"))
         }
     }
 }
@@ -174,11 +150,7 @@ pub async fn exchange_token(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -191,11 +163,7 @@ pub async fn exchange_token(
         .await
         .unwrap_or(false)
     {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "ACCESS_DENIED",
-            "Session not found or access denied",
-        );
+        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
     }
 
     // 添加详细日志记录
@@ -217,26 +185,18 @@ pub async fn exchange_token(
         .await
     {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => response::error(
-            StatusCode::NOT_FOUND,
-            "SESSION_NOT_FOUND",
-            "Session not found",
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
+            crate::proxy_err!(business, "Session not found: {}", request.session_id)
         ),
         Err(OAuthError::SessionExpired(_)) => {
-            response::error(StatusCode::GONE, "SESSION_EXPIRED", "Session expired")
+            crate::manage_error!(crate::proxy_err!(business, "Session expired"))
         }
-        Err(OAuthError::TokenExchangeFailed(msg)) => response::error(
-            StatusCode::BAD_REQUEST,
-            "TOKEN_EXCHANGE_FAILED",
-            &format!("Token exchange failed: {}", msg),
+        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(
+            crate::proxy_err!(business, "Token exchange failed: {}", msg)
         ),
         Err(e) => {
             tracing::error!("Failed to exchange token: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "EXCHANGE_FAILED",
-                "Failed to exchange token",
-            )
+            crate::manage_error!(crate::proxy_err!(internal, "Failed to exchange token"))
         }
     }
 }
@@ -247,11 +207,7 @@ pub async fn list_sessions(State(state): State<AppState>, headers: HeaderMap) ->
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -263,11 +219,7 @@ pub async fn list_sessions(State(state): State<AppState>, headers: HeaderMap) ->
         Ok(sessions) => response::success(sessions),
         Err(e) => {
             tracing::error!("Failed to list sessions: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "LIST_SESSIONS_FAILED",
-                "Failed to list sessions",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "Failed to list sessions: {:?}", e))
         }
     }
 }
@@ -282,11 +234,7 @@ pub async fn delete_session(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -296,18 +244,12 @@ pub async fn delete_session(
     // 删除会话
     match oauth_client.delete_session(&session_id, user_id).await {
         Ok(()) => response::success("Session deleted successfully"),
-        Err(OAuthError::InvalidSession(_)) => response::error(
-            StatusCode::NOT_FOUND,
-            "SESSION_NOT_FOUND",
-            "Session not found",
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
+            crate::proxy_err!(business, "Session not found: {}", session_id)
         ),
         Err(e) => {
             tracing::error!("Failed to delete session: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DELETE_SESSION_FAILED",
-                "Failed to delete session",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "Failed to delete session: {:?}", e))
         }
     }
 }
@@ -322,11 +264,7 @@ pub async fn refresh_token(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -339,33 +277,21 @@ pub async fn refresh_token(
         .await
         .unwrap_or(false)
     {
-        return response::error(
-            StatusCode::FORBIDDEN,
-            "ACCESS_DENIED",
-            "Session not found or access denied",
-        );
+        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
     }
 
     // 刷新令牌
     match oauth_client.refresh_token(&session_id).await {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => response::error(
-            StatusCode::NOT_FOUND,
-            "SESSION_NOT_FOUND",
-            "Session not found",
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
+            crate::proxy_err!(business, "Session not found: {}", session_id)
         ),
-        Err(OAuthError::TokenExchangeFailed(msg)) => response::error(
-            StatusCode::BAD_REQUEST,
-            "TOKEN_REFRESH_FAILED",
-            &format!("Token refresh failed: {}", msg),
+        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(
+            crate::proxy_err!(business, "Token refresh failed: {}", msg)
         ),
         Err(e) => {
             tracing::error!("Failed to refresh token: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "REFRESH_FAILED",
-                "Failed to refresh token",
-            )
+            crate::manage_error!(crate::proxy_err!(internal, "Failed to refresh token"))
         }
     }
 }
@@ -379,11 +305,7 @@ pub async fn get_statistics(
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => Some(id),
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -395,11 +317,7 @@ pub async fn get_statistics(
         Ok(statistics) => response::success(statistics),
         Err(e) => {
             tracing::error!("Failed to get statistics: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "STATS_FAILED",
-                "Failed to get statistics",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "Failed to get statistics: {:?}", e))
         }
     }
 }
@@ -413,11 +331,7 @@ pub async fn cleanup_expired_sessions(
     let _user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
         Err(_) => {
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Unauthorized access",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
         }
     };
 
@@ -434,11 +348,7 @@ pub async fn cleanup_expired_sessions(
         })),
         Err(e) => {
             tracing::error!("Failed to cleanup sessions: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CLEANUP_FAILED",
-                "Failed to cleanup sessions",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "Failed to cleanup sessions: {:?}", e))
         }
     }
 }
@@ -468,11 +378,7 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
         }
         Err(e) => {
             tracing::error!("Failed to list providers: {:?}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "LIST_PROVIDERS_FAILED",
-                "Failed to list providers",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "Failed to list providers: {:?}", e))
         }
     }
 }

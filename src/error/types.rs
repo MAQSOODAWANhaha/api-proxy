@@ -1,6 +1,8 @@
 //! # 错误类型定义
 
 use axum::http::StatusCode;
+use axum::response::Response as AxumResponse;
+use axum::body::Body as AxumBody;
 use thiserror::Error;
 
 /// 应用主要错误类型
@@ -30,13 +32,7 @@ pub enum ProxyError {
         source: Option<anyhow::Error>,
     },
 
-    /// 认证和授权错误
-    #[error("认证错误: {message}")]
-    Auth {
-        message: String,
-        #[source]
-        source: Option<anyhow::Error>,
-    },
+    
 
     /// AI服务商错误
     #[error("AI服务错误: {message}")]
@@ -267,13 +263,77 @@ pub enum ProxyError {
 }
 
 impl ProxyError {
+    /// 将错误标准化为 (HTTP 状态码, 标准错误码, 人类可读消息)
+    /// 可用于管理端(Axum)与代理端(Pingora)统一输出
+    pub fn as_http_parts(&self) -> (StatusCode, &'static str, String) {
+        let (status, code) = self.to_http_response_parts();
+        let message = self.to_string();
+        (status, code, message)
+    }
+
+    /// 直接转换为 Axum Response（application/json）
+    pub fn to_axum_response(&self) -> AxumResponse {
+        let (status, body) = self.to_http_status_and_body();
+        axum::http::Response::builder()
+            .status(status)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(AxumBody::from(body))
+            .unwrap_or_else(|_| axum::http::Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(AxumBody::from("{\"error\":\"Internal error building response\",\"code\":\"INTERNAL_ERROR\"}"))
+                .expect("fallback response"))
+    }
+
+    /// 直接转换为 Pingora 错误
+    pub fn to_pingora_error(&self) -> pingora_core::Error {
+        let (status, body) = self.to_http_status_and_body();
+        *pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(status.as_u16()), body)
+    }
+    /// 直接生成 (HTTP 状态码, JSON 字符串) 形式的响应体，便于快速返回
+    /// JSON 结构: {"error": <message>, "code": <code>, [extras...]}
+    pub fn to_http_status_and_body(&self) -> (StatusCode, String) {
+        let (status, code) = self.to_http_response_parts();
+
+        // 附加可选字段（如超时配置）
+        match self {
+            ProxyError::ConnectionTimeout { timeout_seconds, .. } => (
+                status,
+                format!(
+                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
+                    self, code, timeout_seconds
+                ),
+            ),
+            ProxyError::ReadTimeout { timeout_seconds, .. } => (
+                status,
+                format!(
+                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
+                    self, code, timeout_seconds
+                ),
+            ),
+            ProxyError::WriteTimeout { timeout_seconds, .. } => (
+                status,
+                format!(
+                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
+                    self, code, timeout_seconds
+                ),
+            ),
+            _ => (
+                status,
+                format!(
+                    "{{\"error\":\"{}\",\"code\":\"{}\"}}",
+                    self, code
+                ),
+            ),
+        }
+    }
+
     /// 将错误转换为HTTP状态码和错误代码
-    pub fn to_http_response_parts(&self) -> (StatusCode, &str) {
+    pub fn to_http_response_parts(&self) -> (StatusCode, &'static str) {
         match self {
             ProxyError::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
             ProxyError::Database { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
             ProxyError::Network { .. } => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR"),
-            ProxyError::Auth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+            
             ProxyError::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
             ProxyError::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
             ProxyError::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
@@ -287,13 +347,13 @@ impl ProxyError {
             ProxyError::ServerStart { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR")
             }
-            ProxyError::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTHENTICATION_ERROR"),
+            ProxyError::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
             ProxyError::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
             ProxyError::UpstreamNotAvailable { .. } => {
-                (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_NOT_AVAILABLE")
+                (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE")
             }
-            ProxyError::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_ERROR"),
-            ProxyError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY_ERROR"),
+            ProxyError::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT"),
+            ProxyError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
             ProxyError::ConnectionTimeout { .. } => {
                 (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT")
             }
@@ -380,13 +440,7 @@ impl ProxyError {
         }
     }
 
-    /// 创建认证错误
-    pub fn auth<T: Into<String>>(message: T) -> Self {
-        Self::Auth {
-            message: message.into(),
-            source: None,
-        }
-    }
+    
 
     /// 创建AI服务商错误
     pub fn ai_provider<T: Into<String>, P: Into<String>>(message: T, provider: P) -> Self {
@@ -909,7 +963,7 @@ impl From<sea_orm::error::DbErr> for ProxyError {
 
 impl From<crate::auth::jwt::JwtError> for ProxyError {
     fn from(err: crate::auth::jwt::JwtError) -> Self {
-        Self::Auth {
+        Self::Authentication {
             message: err.to_string(),
             source: Some(anyhow::Error::new(err)),
         }
@@ -918,7 +972,7 @@ impl From<crate::auth::jwt::JwtError> for ProxyError {
 
 impl From<crate::auth::api_key::ApiKeyError> for ProxyError {
     fn from(err: crate::auth::api_key::ApiKeyError) -> Self {
-        Self::Auth {
+        Self::Authentication {
             message: err.to_string(),
             source: Some(anyhow::Error::new(err)),
         }
@@ -927,7 +981,7 @@ impl From<crate::auth::api_key::ApiKeyError> for ProxyError {
 
 impl From<crate::auth::service::AuthServiceError> for ProxyError {
     fn from(err: crate::auth::service::AuthServiceError) -> Self {
-        Self::Auth {
+        Self::Authentication {
             message: err.to_string(),
             source: Some(anyhow::Error::new(err)),
         }

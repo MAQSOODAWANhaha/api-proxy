@@ -828,7 +828,6 @@ pub struct AppState {
     pub db: Arc<DatabaseConnection>,
     pub redis: Arc<redis::Client>,
     pub health_checker: Arc<health::HealthChecker>,
-    pub statistics: Arc<statistics::StatisticsService>,
     pub tls_manager: Arc<tls::TlsManager>,
     pub schedulers: Arc<scheduler::SchedulerRegistry>,
 }
@@ -846,7 +845,6 @@ impl AppState {
 
         // 创建各个服务实例
         let health_checker = Arc::new(health::HealthChecker::new(db.clone(), redis.clone()));
-        let statistics = Arc::new(statistics::StatisticsService::new(db.clone(), redis.clone()));
         let tls_manager = Arc::new(tls::TlsManager::new(db.clone(), config.clone()));
         let schedulers = Arc::new(scheduler::SchedulerRegistry::new(
             db.clone(), 
@@ -859,7 +857,6 @@ impl AppState {
             db,
             redis,
             health_checker,
-            statistics,
             tls_manager,
             schedulers,
         })
@@ -938,9 +935,9 @@ impl ProxyHttp for UnifiedProxyService {
             },
             RouteType::AIProxy => {
                 // 处理AI代理请求
-                // 使用 Pipeline 执行准备（认证→限流→配置→选 key）；错误在顶层统一映射
-                let prep = build_pipeline();
-                match prep.execute(session, ctx).await {
+                // 早期设计曾使用 Pipeline（认证→限流→配置→选 key）模式。
+                // 现已改为由 ProxyService 内部按阶段顺序编排执行，并在顶层统一映射错误。
+                match self.prepare_proxy(session, ctx).await {
                     Ok(_) => Ok(false),
                     Err(e) => { self.send_error_response(session, e).await; Ok(true) }
                 }

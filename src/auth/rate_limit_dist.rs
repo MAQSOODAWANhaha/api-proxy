@@ -1,13 +1,13 @@
-//! 分布式速率限制器（Redis/UnifiedCacheManager后端）
+//! 分布式速率限制器（Redis/CacheManager 后端）
 //!
-//! 使用 UnifiedCacheManager 的 `incr` + `expire` 实现跨实例一致的 QPS/日配额计数。
+//! 使用 CacheManager（UnifiedCacheManager） 的 `incr` + `expire` 实现跨实例一致的 QPS/日配额计数。
 //! 先提供最小实现与接口；集成到 ApiKeyManager 可作为后续任务。
 
 use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::cache::{keys::CacheKeyBuilder, UnifiedCacheManager};
+use crate::cache::{keys::CacheKeyBuilder, CacheManager};
 
 /// 分布式速率限制检查结果
 #[derive(Debug, Clone)]
@@ -20,11 +20,11 @@ pub struct DistRateLimitOutcome {
 
 /// 简单的分布式限流器
 pub struct DistributedRateLimiter {
-    cache: std::sync::Arc<UnifiedCacheManager>,
+    cache: std::sync::Arc<CacheManager>,
 }
 
 impl DistributedRateLimiter {
-    pub fn new(cache: std::sync::Arc<UnifiedCacheManager>) -> Self { Self { cache } }
+    pub fn new(cache: std::sync::Arc<CacheManager>) -> Self { Self { cache } }
 
     /// 以“用户+端点”为维度的每分钟请求限制
     pub async fn check_per_minute(&self, user_id: i32, endpoint: &str, limit: i64) -> Result<DistRateLimitOutcome> {
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn smoke_test_memory_backend() {
         // 使用内存后端快速冒烟
-        let cache = std::sync::Arc::new(UnifiedCacheManager::memory_only());
+        let cache = std::sync::Arc::new(CacheManager::memory_only());
         let rl = DistributedRateLimiter::new(cache);
 
         let mut last = None;
@@ -83,4 +83,3 @@ mod tests {
         }
     }
 }
-

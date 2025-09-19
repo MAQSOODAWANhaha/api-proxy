@@ -10,10 +10,10 @@ pub struct AuthUtils;
 
 impl AuthUtils {
     /// 净化API密钥用于日志记录（管理端和代理端共享）
-    /// 
+    ///
     /// # 参数
     /// - `api_key`: 原始API密钥
-    /// 
+    ///
     /// # 返回
     /// 脱敏后的API密钥字符串，格式: "sk-1***2345"
     pub fn sanitize_api_key(api_key: &str) -> String {
@@ -25,10 +25,10 @@ impl AuthUtils {
     }
 
     /// 从HTTP头中提取Authorization头的值
-    /// 
+    ///
     /// # 参数
     /// - `headers`: HTTP请求头
-    /// 
+    ///
     /// # 返回
     /// - `Some(String)`: Authorization头的值
     /// - `None`: 未找到Authorization头
@@ -40,10 +40,10 @@ impl AuthUtils {
     }
 
     /// 从Authorization头中提取Bearer token
-    /// 
+    ///
     /// # 参数
     /// - `auth_header`: Authorization头的完整值，如 "Bearer eyJ..."
-    /// 
+    ///
     /// # 返回
     /// - `Some(String)`: Bearer token部分
     /// - `None`: 不是Bearer类型的认证头
@@ -56,24 +56,22 @@ impl AuthUtils {
     }
 
     /// 从HTTP头中提取各种API Key
-    /// 
+    ///
     /// 支持的头格式:
     /// - `Authorization: Bearer <key>`
     /// - `Authorization: <key>` (直接key)
     /// - `X-API-Key: <key>`
     /// - `API-Key: <key>`
-    /// 
+    ///
     /// # 参数
     /// - `headers`: HTTP请求头
-    /// 
+    ///
     /// # 返回
     /// - `Some(String)`: 提取的API Key
     /// - `None`: 未找到任何API Key
     pub fn extract_api_key_from_headers(headers: &HeaderMap) -> Option<String> {
         // 1. 尝试从 Authorization 头提取
-        if let Some(auth_value) = headers.get("authorization")
-            .and_then(|v| v.to_str().ok()) 
-        {
+        if let Some(auth_value) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
             // Bearer token
             if let Some(token) = Self::extract_bearer_token(auth_value) {
                 return Some(token);
@@ -85,7 +83,8 @@ impl AuthUtils {
         }
 
         // 2. 尝试从 X-API-Key 头提取
-        if let Some(api_key) = headers.get("x-api-key")
+        if let Some(api_key) = headers
+            .get("x-api-key")
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
         {
@@ -93,7 +92,8 @@ impl AuthUtils {
         }
 
         // 3. 尝试从 API-Key 头提取
-        if let Some(api_key) = headers.get("api-key")
+        if let Some(api_key) = headers
+            .get("api-key")
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
         {
@@ -104,15 +104,15 @@ impl AuthUtils {
     }
 
     /// 解析URL查询参数为HashMap
-    /// 
+    ///
     /// # 参数
     /// - `query_string`: URL查询字符串，不包含'?'
-    /// 
+    ///
     /// # 返回
     /// 解析后的键值对映射
     pub fn parse_query_string(query_string: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
-        
+
         for param in query_string.split('&') {
             if let Some((key, value)) = param.split_once('=') {
                 // URL解码
@@ -121,15 +121,15 @@ impl AuthUtils {
                 params.insert(decoded_key.to_string(), decoded_value.to_string());
             }
         }
-        
+
         params
     }
 
     /// 从路径中提取查询参数
-    /// 
+    ///
     /// # 参数
     /// - `path`: 包含查询参数的完整路径，如 "/api/chat?model=gpt-4"
-    /// 
+    ///
     /// # 返回
     /// 解析后的查询参数映射
     pub fn extract_query_params_from_path(path: &str) -> HashMap<String, String> {
@@ -142,10 +142,10 @@ impl AuthUtils {
     }
 
     /// 验证API Key的基本格式
-    /// 
+    ///
     /// # 参数
     /// - `api_key`: 要验证的API Key
-    /// 
+    ///
     /// # 返回
     /// - `true`: 格式有效（以sk-开头，长度>=20字符）
     /// - `false`: 格式无效
@@ -155,13 +155,13 @@ impl AuthUtils {
     }
 
     /// 生成缓存键
-    /// 
+    ///
     /// 为认证相关的数据生成标准化的缓存键
-    /// 
+    ///
     /// # 参数
     /// - `prefix`: 缓存键前缀，如 "jwt", "api_key"
     /// - `identifier`: 标识符，如用户ID、API Key hash等
-    /// 
+    ///
     /// # 返回
     /// 标准化的缓存键
     pub fn generate_cache_key(prefix: &str, identifier: &str) -> String {
@@ -169,12 +169,12 @@ impl AuthUtils {
     }
 
     /// 计算字符串的SHA256哈希值
-    /// 
+    ///
     /// 用于API Key或Token的哈希，用于缓存键或记录
-    /// 
+    ///
     /// # 参数
     /// - `input`: 要哈希的字符串
-    /// 
+    ///
     /// # 返回
     /// 十六进制格式的哈希值
     pub fn sha256_hash(input: &str) -> String {
@@ -185,25 +185,22 @@ impl AuthUtils {
     }
 
     /// 从请求中提取客户端IP地址（考虑代理）
-    /// 
+    ///
     /// 按优先级检查以下头部：
     /// 1. X-Forwarded-For (第一个IP)
     /// 2. X-Real-IP
     /// 3. CF-Connecting-IP (Cloudflare)
     /// 4. 直接连接IP
-    /// 
+    ///
     /// # 参数
     /// - `headers`: HTTP请求头
     /// - `connection_ip`: 直接连接的客户端IP
-    /// 
+    ///
     /// # 返回
     /// 真实的客户端IP地址
     pub fn extract_real_client_ip(headers: &HeaderMap, connection_ip: Option<String>) -> String {
         // 1. 优先检查 X-Forwarded-For 头
-        if let Some(forwarded_for) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(forwarded_for) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             // X-Forwarded-For 可能包含多个IP，取第一个（最原始的客户端IP）
             if let Some(first_ip) = forwarded_for.split(',').next() {
                 let ip = first_ip.trim();
@@ -214,10 +211,7 @@ impl AuthUtils {
         }
 
         // 2. 检查 X-Real-IP 头
-        if let Some(real_ip) = headers
-            .get("x-real-ip")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
             let ip = real_ip.trim();
             if !ip.is_empty() && ip != "unknown" {
                 return ip.to_string();
@@ -240,10 +234,10 @@ impl AuthUtils {
     }
 
     /// 提取User-Agent字符串
-    /// 
+    ///
     /// # 参数
     /// - `headers`: HTTP请求头
-    /// 
+    ///
     /// # 返回
     /// - `Some(String)`: User-Agent字符串
     /// - `None`: 未找到User-Agent头
@@ -255,12 +249,12 @@ impl AuthUtils {
     }
 
     /// 提取Referer字符串
-    /// 
+    ///
     /// 支持 "referer" 和 "referrer" 两种拼写
-    /// 
+    ///
     /// # 参数
     /// - `headers`: HTTP请求头
-    /// 
+    ///
     /// # 返回
     /// - `Some(String)`: Referer字符串
     /// - `None`: 未找到Referer头
@@ -273,10 +267,10 @@ impl AuthUtils {
     }
 
     /// 净化用户名用于日志记录（管理端和代理端共享）
-    /// 
+    ///
     /// # 参数
     /// - `username`: 原始用户名
-    /// 
+    ///
     /// # 返回
     /// 脱敏后的用户名字符串，用于安全日志记录
     pub fn sanitize_username(username: &str) -> String {
@@ -343,7 +337,7 @@ mod tests {
     #[test]
     fn test_parse_query_string() {
         let params = AuthUtils::parse_query_string("model=gpt-4&stream=true&temperature=0.7");
-        
+
         assert_eq!(params.get("model"), Some(&"gpt-4".to_string()));
         assert_eq!(params.get("stream"), Some(&"true".to_string()));
         assert_eq!(params.get("temperature"), Some(&"0.7".to_string()));
@@ -353,7 +347,7 @@ mod tests {
     #[test]
     fn test_extract_query_params_from_path() {
         let params = AuthUtils::extract_query_params_from_path("/api/chat?model=gpt-4&stream=true");
-        
+
         assert_eq!(params.get("model"), Some(&"gpt-4".to_string()));
         assert_eq!(params.get("stream"), Some(&"true".to_string()));
 
@@ -363,17 +357,21 @@ mod tests {
 
     #[test]
     fn test_is_valid_api_key_format() {
-        assert!(AuthUtils::is_valid_api_key_format("sk-1234567890abcdef12345"));
+        assert!(AuthUtils::is_valid_api_key_format(
+            "sk-1234567890abcdef12345"
+        ));
         assert!(!AuthUtils::is_valid_api_key_format("invalid-key"));
         assert!(!AuthUtils::is_valid_api_key_format("sk-short"));
-        assert!(!AuthUtils::is_valid_api_key_format("ak-1234567890abcdef12345"));
+        assert!(!AuthUtils::is_valid_api_key_format(
+            "ak-1234567890abcdef12345"
+        ));
     }
 
     #[test]
     fn test_generate_cache_key() {
         let key = AuthUtils::generate_cache_key("jwt", "user123");
         assert_eq!(key, "auth:jwt:user123");
-        
+
         let api_key = AuthUtils::generate_cache_key("api_key", "sk-test123");
         assert_eq!(api_key, "auth:api_key:sk-test123");
     }
@@ -401,7 +399,8 @@ mod tests {
 
         // 测试没有代理头的情况
         let empty_headers = HeaderMap::new();
-        let direct_ip = AuthUtils::extract_real_client_ip(&empty_headers, Some("192.168.1.1".to_string()));
+        let direct_ip =
+            AuthUtils::extract_real_client_ip(&empty_headers, Some("192.168.1.1".to_string()));
         assert_eq!(direct_ip, "192.168.1.1");
     }
 

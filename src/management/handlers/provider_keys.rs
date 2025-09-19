@@ -5,7 +5,7 @@
 use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use chrono::Utc;
 use sea_orm::{
@@ -63,11 +63,10 @@ pub async fn get_provider_keys_list(
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count provider keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to count provider keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to count provider keys"
+            ));
         }
     };
 
@@ -83,11 +82,10 @@ pub async fn get_provider_keys_list(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider keys"
+            ));
         }
     };
 
@@ -114,7 +112,7 @@ pub async fn get_provider_keys_list(
             format!(
                 "{}****{}",
                 &provider_key.api_key[..4],
-                &provider_key.api_key[provider_key.api_key.len()-4..]
+                &provider_key.api_key[provider_key.api_key.len() - 4..]
             )
         } else {
             "****".to_string()
@@ -201,14 +199,13 @@ pub async fn create_provider_key(
 
     match existing {
         Ok(Some(_)) => {
-            return response::app_error(crate::error::ProxyError::management_conflict(
-                "ProviderKey",
-                &payload.name,
-            ));
+            return crate::manage_error!(
+                crate::proxy_err!(business, "ProviderKey conflict: {}", &payload.name)
+            );
         }
         Err(err) => {
             tracing::error!("Failed to check existing provider key: {}", err);
-            return response::app_error(crate::error::ProxyError::database_with_source(
+            return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to check existing provider key",
                 err,
             ));
@@ -218,76 +215,74 @@ pub async fn create_provider_key(
 
     // 验证认证类型和相应参数
     if payload.auth_type == "api_key" && payload.api_key.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_API_KEY",
-            "API Key认证类型需要提供api_key字段",
-        );
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "API Key认证类型需要提供api_key字段 (field: api_key)"
+        ));
     }
 
     // OAuth类型需要通过api_key字段提供session_id
     if payload.auth_type == "oauth" && payload.api_key.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_OAUTH_SESSION",
-            "OAuth认证类型需要通过api_key字段提供session_id",
-        );
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)"
+        ));
     }
 
     // 验证OAuth会话存在性和所有权
     if payload.auth_type == "oauth" {
         if let Some(session_id) = &payload.api_key {
-        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
-        
-        match OAuthSession::find()
-            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
-            .one(db)
-            .await
-        {
-            Ok(Some(_)) => {
-                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
-                let existing_usage = UserProviderKey::find()
-                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
-                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-                    .filter(user_provider_keys::Column::IsActive.eq(true))
-                    .one(db)
-                    .await;
-                    
-                match existing_usage {
-                    Ok(Some(_)) => {
-                        return response::error(
-                            StatusCode::BAD_REQUEST,
-                            "OAUTH_SESSION_IN_USE",
-                            "指定的OAuth会话已被其他provider key使用",
-                        );
+            use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+
+            match OAuthSession::find()
+                .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+                .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+                .filter(oauth_client_sessions::Column::Status.eq("completed"))
+                .one(db)
+                .await
+            {
+                Ok(Some(_)) => {
+                    // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                    let existing_usage = UserProviderKey::find()
+                        .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                        .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+                        .filter(user_provider_keys::Column::IsActive.eq(true))
+                        .one(db)
+                        .await;
+
+                    match existing_usage {
+                        Ok(Some(_)) => {
+                            return crate::manage_error!(crate::proxy_err!(
+                                business,
+                                "指定的OAuth会话已被其他provider key使用"
+                            ));
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to check OAuth session usage: {}", err);
+                            return crate::manage_error!(
+                                crate::error::ProxyError::database_with_source(
+                                    "Failed to check OAuth session usage",
+                                    err,
+                                )
+                            );
+                        }
+                        _ => {} // 会话可用
                     }
-                    Err(err) => {
-                        tracing::error!("Failed to check OAuth session usage: {}", err);
-                        return response::app_error(crate::error::ProxyError::database_with_source(
-                            "Failed to check OAuth session usage",
-                            err,
-                        ));
-                    }
-                    _ => {} // 会话可用
+                }
+                Ok(None) => {
+                    return crate::manage_error!(crate::proxy_err!(
+                        business,
+                        "指定的OAuth会话不存在或未完成授权 (field: api_key)"
+                    ));
+                }
+                Err(err) => {
+                    tracing::error!("Failed to validate OAuth session: {}", err);
+                    return crate::manage_error!(crate::error::ProxyError::database_with_source(
+                        "Failed to validate OAuth session",
+                        err,
+                    ));
                 }
             }
-            Ok(None) => {
-                return response::error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_OAUTH_SESSION",
-                    "指定的OAuth会话不存在或未完成授权",
-                );
-            }
-            Err(err) => {
-                tracing::error!("Failed to validate OAuth session: {}", err);
-                return response::app_error(crate::error::ProxyError::database_with_source(
-                    "Failed to validate OAuth session",
-                    err,
-                ));
-            }
-        }
         }
     }
 
@@ -316,7 +311,7 @@ pub async fn create_provider_key(
         Ok(model) => model,
         Err(err) => {
             tracing::error!("Failed to create provider key: {}", err);
-            return response::app_error(crate::error::ProxyError::database_with_source(
+            return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to create provider key",
                 err,
             ));
@@ -371,15 +366,17 @@ pub async fn get_provider_key_detail(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
+            return crate::manage_error!(
+                crate::proxy_err!(business, "ProviderKey not found: {}", key_id)
+            );
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider key detail: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider key detail",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider key detail: {}",
+                err
+            ));
         }
     };
 
@@ -400,7 +397,7 @@ pub async fn get_provider_key_detail(
         format!(
             "{}****{}",
             &provider_key.0.api_key[..4],
-            &provider_key.0.api_key[provider_key.0.api_key.len()-4..]
+            &provider_key.0.api_key[provider_key.0.api_key.len() - 4..]
         )
     } else {
         "****".to_string()
@@ -472,15 +469,15 @@ pub async fn update_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
+            return crate::manage_error!(crate::proxy_err!(business, "ProviderKey not found: {}", key_id));
         }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to find provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to find provider key: {}",
+                err
+            ));
         }
     };
 
@@ -496,15 +493,15 @@ pub async fn update_provider_key(
 
         match duplicate {
             Ok(Some(_)) => {
-                return response::error(StatusCode::CONFLICT, "DUPLICATE_NAME", "密钥名称已存在");
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "ProviderKey conflict: {}",
+                    payload.name.clone()
+                ));
             }
             Err(err) => {
                 tracing::error!("Failed to check duplicate name: {}", err);
-                return response::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "DB_ERROR",
-                    "Failed to check duplicate name",
-                );
+                return crate::manage_error!(crate::proxy_err!(database, "Failed to check duplicate name: {}", err));
             }
             _ => {}
         }
@@ -512,79 +509,63 @@ pub async fn update_provider_key(
 
     // 验证认证类型和相应参数
     if payload.auth_type == "api_key" && payload.api_key.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_API_KEY",
-            "API Key认证类型需要提供api_key字段",
-        );
+        return crate::manage_error!(crate::proxy_err!(business, "API Key认证类型需要提供api_key字段 (field: api_key)"));
     }
 
     // OAuth类型需要通过api_key字段提供session_id
     if payload.auth_type == "oauth" && payload.api_key.is_none() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "MISSING_OAUTH_SESSION",
-            "OAuth认证类型需要通过api_key字段提供session_id",
-        );
+        return crate::manage_error!(crate::proxy_err!(business, "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)"));
     }
 
     // 验证OAuth会话存在性和所有权
     if payload.auth_type == "oauth" {
         if let Some(session_id) = &payload.api_key {
-        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
-        
-        // 检查会话是否有效
-        match OAuthSession::find()
-            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
-            .one(db)
-            .await
-        {
-            Ok(Some(_)) => {
-                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
-                // (排除当前正在更新的key)
-                let existing_usage = UserProviderKey::find()
-                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
-                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-                    .filter(user_provider_keys::Column::IsActive.eq(true))
-                    .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
-                    .one(db)
-                    .await;
-                    
-                match existing_usage {
-                    Ok(Some(_)) => {
-                        return response::error(
-                            StatusCode::BAD_REQUEST,
-                            "OAUTH_SESSION_IN_USE",
-                            "指定的OAuth会话已被其他provider key使用",
-                        );
+            use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+
+            // 检查会话是否有效
+            match OAuthSession::find()
+                .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+                .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+                .filter(oauth_client_sessions::Column::Status.eq("completed"))
+                .one(db)
+                .await
+            {
+                Ok(Some(_)) => {
+                    // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                    // (排除当前正在更新的key)
+                    let existing_usage = UserProviderKey::find()
+                        .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                        .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+                        .filter(user_provider_keys::Column::IsActive.eq(true))
+                        .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
+                        .one(db)
+                        .await;
+
+                    match existing_usage {
+                        Ok(Some(_)) => {
+                            return crate::manage_error!(crate::proxy_err!(business, "指定的OAuth会话已被其他provider key使用"));
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to check OAuth session usage: {}", err);
+                            return crate::manage_error!(crate::error::ProxyError::database_with_source(
+                                "Failed to check OAuth session usage",
+                                err,
+                            ));
+                        }
+                        _ => {} // 会话可用
                     }
-                    Err(err) => {
-                        tracing::error!("Failed to check OAuth session usage: {}", err);
-                        return response::app_error(crate::error::ProxyError::database_with_source(
-                            "Failed to check OAuth session usage",
-                            err,
-                        ));
-                    }
-                    _ => {} // 会话可用
+                }
+                Ok(None) => {
+                    return crate::manage_error!(crate::proxy_err!(business, "指定的OAuth会话不存在或未完成授权 (field: api_key)"));
+                }
+                Err(err) => {
+                    tracing::error!("Failed to validate OAuth session: {}", err);
+                    return crate::manage_error!(crate::error::ProxyError::database_with_source(
+                        "Failed to validate OAuth session",
+                        err,
+                    ));
                 }
             }
-            Ok(None) => {
-                return response::error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_OAUTH_SESSION",
-                    "指定的OAuth会话不存在或未完成授权",
-                );
-            }
-            Err(err) => {
-                tracing::error!("Failed to validate OAuth session: {}", err);
-                return response::app_error(crate::error::ProxyError::database_with_source(
-                    "Failed to validate OAuth session",
-                    err,
-                ));
-            }
-        }
         }
     }
 
@@ -607,11 +588,7 @@ pub async fn update_provider_key(
         Ok(model) => model,
         Err(err) => {
             tracing::error!("Failed to update provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to update provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to update provider key: {}", err));
         }
     };
 
@@ -650,16 +627,10 @@ pub async fn delete_provider_key(
         .await
     {
         Ok(Some(key)) => key,
-        Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
-        }
+        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "ProviderKey not found: {}", key_id)); }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to find provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to find provider key: {}", err));
         }
     };
 
@@ -669,11 +640,11 @@ pub async fn delete_provider_key(
         Ok(_) => {}
         Err(err) => {
             tracing::error!("Failed to delete provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to delete provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to delete provider key: {}",
+                err
+            ));
         }
     };
 
@@ -712,15 +683,15 @@ pub async fn get_provider_key_stats(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
+            return crate::manage_error!(crate::proxy_err!(business, "ProviderKey not found: {}", key_id));
         }
         Err(err) => {
             tracing::error!("Failed to fetch provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider key: {}",
+                err
+            ));
         }
     };
 
@@ -780,11 +751,7 @@ pub async fn get_provider_keys_dashboard_stats(
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count total keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to count total keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to count total keys: {}", err));
         }
     };
 
@@ -798,11 +765,7 @@ pub async fn get_provider_keys_dashboard_stats(
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count active keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to count active keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to count active keys: {}", err));
         }
     };
 
@@ -816,11 +779,7 @@ pub async fn get_provider_keys_dashboard_stats(
         Ok(keys) => keys.iter().map(|k| k.id).collect(),
         Err(err) => {
             tracing::error!("Failed to fetch user provider keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch user provider keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch user provider keys: {}", err));
         }
     };
 
@@ -841,14 +800,10 @@ pub async fn get_provider_keys_dashboard_stats(
                 let cost_sum: f64 = records.iter().filter_map(|record| record.cost).sum();
                 (usage_count, cost_sum)
             }
-            Err(err) => {
-                tracing::error!("Failed to fetch proxy tracing records: {}", err);
-                return response::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "DB_ERROR",
-                    "Failed to fetch usage statistics",
-                );
-            }
+        Err(err) => {
+            tracing::error!("Failed to fetch proxy tracing records: {}", err);
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch usage statistics: {}", err));
+        }
         }
     };
 
@@ -902,11 +857,7 @@ pub async fn get_simple_provider_keys_list(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch simple provider keys: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider keys",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch provider keys: {}", err));
         }
     };
 
@@ -964,16 +915,10 @@ pub async fn health_check_provider_key(
         .await
     {
         Ok(Some(key)) => key,
-        Ok(None) => {
-            return response::error(StatusCode::NOT_FOUND, "NOT_FOUND", "密钥不存在");
-        }
+        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "ProviderKey not found: {}", key_id)); }
         Err(err) => {
             tracing::error!("Failed to find provider key: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to find provider key",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to find provider key: {}", err));
         }
     };
 

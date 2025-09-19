@@ -3,7 +3,6 @@
 //! 提供管理端专用的认证工具函数，使用共享的AuthUtils基础组件
 
 use crate::auth::AuthUtils;
-use crate::management::response;
 use axum::http::HeaderMap;
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
@@ -64,10 +63,8 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Some(header) => header,
         None => {
             tracing::warn!("Missing Authorization header");
-            return Err(response::error(
-                axum::http::StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Authorization header required",
+            return Err(crate::manage_error!(
+                crate::proxy_err!(auth, "Authorization header required")
             ));
         }
     };
@@ -77,10 +74,8 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Some(token) => token,
         None => {
             tracing::warn!("Invalid Authorization header format - not a Bearer token");
-            return Err(response::error(
-                axum::http::StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Invalid Authorization header format - Bearer token required",
+            return Err(crate::manage_error!(
+                crate::proxy_err!(business, "Invalid Authorization header format - Bearer token required")
             ));
         }
     };
@@ -99,10 +94,8 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Ok(data) => data,
         Err(err) => {
             tracing::warn!("JWT token validation failed: {}", err);
-            return Err(response::error(
-                axum::http::StatusCode::UNAUTHORIZED,
-                "AUTH_ERROR",
-                "Invalid or expired token",
+            return Err(crate::manage_error!(
+                crate::proxy_err!(auth, "Invalid or expired token")
             ));
         }
     };
@@ -115,10 +108,8 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
                 "Failed to parse user ID from JWT token: {}",
                 token_data.claims.sub
             );
-            return Err(response::error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL_ERROR",
-                "Invalid user ID in token",
+            return Err(crate::manage_error!(
+                crate::proxy_err!(internal, "Invalid user ID in token")
             ));
         }
     };

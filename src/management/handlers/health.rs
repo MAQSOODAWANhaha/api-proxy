@@ -4,7 +4,7 @@ use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use axum::extract::{Path, State};
 use entity::{user_provider_keys, provider_types};
-use pingora_http::StatusCode;
+// use pingora_http::StatusCode; // no longer needed with manage_error!
 use sea_orm::{EntityTrait, ColumnTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -73,7 +73,7 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
         Ok(health_infos) => response::success(health_infos),
         Err(err) => {
             error!(error = %err, "Failed to get API keys health status");
-            response::error(StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_ERROR", "Failed to retrieve API keys health status")
+            crate::manage_error!(crate::proxy_err!(database, "Failed to retrieve API keys health status: {}", err))
         }
     }
 }
@@ -85,7 +85,7 @@ pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::
         Ok(stats) => response::success(stats),
         Err(err) => {
             error!(error = %err, "Failed to get health statistics");
-            response::error(StatusCode::INTERNAL_SERVER_ERROR, "STATS_ERROR", "Failed to retrieve health statistics")
+            crate::manage_error!(crate::proxy_err!(database, "Failed to retrieve health statistics: {}", err))
         }
     }
 }
@@ -99,7 +99,7 @@ pub async fn trigger_key_health_check(
         Ok(check_result) => response::success(check_result),
         Err(err) => {
             error!(key_id = key_id, error = %err, "Failed to trigger health check");
-            response::error(StatusCode::INTERNAL_SERVER_ERROR, "CHECK_ERROR", &format!("Failed to trigger health check for key {}", key_id))
+            crate::manage_error!(crate::proxy_err!(database, "Failed to trigger health check for key {}: {}", key_id, err))
         }
     }
 }
@@ -114,7 +114,7 @@ pub async fn mark_key_unhealthy(
         Ok(_) => response::success("API key marked as unhealthy"),
         Err(err) => {
             error!(key_id = key_id, error = %err, "Failed to mark key unhealthy");
-            response::error(StatusCode::INTERNAL_SERVER_ERROR, "MARK_ERROR", &format!("Failed to mark key {} as unhealthy", key_id))
+            crate::manage_error!(crate::proxy_err!(database, "Failed to mark key {} as unhealthy: {}", key_id, err))
         }
     }
 }

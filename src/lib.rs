@@ -4,6 +4,7 @@
 //!
 //! 企业级AI服务代理平台核心库
 
+pub mod app;
 pub mod auth;
 pub mod cache;
 pub mod config;
@@ -19,7 +20,6 @@ pub mod proxy;
 pub mod scheduler;
 pub mod statistics;
 pub mod trace;
-pub mod app;
 /// 通用工具和辅助函数模块
 pub mod utils;
 

@@ -10,15 +10,15 @@
 
 - **PingoraProxyServer** (端口8080): 专注高性能AI请求代理，基于Pingora 0.5.0原生性能
 - **ManagementServer** (端口9090): 专注业务管理逻辑，用户管理、API密钥管理、统计查询
-- **共享数据层**: SQLite数据库 + UnifiedCacheManager + RefactoredUnifiedAuthManager
+- **共享数据层**: SQLite数据库 + CacheManager + AuthManager
 
 ### 技术栈组成
 
 - **核心框架**: Rust 2024 Edition + Pingora 0.5.0 + Axum 0.8.4
 - **数据库**: SQLite + Sea-ORM 1.1.13 + Sea-ORM-Migration  
-- **缓存**: Redis with UnifiedCacheManager (支持内存/Redis后端)
-- **认证**: RefactoredUnifiedAuthManager + JWT + API Key + RBAC
-- **追踪**: UnifiedTraceSystem + ImmediateProxyTracer
+- **缓存**: Redis with CacheManager (支持内存/Redis后端)
+- **认证**: AuthManager + JWT + API Key + RBAC
+- **追踪**: TraceSystem + ImmediateProxyTracer
 - **前端**: Vue 3 + TypeScript + Element Plus (规划中)
 
 ## 📊 完整请求处理流程图
@@ -41,11 +41,11 @@ flowchart TD
             AuthConfig --> ApiKeyManager["ApiKeyManager::new()"]
             JWTManager --> AuthService["AuthService::new()"]
             ApiKeyManager --> AuthService
-            AuthService --> UnifiedAuthMgr["RefactoredUnifiedAuthManager::new()"]
+            AuthService --> AuthManager["AuthManager::new()"]
             InitComponents --> CacheManager["UnifiedCacheManager::new()"]
             InitComponents --> ProviderConfigMgr["ProviderConfigManager::new()"]
             InitComponents --> StatisticsService["StatisticsService::new()"]
-            InitComponents --> TraceSystem["UnifiedTraceSystem::new_immediate()"]
+            InitComponents --> TraceSystem["TraceSystem::new_immediate()"]
             InitComponents --> HealthChecker["ApiKeyHealthChecker::new()"]
             InitComponents --> OAuthClient["OAuthClient::new()"]
         end
@@ -99,7 +99,7 @@ flowchart TD
             subgraph AuthFlow["🔐 认证流程详细"]
                 AuthPhase --> ParseKey["parse_inbound_api_key_from_client()<br/>解析客户端认证头"]
                 ParseKey --> ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
-                ExtractHeaders --> UnifiedAuth["RefactoredUnifiedAuthManager<br/>.authenticate_proxy_request()"]
+                ExtractHeaders --> Auth["AuthManager<br/>.authenticate_proxy_request()"]
                 UnifiedAuth --> VerifyMatch["验证provider类型匹配"]
                 VerifyMatch --> AuthResult["构造AuthenticationResult"]
             end
@@ -231,13 +231,13 @@ main.rs:30 → dual_port_setup::run_dual_port_servers()
 │   │   ├── JwtManager::new()
 │   │   ├── ApiKeyManager::new()
 │   │   ├── AuthService::new()
-│   │   └── RefactoredUnifiedAuthManager::new()
+│   │   └── AuthManager::new()
 │   ├── 缓存和配置管理器
 │   │   ├── UnifiedCacheManager::new()
 │   │   └── ProviderConfigManager::new()
 │   ├── 其他服务组件
 │   │   ├── StatisticsService::new()
-│   │   ├── UnifiedTraceSystem::new_immediate()
+│   │   ├── TraceSystem::new_immediate()
 │   │   ├── ApiKeyHealthChecker::new()
 │   │   ├── OAuthClient::new()
 │   │   ├── SmartApiKeyProvider::new()
@@ -251,7 +251,7 @@ main.rs:30 → dual_port_setup::run_dual_port_servers()
 **关键代码路径：**
 - `src/main.rs:30`: `dual_port_setup::run_dual_port_servers()`
 - `src/dual_port_setup.rs:132`: `initialize_shared_services()`
-- `src/dual_port_setup.rs:262`: 初始化UnifiedTraceSystem
+- `src/dual_port_setup.rs:262`: 初始化追踪系统（TraceSystem）
 
 ### 2. 代理服务构建 (`src/proxy/pingora_proxy.rs` + `src/proxy/builder.rs`)
 
@@ -266,7 +266,7 @@ PingoraProxyServer::start()
 │       ├── ensure_database() → 复用共享连接
 │       ├── ensure_cache() → UnifiedCacheManager
 │       ├── ensure_provider_config_manager() → ProviderConfigManager
-│       ├── create_auth_manager() → RefactoredUnifiedAuthManager
+│       ├── create_auth_manager() → AuthManager
 │       └── create_proxy_service() → ProxyService实例
 ├── http_proxy_service(proxy_service) // Pingora HTTP服务
 ├── add_tcp(server_address) // 添加TCP监听
@@ -292,7 +292,7 @@ ProxyService (实现 ProxyHttp trait):
 │       ├── 步骤1: AuthenticationService::authenticate_with_provider()
 │       │   ├── parse_inbound_api_key_from_client() // 解析客户端认证头
 │       │   ├── 根据provider.auth_header_format提取密钥
-│       │   └── RefactoredUnifiedAuthManager::authenticate_proxy_request()
+│       │   └── AuthManager::authenticate_proxy_request()
 │       ├── 步骤2: TracingService::start_trace() // 开始追踪
 │       ├── 步骤3: check_rate_limit() // 速率限制检查
 │       ├── 步骤4: 获取Provider配置 (从ctx.provider_type)
@@ -331,7 +331,7 @@ AuthenticationService::authenticate_with_provider()
 │   ├── AuthHeaderParser::parse_api_key_from_inbound_headers_smart() // 直接调用底层解析器
 │   │   └── 使用统一的错误转换机制 (From<AuthParseError> for ProxyError)
 │   └── Fallback到查询参数 (?api_key=...)
-├── RefactoredUnifiedAuthManager::authenticate_proxy_request()
+├── AuthManager::authenticate_proxy_request()
 │   ├── 验证API密钥有效性
 │   ├── 检查用户权限和状态
 │   └── 验证provider类型匹配
@@ -347,7 +347,7 @@ AuthenticationService::authenticate_with_provider()
 - `src/proxy/authentication_service.rs:52`: `parse_inbound_api_key_from_client()`
 - `src/proxy/authentication_service.rs:162`: `authenticate_with_provider()`
 - `src/auth/header_parser.rs`: `AuthHeaderParser` 统一头部解析器
-- `src/auth/unified_refactored.rs`: `RefactoredUnifiedAuthManager`
+- `src/auth/auth_manager.rs`: `AuthManager`
 - `src/error/types.rs:1047`: `From<AuthParseError> for ProxyError` 自动转换
 
 ### 5. 负载均衡算法 (`src/scheduler/pool_manager.rs`)
@@ -376,7 +376,7 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 - `src/scheduler/api_key_health.rs`: `ApiKeyHealthChecker`
 - `src/proxy/request_handler.rs:866`: `select_api_key()`
 
-### 6. 追踪和统计 (`src/proxy/tracing_service.rs` + `src/proxy/statistics_service.rs`)
+### 6. 追踪和统计 (`src/proxy/tracing_service.rs` + `src/statistics/service.rs`)
 
 ```rust
 请求追踪完整生命周期：
@@ -389,7 +389,7 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 │   ├── model_used: 使用的模型
 │   └── user_provider_key_id: 后端API密钥ID
 ├── 统计数据提取 (响应体收集完成后)：
-│   ├── StatisticsService::extract_stats_from_response_body()
+│   ├── StatisticsService::extract_usage_from_json() / normalize_usage_metadata()
 │   ├── 支持SSE格式和传统流式响应解析
 │   ├── 使用TokenFieldExtractor从JSON提取token信息
 │   ├── 使用ModelExtractor提取模型名称
@@ -402,7 +402,7 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 
 **关键代码路径：**
 - `src/proxy/tracing_service.rs:31`: `start_trace()`
-- `src/proxy/statistics_service.rs:422`: `extract_stats_from_response_body()`
+- `src/statistics/service.rs`: `extract_usage_from_json()`, `initialize_token_usage()`
 - `src/trace/immediate.rs`: `ImmediateProxyTracer`
 - `src/providers/field_extractor.rs`: `TokenFieldExtractor`, `ModelExtractor`
 
@@ -477,7 +477,7 @@ AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
 - **代码位置**: `src/proxy/service.rs:270`
 
 ### 6. 统一追踪系统
-- **追踪架构**: UnifiedTraceSystem + ImmediateProxyTracer
+- **追踪架构**: TraceSystem + ImmediateProxyTracer
 - **即时写入**: 所有请求都被即时写入数据库，确保数据不丢失
 - **完整生命周期**: 从认证开始到响应完成的全程追踪
 - **错误处理**: 专门的错误类型分类和追踪
@@ -517,7 +517,7 @@ AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
    - 验证 `provider.auth_header_format` 配置是否正确
    - 确认 `AuthHeaderParser::parse_api_key_from_inbound_headers_smart()` 解析结果
    - 检查错误自动转换 `From<AuthParseError> for ProxyError` 是否正常
-   - 确认 `RefactoredUnifiedAuthManager` 认证流程
+   - 确认 `AuthManager` 认证流程
 2. **负载均衡异常**: 
    - 查看 `ApiKeyPoolManager::select_api_key_from_service_api()` 输出
    - 检查 `user_provider_keys_ids` JSON数组解析
@@ -527,7 +527,7 @@ AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
    - 检查 provider.base_url 配置
    - 验证 TLS/SSL 证书问题
 4. **追踪数据丢失**: 
-   - 确认 `UnifiedTraceSystem::new_immediate()` 正确初始化
+   - 确认 `TraceSystem::new_immediate()` 正确初始化
    - 检查 `ImmediateProxyTracer` 数据库写入权限
    - 验证 `TracingService` 是否正确传递给RequestHandler
 5. **统计数据异常**:
@@ -548,12 +548,12 @@ AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
   - 重试次数和成功率 (`retry_count`)
   - 上游连接状态 (`upstream_connection_status`)
   - 数据库连接池状态
-  - 缓存命中率 (UnifiedCacheManager)
+  - 缓存命中率 (CacheManager)
 
 ### 架构扩展要点
 - **新增Provider**: 更新数据库配置，无需代码修改
 - **新增认证方式**: 扩展 `auth_header_format` JSON配置
 - **新增调度算法**: 实现 `ApiKeySelector` trait
-- **新增追踪器**: 实现 `ProxyTracer` trait并集成到UnifiedTraceSystem
+- **新增追踪器**: 实现 `ProxyTracer` trait 并集成到 TraceSystem
 
 这个文档基于实际源码深度分析提供了完整的技术参考，确保团队成员能够准确理解系统架构并高效进行开发维护工作。

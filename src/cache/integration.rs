@@ -49,16 +49,16 @@ pub struct UserApiConfig {
     pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
 }
 
-/// 高级缓存管理器
+/// 高级缓存门面（避免与基础 CacheManager 混淆）
 #[derive(Clone)]
-pub struct CacheManager {
+pub struct CacheFacade {
     /// Redis 客户端
     client: CacheClient,
     /// 数据库连接（可选，用于预热功能）
     database: Option<Arc<DatabaseConnection>>,
 }
 
-impl CacheManager {
+impl CacheFacade {
     /// 从应用配置创建缓存管理器
     pub async fn from_config(redis_config: &RedisConfig) -> Result<Self> {
         // 转换配置格式
@@ -387,13 +387,13 @@ impl CacheManager {
 
 /// 缓存装饰器 - 用于方法级缓存
 pub struct CacheDecorator<'a> {
-    manager: &'a CacheManager,
+    manager: &'a CacheFacade,
     key: CacheKey,
 }
 
 impl<'a> CacheDecorator<'a> {
     /// 创建缓存装饰器
-    pub fn new(manager: &'a CacheManager, key: CacheKey) -> Self {
+    pub fn new(manager: &'a CacheFacade, key: CacheKey) -> Self {
         Self { manager, key }
     }
 
@@ -437,7 +437,7 @@ mod tests {
     #[ignore] // 默认忽略，需要手动运行
     async fn test_cache_manager_basic_operations() {
         let redis_config = RedisConfig::default();
-        let cache_manager = CacheManager::from_config(&redis_config).await.unwrap();
+        let cache_manager = CacheFacade::from_config(&redis_config).await.unwrap();
 
         // 测试连接
         cache_manager.ping().await.unwrap();
@@ -463,7 +463,7 @@ mod tests {
     #[ignore]
     async fn test_cache_decorator() {
         let redis_config = RedisConfig::default();
-        let cache_manager = CacheManager::from_config(&redis_config).await.unwrap();
+        let cache_manager = CacheFacade::from_config(&redis_config).await.unwrap();
 
         let key = CacheKeyBuilder::config("decorator_test");
         let decorator = CacheDecorator::new(&cache_manager, key.clone());

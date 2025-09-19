@@ -1,7 +1,7 @@
 //! # 重构后的统一认证层
 //!
 //! 使用新的services架构消除重复实现，保持向后兼容的API
-//! 本文件将逐步替代unified.rs中的RefactoredUnifiedAuthManager God Object
+//! 本文件提供统一认证管理器（AuthManager）的实现。
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -19,7 +19,7 @@ use crate::auth::{
     // oauth::OAuthSessionManager, // 已删除，使用oauth_client替代
     types::{AuthConfig, AuthType},
 };
-use crate::cache::UnifiedCacheManager;
+use crate::cache::CacheManager;
 use crate::error::Result;
 use sea_orm::DatabaseConnection;
 
@@ -32,7 +32,7 @@ use sea_orm::DatabaseConnection;
 /// - 提供向后兼容的API接口
 /// - 委托给核心AuthService处理认证逻辑
 /// - 管理OAuth会话
-pub struct RefactoredUnifiedAuthManager {
+pub struct AuthManager {
     /// 核心认证服务
     auth_service: Arc<AuthService>,
     /// OAuth会话管理器
@@ -58,13 +58,13 @@ pub struct AuthRequest {
     pub extra_headers: HashMap<String, String>,
 }
 
-impl RefactoredUnifiedAuthManager {
+impl AuthManager {
     /// 创建重构后的统一认证管理器
     pub async fn new(
         auth_service: Arc<AuthService>,
         config: Arc<AuthConfig>,
         _db: Arc<DatabaseConnection>,
-        _cache_manager: Arc<UnifiedCacheManager>,
+        _cache_manager: Arc<CacheManager>,
     ) -> Result<Self> {
         // let oauth_session_manager = Arc::new(OAuthSessionManager::new(db.clone())); // 已删除
 
@@ -170,14 +170,14 @@ impl RefactoredUnifiedAuthManager {
     pub async fn authenticate_proxy_request(
         &self,
         api_key: &str,
-    ) -> Result<crate::auth::proxy::ProxyAuthResult> {
+    ) -> Result<crate::auth::ProxyAuthResult> {
         // 使用AuthService进行用户服务API认证
         let user_api = self
             .auth_service
             .authenticate_user_service_api(api_key)
             .await?;
 
-        Ok(crate::auth::proxy::ProxyAuthResult {
+        Ok(crate::auth::ProxyAuthResult {
             user_api: user_api.clone(),
             user_id: user_api.user_id,
             provider_type_id: user_api.provider_type_id,
@@ -327,14 +327,14 @@ impl RefactoredUnifiedAuthManager {
     // }
 }
 
-/// 便捷的工厂函数，用于创建重构后的RefactoredUnifiedAuthManager
-pub async fn create_refactored_unified_auth_manager(
+/// 便捷的工厂函数，用于创建统一认证管理器（AuthManager）
+pub async fn create_auth_manager(
     auth_service: Arc<AuthService>,
     config: Arc<AuthConfig>,
     db: Arc<DatabaseConnection>,
-    cache_manager: Arc<UnifiedCacheManager>,
-) -> Result<RefactoredUnifiedAuthManager> {
-    RefactoredUnifiedAuthManager::new(auth_service, config, db, cache_manager).await
+    cache_manager: Arc<CacheManager>,
+) -> Result<AuthManager> {
+    AuthManager::new(auth_service, config, db, cache_manager).await
 }
 
 #[cfg(test)]

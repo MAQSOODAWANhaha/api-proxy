@@ -145,101 +145,137 @@ mod tests {
 
     #[test]
     fn test_error_macros() {
-        let err = crate::config_error!("配置错误");
+        let err = crate::proxy_err!(config, "配置错误");
         assert!(matches!(err, ProxyError::Config { .. }));
 
-        let err = crate::database_error!("数据库错误");
+        let err = crate::proxy_err!(database, "数据库错误");
         assert!(matches!(err, ProxyError::Database { .. }));
 
-        let err = crate::network_error!("网络错误");
+        let err = crate::proxy_err!(network, "网络错误");
         assert!(matches!(err, ProxyError::Network { .. }));
 
-        let err = crate::auth_error!("认证错误");
-        assert!(matches!(err, ProxyError::Auth { .. }));
-
-        let err = crate::cache_error!("缓存错误");
-        assert!(matches!(err, ProxyError::Cache { .. }));
-
-        let err = crate::server_init_error!("服务器初始化错误");
-        assert!(matches!(err, ProxyError::ServerInit { .. }));
-
-        let err = crate::server_start_error!("服务器启动错误");
-        assert!(matches!(err, ProxyError::ServerStart { .. }));
-
-        let err = crate::authentication_error!("认证错误");
+        let err = crate::proxy_err!(auth, "认证错误");
         assert!(matches!(err, ProxyError::Authentication { .. }));
 
-        let err = crate::rate_limit_error!("速率限制错误");
+        let err = crate::proxy_err!(cache, "缓存错误");
+        assert!(matches!(err, ProxyError::Cache { .. }));
+
+        let err = crate::proxy_err!(server_init, "服务器初始化错误");
+        assert!(matches!(err, ProxyError::ServerInit { .. }));
+
+        let err = crate::proxy_err!(server_start, "服务器启动错误");
+        assert!(matches!(err, ProxyError::ServerStart { .. }));
+
+        let err = crate::proxy_err!(rate_limit, "速率限制错误");
         assert!(matches!(err, ProxyError::RateLimit { .. }));
 
-        let err = crate::bad_gateway_error!("网关错误");
+        let err = crate::proxy_err!(bad_gateway, "网关错误");
         assert!(matches!(err, ProxyError::BadGateway { .. }));
 
-        let err = crate::upstream_not_found_error!("上游服务器未找到");
+        let err = crate::proxy_err!(upstream_not_found, "上游服务器未找到");
         assert!(matches!(err, ProxyError::UpstreamNotFound { .. }));
 
-        let err = crate::upstream_not_available_error!("上游服务器不可用");
+        let err = crate::proxy_err!(upstream_not_available, "上游服务器不可用");
         assert!(matches!(err, ProxyError::UpstreamNotAvailable { .. }));
 
-        let err = crate::load_balancer_error!("负载均衡错误");
+        let err = crate::proxy_err!(load_balancer, "负载均衡错误");
         assert!(matches!(err, ProxyError::LoadBalancer { .. }));
 
-        let err = crate::health_check_error!("健康检查错误");
+        let err = crate::proxy_err!(health_check, "健康检查错误");
         assert!(matches!(err, ProxyError::HealthCheck { .. }));
 
-        let err = crate::statistics_error!("统计收集错误");
+        let err = crate::proxy_err!(statistics, "统计收集错误");
         assert!(matches!(err, ProxyError::Statistics { .. }));
 
-        let err = crate::tracing_error!("跟踪系统错误");
+        let err = crate::proxy_err!(tracing, "跟踪系统错误");
         assert!(matches!(err, ProxyError::Tracing { .. }));
     }
 
     #[test]
     fn test_ensure_macros() -> Result<(), ProxyError> {
-        crate::ensure_config!(true, "这不应该触发");
-        crate::ensure_business!(true, "这不应该触发");
-        crate::ensure_database!(true, "这不应该触发");
-        crate::ensure_network!(true, "这不应该触发");
-        crate::ensure_auth!(true, "这不应该触发");
-        crate::ensure_cache!(true, "这不应该触发");
+        crate::proxy_ensure!(true, config, "这不应该触发");
+        crate::proxy_ensure!(true, business, "这不应该触发");
+        crate::proxy_ensure!(true, database, "这不应该触发");
+        crate::proxy_ensure!(true, network, "这不应该触发");
+        crate::proxy_ensure!(true, auth, "这不应该触发");
+        crate::proxy_ensure!(true, cache, "这不应该触发");
 
         // 测试确保宏会正确返回错误
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_config!(false, "配置错误");
+            crate::proxy_ensure!(false, config, "配置错误");
             Ok(())
         })();
         assert!(matches!(result.unwrap_err(), ProxyError::Config { .. }));
 
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_business!(false, "业务错误");
+            crate::proxy_ensure!(false, business, "业务错误");
             Ok(())
         })();
         assert!(matches!(result.unwrap_err(), ProxyError::Business { .. }));
 
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_database!(false, "数据库错误");
+            crate::proxy_ensure!(false, database, "数据库错误");
             Ok(())
         })();
         assert!(matches!(result.unwrap_err(), ProxyError::Database { .. }));
 
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_network!(false, "网络错误");
+            crate::proxy_ensure!(false, network, "网络错误");
             Ok(())
         })();
         assert!(matches!(result.unwrap_err(), ProxyError::Network { .. }));
 
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_auth!(false, "认证错误");
+            crate::proxy_ensure!(false, auth, "认证错误");
             Ok(())
         })();
-        assert!(matches!(result.unwrap_err(), ProxyError::Auth { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ProxyError::Authentication { .. }
+        ));
 
         let result = (|| -> Result<(), ProxyError> {
-            crate::ensure_cache!(false, "缓存错误");
+            crate::proxy_ensure!(false, cache, "缓存错误");
             Ok(())
         })();
         assert!(matches!(result.unwrap_err(), ProxyError::Cache { .. }));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_pingora_http_macro() {
+        let pe = crate::pingora_http!(200, "OK");
+        assert!(matches!(pe.etype, pingora_core::ErrorType::HTTPStatus(200)));
+    }
+
+    #[test]
+    fn test_pingora_continue_and_respond_macros() {
+        let r1: pingora_core::Result<bool> = crate::pingora_continue!();
+        assert_eq!(r1.unwrap(), false);
+        let r2: pingora_core::Result<bool> = crate::pingora_respond!();
+        assert_eq!(r2.unwrap(), true);
+    }
+
+    #[test]
+    fn test_pingora_try_macro() {
+        fn returns_proxy_result(ok: bool) -> crate::error::Result<u32> {
+            if ok {
+                Ok(42)
+            } else {
+                Err(crate::proxy_err!(business, "nope"))
+            }
+        }
+        fn wrap_to_pingora(ok: bool) -> pingora_core::Result<u32> {
+            let v = crate::pingora_try!(returns_proxy_result(ok));
+            Ok(v)
+        }
+
+        assert_eq!(wrap_to_pingora(true).unwrap(), 42);
+        let err = wrap_to_pingora(false).err().unwrap();
+        assert!(matches!(
+            err.etype,
+            pingora_core::ErrorType::HTTPStatus(400)
+        ));
     }
 }

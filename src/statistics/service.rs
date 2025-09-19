@@ -1,592 +1,477 @@
-//! # 统计服务
+//! # 代理端统计服务（迁移）
 //!
-//! 收集和聚合系统统计信息
+//! 从 `src/proxy/statistics_service.rs` 迁移至此，作为统计模块对外服务。
 
-use crate::cache::abstract_cache::UnifiedCacheManager;
-use crate::cache::keys::CacheKeyBuilder;
-use crate::config::AppConfig;
 use anyhow::Result;
-use chrono::{DateTime, Timelike, Utc};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use pingora_http::ResponseHeader;
+use pingora_proxy::Session;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
 
-/// 统计服务
-pub struct StatisticsService {
-    /// 应用配置
-    #[allow(dead_code)]
-    config: Arc<AppConfig>,
-    /// 缓存管理器
-    cache_manager: Arc<UnifiedCacheManager>,
-    /// 内存统计数据
-    memory_stats: Arc<RwLock<MemoryStats>>,
-}
+use crate::auth::AuthUtils;
+use crate::error::ProxyError;
+use crate::pricing::PricingCalculatorService;
+use crate::proxy::ProxyContext;
+// 提取器在此处不直接依赖，避免强耦合；如需高级解析可在 providers 层使用。
 
-/// 内存统计数据
-#[derive(Debug, Default)]
-struct MemoryStats {
-    /// 请求计数器
-    request_counters: HashMap<String, u64>,
-    /// 响应时间记录
-    response_times: Vec<ResponseTimeRecord>,
-    /// 错误计数器
-    error_counters: HashMap<String, u64>,
-}
-
-/// 响应时间记录
-#[derive(Debug, Clone)]
-struct ResponseTimeRecord {
-    /// 时间戳
-    timestamp: DateTime<Utc>,
-    /// 响应时间（毫秒）
-    duration_ms: u64,
-    /// 端点
-    #[allow(dead_code)]
-    endpoint: String,
-    /// 上游类型
-    upstream_type: String,
-}
-
-/// 缓存的请求统计数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CachedRequestStats {
-    /// 日期
-    pub date: String,
-    /// 小时
-    pub hour: u8,
-    /// 总请求数
-    pub total_requests: u64,
-    /// 成功请求数
-    pub successful_requests: u64,
-    /// 失败请求数
-    pub failed_requests: u64,
-    /// 总响应时间（毫秒）
-    pub total_response_time_ms: u64,
-    /// 平均响应时间（毫秒）
-    pub avg_response_time_ms: f64,
-    /// 端点统计
-    pub endpoints: HashMap<String, EndpointStats>,
-    /// 上游类型统计
-    pub upstream_types: HashMap<String, UpstreamStats>,
-    /// 最后更新时间
-    pub last_updated: DateTime<Utc>,
-}
-
-/// 端点统计信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EndpointStats {
-    /// 总请求数
-    pub total_requests: u64,
-    /// 成功请求数
-    pub successful_requests: u64,
-    /// 失败请求数
-    pub failed_requests: u64,
-    /// 总响应时间（毫秒）
-    pub total_response_time_ms: u64,
-    /// 平均响应时间（毫秒）
-    pub avg_response_time_ms: f64,
-}
-
-/// 上游类型统计信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpstreamStats {
-    /// 总请求数
-    pub total_requests: u64,
-    /// 成功请求数
-    pub successful_requests: u64,
-    /// 失败请求数
-    pub failed_requests: u64,
-    /// 总响应时间（毫秒）
-    pub total_response_time_ms: u64,
-    /// 平均响应时间（毫秒）
-    pub avg_response_time_ms: f64,
-}
+// 重用request_handler中的类型，避免重复定义
+pub use crate::proxy::request_handler::{
+    DetailedRequestStats, RequestDetails, ResponseDetails, SerializableResponseDetails, TokenUsage,
+};
 
 /// 请求统计信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RequestStats {
-    /// 总请求数
-    pub total_requests: u64,
-    /// 成功请求数
-    pub successful_requests: u64,
-    /// 失败请求数
-    pub failed_requests: u64,
-    /// 成功率
-    pub success_rate: f64,
-    /// 平均响应时间（毫秒）
-    pub avg_response_time_ms: f64,
-    /// P95响应时间（毫秒）
-    pub p95_response_time_ms: f64,
-    /// P99响应时间（毫秒）
-    pub p99_response_time_ms: f64,
+    pub method: String,
+    pub path: String,
+    pub client_ip: String,
+    pub user_agent: Option<String>,
+    pub referer: Option<String>,
 }
 
-/// 时间范围统计查询
+/// 响应统计信息
 #[derive(Debug, Clone)]
-pub struct TimeRangeQuery {
-    /// 开始时间
-    pub start_time: DateTime<Utc>,
-    /// 结束时间
-    pub end_time: DateTime<Utc>,
-    /// 分组间隔（小时）
-    pub group_by_hours: Option<u32>,
+pub struct ResponseStats {
+    pub status_code: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub content_type: Option<String>,
+    pub content_length: Option<i64>,
+}
+
+/// 代理端统计服务
+pub struct StatisticsService {
+    /// 费用计算服务
+    pricing_calculator: Arc<PricingCalculatorService>,
 }
 
 impl StatisticsService {
-    /// 创建新的统计服务
-    pub fn new(config: Arc<AppConfig>, cache_manager: Arc<UnifiedCacheManager>) -> Self {
-        Self {
-            config,
-            cache_manager,
-            memory_stats: Arc::new(RwLock::new(MemoryStats::default())),
-        }
-    }
-
-    /// 记录请求
-    pub async fn record_request(
-        &self,
-        endpoint: &str,
-        upstream_type: &str,
-        duration_ms: u64,
-        success: bool,
-    ) -> Result<()> {
-        let mut stats = self.memory_stats.write().await;
-
-        // 更新请求计数器
-        let key = format!("{}:{}", upstream_type, endpoint);
-        *stats.request_counters.entry(key.clone()).or_insert(0) += 1;
-
-        // 记录响应时间
-        stats.response_times.push(ResponseTimeRecord {
-            timestamp: Utc::now(),
-            duration_ms,
-            endpoint: endpoint.to_string(),
-            upstream_type: upstream_type.to_string(),
-        });
-
-        // 清理旧的响应时间记录（保留最近1小时）
-        let cutoff_time = Utc::now() - chrono::Duration::hours(1);
-        stats
-            .response_times
-            .retain(|record| record.timestamp > cutoff_time);
-
-        // 更新错误计数器
-        if !success {
-            *stats.error_counters.entry(key).or_insert(0) += 1;
+    /// 在任意层级查找并归一化 usageMetadata 到顶层，便于通用提取器工作
+    pub fn normalize_usage_metadata(&self, mut root: serde_json::Value) -> serde_json::Value {
+        // 如果顶层已存在，直接返回
+        if root.get("usageMetadata").is_some() {
+            return root;
         }
 
-        debug!(
-            endpoint = endpoint,
-            upstream_type = upstream_type,
-            duration_ms = duration_ms,
-            success = success,
-            "Recorded request statistics"
-        );
+        // 深度优先在任意层级查找包含 token 计数字段的对象
+        fn dfs_find(obj: &serde_json::Value) -> Option<serde_json::Map<String, serde_json::Value>> {
+            match obj {
+                serde_json::Value::Object(map) => {
+                    let mut acc: serde_json::Map<String, serde_json::Value> =
+                        serde_json::Map::new();
 
-        // 异步写入缓存
-        self.persist_to_cache(endpoint, upstream_type, duration_ms, success)
-            .await?;
-
-        Ok(())
-    }
-
-    /// 获取请求统计信息
-    pub async fn get_request_stats(
-        &self,
-        _time_range: Option<TimeRangeQuery>,
-    ) -> Result<RequestStats> {
-        let stats = self.memory_stats.read().await;
-
-        // 计算总请求数
-        let total_requests: u64 = stats.request_counters.values().sum();
-
-        // 计算失败请求数
-        let failed_requests: u64 = stats.error_counters.values().sum();
-        let successful_requests = total_requests.saturating_sub(failed_requests);
-
-        // 计算成功率
-        let success_rate = if total_requests > 0 {
-            (successful_requests as f64) / (total_requests as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        // 计算响应时间统计
-        let mut response_times: Vec<u64> = stats
-            .response_times
-            .iter()
-            .map(|record| record.duration_ms)
-            .collect();
-
-        response_times.sort_unstable();
-
-        let avg_response_time_ms = if !response_times.is_empty() {
-            response_times.iter().sum::<u64>() as f64 / response_times.len() as f64
-        } else {
-            0.0
-        };
-
-        let p95_response_time_ms = if !response_times.is_empty() {
-            let index = ((response_times.len() as f64) * 0.95) as usize;
-            response_times
-                .get(index.saturating_sub(1))
-                .copied()
-                .unwrap_or(0) as f64
-        } else {
-            0.0
-        };
-
-        let p99_response_time_ms = if !response_times.is_empty() {
-            let index = ((response_times.len() as f64) * 0.99) as usize;
-            response_times
-                .get(index.saturating_sub(1))
-                .copied()
-                .unwrap_or(0) as f64
-        } else {
-            0.0
-        };
-
-        Ok(RequestStats {
-            total_requests,
-            successful_requests,
-            failed_requests,
-            success_rate,
-            avg_response_time_ms,
-            p95_response_time_ms,
-            p99_response_time_ms,
-        })
-    }
-
-    /// 获取按上游类型分组的统计信息
-    pub async fn get_stats_by_upstream(&self) -> Result<HashMap<String, RequestStats>> {
-        let stats = self.memory_stats.read().await;
-        let mut upstream_stats: HashMap<String, (u64, u64, Vec<u64>)> = HashMap::new();
-
-        // 按上游类型分组计算
-        for (key, count) in &stats.request_counters {
-            if let Some((upstream_type, _)) = key.split_once(':') {
-                let entry =
-                    upstream_stats
-                        .entry(upstream_type.to_string())
-                        .or_insert((0, 0, Vec::new()));
-                entry.0 += count; // 总请求数
-            }
-        }
-
-        // 计算错误数
-        for (key, error_count) in &stats.error_counters {
-            if let Some((upstream_type, _)) = key.split_once(':') {
-                if let Some(entry) = upstream_stats.get_mut(upstream_type) {
-                    entry.1 += error_count; // 错误数
-                }
-            }
-        }
-
-        // 收集响应时间
-        for record in &stats.response_times {
-            if let Some(entry) = upstream_stats.get_mut(&record.upstream_type) {
-                entry.2.push(record.duration_ms);
-            }
-        }
-
-        // 计算统计信息
-        let mut result = HashMap::new();
-        for (upstream_type, (total, failed, mut response_times)) in upstream_stats {
-            let successful = total.saturating_sub(failed);
-            let success_rate = if total > 0 {
-                (successful as f64) / (total as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            response_times.sort_unstable();
-            let avg_response_time_ms = if !response_times.is_empty() {
-                response_times.iter().sum::<u64>() as f64 / response_times.len() as f64
-            } else {
-                0.0
-            };
-
-            let p95_response_time_ms = if !response_times.is_empty() {
-                let index = ((response_times.len() as f64) * 0.95) as usize;
-                response_times
-                    .get(index.saturating_sub(1))
-                    .copied()
-                    .unwrap_or(0) as f64
-            } else {
-                0.0
-            };
-
-            let p99_response_time_ms = if !response_times.is_empty() {
-                let index = ((response_times.len() as f64) * 0.99) as usize;
-                response_times
-                    .get(index.saturating_sub(1))
-                    .copied()
-                    .unwrap_or(0) as f64
-            } else {
-                0.0
-            };
-
-            result.insert(
-                upstream_type,
-                RequestStats {
-                    total_requests: total,
-                    successful_requests: successful,
-                    failed_requests: failed,
-                    success_rate,
-                    avg_response_time_ms,
-                    p95_response_time_ms,
-                    p99_response_time_ms,
-                },
-            );
-        }
-
-        Ok(result)
-    }
-
-    /// 清理旧统计数据
-    pub async fn cleanup_old_data(&self) -> Result<()> {
-        let mut stats = self.memory_stats.write().await;
-
-        // 清理超过24小时的响应时间记录
-        let cutoff_time = Utc::now() - chrono::Duration::hours(24);
-        stats
-            .response_times
-            .retain(|record| record.timestamp > cutoff_time);
-
-        debug!("Cleaned up old statistics data");
-        Ok(())
-    }
-
-    /// 持久化到缓存
-    async fn persist_to_cache(
-        &self,
-        endpoint: &str,
-        upstream_type: &str,
-        duration_ms: u64,
-        success: bool,
-    ) -> Result<()> {
-        let now = Utc::now();
-        let date_key = now.format("%Y-%m-%d").to_string();
-        let hour = now.hour() as u8;
-
-        // 构建缓存键
-        let stats_key = CacheKeyBuilder::request_stats(&date_key, hour);
-
-        // 获取现有统计数据或创建新的
-        let mut cached_stats: CachedRequestStats =
-            match self.cache_manager.get(&stats_key.build()).await {
-                Ok(Some(stats)) => stats,
-                Ok(None) => CachedRequestStats {
-                    date: date_key.clone(),
-                    hour,
-                    total_requests: 0,
-                    successful_requests: 0,
-                    failed_requests: 0,
-                    total_response_time_ms: 0,
-                    avg_response_time_ms: 0.0,
-                    endpoints: HashMap::new(),
-                    upstream_types: HashMap::new(),
-                    last_updated: now,
-                },
-                Err(e) => {
-                    warn!("Failed to get cached stats, creating new: {}", e);
-                    CachedRequestStats {
-                        date: date_key.clone(),
-                        hour,
-                        total_requests: 0,
-                        successful_requests: 0,
-                        failed_requests: 0,
-                        total_response_time_ms: 0,
-                        avg_response_time_ms: 0.0,
-                        endpoints: HashMap::new(),
-                        upstream_types: HashMap::new(),
-                        last_updated: now,
+                    for key in [
+                        "promptTokenCount",
+                        "candidatesTokenCount",
+                        "totalTokenCount",
+                    ] {
+                        if let Some(v) = map.get(key) {
+                            acc.insert(key.to_string(), v.clone());
+                        }
                     }
+
+                    if !acc.is_empty() {
+                        return Some(acc);
+                    }
+
+                    // 递归遍历子对象/数组
+                    for (_k, v) in map.iter() {
+                        if let Some(found) = dfs_find(v) {
+                            return Some(found);
+                        }
+                    }
+                    None
                 }
-            };
-
-        // 更新统计数据
-        cached_stats.total_requests += 1;
-        cached_stats.total_response_time_ms += duration_ms;
-        cached_stats.avg_response_time_ms =
-            cached_stats.total_response_time_ms as f64 / cached_stats.total_requests as f64;
-        cached_stats.last_updated = now;
-
-        if success {
-            cached_stats.successful_requests += 1;
-        } else {
-            cached_stats.failed_requests += 1;
+                serde_json::Value::Array(arr) => {
+                    for v in arr {
+                        if let Some(found) = dfs_find(v) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
         }
 
-        // 更新端点统计
-        let endpoint_stats = cached_stats
-            .endpoints
-            .entry(endpoint.to_string())
-            .or_insert_with(|| EndpointStats {
-                total_requests: 0,
-                successful_requests: 0,
-                failed_requests: 0,
-                total_response_time_ms: 0,
-                avg_response_time_ms: 0.0,
-            });
-
-        endpoint_stats.total_requests += 1;
-        endpoint_stats.total_response_time_ms += duration_ms;
-        endpoint_stats.avg_response_time_ms =
-            endpoint_stats.total_response_time_ms as f64 / endpoint_stats.total_requests as f64;
-
-        if success {
-            endpoint_stats.successful_requests += 1;
-        } else {
-            endpoint_stats.failed_requests += 1;
+        if let Some(meta) = dfs_find(&root) {
+            if let Some(root_map) = root.as_object_mut() {
+                root_map.insert("usageMetadata".to_string(), serde_json::Value::Object(meta));
+            }
         }
 
-        // 更新上游类型统计
-        let upstream_stats = cached_stats
-            .upstream_types
-            .entry(upstream_type.to_string())
-            .or_insert_with(|| UpstreamStats {
-                total_requests: 0,
-                successful_requests: 0,
-                failed_requests: 0,
-                total_response_time_ms: 0,
-                avg_response_time_ms: 0.0,
-            });
+        root
+    }
 
-        upstream_stats.total_requests += 1;
-        upstream_stats.total_response_time_ms += duration_ms;
-        upstream_stats.avg_response_time_ms =
-            upstream_stats.total_response_time_ms as f64 / upstream_stats.total_requests as f64;
+    /// 创建新的统计服务
+    pub fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
+        Self { pricing_calculator }
+    }
 
-        if success {
-            upstream_stats.successful_requests += 1;
-        } else {
-            upstream_stats.failed_requests += 1;
-        }
-
-        // 缓存更新后的统计数据
-        if let Err(e) = self
-            .cache_manager
-            .set_with_strategy(&stats_key, &cached_stats)
+    /// 直接根据给定的 TokenUsage 计算成本（用于 SSE 聚合覆盖后重算）
+    pub async fn calculate_cost_direct(
+        &self,
+        model: &str,
+        provider_type_id: i32,
+        usage: &TokenUsage,
+        request_id: &str,
+    ) -> Result<(Option<f64>, Option<String>), ProxyError> {
+        let pricing_usage = crate::pricing::TokenUsage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            cache_create_tokens: None,
+            cache_read_tokens: None,
+        };
+        match self
+            .pricing_calculator
+            .calculate_cost(model, provider_type_id, &pricing_usage, request_id)
             .await
         {
-            error!("Failed to cache request statistics: {}", e);
-            return Err(e.into());
+            Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
+            Err(e) => {
+                tracing::warn!(request_id = %request_id, error = %e, "Failed to calculate cost (direct)");
+                Ok((None, None))
+            }
         }
-
-        debug!(
-            "Successfully persisted request statistics to cache: endpoint={}, upstream={}, success={}",
-            endpoint, upstream_type, success
-        );
-
-        Ok(())
     }
 
-    /// 从缓存获取统计数据
-    pub async fn get_cached_stats(
+    /// 提取模型名称并初始化token使用信息
+    pub async fn initialize_token_usage(
         &self,
-        date: &str,
-        hour: Option<u8>,
-    ) -> Result<Option<CachedRequestStats>> {
-        if let Some(h) = hour {
-            let stats_key = CacheKeyBuilder::request_stats(date, h);
-            self.cache_manager
-                .get(&stats_key.build())
-                .await
-                .map_err(|e| e.into())
-        } else {
-            // 如果没有指定小时，返回当天的汇总数据
-            let mut daily_stats = None;
+        ctx: &mut ProxyContext,
+    ) -> Result<TokenUsage, ProxyError> {
+        // 提取模型名称（使用数据驱动的ModelExtractor）
+        let model_used = self.extract_model_with_model_extractor(ctx).await;
 
-            // 聚合24小时的数据
-            for h in 0..24u8 {
-                let stats_key = CacheKeyBuilder::request_stats(date, h);
-                if let Ok(Some(hourly_stats)) = self
-                    .cache_manager
-                    .get::<CachedRequestStats>(&stats_key.build())
-                    .await
+        // 创建token使用信息
+        let token_usage = TokenUsage {
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: 0,
+            model_used: model_used.clone(),
+        };
+
+        Ok(token_usage)
+    }
+
+    /// 收集请求统计信息
+    pub fn collect_request_stats(&self, session: &Session) -> RequestStats {
+        // 将Pingora headers转换为标准HeaderMap以便使用AuthUtils
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in session.req_header().headers.iter() {
+            if let Ok(header_name) = axum::http::HeaderName::from_bytes(name.as_str().as_bytes()) {
+                if let Ok(header_value) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
+                    headers.insert(header_name, header_value);
+                }
+            }
+        }
+
+        // 使用AuthUtils提取客户端信息
+        let client_ip = AuthUtils::extract_real_client_ip(
+            &headers,
+            session.client_addr().map(|addr| addr.to_string()),
+        );
+        let user_agent = AuthUtils::extract_user_agent(&headers);
+        let referer = AuthUtils::extract_referer(&headers);
+
+        let req_header = session.req_header();
+        RequestStats {
+            method: req_header.method.to_string(),
+            path: req_header.uri.path().to_string(),
+            client_ip,
+            user_agent,
+            referer,
+        }
+    }
+
+    /// 收集请求详情
+    pub fn collect_request_details(
+        &self,
+        session: &Session,
+        request_stats: &RequestStats,
+    ) -> RequestDetails {
+        let req_header = session.req_header();
+
+        // 收集请求头
+        let mut headers = std::collections::HashMap::new();
+        for (name, value) in req_header.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                headers.insert(name.as_str().to_string(), value_str.to_string());
+            }
+        }
+
+        // 获取Content-Type
+        let content_type = req_header
+            .headers
+            .get("content-type")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+
+        // 获取Content-Length
+        let body_size = req_header
+            .headers
+            .get("content-length")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .and_then(|s| s.parse::<u64>().ok());
+
+        RequestDetails {
+            headers,
+            body_size,
+            content_type,
+            client_ip: request_stats.client_ip.clone(),
+            user_agent: request_stats.user_agent.clone(),
+            referer: request_stats.referer.clone(),
+            method: request_stats.method.clone(),
+            path: request_stats.path.clone(),
+            protocol_version: Some("HTTP/1.1".to_string()),
+        }
+    }
+
+    /// 收集响应详情
+    pub fn collect_response_details(
+        &self,
+        upstream_response: &ResponseHeader,
+        ctx: &mut ProxyContext,
+    ) -> ResponseStats {
+        // 收集响应头
+        let mut headers = std::collections::HashMap::new();
+        for (name, value) in upstream_response.headers.iter() {
+            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
+                headers.insert(name.as_str().to_string(), value_str.to_string());
+            }
+        }
+
+        // 获取Content-Type和Content-Length
+        let content_type = upstream_response
+            .headers
+            .get("content-type")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .map(|s| s.to_string());
+
+        let content_length = upstream_response
+            .headers
+            .get("content-length")
+            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            .and_then(|s| s.parse::<i64>().ok());
+
+        // 更新上下文中的响应详情元数据
+        if let Some(ct) = &content_type {
+            ctx.response_details.content_type = Some(ct.clone());
+        }
+
+        ResponseStats {
+            status_code: upstream_response.status.as_u16(),
+            headers,
+            content_type,
+            content_length,
+        }
+    }
+
+    /// 使用数据库驱动的 ModelExtractor/回退策略提取模型名
+    async fn extract_model_with_model_extractor(&self, ctx: &ProxyContext) -> Option<String> {
+        // 先尝试使用 provider_type 中配置的 model_extraction_json
+        if let Some(provider) = ctx.provider_type.as_ref() {
+            if let Some(cfg) = provider.model_extraction_json.as_ref() {
+                if let Ok(extractor) =
+                    crate::providers::field_extractor::ModelExtractor::from_json_config(cfg)
                 {
-                    match &mut daily_stats {
-                        Some(total) => {
-                            self.merge_stats(total, &hourly_stats);
-                        }
-                        None => {
-                            daily_stats = Some(hourly_stats);
-                        }
+                    // 对于响应体内的模型名提取，使用 BodyJson 规则；URL/Query 由上层按需配置。
+                    let body_json = ctx
+                        .response_details
+                        .body
+                        .as_ref()
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+                    let model = extractor.extract_model_name(
+                        "",                 // 无 URL 上下文
+                        body_json.as_ref(), // 传递响应体 JSON
+                        &std::collections::HashMap::new(),
+                    );
+                    if !model.is_empty() {
+                        return Some(model);
                     }
                 }
             }
-
-            Ok(daily_stats)
         }
+        // 回退：直接从响应JSON常见字段读取
+        if let Some(json) = ctx
+            .response_details
+            .body
+            .as_ref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        {
+            if let Some(m) = json.get("model").and_then(|v| v.as_str()) {
+                return Some(m.to_string());
+            }
+            if let Some(m) = json
+                .get("data")
+                .and_then(|d| d.get("model"))
+                .and_then(|v| v.as_str())
+            {
+                return Some(m.to_string());
+            }
+        }
+        None
     }
 
-    /// 合并统计数据
-    fn merge_stats(&self, target: &mut CachedRequestStats, source: &CachedRequestStats) {
-        target.total_requests += source.total_requests;
-        target.successful_requests += source.successful_requests;
-        target.failed_requests += source.failed_requests;
-        target.total_response_time_ms += source.total_response_time_ms;
-
-        if target.total_requests > 0 {
-            target.avg_response_time_ms =
-                target.total_response_time_ms as f64 / target.total_requests as f64;
+    /// 从 JSON 响应中提取 token 统计（通用提取器）
+    pub fn extract_usage_from_json(&self, json: &serde_json::Value) -> DetailedRequestStats {
+        let mut stats = DetailedRequestStats::default();
+        // 默认直接读取 usageMetadata 常见字段，以便无配置也能工作
+        if let Some(usage) = json.get("usageMetadata") {
+            if let Some(p) = usage.get("promptTokenCount").and_then(|v| v.as_u64()) {
+                stats.input_tokens = Some(p as u32);
+            }
+            if let Some(c) = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()) {
+                stats.output_tokens = Some(c as u32);
+            }
+            if let Some(t) = usage.get("totalTokenCount").and_then(|v| v.as_u64()) {
+                stats.total_tokens = Some(t as u32);
+            }
         }
+        // 模型名（回退）
+        stats.model_name = json
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                json.get("data")
+                    .and_then(|d| d.get("model"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
 
-        // 合并端点统计
-        for (endpoint, stats) in &source.endpoints {
-            let target_stats =
-                target
-                    .endpoints
-                    .entry(endpoint.clone())
-                    .or_insert_with(|| EndpointStats {
-                        total_requests: 0,
-                        successful_requests: 0,
-                        failed_requests: 0,
-                        total_response_time_ms: 0,
-                        avg_response_time_ms: 0.0,
-                    });
+        stats
+    }
 
-            target_stats.total_requests += stats.total_requests;
-            target_stats.successful_requests += stats.successful_requests;
-            target_stats.failed_requests += stats.failed_requests;
-            target_stats.total_response_time_ms += stats.total_response_time_ms;
+    /// 从上下文响应体中提取统计信息（统一实现）
+    pub async fn extract_stats_from_response_body(
+        &self,
+        ctx: &mut ProxyContext,
+    ) -> Result<DetailedRequestStats, ProxyError> {
+        let body = match ctx.response_details.body.as_ref() {
+            Some(b) => b,
+            None => return Ok(DetailedRequestStats::default()),
+        };
 
-            if target_stats.total_requests > 0 {
-                target_stats.avg_response_time_ms =
-                    target_stats.total_response_time_ms as f64 / target_stats.total_requests as f64;
+        // 尝试解析 JSON
+        let parsed: serde_json::Value = match serde_json::from_str(body) {
+            Ok(v) => v,
+            Err(_) => return Ok(DetailedRequestStats::default()),
+        };
+
+        // 归一化 usageMetadata（若在深层）
+        let normalized = self.normalize_usage_metadata(parsed);
+        let mut stats = DetailedRequestStats::default();
+
+        // 若 provider 配置了 token_mappings_json，则用数据库映射优先提取
+        if let Some(provider) = ctx.provider_type.as_ref() {
+            if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
+                if let Ok(cfg) =
+                    crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json)
+                {
+                    let extractor =
+                        crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
+                    stats.input_tokens = extractor.extract_token_u32(&normalized, "tokens_prompt");
+                    stats.output_tokens =
+                        extractor.extract_token_u32(&normalized, "tokens_completion");
+                    // total: 优先映射，如果没有，则根据 prompt+completion 回退
+                    stats.total_tokens = extractor
+                        .extract_token_u32(&normalized, "tokens_total")
+                        .or_else(|| match (stats.input_tokens, stats.output_tokens) {
+                            (Some(p), Some(c)) => Some(p + c),
+                            (Some(p), None) => Some(p),
+                            (None, Some(c)) => Some(c),
+                            _ => None,
+                        });
+                    // 可选缓存字段
+                    stats.cache_create_tokens =
+                        extractor.extract_token_u32(&normalized, "cache_create_tokens");
+                    stats.cache_read_tokens =
+                        extractor.extract_token_u32(&normalized, "cache_read_tokens");
+                }
             }
         }
 
-        // 合并上游类型统计
-        for (upstream, stats) in &source.upstream_types {
-            let target_stats = target
-                .upstream_types
-                .entry(upstream.clone())
-                .or_insert_with(|| UpstreamStats {
-                    total_requests: 0,
-                    successful_requests: 0,
-                    failed_requests: 0,
-                    total_response_time_ms: 0,
-                    avg_response_time_ms: 0.0,
-                });
+        // 若数据库未配置或未提取到，则使用通用回退提取
+        if stats.input_tokens.is_none()
+            && stats.output_tokens.is_none()
+            && stats.total_tokens.is_none()
+        {
+            let fallback = self.extract_usage_from_json(&normalized);
+            stats.input_tokens = fallback.input_tokens;
+            stats.output_tokens = fallback.output_tokens;
+            stats.total_tokens = fallback.total_tokens;
+            stats.model_name = fallback.model_name;
+        }
 
-            target_stats.total_requests += stats.total_requests;
-            target_stats.successful_requests += stats.successful_requests;
-            target_stats.failed_requests += stats.failed_requests;
-            target_stats.total_response_time_ms += stats.total_response_time_ms;
+        // 同步模型名（优先使用上游模型提取，与上方回退保持一致）
+        if stats.model_name.is_none() {
+            stats.model_name = self.extract_model_with_model_extractor(ctx).await;
+        }
 
-            if target_stats.total_requests > 0 {
-                target_stats.avg_response_time_ms =
-                    target_stats.total_response_time_ms as f64 / target_stats.total_requests as f64;
+        // 若存在模型与provider，计算费用
+        if let (Some(model), Some(provider)) =
+            (stats.model_name.clone(), ctx.provider_type.as_ref())
+        {
+            let pricing_usage = crate::pricing::TokenUsage {
+                prompt_tokens: stats.input_tokens,
+                completion_tokens: stats.output_tokens,
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            };
+            match self
+                .pricing_calculator
+                .calculate_cost(&model, provider.id, &pricing_usage, &ctx.request_id)
+                .await
+            {
+                Ok(cost) => {
+                    stats.cost = Some(cost.total_cost);
+                    stats.cost_currency = Some(cost.currency);
+                }
+                Err(e) => {
+                    tracing::warn!(request_id = %ctx.request_id, error = %e, "Failed to calc cost");
+                }
             }
         }
 
-        // 更新最后更新时间
-        if source.last_updated > target.last_updated {
-            target.last_updated = source.last_updated;
-        }
+        Ok(stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn normalize_usage_metadata_lifts_nested() {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let svc = StatisticsService::new(Arc::new(PricingCalculatorService::new(Arc::new(db))));
+        let nested = serde_json::json!({
+            "data": {"totalTokenCount": 123, "foo": 1},
+            "other": [{"promptTokenCount": 11}]
+        });
+        let out = svc.normalize_usage_metadata(nested);
+        let meta = out
+            .get("usageMetadata")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        // 任意一个计数字段被提取到顶层即可
+        assert!(meta.contains_key("totalTokenCount") || meta.contains_key("promptTokenCount"));
+    }
+
+    #[tokio::test]
+    async fn extract_usage_from_json_reads_common_fields() {
+        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+        let svc = StatisticsService::new(Arc::new(PricingCalculatorService::new(Arc::new(db))));
+        let json = serde_json::json!({
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 20,
+                "totalTokenCount": 30
+            },
+            "model": "gpt-4o"
+        });
+        let stats = svc.extract_usage_from_json(&json);
+        assert_eq!(stats.input_tokens, Some(10));
+        assert_eq!(stats.output_tokens, Some(20));
+        assert_eq!(stats.total_tokens, Some(30));
     }
 }

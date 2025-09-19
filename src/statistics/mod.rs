@@ -1,7 +1,6 @@
-//! # 统计模块
+//! 统计模块聚合
 //!
-//! 收集和分析系统统计信息
+//! 归档代理端统计服务，供代理/管理等子系统复用。
 
 pub mod service;
 
-pub use service::{RequestStats, StatisticsService, TimeRangeQuery};

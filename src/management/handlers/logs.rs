@@ -163,12 +163,7 @@ pub async fn get_dashboard_stats(
         Ok(stats) => ApiResponse::Success(stats).into_response(),
         Err(e) => {
             tracing::error!("获取日志仪表板统计失败: {}", e);
-            ApiResponse::<LogsDashboardStatsResponse>::Error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_ERROR".to_string(),
-                "获取统计数据失败".to_string(),
-            )
-            .into_response()
+            crate::management::response::app_error(crate::proxy_err!(database, "获取统计数据失败: {}", e))
         }
     }
 }
@@ -265,12 +260,7 @@ pub async fn get_traces_list(
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志列表失败: {}", e);
-            ApiResponse::<LogsListResponse>::Error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_ERROR".to_string(),
-                "获取日志列表失败".to_string(),
-            )
-            .into_response()
+            crate::management::response::app_error(crate::proxy_err!(database, "获取日志列表失败: {}", e))
         }
     }
 }
@@ -428,20 +418,12 @@ pub async fn get_trace_detail(
 
     match fetch_trace_detail(&state.database, id).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
-        Ok(None) => ApiResponse::<ProxyTraceEntry>::Error(
-            axum::http::StatusCode::NOT_FOUND,
-            "RESOURCE_NOT_FOUND".to_string(),
-            "日志记录不存在".to_string(),
-        )
-        .into_response(),
+        Ok(None) => crate::management::response::app_error(
+            crate::proxy_err!(business, "ProxyTrace not found: {}", id),
+        ),
         Err(e) => {
             tracing::error!("获取日志详情失败: {}", e);
-            ApiResponse::<ProxyTraceEntry>::Error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_ERROR".to_string(),
-                "获取日志详情失败".to_string(),
-            )
-            .into_response()
+            crate::management::response::app_error(crate::proxy_err!(database, "获取日志详情失败: {}", e))
         }
     }
 }
@@ -530,12 +512,7 @@ pub async fn get_logs_analytics(
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志统计分析失败: {}", e);
-            ApiResponse::<LogsAnalyticsResponse>::Error(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_ERROR".to_string(),
-                "获取统计分析失败".to_string(),
-            )
-            .into_response()
+            crate::management::response::app_error(crate::proxy_err!(database, "获取统计分析失败: {}", e))
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::management::{response, server::AppState};
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use bcrypt;
 use chrono::{Duration, Utc};
@@ -65,11 +65,7 @@ pub async fn login(
 ) -> axum::response::Response {
     // 基本输入验证
     if request.username.is_empty() || request.password.is_empty() {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "VALIDATION_ERROR",
-            "Username and password cannot be empty",
-        );
+        return crate::manage_error!(crate::proxy_err!(business, "Username and password cannot be empty"));
     }
 
     // 从数据库查找用户
@@ -86,19 +82,11 @@ pub async fn login(
                 "Login attempt with non-existent or inactive user: {}",
                 request.username
             );
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "INVALID_CREDENTIALS",
-                "Invalid username or password",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
         }
         Err(err) => {
             tracing::error!("Database error during login: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Database error during login",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Database error during login: {}", err));
         }
     };
 
@@ -112,19 +100,11 @@ pub async fn login(
                 "Failed login attempt - invalid password for user: {}",
                 request.username
             );
-            return response::error(
-                StatusCode::UNAUTHORIZED,
-                "INVALID_CREDENTIALS",
-                "Invalid username or password",
-            );
+            return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
         }
         Err(err) => {
             tracing::error!("Password verification error: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "HASH_ERROR",
-                "Password verification error",
-            );
+            return crate::manage_error!(crate::proxy_err!(internal, "Password verification error: {}", err));
         }
     }
 
@@ -152,11 +132,7 @@ pub async fn login(
         Ok(token) => token,
         Err(err) => {
             tracing::error!("JWT encoding error: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "JWT_ERROR",
-                "JWT token generation failed",
-            );
+            return crate::manage_error!(crate::proxy_err!(internal, "JWT token generation failed: {}", err));
         }
     };
 
@@ -196,30 +172,18 @@ pub async fn logout(
             Ok(header_str) => header_str,
             Err(err) => {
                 tracing::warn!("Invalid Authorization header format: {}", err);
-                return response::error(
-                    StatusCode::BAD_REQUEST,
-                    "VALIDATION_ERROR",
-                    "Invalid Authorization header format",
-                );
+                return crate::manage_error!(crate::proxy_err!(business, "Invalid Authorization header format"));
             }
         },
         None => {
             tracing::warn!("No Authorization header found in logout request");
-            return response::error(
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "No Authorization header found",
-            );
+            return crate::manage_error!(crate::proxy_err!(business, "No Authorization header found"));
         }
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return response::error(
-            StatusCode::BAD_REQUEST,
-            "VALIDATION_ERROR",
-            "Invalid Authorization header format",
-        );
+        return crate::manage_error!(crate::proxy_err!(business, "Invalid Authorization header format"));
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀

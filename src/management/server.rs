@@ -9,12 +9,11 @@ use crate::config::{AppConfig, ProviderConfigManager};
 use crate::management::response::{self};
 use crate::providers::DynamicAdapterManager;
 use crate::providers::dynamic_manager::AdapterStats;
-use crate::statistics::service::StatisticsService;
 use anyhow::Result;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
+// use axum::http::StatusCode; // not needed with manage_error!
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use sea_orm::DatabaseConnection;
@@ -79,8 +78,6 @@ pub struct AppState {
     pub auth_service: Arc<AuthService>,
     /// 适配器管理器
     pub adapter_manager: Arc<DynamicAdapterManager>,
-    /// 统计服务
-    pub statistics_service: Arc<StatisticsService>,
     /// 提供商配置管理器
     pub provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥健康检查器
@@ -110,7 +107,6 @@ impl ManagementServer {
         database: Arc<DatabaseConnection>,
         auth_service: Arc<AuthService>,
         adapter_manager: Arc<DynamicAdapterManager>,
-        statistics_service: Arc<StatisticsService>,
         provider_config_manager: Arc<ProviderConfigManager>,
         api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
         oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
@@ -121,7 +117,6 @@ impl ManagementServer {
             database,
             auth_service,
             adapter_manager,
-            statistics_service,
             provider_config_manager,
             api_key_health_checker,
             oauth_client,
@@ -293,11 +288,7 @@ pub async fn health_check(State(state): State<AppState>) -> axum::response::Resp
         })),
         Err(e) => {
             warn!("Database ping failed: {}", e);
-            response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DATABASE_UNAVAILABLE", 
-                "数据库连接失败",
-            )
+            crate::manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
         }
     }
 }

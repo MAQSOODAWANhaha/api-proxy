@@ -107,7 +107,7 @@ impl<T> ErrorContext<T> for Option<T> {
     where
         F: FnOnce() -> String,
     {
-        self.ok_or_else(|| ProxyError::auth(f()))
+        self.ok_or_else(|| ProxyError::authentication(f()))
     }
 
     fn with_cache_context<F>(self, f: F) -> Result<T>

@@ -6,7 +6,7 @@ use super::builder::ProxyServerBuilder;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 // 使用 tracing 替代 log
-use crate::trace::UnifiedTraceSystem;
+use crate::trace::TraceSystem;
 use pingora_core::server::{Server, configuration::Opt};
 use pingora_proxy::http_proxy_service;
 use std::sync::Arc;
@@ -16,8 +16,8 @@ pub struct PingoraProxyServer {
     config: Arc<AppConfig>,
     /// 共享数据库连接
     db: Option<Arc<sea_orm::DatabaseConnection>>,
-    /// 统一追踪系统
-    trace_system: Option<Arc<UnifiedTraceSystem>>,
+    /// 追踪系统（TraceSystem）
+    trace_system: Option<Arc<TraceSystem>>,
 }
 
 impl PingoraProxyServer {
@@ -43,7 +43,7 @@ impl PingoraProxyServer {
     pub fn new_with_db_and_trace(
         config: AppConfig,
         db: Arc<sea_orm::DatabaseConnection>,
-        trace_system: Arc<UnifiedTraceSystem>,
+        trace_system: Arc<TraceSystem>,
     ) -> Self {
         let mut server = Self::new(config);
         server.db = Some(db);

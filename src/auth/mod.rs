@@ -15,7 +15,6 @@ pub mod oauth_cleanup_task; // OAuth 会话清理任务
 pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
 pub mod oauth_token_refresh_task; // OAuth token刷新后台任务
 pub mod permissions;
-pub mod proxy;
 pub mod service;
 pub mod smart_api_key_provider; // 智能API密钥提供者
 pub mod strategies;
@@ -23,7 +22,7 @@ pub mod strategy_manager;
 pub mod types;
 pub mod rate_limit_dist; // 分布式限流器
 // pub mod unified; // 已删除，使用services架构替代
-pub mod unified_refactored; // 重构后的统一认证管理器
+pub mod auth_manager; // 统一认证管理器实现（原RefactoredUnified重命名）
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
@@ -37,13 +36,12 @@ pub use oauth_cleanup_task::{OAuthCleanupTask, OAuthCleanupStats};
 pub use oauth_token_refresh_service::{OAuthTokenRefreshService, RefreshServiceConfig, RefreshStats, TokenRefreshResult, RefreshType, OAuthTokenRefreshServiceBuilder};
 pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, RefreshTaskConfig, TaskState, TaskControl, TaskStats, OAuthTokenRefreshTaskBuilder};
 pub use permissions::{Permission, Role};
-pub use proxy::{ProxyAuthResult, ProxyAuthenticator};
 pub use service::AuthService;
 pub use smart_api_key_provider::{SmartApiKeyProvider, AuthCredentialType, CredentialResult, SmartApiKeyProviderConfig};
 pub use strategies::{AuthStrategy, OAuthTokenResult};
 pub use types::*;
-// 注意：RefactoredUnifiedAuthManager已被删除，请使用新的服务化架构
-pub use unified_refactored::{AuthRequest, RefactoredUnifiedAuthManager};
+// 统一导出：统一认证管理器（新命名）
+pub use auth_manager::{AuthRequest, AuthManager};
 pub use utils::AuthUtils;
 
 // 统一缓存策略

@@ -282,13 +282,9 @@ impl ApiKeyManager {
         api_key.starts_with("sk-") && api_key.len() >= 20
     }
 
-    /// Sanitize API key for logging
+    /// Sanitize API key for logging（委托统一工具，避免重复实现）
     fn sanitize_api_key(&self, api_key: &str) -> String {
-        if api_key.len() > 10 {
-            format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
-        } else {
-            "***".to_string()
-        }
+        crate::auth::AuthUtils::sanitize_api_key(api_key)
     }
 
     /// Get user permissions from database

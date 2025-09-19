@@ -1,7 +1,7 @@
 use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{entity::*, query::*};
 use serde_json::json;
@@ -20,11 +20,7 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider types: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch provider types",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch provider types: {}", err));
         }
     };
 

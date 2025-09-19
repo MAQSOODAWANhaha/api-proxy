@@ -5,7 +5,7 @@ use crate::auth::extract_user_id_from_headers;
 use crate::management::response;
 use crate::management::server::AppState;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use sea_orm::{entity::*, query::*};
@@ -164,11 +164,7 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch today's traces: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch today's data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch today's data: {}", err));
         }
     };
 
@@ -183,11 +179,7 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch yesterday's traces: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch yesterday's data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch yesterday's data: {}", err));
         }
     };
 
@@ -291,11 +283,7 @@ pub async fn get_models_usage_rate(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models rate: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
         }
     };
 
@@ -361,11 +349,7 @@ pub async fn get_models_statistics(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models statistics: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
         }
     };
 
@@ -428,11 +412,7 @@ pub async fn get_tokens_trend(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for tokens trend: {}", err);
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
         }
     };
 
@@ -544,11 +524,7 @@ pub async fn get_user_api_keys_request_trend(
                 "Failed to fetch traces for user API keys request trend: {}",
                 err
             );
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch data",
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
         }
     };
 
@@ -635,10 +611,8 @@ pub async fn get_user_api_keys_token_trend(
                 "Failed to fetch traces for user API keys token trend: {}",
                 err
             );
-            return response::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "Failed to fetch data",
+            return crate::manage_error!(
+                crate::proxy_err!(database, "Failed to fetch data: {}", err)
             );
         }
     };
@@ -728,18 +702,14 @@ fn parse_time_range(
                         DateTime::from_naive_utc_and_offset(start_datetime, Utc)
                     }
                     Err(_) => {
-                        return Err(response::error(
-                            StatusCode::BAD_REQUEST,
-                            "INVALID_DATE",
-                            "Invalid start date format. Use YYYY-MM-DD",
+                        return Err(crate::manage_error!(
+                            crate::proxy_err!(business, "Invalid start date format. Use YYYY-MM-DD")
                         ));
                     }
                 }
             } else {
-                return Err(response::error(
-                    StatusCode::BAD_REQUEST,
-                    "MISSING_DATES",
-                    "Custom range requires both start and end dates",
+                return Err(crate::manage_error!(
+                    crate::proxy_err!(business, "Custom range requires both start and end dates")
                 ));
             }
         }

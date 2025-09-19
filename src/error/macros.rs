@@ -1,333 +1,128 @@
-//! # 错误处理宏
+//! 错误处理宏（精简版）
 
-/// 快速创建配置错误的宏
+/// 通用错误构造宏
+/// 用法：
+/// - proxy_err!(auth, "未认证")
+/// - proxy_err!(ai_provider, "OpenAI", "bad request")
+/// - proxy_err!(connection_timeout, "connect timeout", 30)
 #[macro_export]
-macro_rules! config_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::config($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::config(format!($fmt, $($arg)*))
+macro_rules! proxy_err {
+    (config, $($t:tt)*) => { $crate::error::ProxyError::config(format!($($t)*)) };
+    (database, $($t:tt)*) => { $crate::error::ProxyError::database(format!($($t)*)) };
+    (db, $($t:tt)*) => { $crate::proxy_err!(database, $($t)*) };
+    (network, $($t:tt)*) => { $crate::error::ProxyError::network(format!($($t)*)) };
+    (net, $($t:tt)*) => { $crate::proxy_err!(network, $($t)*) };
+    (auth, $($t:tt)*) => { $crate::error::ProxyError::authentication(format!($($t)*)) };
+    (authentication, $($t:tt)*) => { $crate::proxy_err!(auth, $($t)*) };
+    (ai_provider, $provider:expr, $($t:tt)*) => { $crate::error::ProxyError::ai_provider(format!($($t)*), $provider) };
+    (tls, $($t:tt)*) => { $crate::error::ProxyError::tls(format!($($t)*)) };
+    (business, $($t:tt)*) => { $crate::error::ProxyError::business(format!($($t)*)) };
+    (internal, $($t:tt)*) => { $crate::error::ProxyError::internal(format!($($t)*)) };
+    (cache, $($t:tt)*) => { $crate::error::ProxyError::cache(format!($($t)*)) };
+    (server_init, $($t:tt)*) => { $crate::error::ProxyError::server_init(format!($($t)*)) };
+    (server_start, $($t:tt)*) => { $crate::error::ProxyError::server_start(format!($($t)*)) };
+    (upstream_not_found, $($t:tt)*) => { $crate::error::ProxyError::upstream_not_found(format!($($t)*)) };
+    (upstream_not_available, $($t:tt)*) => { $crate::error::ProxyError::upstream_not_available(format!($($t)*)) };
+    (rate_limit, $($t:tt)*) => { $crate::error::ProxyError::rate_limit(format!($($t)*)) };
+    (bad_gateway, $($t:tt)*) => { $crate::error::ProxyError::bad_gateway(format!($($t)*)) };
+    (connection_timeout, $msg:expr, $timeout:expr) => { $crate::error::ProxyError::connection_timeout($msg, $timeout) };
+    (read_timeout, $msg:expr, $timeout:expr) => { $crate::error::ProxyError::read_timeout($msg, $timeout) };
+    (write_timeout, $msg:expr, $timeout:expr) => { $crate::error::ProxyError::write_timeout($msg, $timeout) };
+    (load_balancer, $($t:tt)*) => { $crate::error::ProxyError::load_balancer(format!($($t)*)) };
+    (health_check, $($t:tt)*) => { $crate::error::ProxyError::health_check(format!($($t)*)) };
+    (statistics, $($t:tt)*) => { $crate::error::ProxyError::statistics(format!($($t)*)) };
+    (tracing, $($t:tt)*) => { $crate::error::ProxyError::tracing(format!($($t)*)) };
+    // 管理端
+    (mgmt_auth, $($t:tt)*) => { $crate::error::ProxyError::management_auth(format!($($t)*)) };
+    (mgmt_permission, $($t:tt)*) => { $crate::error::ProxyError::management_permission(format!($($t)*)) };
+    (mgmt_validation, $msg:expr) => { $crate::error::ProxyError::management_validation($msg, None) };
+    (mgmt_validation, $msg:expr, field = $field:expr) => { $crate::error::ProxyError::management_validation($msg, Some($field.to_string())) };
+    (mgmt_business, $($t:tt)*) => { $crate::error::ProxyError::management_business(format!($($t)*)) };
+    (mgmt_not_found, $r:expr, $id:expr) => { $crate::error::ProxyError::management_not_found($r, $id) };
+    (mgmt_conflict, $r:expr, $id:expr) => { $crate::error::ProxyError::management_conflict($r, $id) };
+    (mgmt_rate_limit, $($t:tt)*) => { $crate::error::ProxyError::management_rate_limit(format!($($t)*)) };
+}
+
+/// 直接返回错误：proxy_bail!(auth, "msg")
+#[macro_export]
+macro_rules! proxy_bail {
+    ($($t:tt)*) => { return Err($crate::proxy_err!($($t)*)) };
+}
+
+/// 通用 ensure：proxy_ensure!(cond, auth, "msg")
+#[macro_export]
+macro_rules! proxy_ensure {
+    ($cond:expr, $($t:tt)*) => {
+        if !($cond) { $crate::proxy_bail!($($t)*); }
     };
 }
 
-/// 快速创建数据库错误的宏
+/// 将 ProxyError 转为 (StatusCode, JSON 字符串)
 #[macro_export]
-macro_rules! database_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::database($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::database(format!($fmt, $($arg)*))
-    };
+macro_rules! http_error_body {
+    ($err:expr) => {{
+        $err.to_http_status_and_body()
+    }};
 }
 
-/// 快速创建网络错误的宏
+/// 将 ProxyError 直接转换为 Pingora 错误（ErrorType::HTTPStatus + JSON body）
+/// 用法：return Err(pingora_error!(err));
 #[macro_export]
-macro_rules! network_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::network($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::network(format!($fmt, $($arg)*))
-    };
+macro_rules! pingora_error {
+    ($err:expr) => {{
+        let (status, body) = $err.to_http_status_and_body();
+        pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(status.as_u16()), body)
+    }};
 }
 
-/// 快速创建认证错误的宏
+/// 构造任意 HTTP 状态的 Pingora 错误（用于成功短路或特殊响应）
 #[macro_export]
-macro_rules! auth_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::auth($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::auth(format!($fmt, $($arg)*))
-    };
+macro_rules! pingora_http {
+    ($status:expr, $msg:expr) => {{
+        pingora_core::Error::explain(
+            pingora_core::ErrorType::HTTPStatus(($status) as u16),
+            $msg,
+        )
+    }};
 }
 
-/// 快速创建AI服务商错误的宏
+/// 将 Result<T, ProxyError> 一步转换为 pingora_core::Result<T>
+/// 用法：let val = pingora_try!(expr_returning_proxy_result);
 #[macro_export]
-macro_rules! ai_provider_error {
-    ($provider:expr, $msg:expr) => {
-        $crate::error::ProxyError::ai_provider($msg, $provider)
-    };
-    ($provider:expr, $fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::ai_provider(format!($fmt, $($arg)*), $provider)
-    };
-}
-
-/// 快速创建业务错误的宏
-#[macro_export]
-macro_rules! business_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::business($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::business(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建内部错误的宏
-#[macro_export]
-macro_rules! internal_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::internal($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::internal(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建缓存错误的宏
-#[macro_export]
-macro_rules! cache_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::cache($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::cache(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建服务器初始化错误的宏
-#[macro_export]
-macro_rules! server_init_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::server_init($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::server_init(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建服务器启动错误的宏
-#[macro_export]
-macro_rules! server_start_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::server_start($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::server_start(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建认证错误的宏
-#[macro_export]
-macro_rules! authentication_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::authentication($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::authentication(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建速率限制错误的宏
-#[macro_export]
-macro_rules! rate_limit_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::rate_limit($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::rate_limit(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建网关错误的宏
-#[macro_export]
-macro_rules! bad_gateway_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::bad_gateway($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::bad_gateway(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建上游服务器未找到错误的宏
-#[macro_export]
-macro_rules! upstream_not_found_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::upstream_not_found($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::upstream_not_found(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建上游服务器不可用错误的宏
-#[macro_export]
-macro_rules! upstream_not_available_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::upstream_not_available($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::upstream_not_available(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建连接超时错误的宏
-#[macro_export]
-macro_rules! connection_timeout_error {
-    ($msg:expr, $timeout:expr) => {
-        $crate::error::ProxyError::connection_timeout($msg, $timeout)
-    };
-    ($fmt:expr, $timeout:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::connection_timeout(format!($fmt, $($arg)*), $timeout)
-    };
-}
-
-/// 快速创建读取超时错误的宏
-#[macro_export]
-macro_rules! read_timeout_error {
-    ($msg:expr, $timeout:expr) => {
-        $crate::error::ProxyError::read_timeout($msg, $timeout)
-    };
-    ($fmt:expr, $timeout:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::read_timeout(format!($fmt, $($arg)*), $timeout)
-    };
-}
-
-/// 快速创建写入超时错误的宏
-#[macro_export]
-macro_rules! write_timeout_error {
-    ($msg:expr, $timeout:expr) => {
-        $crate::error::ProxyError::write_timeout($msg, $timeout)
-    };
-    ($fmt:expr, $timeout:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::write_timeout(format!($fmt, $($arg)*), $timeout)
-    };
-}
-
-/// 快速创建负载均衡错误的宏
-#[macro_export]
-macro_rules! load_balancer_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::load_balancer($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::load_balancer(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建健康检查错误的宏
-#[macro_export]
-macro_rules! health_check_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::health_check($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::health_check(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建统计收集错误的宏
-#[macro_export]
-macro_rules! statistics_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::statistics($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::statistics(format!($fmt, $($arg)*))
-    };
-}
-
-/// 快速创建跟踪系统错误的宏
-#[macro_export]
-macro_rules! tracing_error {
-    ($msg:expr) => {
-        $crate::error::ProxyError::tracing($msg)
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::ProxyError::tracing(format!($fmt, $($arg)*))
-    };
-}
-
-/// 确保条件成立，否则返回配置错误
-#[macro_export]
-macro_rules! ensure_config {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::config_error!($msg));
+macro_rules! pingora_try {
+    ($expr:expr) => {{
+        match $expr {
+            Ok(v) => v,
+            Err(e) => return Err($crate::pingora_error!(e)),
         }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::config_error!($fmt, $($arg)*));
-        }
-    };
+    }};
 }
 
-/// 确保条件成立，否则返回业务错误
+/// 返回 Ok(false)（继续代理）
 #[macro_export]
-macro_rules! ensure_business {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::business_error!($msg));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::business_error!($fmt, $($arg)*));
-        }
-    };
+macro_rules! pingora_continue {
+    () => { Ok(false) };
 }
 
-/// 确保条件成立，否则返回数据库错误
+/// 返回 Ok(true)（已响应，下游结束）
 #[macro_export]
-macro_rules! ensure_database {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::database_error!($msg));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::database_error!($fmt, $($arg)*));
-        }
-    };
+macro_rules! pingora_respond {
+    () => { Ok(true) };
 }
 
-/// 确保条件成立，否则返回网络错误
+/// 管理端错误快速返回：将 ProxyError 转为标准管理端响应包裹
 #[macro_export]
-macro_rules! ensure_network {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::network_error!($msg));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::network_error!($fmt, $($arg)*));
-        }
-    };
+macro_rules! manage_error {
+    ($err:expr) => {{
+        $crate::management::response::app_error($err)
+    }};
 }
 
-/// 确保条件成立，否则返回认证错误
+/// 管理端临时代码路径：用现有 code/status 直接返回标准错误包裹
+/// 便于逐步从手写 code 过渡到 ProxyError 语义映射
 #[macro_export]
-macro_rules! ensure_auth {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::auth_error!($msg));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::auth_error!($fmt, $($arg)*));
-        }
-    };
-}
-
-/// 确保条件成立，否则返回缓存错误
-#[macro_export]
-macro_rules! ensure_cache {
-    ($cond:expr, $msg:expr) => {
-        if !($cond) {
-            return Err($crate::cache_error!($msg));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !($cond) {
-            return Err($crate::cache_error!($fmt, $($arg)*));
-        }
-    };
+macro_rules! manage_error_code {
+    ($status:expr, $code:expr, $msg:expr) => {{
+        $crate::management::response::error($status, $code, $msg)
+    }};
 }

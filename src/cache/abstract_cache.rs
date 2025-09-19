@@ -498,12 +498,12 @@ impl CacheProviderType {
     }
 }
 
-/// 统一缓存管理器
-pub struct UnifiedCacheManager {
+/// 缓存管理器
+pub struct CacheManager {
     provider: CacheProviderType,
 }
 
-impl UnifiedCacheManager {
+impl CacheManager {
     /// 根据配置创建缓存管理器
     pub fn new(config: &CacheConfig, redis_url: &str) -> Result<Self> {
         let provider = match config.cache_type {

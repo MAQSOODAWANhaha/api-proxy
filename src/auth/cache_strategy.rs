@@ -5,7 +5,7 @@
 use std::time::Duration;
 use tracing::debug;
 
-use crate::cache::UnifiedCacheManager;
+use crate::cache::CacheManager;
 use crate::auth::types::AuthConfig;
 use crate::error::Result;
 use std::sync::Arc;
@@ -86,7 +86,7 @@ impl AuthCacheKey {
 /// 提供高级的缓存操作接口，隐藏底层缓存实现细节
 pub struct UnifiedAuthCacheManager {
     /// 底层缓存管理器
-    cache_manager: Arc<UnifiedCacheManager>,
+    cache_manager: Arc<CacheManager>,
     /// 认证配置
     config: Arc<AuthConfig>,
 }
@@ -94,7 +94,7 @@ pub struct UnifiedAuthCacheManager {
 impl UnifiedAuthCacheManager {
     /// 创建新的统一认证缓存管理器
     pub fn new(
-        cache_manager: Arc<UnifiedCacheManager>,
+        cache_manager: Arc<CacheManager>,
         config: Arc<AuthConfig>,
     ) -> Self {
         Self {
@@ -182,7 +182,7 @@ impl UnifiedAuthCacheManager {
     pub async fn invalidate_cache(&self, key: &AuthCacheKey) -> Result<()> {
         let cache_key = key.to_key();
         
-        // 由于UnifiedCacheManager可能不支持删除，我们设置极短的TTL来"删除"
+        // 由于CacheManager可能不支持删除，我们设置极短的TTL来"删除"
         let result = self.cache_manager
             .provider()
             .set(&cache_key, Option::<()>::None, Some(Duration::from_secs(1)))
@@ -277,7 +277,7 @@ impl UnifiedAuthCacheManager {
 
     /// 清理过期缓存
     pub async fn cleanup_expired(&self) -> Result<u64> {
-        // UnifiedCacheManager基于TTL自动清理
+        // CacheManager基于TTL自动清理
         debug!("Auth cache cleanup - handled automatically by TTL");
         Ok(0)
     }
