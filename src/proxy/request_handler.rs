@@ -14,18 +14,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::form_urlencoded;
 
+use crate::auth::oauth_client::JWTParser;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::{AuthManager, AuthUtils};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
-use crate::{proxy_debug, proxy_info, proxy_warn};
-use crate::logging::LogComponent;
 use crate::error::ProxyError;
+use crate::logging::LogComponent;
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::{AuthenticationService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::statistics::service::StatisticsService;
 use crate::trace::immediate::ImmediateProxyTracer;
+use crate::{proxy_debug, proxy_info, proxy_warn};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
@@ -307,6 +308,8 @@ pub struct ProxyContext {
     pub will_modify_body: bool,
     /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
     pub resolved_credential: Option<ResolvedCredential>,
+    /// ChatGPT Account ID（用于OpenAI ChatGPT API）
+    pub account_id: Option<String>,
     /// SSE 行缓冲（用于流式分块行合并）
     pub sse_line_buffer: String,
     /// SSE 阶段观测到的 usageMetadata（最新一次覆盖）
@@ -331,6 +334,7 @@ impl Default for ProxyContext {
             body: Vec::new(),
             will_modify_body: false,
             resolved_credential: None,
+            account_id: None,
             sse_line_buffer: String::new(),
             sse_usage_agg: None,
         }
@@ -369,6 +373,12 @@ impl RequestHandler {
     /// 获取认证服务引用（用于外部管道步骤）
     pub fn auth_service(&self) -> &Arc<AuthenticationService> {
         &self.auth_service
+    }
+
+    /// 从 OpenAI access_token 中解析 chatgpt-account-id
+    fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
+        let jwt_parser = JWTParser::new().ok()?;
+        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
     /// 判断本次请求是否为 SSE（流式）请求：
     /// - 下游或上游 Accept 包含 text/event-stream 或 application/stream+json
@@ -615,7 +625,7 @@ impl RequestHandler {
         // 4. 检查每日token限制 (基于历史数据预检查)
         if let Some(token_limit) = user_api.max_tokens_per_day {
             if token_limit > 0 {
-                self.check_daily_token_limit(user_api.id, token_limit, request_id)
+                self.check_daily_token_limit(user_api.id, token_limit.into(), request_id)
                     .await?;
             }
         }
@@ -623,7 +633,8 @@ impl RequestHandler {
         // 5. 检查每日成本限制 (基于历史数据预检查)
         if let Some(cost_limit) = user_api.max_cost_per_day {
             if cost_limit > Decimal::ZERO {
-                self.check_daily_cost_limit(user_api.id, cost_limit, request_id).await?;
+                self.check_daily_cost_limit(user_api.id, cost_limit, request_id)
+                    .await?;
             }
         }
 
@@ -1165,6 +1176,34 @@ impl RequestHandler {
                             e
                         ))
                     })?;
+
+                // 对于 OpenAI OAuth token，解析 JWT 获取 chatgpt-account-id
+                if provider_type.name == "openai" {
+                    if let Some(account_id) = self.extract_chatgpt_account_id(&access_token) {
+                        upstream_request
+                            .insert_header("chatgpt-account-id", &account_id)
+                            .map_err(|e| {
+                                ProxyError::internal(format!(
+                                    "Failed to set chatgpt-account-id header: {}",
+                                    e
+                                ))
+                            })?;
+                        upstream_request
+                            .insert_header("host", "chatgpt.com")
+                            .map_err(|e| {
+                                ProxyError::internal(format!(
+                                    "Failed to set host header for ChatGPT: {}",
+                                    e
+                                ))
+                            })?;
+                        tracing::debug!(
+                            request_id = ctx.request_id,
+                            account_id = account_id,
+                            "Added ChatGPT specific headers for OpenAI OAuth token"
+                        );
+                    }
+                }
+
                 tracing::info!(
                     request_id = ctx.request_id,
                     provider = provider_type.name,

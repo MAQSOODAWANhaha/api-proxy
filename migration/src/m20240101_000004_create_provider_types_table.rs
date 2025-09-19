@@ -145,7 +145,7 @@ impl MigrationTrait for Migration {
                     .values_panic([
                         "openai".into(),
                         "OpenAI ChatGPT".into(),
-                        "chatgpt.com/backend-api/codex".into(),
+                        "chatgpt.com".into(),
                         "openai".into(),
                         "gpt-4.1".into(),
                         "[\"api_key\", \"oauth\"]".into(),

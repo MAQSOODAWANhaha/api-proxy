@@ -11,6 +11,7 @@
 //! - 支持多提供商的统一OAuth接口
 
 pub mod auto_refresh;
+pub mod jwt_extractor;
 pub mod pkce;
 pub mod polling;
 pub mod providers;
@@ -18,6 +19,7 @@ pub mod session_manager;
 pub mod token_exchange;
 
 pub use auto_refresh::{AutoRefreshManager, RefreshPolicy};
+pub use jwt_extractor::{JWTParser, OpenAIAuthInfo, OpenAIJWTPayload};
 pub use pkce::{PkceChallenge, PkceVerifier};
 pub use polling::{OAuthPollingClient, PollingStatus};
 pub use providers::OAuthProviderManager;
@@ -57,6 +59,9 @@ pub enum OAuthError {
 
     #[error("Serde error: {0}")]
     SerdeError(String),
+
+    #[error("Invalid token: {0}")]
+    InvalidToken(String),
 }
 
 impl From<reqwest::Error> for OAuthError {
