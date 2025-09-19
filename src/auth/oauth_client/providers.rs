@@ -227,50 +227,35 @@ impl OAuthProviderManager {
             extra_params.extend(config_extra_params.clone());
         }
 
-        // 添加提供商特定的额外参数
-        let provider_params = self.build_extra_params(&model.name);
-        extra_params.extend(provider_params);
-
-        Ok(OAuthProviderConfig {
+        // 创建基础配置对象
+        let base_config = OAuthProviderConfig {
             provider_name: format!("{}:{}", model.name, oauth_type),
             client_id: oauth_config.client_id,
             client_secret: oauth_config.client_secret,
             authorize_url: oauth_config.authorize_url,
             token_url: oauth_config.token_url,
             redirect_uri: oauth_config.redirect_uri.unwrap_or_default(),
-            scopes,
+            scopes: scopes.clone(),
             pkce_required: oauth_config.pkce_required,
+            extra_params: extra_params.clone(),
+        };
+
+        // 添加提供商特定的额外参数
+        let provider_params = self.build_extra_params(&base_config);
+        extra_params.extend(provider_params);
+
+        Ok(OAuthProviderConfig {
+            scopes,
             extra_params,
+            ..base_config
         })
     }
 
     /// 构建特定提供商的额外参数
-    fn build_extra_params(&self, provider_name: &str) -> HashMap<String, String> {
-        let mut params = HashMap::new();
-
-        match provider_name {
-            "google" => {
-                // Google特定参数
-                params.insert("access_type".to_string(), "offline".to_string());
-                params.insert("prompt".to_string(), "select_account".to_string());
-                params.insert("include_granted_scopes".to_string(), "true".to_string());
-            }
-            "claude" => {
-                // Claude特定参数 - 根据Wei-Shaw项目的实现
-                params.insert("code".to_string(), "true".to_string());
-                params.insert("response_type".to_string(), "code".to_string());
-            }
-            "openai" => {
-                // OpenAI特定参数
-                params.insert("response_type".to_string(), "code".to_string());
-                params.insert("grant_type".to_string(), "authorization_code".to_string());
-            }
-            _ => {
-                // 默认参数
-            }
-        }
-
-        params
+    /// 现在从数据库配置中读取，而不是硬编码
+    fn build_extra_params(&self, config: &OAuthProviderConfig) -> HashMap<String, String> {
+        // 直接从配置中返回 extra_params，实现数据库驱动
+        config.extra_params.clone()
     }
 }
 
