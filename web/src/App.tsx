@@ -19,6 +19,7 @@ import UsersPage from './pages/Users'
 import SettingsPage from './pages/Settings'
 import ProfilePage from './pages/Profile'
 import LoginPage from './pages/Login'
+import OAuthCallbackPage from './pages/OAuthCallbackPage'
 
 /**
  * 应用根组件
@@ -33,6 +34,9 @@ export default function App() {
 
           {/* 登录页（公开） */}
           <Route path="/login" element={<LoginPage />} />
+
+          {/* OAuth回调页（公开） */}
+          <Route path="/auth/callback" element={<OAuthCallbackPage />} />
 
           {/* 受保护区域：登录后访问 */}
           <Route element={<ProtectedRoute />}>
