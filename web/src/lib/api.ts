@@ -403,8 +403,14 @@ export interface UserServiceApiKey {
   provider_type_id: number
   api_key: string
   usage?: {
-    success: number
-    failure: number
+    successful_requests: number
+    failed_requests: number
+    total_requests: number
+    success_rate: number
+    avg_response_time: number
+    total_cost: number
+    total_tokens: number
+    last_used_at: string | null
   }
   is_active: boolean
   last_used_at: string | null

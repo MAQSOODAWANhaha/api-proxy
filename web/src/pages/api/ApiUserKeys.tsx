@@ -354,7 +354,7 @@ const ApiUserKeysPage: React.FC = () => {
         />
         <StatCard
           icon={<Users size={18} />}
-          value={data.reduce((sum, item) => sum + (item.usage?.success || 0), 0).toLocaleString()}
+          value={data.reduce((sum, item) => sum + (item.usage?.successful_requests || 0), 0).toLocaleString()}
           label="总使用次数"
           color="#0ea5e9"
         />
@@ -435,7 +435,7 @@ const ApiUserKeysPage: React.FC = () => {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span className="text-sm">
-                          {(item.usage?.success || 0).toLocaleString()} / {(item.usage?.failure || 0).toLocaleString()}
+                          {(item.usage?.successful_requests || 0).toLocaleString()} / {(item.usage?.failed_requests || 0).toLocaleString()}
                         </span>
                         <button
                           onClick={() => {
@@ -451,11 +451,11 @@ const ApiUserKeysPage: React.FC = () => {
                       <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
                         <div
                           className="bg-violet-600 h-1.5 rounded-full"
-                          style={{ 
+                          style={{
                             width: `${Math.min(
-                              ((item.usage?.success || 0) / Math.max(1, (item.usage?.success || 0) + (item.usage?.failure || 0))) * 100, 
+                              ((item.usage?.successful_requests || 0) / Math.max(1, (item.usage?.successful_requests || 0) + (item.usage?.failed_requests || 0))) * 100,
                               100
-                            )}%` 
+                            )}%`
                           }}
                         />
                       </div>
@@ -1628,7 +1628,7 @@ const StatsDialog: React.FC<{
           <div className="p-4 bg-violet-50 rounded-xl">
             <div className="text-sm text-violet-600">使用次数</div>
             <div className="text-2xl font-bold text-violet-900">
-              {(item.usage?.success || 0).toLocaleString()}
+              {(item.usage?.successful_requests || 0).toLocaleString()}
             </div>
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
