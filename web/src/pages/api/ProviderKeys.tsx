@@ -30,19 +30,29 @@ import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListR
 import { toast } from 'sonner'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
-interface LocalProviderKey extends ProviderKey {
+interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
   // 为了兼容现有UI，添加一些别名
   keyName: string  // 映射到 name
   keyValue: string // 映射到 api_key
-  status: 'active' | 'disabled' | 'error' // 基于 is_active 转换
+  status: 'active' | 'disabled' | 'error' // 基于 is_active 转换，覆盖原始status
   createdAt: string // 映射到 created_at
   requestLimitPerMinute: number // 映射到 max_requests_per_minute
   tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute
   requestLimitPerDay: number // 映射到 max_requests_per_day
   healthCheck: 'healthy' | 'warning' | 'error' // 映射到 health_status
   cost: number // 从 usage.total_cost 映射
-  usage: number // 从 usage.total_requests 映射
+  usage: {
+    total_requests: number
+    successful_requests: number
+    failed_requests: number
+    success_rate: number
+    total_tokens: number
+    total_cost: number
+    avg_response_time: number
+    last_used_at?: string
+  } // 使用完整的usage对象结构
   rateLimitRemainingSeconds?: number // 限流剩余时间（秒）
+  provider_type_id?: number // 服务商类型ID
 }
 
 // 健康状态映射函数：将后端的4个状态映射到前端的3个状态
@@ -121,9 +131,17 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
     healthCheck: mapHealthStatus(apiKey.status?.health_status || apiKey.health_status || 'unknown'),
     // 添加缺失的字段，从usage中获取
     cost: apiKey.usage?.total_cost || 0,
-    usage: apiKey.usage?.total_requests || 0,
-    // 添加限流剩余时间
-    rateLimitRemainingSeconds: apiKey.status?.rate_limit_remaining_seconds,
+    usage: apiKey.usage || {
+      total_requests: 0,
+      successful_requests: 0,
+      failed_requests: 0,
+      success_rate: 0,
+      total_tokens: 0,
+      total_cost: 0,
+      avg_response_time: 0
+    },
+    // 添加限流剩余时间（可选字段）
+    rateLimitRemainingSeconds: (apiKey.status as any)?.rate_limit_remaining_seconds,
   }
 }
 
@@ -269,7 +287,6 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
         max_requests_per_day: newKey.requestLimitPerDay || 0,
         is_active: newKey.status === 'active',
-        project_id: (newKey as any).project_id || null, // 添加 project_id 字段
       })
 
       if (response.success) {
@@ -304,7 +321,7 @@ const ProviderKeysPage: React.FC = () => {
         }
       }
 
-      const response = await api.providerKeys.update(updatedKey.id, {
+      const response = await api.providerKeys.update(String(updatedKey.id), {
         provider_type_id: providerTypeId,
         name: updatedKey.keyName,
         api_key: updatedKey.keyValue,
@@ -314,7 +331,6 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
         max_requests_per_day: updatedKey.requestLimitPerDay,
         is_active: updatedKey.status === 'active',
-        project_id: (updatedKey as any).project_id || null, // 添加 project_id 字段
       })
 
       if (response.success) {
@@ -338,7 +354,7 @@ const ProviderKeysPage: React.FC = () => {
   const handleDelete = async () => {
     if (selectedItem) {
       try {
-        const response = await api.providerKeys.delete(selectedItem.id)
+        const response = await api.providerKeys.delete(String(selectedItem.id))
         
         if (response.success) {
           // 刷新数据
@@ -365,8 +381,8 @@ const ProviderKeysPage: React.FC = () => {
       
       if (response.success) {
         // 更新本地数据中的健康状态
-        setData(data.map(item => 
-          item.id === id 
+        setData(data.map(item =>
+          String(item.id) === String(id)
             ? { ...item, healthCheck: response.data?.health_status || 'healthy' }
             : item
         ))
@@ -376,8 +392,8 @@ const ProviderKeysPage: React.FC = () => {
     } catch (error) {
       console.error('健康检查失败:', error)
       // 显示错误状态
-      setData(data.map(item => 
-        item.id === id 
+      setData(data.map(item =>
+        String(item.id) === String(id)
           ? { ...item, healthCheck: 'error' as const }
           : item
       ))
@@ -394,8 +410,8 @@ const ProviderKeysPage: React.FC = () => {
     navigator.clipboard.writeText(text)
   }
 
-  // 渲染健康状态
-  const renderHealthStatus = (status: string, rateLimitRemainingSeconds?: number) => {
+  // 健康状态组件
+  const HealthStatus: React.FC<{ status: string; rateLimitRemainingSeconds?: number }> = ({ status, rateLimitRemainingSeconds }) => {
     const { remainingSeconds, formattedTime, isRateLimited } = useRateLimitCountdown(rateLimitRemainingSeconds)
 
     const statusConfig = {
@@ -584,7 +600,7 @@ const ProviderKeysPage: React.FC = () => {
                       <div className="text-xs text-neutral-500">创建于 {item.createdAt}</div>
                     </div>
                   </td>
-                  <td className="px-4 py-3">{renderMaskedKey(item.keyValue, item.id)}</td>
+                  <td className="px-4 py-3">{renderMaskedKey(item.keyValue, String(item.id))}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span className="text-sm">{(item.usage || 0).toLocaleString()}</span>
@@ -615,9 +631,9 @@ const ProviderKeysPage: React.FC = () => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      {renderHealthStatus(item.healthCheck, item.rateLimitRemainingSeconds)}
+                      <HealthStatus status={item.healthCheck} rateLimitRemainingSeconds={item.rateLimitRemainingSeconds} />
                       <button
-                        onClick={() => performHealthCheck(item.id)}
+                        onClick={() => performHealthCheck(String(item.id))}
                         className="text-neutral-500 hover:text-neutral-700"
                         title="健康检查"
                       >
@@ -952,7 +968,24 @@ const AddDialog: React.FC<{
       toast.info('请先完成OAuth授权流程')
       return
     }
-    onSubmit(formData)
+    onSubmit({
+      name: formData.keyName,
+      api_key: formData.keyValue,
+      provider: formData.provider,
+      auth_type: formData.auth_type,
+      weight: formData.weight,
+      max_requests_per_minute: formData.requestLimitPerMinute,
+      max_tokens_prompt_per_minute: formData.tokenLimitPromptPerMinute,
+      max_requests_per_day: formData.requestLimitPerDay,
+      is_active: formData.status === 'active',
+      keyName: formData.keyName,
+      keyValue: formData.keyValue,
+      requestLimitPerMinute: formData.requestLimitPerMinute,
+      tokenLimitPromptPerMinute: formData.tokenLimitPromptPerMinute,
+      requestLimitPerDay: formData.requestLimitPerDay,
+      status: formData.status,
+      provider_type_id: formData.provider_type_id,
+    } as any)
   }
 
   // 处理数字输入框的增减
@@ -1394,7 +1427,24 @@ const EditDialog: React.FC<{
       toast.info('请先完成OAuth授权流程')
       return
     }
-    onSubmit(formData)
+    onSubmit({
+      name: formData.keyName,
+      api_key: formData.keyValue,
+      provider: formData.provider,
+      auth_type: formData.auth_type,
+      weight: formData.weight,
+      max_requests_per_minute: formData.requestLimitPerMinute,
+      max_tokens_prompt_per_minute: formData.tokenLimitPromptPerMinute,
+      max_requests_per_day: formData.requestLimitPerDay,
+      is_active: formData.status === 'active',
+      keyName: formData.keyName,
+      keyValue: formData.keyValue,
+      requestLimitPerMinute: formData.requestLimitPerMinute,
+      tokenLimitPromptPerMinute: formData.tokenLimitPromptPerMinute,
+      requestLimitPerDay: formData.requestLimitPerDay,
+      status: formData.status,
+      provider_type_id: formData.provider_type_id,
+    } as any)
   }
 
   // 处理数字输入框的增减
