@@ -603,7 +603,9 @@ const ProviderKeysPage: React.FC = () => {
                   <td className="px-4 py-3">{renderMaskedKey(item.keyValue, String(item.id))}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">{(item.usage || 0).toLocaleString()}</span>
+                      <span className="text-sm">
+                          {(item.usage?.successful_requests || 0).toLocaleString()} / {(item.usage?.failed_requests || 0).toLocaleString()}
+                        </span>
                       <button
                         onClick={() => {
                           setSelectedItem(item)
@@ -614,6 +616,17 @@ const ProviderKeysPage: React.FC = () => {
                       >
                         <BarChart3 size={14} />
                       </button>
+                    </div>
+                    <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
+                      <div
+                        className="bg-violet-600 h-1.5 rounded-full"
+                        style={{
+                          width: `${Math.min(
+                            ((item.usage?.successful_requests || 0) / Math.max(1, (item.usage?.successful_requests || 0) + (item.usage?.failed_requests || 0))) * 100,
+                            100
+                          )}%`
+                        }}
+                      />
                     </div>
                     <div className="text-xs text-neutral-500 mt-1">
                       请求限制: {item.requestLimitPerMinute}/分钟
