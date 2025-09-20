@@ -6,7 +6,7 @@
 //! - 日志系统初始化和配置
 
 use std::env;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, fmt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 // ================ Proxy 模块业务日志工具 ================
 
@@ -221,8 +221,17 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
                             if let Some(name) = cookie_parts.first() {
                                 let value = &cookie_parts[1..].join("=");
                                 if value.len() > 8 {
-                                    let masked_value = format!("{}...{}", &value[..4], &value[value.len().saturating_sub(4)..]);
-                                    format!("{}: {}={}", name, masked_value, cookie_parts[1..].join("="))
+                                    let masked_value = format!(
+                                        "{}...{}",
+                                        &value[..4],
+                                        &value[value.len().saturating_sub(4)..]
+                                    );
+                                    format!(
+                                        "{}: {}={}",
+                                        name,
+                                        masked_value,
+                                        cookie_parts[1..].join("=")
+                                    )
                                 } else {
                                     format!("{}: ****; {}", name, cookie_parts[1..].join("="))
                                 }
@@ -249,7 +258,11 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
 /// 脱敏API密钥
 pub fn sanitize_api_key(api_key: &str) -> String {
     if api_key.len() > 8 {
-        format!("{}...{}", &api_key[..4], &api_key[api_key.len().saturating_sub(4)..])
+        format!(
+            "{}...{}",
+            &api_key[..4],
+            &api_key[api_key.len().saturating_sub(4)..]
+        )
     } else if api_key.len() > 0 {
         "***".to_string()
     } else {
@@ -303,7 +316,13 @@ pub struct DbQueryFormatter;
 
 impl DbQueryFormatter {
     /// 格式化SQLx查询日志
-    pub fn format_sqlx_query(statement: &str, _summary: &str, elapsed: f64, rows_affected: Option<u64>, rows_returned: Option<u64>) -> String {
+    pub fn format_sqlx_query(
+        statement: &str,
+        _summary: &str,
+        elapsed: f64,
+        rows_affected: Option<u64>,
+        rows_returned: Option<u64>,
+    ) -> String {
         // 清理和格式化SQL语句
         let clean_sql = Self::clean_sql_statement(statement);
 
@@ -339,10 +358,7 @@ impl DbQueryFormatter {
 
         format!(
             "{} {} (⏱ {}){}",
-            operation_icon,
-            clean_sql,
-            time_str,
-            result_str
+            operation_icon, clean_sql, time_str, result_str
         )
     }
 
@@ -356,7 +372,7 @@ impl DbQueryFormatter {
             .join(" ")
             .chars()
             .collect::<String>()
-            .replace("  ", " ")  // 移除多余空格
+            .replace("  ", " ") // 移除多余空格
     }
 
     /// 根据SQL操作类型获取对应图标
@@ -499,18 +515,13 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
     let filter_string = final_config.build_filter();
 
     // 从环境变量获取覆盖配置，如果没有则使用构建的配置
-    let log_filter = env::var("RUST_LOG")
-        .unwrap_or_else(|_| filter_string);
+    let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| filter_string);
 
     // 创建多层级订阅者
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    EnvFilter::try_new(&log_filter)
-                        .unwrap_or_else(|_| EnvFilter::default())
-                })
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::try_new(&log_filter).unwrap_or_else(|_| EnvFilter::default())
+        }))
         .with(
             fmt::layer()
                 .with_target(true)
@@ -527,7 +538,7 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
                         && !metadata.target().starts_with("hyper::")
                         && !metadata.target().starts_with("tokio::runtime")
                         && !metadata.target().starts_with("pingora::upstreams::peer")
-                }))
+                })),
         )
         .init();
 
@@ -607,14 +618,24 @@ impl LogFormatValidator {
 
         // 检查 stage 和 component 的有效性
         match stage {
-            LogStage::RequestStart | LogStage::Authentication | LogStage::RequestModify |
-            LogStage::UpstreamRequest | LogStage::Response | LogStage::ResponseFailure | LogStage::Error => {}
+            LogStage::RequestStart
+            | LogStage::Authentication
+            | LogStage::RequestModify
+            | LogStage::UpstreamRequest
+            | LogStage::Response
+            | LogStage::ResponseFailure
+            | LogStage::Error => {}
         }
 
         match component {
-            LogComponent::Proxy | LogComponent::AuthService | LogComponent::RequestHandler |
-            LogComponent::TracingService | LogComponent::Upstream | LogComponent::Builder |
-            LogComponent::GeminiStrategy | LogComponent::Database => {}
+            LogComponent::Proxy
+            | LogComponent::AuthService
+            | LogComponent::RequestHandler
+            | LogComponent::TracingService
+            | LogComponent::Upstream
+            | LogComponent::Builder
+            | LogComponent::GeminiStrategy
+            | LogComponent::Database => {}
         }
 
         true
@@ -633,7 +654,8 @@ impl LogFormatValidator {
     ) {
         if Self::validate_log_format(request_id, stage, component, operation, description) {
             // 使用标准 tracing 记录（验证通过）
-            let field_str = fields.iter()
+            let field_str = fields
+                .iter()
                 .map(|(key, value)| format!("{} = {}", key, value))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -648,7 +670,11 @@ impl LogFormatValidator {
                 description
             );
         } else {
-            tracing::warn!("日志格式验证失败，跳过记录: request_id={}, operation={}", request_id, operation);
+            tracing::warn!(
+                "日志格式验证失败，跳过记录: request_id={}, operation={}",
+                request_id,
+                operation
+            );
         }
     }
 
@@ -666,8 +692,16 @@ impl LogFormatValidator {
     /// 自动检测并警告潜在的敏感信息泄露
     pub fn check_sensitive_fields(fields: &[(&str, String)]) -> Vec<String> {
         let sensitive_keywords = vec![
-            "password", "secret", "token", "key", "auth", "credential",
-            "api_key", "authorization", "signature", "private"
+            "password",
+            "secret",
+            "token",
+            "key",
+            "auth",
+            "credential",
+            "api_key",
+            "authorization",
+            "signature",
+            "private",
         ];
 
         let mut warnings = Vec::new();
@@ -676,11 +710,7 @@ impl LogFormatValidator {
             let key_lower = key.to_lowercase();
             for keyword in &sensitive_keywords {
                 if key_lower.contains(keyword) {
-                    warnings.push(format!(
-                        "潜在敏感字段: {} (值长度: {})",
-                        key,
-                        value.len()
-                    ));
+                    warnings.push(format!("潜在敏感字段: {} (值长度: {})", key, value.len()));
                 }
             }
         }

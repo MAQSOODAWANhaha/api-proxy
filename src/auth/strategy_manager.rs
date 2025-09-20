@@ -2,19 +2,22 @@
 //!
 //! 专门负责管理和执行各种认证策略
 
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 use tracing::info;
 
 use crate::auth::{
-    types::{AuthType, MultiAuthConfig},
-    strategies::{traits::{AuthStrategy, OAuthTokenResult}, ApiKeyStrategy},
     AuthError,
+    strategies::{
+        ApiKeyStrategy,
+        traits::{AuthStrategy, OAuthTokenResult},
+    },
+    types::{AuthType, MultiAuthConfig},
 };
 use crate::error::Result;
 
 /// 认证策略管理器
-/// 
+///
 /// 负责注册、管理和执行各种认证策略
 pub struct AuthStrategyManager {
     /// 认证策略注册表
@@ -30,7 +33,7 @@ impl AuthStrategyManager {
             strategies: HashMap::new(),
             default_configs: HashMap::new(),
         };
-        
+
         // 注册默认认证策略
         manager.register_default_strategies();
         manager
@@ -41,7 +44,7 @@ impl AuthStrategyManager {
         // 注册API密钥策略
         let api_key_strategy = Box::new(ApiKeyStrategy::new("Authorization", "Bearer {key}"));
         self.register_strategy(api_key_strategy);
-        
+
         info!("Default auth strategies registered in AuthStrategyManager");
     }
 
@@ -68,8 +71,9 @@ impl AuthStrategyManager {
 
     /// 验证配置
     pub fn validate_config(&self, auth_type: &AuthType, config: &Value) -> Result<()> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
         strategy.validate_config(config).map_err(Into::into)
     }
@@ -80,36 +84,35 @@ impl AuthStrategyManager {
         auth_type: &AuthType,
         credentials: &Value,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
         strategy.authenticate(credentials).await.map_err(Into::into)
     }
-    
+
     /// 刷新认证凭据
     pub async fn refresh_multi_auth(
         &self,
         auth_type: &AuthType,
         refresh_token: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
         strategy.refresh(refresh_token).await.map_err(Into::into)
     }
-    
+
     /// 撤销认证凭据
-    pub async fn revoke_multi_auth(
-        &self,
-        auth_type: &AuthType,
-        token: &str,
-    ) -> Result<()> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+    pub async fn revoke_multi_auth(&self, auth_type: &AuthType, token: &str) -> Result<()> {
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
         strategy.revoke(token).await.map_err(Into::into)
     }
-    
+
     /// 获取OAuth认证URL
     pub async fn get_oauth_auth_url(
         &self,
@@ -117,12 +120,16 @@ impl AuthStrategyManager {
         state: &str,
         redirect_uri: &str,
     ) -> Result<String> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
-        strategy.get_auth_url(state, redirect_uri).await.map_err(Into::into)
+        strategy
+            .get_auth_url(state, redirect_uri)
+            .await
+            .map_err(Into::into)
     }
-    
+
     /// 处理OAuth回调
     pub async fn handle_oauth_callback(
         &self,
@@ -130,10 +137,14 @@ impl AuthStrategyManager {
         code: &str,
         state: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type)
-            .ok_or_else(|| AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type)))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
+        })?;
 
-        strategy.handle_callback(code, state).await.map_err(Into::into)
+        strategy
+            .handle_callback(code, state)
+            .await
+            .map_err(Into::into)
     }
 }
 

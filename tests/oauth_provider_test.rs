@@ -6,17 +6,17 @@
 //! 3. PKCE参数正确添加
 //! 4. 不同提供商的配置处理
 
-use api_proxy::auth::oauth_client::providers::{OAuthProviderManager, ProviderConfigBuilder};
 use api_proxy::auth::oauth_client::OAuthProviderConfig;
+use api_proxy::auth::oauth_client::providers::{OAuthProviderManager, ProviderConfigBuilder};
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::DatabaseConnection;
     use entity::oauth_client_sessions::Model;
     use migration::{Migrator, MigratorTrait};
+    use sea_orm::DatabaseConnection;
     use url::Url;
 
     /// 创建测试用的数据库连接
@@ -80,7 +80,7 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_provider_config_creation() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(db);
+        let _manager = OAuthProviderManager::new(db);
 
         // 测试管理器创建成功
         assert!(true); // 简单测试，确保能创建manager
@@ -94,7 +94,11 @@ mod tests {
         let oauth_config = create_openai_oauth_config();
 
         // 模拟oauth_model_to_config方法的逻辑来创建配置
-        let scopes: Vec<String> = oauth_config.scopes.split_whitespace().map(|s| s.to_string()).collect();
+        let scopes: Vec<String> = oauth_config
+            .scopes
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
 
         let mut extra_params = HashMap::new();
 
@@ -130,29 +134,57 @@ mod tests {
 
         // 验证必需参数存在
         assert_eq!(params.get("client_id"), Some(&"test_client_id".to_string()));
-        assert_eq!(params.get("redirect_uri"), Some(&"http://localhost:1455/auth/callback".to_string()));
+        assert_eq!(
+            params.get("redirect_uri"),
+            Some(&"http://localhost:1455/auth/callback".to_string())
+        );
         assert_eq!(params.get("state"), Some(&"test_state_456".to_string()));
-        assert_eq!(params.get("scope"), Some(&"openid profile email offline_access".to_string()));
+        assert_eq!(
+            params.get("scope"),
+            Some(&"openid profile email offline_access".to_string())
+        );
         assert_eq!(params.get("response_type"), Some(&"code".to_string()));
 
         // 验证PKCE参数
-        assert_eq!(params.get("code_challenge"), Some(&"test_code_challenge_789".to_string()));
-        assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()));
+        assert_eq!(
+            params.get("code_challenge"),
+            Some(&"test_code_challenge_789".to_string())
+        );
+        assert_eq!(
+            params.get("code_challenge_method"),
+            Some(&"S256".to_string())
+        );
 
         // 验证额外参数
-        assert_eq!(params.get("id_token_add_organizations"), Some(&"true".to_string()));
-        assert_eq!(params.get("codex_cli_simplified_flow"), Some(&"true".to_string()));
+        assert_eq!(
+            params.get("id_token_add_organizations"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            params.get("codex_cli_simplified_flow"),
+            Some(&"true".to_string())
+        );
         assert_eq!(params.get("originator"), Some(&"codex_cli_rs".to_string()));
 
         // 关键测试：验证没有重复参数
         let param_counts: HashMap<&String, usize> = params.iter().map(|(k, _)| (k, 1)).collect();
         for (param, count) in param_counts {
-            assert_eq!(count, 1, "参数 '{}' 应该只出现一次，但出现了 {} 次", param, count);
+            assert_eq!(
+                count, 1,
+                "参数 '{}' 应该只出现一次，但出现了 {} 次",
+                param, count
+            );
         }
 
         // 验证参数总数（基础参数 + PKCE参数 + 额外参数）
         let expected_params = 10; // client_id, redirect_uri, state, scope, response_type, code_challenge, code_challenge_method, id_token_add_organizations, codex_cli_simplified_flow, originator
-        assert_eq!(params.len(), expected_params, "URL应该包含 {} 个参数，但包含了 {} 个", expected_params, params.len());
+        assert_eq!(
+            params.len(),
+            expected_params,
+            "URL应该包含 {} 个参数，但包含了 {} 个",
+            expected_params,
+            params.len()
+        );
     }
 
     #[tokio::test]
@@ -187,13 +219,24 @@ mod tests {
         assert_eq!(params.get("scope"), Some(&"read write".to_string()));
 
         // 验证PKCE参数
-        assert_eq!(params.get("code_challenge"), Some(&"test_code_challenge_789".to_string()));
-        assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()));
+        assert_eq!(
+            params.get("code_challenge"),
+            Some(&"test_code_challenge_789".to_string())
+        );
+        assert_eq!(
+            params.get("code_challenge_method"),
+            Some(&"S256".to_string())
+        );
 
         // 验证没有重复参数
         let param_names: Vec<&String> = params.keys().collect();
-        let unique_param_names: std::collections::HashSet<&String> = param_names.iter().cloned().collect();
-        assert_eq!(param_names.len(), unique_param_names.len(), "不应该有重复的参数名");
+        let unique_param_names: std::collections::HashSet<&String> =
+            param_names.iter().cloned().collect();
+        assert_eq!(
+            param_names.len(),
+            unique_param_names.len(),
+            "不应该有重复的参数名"
+        );
     }
 
     #[tokio::test]
@@ -250,7 +293,10 @@ mod tests {
         assert_eq!(config.client_secret, Some("test_secret".to_string()));
         assert_eq!(config.scopes, vec!["read", "write"]);
         assert!(config.pkce_required);
-        assert_eq!(config.extra_params.get("custom_param"), Some(&"custom_value".to_string()));
+        assert_eq!(
+            config.extra_params.get("custom_param"),
+            Some(&"custom_value".to_string())
+        );
     }
 
     #[tokio::test]
@@ -285,10 +331,16 @@ mod tests {
 
         // 验证额外参数中的response_type优先于默认值
         assert_eq!(params.get("response_type"), Some(&"token".to_string()));
-        assert_eq!(params.get("custom_param"), Some(&"custom_value".to_string()));
+        assert_eq!(
+            params.get("custom_param"),
+            Some(&"custom_value".to_string())
+        );
 
         // 验证只有一个response_type参数（无重复）
-        let response_type_count = params.iter().filter(|(k, _)| **k == "response_type").count();
+        let response_type_count = params
+            .iter()
+            .filter(|(k, _)| **k == "response_type")
+            .count();
         assert_eq!(response_type_count, 1, "response_type参数应该只出现一次");
     }
 
@@ -301,7 +353,10 @@ mod tests {
         // 创建包含特殊字符的参数
         let mut extra_params = HashMap::new();
         extra_params.insert("scope".to_string(), "email profile".to_string()); // 会覆盖基础scope
-        extra_params.insert("redirect_uri".to_string(), "https://example.com/callback?param=value".to_string()); // 包含特殊字符
+        extra_params.insert(
+            "redirect_uri".to_string(),
+            "https://example.com/callback?param=value".to_string(),
+        ); // 包含特殊字符
 
         let config = OAuthProviderConfig {
             provider_name: "test:oauth".to_string(),
@@ -346,8 +401,11 @@ mod tests {
         // 直接使用数据库配置的extra_params
         if let Some(ref config_extra_params) = oauth_config.extra_params {
             extra_params.extend(config_extra_params.clone());
-            println!("从数据库加载了{}个额外参数: {:?}",
-                extra_params.len(), extra_params.keys().collect::<Vec<_>>());
+            println!(
+                "从数据库加载了{}个额外参数: {:?}",
+                extra_params.len(),
+                extra_params.keys().collect::<Vec<_>>()
+            );
         }
 
         let config = OAuthProviderConfig {
@@ -366,9 +424,18 @@ mod tests {
         assert_eq!(config.provider_name, "openai:oauth");
         assert_eq!(config.client_id, "test_client_id");
         assert!(config.pkce_required);
-        assert_eq!(config.extra_params.get("response_type"), Some(&"code".to_string()));
-        assert_eq!(config.extra_params.get("id_token_add_organizations"), Some(&"true".to_string()));
-        assert_eq!(config.extra_params.get("originator"), Some(&"codex_cli_rs".to_string()));
+        assert_eq!(
+            config.extra_params.get("response_type"),
+            Some(&"code".to_string())
+        );
+        assert_eq!(
+            config.extra_params.get("id_token_add_organizations"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            config.extra_params.get("originator"),
+            Some(&"codex_cli_rs".to_string())
+        );
 
         // 验证没有重复参数
         assert_eq!(config.extra_params.len(), 4); // response_type, id_token_add_organizations, codex_cli_simplified_flow, originator
@@ -436,24 +503,46 @@ mod tests {
         let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
         // 验证必需参数存在
-        assert_eq!(params.get("client_id"), Some(&"9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string()));
-        assert_eq!(params.get("redirect_uri"), Some(&"https://console.anthropic.com/oauth/code/callback".to_string()));
+        assert_eq!(
+            params.get("client_id"),
+            Some(&"9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string())
+        );
+        assert_eq!(
+            params.get("redirect_uri"),
+            Some(&"https://console.anthropic.com/oauth/code/callback".to_string())
+        );
         assert_eq!(params.get("state"), Some(&"test_state_456".to_string()));
         assert_eq!(params.get("response_type"), Some(&"code".to_string()));
         assert_eq!(params.get("code"), Some(&"true".to_string()));
 
         // 关键测试：验证所有scope都存在
         let expected_scope = "org:create_api_key user:profile user:inference";
-        assert_eq!(params.get("scope"), Some(&expected_scope.to_string()),
-            "Scope应该包含所有三个权限，实际: {:?}", params.get("scope"));
+        assert_eq!(
+            params.get("scope"),
+            Some(&expected_scope.to_string()),
+            "Scope应该包含所有三个权限，实际: {:?}",
+            params.get("scope")
+        );
 
         // 验证PKCE参数
-        assert_eq!(params.get("code_challenge"), Some(&"test_code_challenge_789".to_string()));
-        assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()));
+        assert_eq!(
+            params.get("code_challenge"),
+            Some(&"test_code_challenge_789".to_string())
+        );
+        assert_eq!(
+            params.get("code_challenge_method"),
+            Some(&"S256".to_string())
+        );
 
         // 验证参数总数
         let expected_params = 8; // client_id, redirect_uri, state, scope, response_type, code, code_challenge, code_challenge_method
-        assert_eq!(params.len(), expected_params, "URL应该包含{}个参数，但包含了{}个", expected_params, params.len());
+        assert_eq!(
+            params.len(),
+            expected_params,
+            "URL应该包含{}个参数，但包含了{}个",
+            expected_params,
+            params.len()
+        );
 
         println!("✅ [测试] Claude OAuth测试通过，所有参数正确");
     }
@@ -466,7 +555,8 @@ mod tests {
         extra_params.insert("prompt".to_string(), "select_account".to_string());
 
         OAuthConfig {
-            client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com".to_string(),
+            client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+                .to_string(),
             client_secret: Some("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".to_string()),
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
             token_url: "https://oauth2.googleapis.com/token".to_string(),
@@ -521,21 +611,45 @@ mod tests {
         let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
         // 验证必需参数存在
-        assert_eq!(params.get("client_id"), Some(&"681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com".to_string()));
-        assert_eq!(params.get("redirect_uri"), Some(&"https://codeassist.google.com/authcode".to_string()));
+        assert_eq!(
+            params.get("client_id"),
+            Some(
+                &"681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            params.get("redirect_uri"),
+            Some(&"https://codeassist.google.com/authcode".to_string())
+        );
         assert_eq!(params.get("state"), Some(&"test_state_456".to_string()));
         assert_eq!(params.get("response_type"), Some(&"code".to_string()));
         assert_eq!(params.get("access_type"), Some(&"offline".to_string()));
         assert_eq!(params.get("prompt"), Some(&"select_account".to_string()));
-        assert_eq!(params.get("scope"), Some(&"https://www.googleapis.com/auth/cloud-platform".to_string()));
+        assert_eq!(
+            params.get("scope"),
+            Some(&"https://www.googleapis.com/auth/cloud-platform".to_string())
+        );
 
         // 验证PKCE参数
-        assert_eq!(params.get("code_challenge"), Some(&"test_code_challenge_789".to_string()));
-        assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()));
+        assert_eq!(
+            params.get("code_challenge"),
+            Some(&"test_code_challenge_789".to_string())
+        );
+        assert_eq!(
+            params.get("code_challenge_method"),
+            Some(&"S256".to_string())
+        );
 
         // 验证参数总数
         let expected_params = 9; // client_id, redirect_uri, state, scope, response_type, access_type, prompt, code_challenge, code_challenge_method
-        assert_eq!(params.len(), expected_params, "URL应该包含{}个参数，但包含了{}个", expected_params, params.len());
+        assert_eq!(
+            params.len(),
+            expected_params,
+            "URL应该包含{}个参数，但包含了{}个",
+            expected_params,
+            params.len()
+        );
 
         println!("✅ [测试] Gemini OAuth测试通过，所有参数正确");
     }
@@ -588,23 +702,66 @@ mod tests {
             let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
             // 通用验证
-            assert!(params.contains_key("client_id"), "{} 应该包含client_id", provider_name);
-            assert!(params.contains_key("redirect_uri"), "{} 应该包含redirect_uri", provider_name);
-            assert!(params.contains_key("state"), "{} 应该包含state", provider_name);
-            assert!(params.contains_key("scope"), "{} 应该包含scope", provider_name);
-            assert!(params.contains_key("response_type"), "{} 应该包含response_type", provider_name);
-            assert!(params.contains_key("code_challenge"), "{} 应该包含code_challenge", provider_name);
-            assert!(params.contains_key("code_challenge_method"), "{} 应该包含code_challenge_method", provider_name);
+            assert!(
+                params.contains_key("client_id"),
+                "{} 应该包含client_id",
+                provider_name
+            );
+            assert!(
+                params.contains_key("redirect_uri"),
+                "{} 应该包含redirect_uri",
+                provider_name
+            );
+            assert!(
+                params.contains_key("state"),
+                "{} 应该包含state",
+                provider_name
+            );
+            assert!(
+                params.contains_key("scope"),
+                "{} 应该包含scope",
+                provider_name
+            );
+            assert!(
+                params.contains_key("response_type"),
+                "{} 应该包含response_type",
+                provider_name
+            );
+            assert!(
+                params.contains_key("code_challenge"),
+                "{} 应该包含code_challenge",
+                provider_name
+            );
+            assert!(
+                params.contains_key("code_challenge_method"),
+                "{} 应该包含code_challenge_method",
+                provider_name
+            );
 
             // 验证PKCE方法
-            assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()), "{} PKCE方法应该是S256", provider_name);
+            assert_eq!(
+                params.get("code_challenge_method"),
+                Some(&"S256".to_string()),
+                "{} PKCE方法应该是S256",
+                provider_name
+            );
 
             // 验证没有重复参数
             let param_names: Vec<&String> = params.keys().collect();
-            let unique_param_names: std::collections::HashSet<&String> = param_names.iter().cloned().collect();
-            assert_eq!(param_names.len(), unique_param_names.len(), "{} 不应该有重复的参数名", provider_name);
+            let unique_param_names: std::collections::HashSet<&String> =
+                param_names.iter().cloned().collect();
+            assert_eq!(
+                param_names.len(),
+                unique_param_names.len(),
+                "{} 不应该有重复的参数名",
+                provider_name
+            );
 
-            println!("✅ [对比测试] {} OAuth验证通过，包含{}个参数", provider_name, params.len());
+            println!(
+                "✅ [对比测试] {} OAuth验证通过，包含{}个参数",
+                provider_name,
+                params.len()
+            );
         }
     }
 }

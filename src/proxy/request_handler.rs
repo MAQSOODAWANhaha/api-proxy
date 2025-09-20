@@ -99,6 +99,8 @@ pub struct ResponseDetails {
     pub body_size: Option<u64>,
     pub content_type: Option<String>,
     pub content_encoding: Option<String>,
+    /// HTTP状态码
+    pub status_code: Option<u16>,
     /// 响应体数据块累积(用于收集响应体数据)
     pub body_chunks: Vec<u8>,
 }
@@ -517,7 +519,9 @@ impl RequestHandler {
             if let Some(name) =
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&pt.name)
             {
-                if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
+                if let Some(strategy) =
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                {
                     return strategy
                         .modify_request_body_json(session, ctx, json_value)
                         .await;
@@ -926,7 +930,9 @@ impl RequestHandler {
         if let Some(name) =
             crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_type.name)
         {
-            if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
+            if let Some(strategy) =
+                crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+            {
                 if let Ok(Some(host)) = strategy.select_upstream_host(ctx).await {
                     upstream_addr = Some(if host.contains(':') {
                         host
@@ -1050,7 +1056,9 @@ impl RequestHandler {
             if let Some(name) =
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
             {
-                if let Some(strategy) = crate::proxy::provider_strategy::make_strategy(name) {
+                if let Some(strategy) =
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                {
                     // 忽略策略内部的无害改写失败，避免影响主流程
                     if let Err(e) = strategy
                         .modify_request(session, upstream_request, ctx)
@@ -1423,6 +1431,7 @@ impl RequestHandler {
     /// 过滤上游响应 - 协调器模式：委托给专门服务
     pub async fn filter_upstream_response(
         &self,
+        session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
@@ -1457,6 +1466,9 @@ impl RequestHandler {
             );
         }
 
+        // 设置响应状态码
+        ctx.response_details.status_code = Some(upstream_response.status.as_u16());
+
         // 收集响应详情 - 委托给StatisticsService
         self.statistics_service
             .collect_response_details(upstream_response, ctx);
@@ -1464,6 +1476,41 @@ impl RequestHandler {
         // 初始化token使用信息 - 委托给StatisticsService
         let token_usage = self.statistics_service.initialize_token_usage(ctx).await?;
         ctx.token_usage = token_usage;
+
+        // 调用提供商策略处理响应
+        if let Some(provider_name) = ctx.provider_type.as_ref().map(|p| p.name.clone()) {
+            if let Some(name) =
+                crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
+            {
+                if let Some(strategy) =
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                {
+                    // 获取响应体
+                    let response_body = if let Some(body) = &ctx.response_details.body {
+                        body.as_bytes()
+                    } else {
+                        &[]
+                    };
+
+                    if let Err(e) = strategy
+                        .handle_response_body(
+                            session, // 使用传入的session
+                            ctx,
+                            upstream_response.status.as_u16(),
+                            response_body,
+                        )
+                        .await
+                    {
+                        tracing::debug!(
+                            request_id = %ctx.request_id,
+                            provider = provider_name,
+                            error = format!("{:?}", e),
+                            "Provider strategy handle_response_body returned error, continue with default path"
+                        );
+                    }
+                }
+            }
+        }
 
         // 模型信息的扩展追踪由 ProxyService 统一处理
 

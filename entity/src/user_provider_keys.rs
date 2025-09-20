@@ -5,6 +5,9 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// JSON格式的健康状态详情数据类型别名
+pub type HealthStatusDetail = String;
+
 /// 用户内部代理商API密钥池实体
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
 #[sea_orm(table_name = "user_provider_keys")]
@@ -22,6 +25,11 @@ pub struct Model {
     pub max_requests_per_day: Option<i32>,
     pub is_active: bool,
     pub health_status: String,
+    // 健康状态增强字段
+    #[sea_orm(column_type = "Json")]
+    pub health_status_detail: Option<HealthStatusDetail>, // JSON格式的健康状态详情
+    pub rate_limit_resets_at: Option<DateTime>, // 限流解除时间
+    pub last_error_time: Option<DateTime>,      // 最后错误时间
     // OAuth认证支持字段
     // 注意: auth_type由provider_types表决定，不需要在这里重复存储
     // OAuth认证直接通过api_key字段存储session_id，从oauth_client_sessions表获取OAuth数据

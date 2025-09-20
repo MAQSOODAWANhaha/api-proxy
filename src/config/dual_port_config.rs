@@ -181,8 +181,8 @@ mod tests {
     fn test_dual_port_config_default() {
         let config = DualPortServerConfig::default();
 
-        assert_eq!(config.management.http.port, 8080);
-        assert_eq!(config.proxy.http.port, 8081);
+        assert_eq!(config.management.http.port, 9090);
+        assert_eq!(config.proxy.http.port, 8080);
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
         assert!(config.validate().is_ok());
 
         // 测试端口冲突
-        config.proxy.http.port = 8080; // 与管理端口冲突
+        config.proxy.http.port = 9090; // 与管理端口冲突
         assert!(config.validate().is_err());
     }
 

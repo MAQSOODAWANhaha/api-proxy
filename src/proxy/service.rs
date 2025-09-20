@@ -9,17 +9,17 @@ use pingora_core::{ErrorType, prelude::*, upstreams::peer::HttpPeer};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::auth::{AuthManager, types::AuthType};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
+use crate::proxy::provider_strategy;
 use crate::proxy::request_handler::{ProxyContext, RequestHandler, ResolvedCredential};
 use crate::trace::{TraceSystem, immediate::ImmediateProxyTracer};
-use crate::proxy::provider_strategy;
 use sea_orm::DatabaseConnection;
 
 /// 简化的AI代理服务 - 保持完整业务逻辑
@@ -29,7 +29,7 @@ pub struct ProxyService {
     /// 即时写入追踪器
     tracer: Option<Arc<ImmediateProxyTracer>>,
     /// 早期阶段服务（在 early_request_filter 执行）
-    early_services: Vec<Arc<dyn EarlyRequestService>>, 
+    early_services: Vec<Arc<dyn EarlyRequestService>>,
     /// 上游请求头构建阶段服务
     upstream_request_services: Vec<Arc<dyn UpstreamRequestService>>,
     /// 请求体阶段服务
@@ -43,7 +43,7 @@ pub struct ProxyService {
     /// 上游连接建立回调服务
     connected_to_upstream_services: Vec<Arc<dyn ConnectedToUpstreamService>>,
     /// 代理失败处理服务
-    proxy_failure_services: Vec<Arc<dyn ProxyFailureService>>,    
+    proxy_failure_services: Vec<Arc<dyn ProxyFailureService>>,
     /// 日志阶段服务
     logging_services: Vec<Arc<dyn LoggingService>>,
 }
@@ -162,10 +162,23 @@ impl ProxyService {
                                     let name_str = name;
                                     let value = &cookie_parts[1..].join("=");
                                     if value.len() > 8 {
-                                        let masked_value = format!("{}...{}", &value[..4], &value[value.len().saturating_sub(4)..]);
-                                        format!("{}: {}={}", name_str, masked_value, cookie_parts[1..].join("="))
+                                        let masked_value = format!(
+                                            "{}...{}",
+                                            &value[..4],
+                                            &value[value.len().saturating_sub(4)..]
+                                        );
+                                        format!(
+                                            "{}: {}={}",
+                                            name_str,
+                                            masked_value,
+                                            cookie_parts[1..].join("=")
+                                        )
                                     } else {
-                                        format!("{}: ****; {}", name_str, cookie_parts[1..].join("="))
+                                        format!(
+                                            "{}: ****; {}",
+                                            name_str,
+                                            cookie_parts[1..].join("=")
+                                        )
                                     }
                                 } else {
                                     format!("{}: ****", name_str)
@@ -237,32 +250,23 @@ impl ProxyService {
         ];
 
         // 其他阶段服务（现阶段各一项，方便后续扩展为多步）
-        let upstream_request_services: Vec<Arc<dyn UpstreamRequestService>> = vec![
-            Arc::new(DefaultUpstreamRequestService),
-        ];
-        let request_body_services: Vec<Arc<dyn RequestBodyService>> = vec![
-            Arc::new(DefaultRequestBodyService),
-        ];
-        let response_header_services: Vec<Arc<dyn ResponseHeaderService>> = vec![
-            Arc::new(DefaultResponseHeaderService),
-        ];
-        let response_body_services: Vec<Arc<dyn ResponseBodyService>> = vec![
-            Arc::new(DefaultResponseBodyService),
-        ];
+        let upstream_request_services: Vec<Arc<dyn UpstreamRequestService>> =
+            vec![Arc::new(DefaultUpstreamRequestService)];
+        let request_body_services: Vec<Arc<dyn RequestBodyService>> =
+            vec![Arc::new(DefaultRequestBodyService)];
+        let response_header_services: Vec<Arc<dyn ResponseHeaderService>> =
+            vec![Arc::new(DefaultResponseHeaderService)];
+        let response_body_services: Vec<Arc<dyn ResponseBodyService>> =
+            vec![Arc::new(DefaultResponseBodyService)];
 
         // 上游选择/连接/失败阶段默认服务
-        let upstream_peer_services: Vec<Arc<dyn UpstreamPeerService>> = vec![
-            Arc::new(DefaultUpstreamPeerService),
-        ];
-        let connected_to_upstream_services: Vec<Arc<dyn ConnectedToUpstreamService>> = vec![
-            Arc::new(DefaultConnectedToUpstreamService),
-        ];
-        let proxy_failure_services: Vec<Arc<dyn ProxyFailureService>> = vec![
-            Arc::new(DefaultProxyFailureService),
-        ];
-        let logging_services: Vec<Arc<dyn LoggingService>> = vec![
-            Arc::new(DefaultLoggingService),
-        ];
+        let upstream_peer_services: Vec<Arc<dyn UpstreamPeerService>> =
+            vec![Arc::new(DefaultUpstreamPeerService)];
+        let connected_to_upstream_services: Vec<Arc<dyn ConnectedToUpstreamService>> =
+            vec![Arc::new(DefaultConnectedToUpstreamService)];
+        let proxy_failure_services: Vec<Arc<dyn ProxyFailureService>> =
+            vec![Arc::new(DefaultProxyFailureService)];
+        let logging_services: Vec<Arc<dyn LoggingService>> = vec![Arc::new(DefaultLoggingService)];
 
         Ok(Self {
             ai_handler,
@@ -296,7 +300,9 @@ impl ProxyService {
 
 #[async_trait]
 trait EarlyRequestService: Send + Sync {
-    fn name(&self) -> &'static str { "early_service" }
+    fn name(&self) -> &'static str {
+        "early_service"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -309,7 +315,9 @@ trait EarlyRequestService: Send + Sync {
 struct EarlyAuthService;
 #[async_trait]
 impl EarlyRequestService for EarlyAuthService {
-    fn name(&self) -> &'static str { "auth" }
+    fn name(&self) -> &'static str {
+        "auth"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -317,7 +325,10 @@ impl EarlyRequestService for EarlyAuthService {
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
         let auth_svc = ai.auth_service().clone();
-        match auth_svc.authenticate_entry_api(session, &ctx.request_id).await {
+        match auth_svc
+            .authenticate_entry_api(session, &ctx.request_id)
+            .await
+        {
             Ok(user_api) => {
                 ctx.user_service_api = Some(user_api.clone());
                 info!(
@@ -328,7 +339,10 @@ impl EarlyRequestService for EarlyAuthService {
             }
             Err(e) => {
                 error!(event = "auth_fail", component = COMPONENT, request_id = %ctx.request_id, error = %e, "认证失败");
-                let _ = ai.tracing_service().complete_trace_with_error(&ctx.request_id, &e).await;
+                let _ = ai
+                    .tracing_service()
+                    .complete_trace_with_error(&ctx.request_id, &e)
+                    .await;
                 Err(crate::pingora_error!(crate::proxy_err!(auth, "{}", e)))
             }
         }
@@ -339,7 +353,9 @@ impl EarlyRequestService for EarlyAuthService {
 struct EarlyTraceStartService;
 #[async_trait]
 impl EarlyRequestService for EarlyTraceStartService {
-    fn name(&self) -> &'static str { "trace_start" }
+    fn name(&self) -> &'static str {
+        "trace_start"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -374,7 +390,9 @@ impl EarlyRequestService for EarlyTraceStartService {
 
 #[async_trait]
 trait UpstreamRequestService: Send + Sync {
-    fn name(&self) -> &'static str { "upstream_request" }
+    fn name(&self) -> &'static str {
+        "upstream_request"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -420,20 +438,33 @@ impl UpstreamRequestService for DefaultUpstreamRequestService {
                 });
                 match e {
                     crate::error::ProxyError::Network { message, .. } => {
-                        crate::pingora_error!(crate::proxy_err!(network, "Network error during request processing: {}", message))
+                        crate::pingora_error!(crate::proxy_err!(
+                            network,
+                            "Network error during request processing: {}",
+                            message
+                        ))
                     }
-                    _ => crate::pingora_error!(crate::proxy_err!(internal, "Internal error during request processing")),
+                    _ => crate::pingora_error!(crate::proxy_err!(
+                        internal,
+                        "Internal error during request processing"
+                    )),
                 }
             })?;
 
         // provider 特定策略的请求改写（如 Gemini 注入/补充 Header）
         if let Some(pt) = ctx.provider_type.as_ref() {
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&pt.name) {
-                if let Some(strategy) = provider_strategy::make_strategy(name) {
+                if let Some(strategy) = provider_strategy::make_strategy(name, None) {
                     strategy
                         .modify_request(session, upstream_request, ctx)
                         .await
-                        .map_err(|e| crate::pingora_error!(crate::proxy_err!(internal, "provider modify_request error: {}", e)))?;
+                        .map_err(|e| {
+                            crate::pingora_error!(crate::proxy_err!(
+                                internal,
+                                "provider modify_request error: {}",
+                                e
+                            ))
+                        })?;
                 }
             }
         }
@@ -658,6 +689,7 @@ trait ResponseHeaderService: Send + Sync {
     async fn exec(
         &self,
         ai: &RequestHandler,
+        session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()>;
@@ -669,10 +701,11 @@ impl ResponseHeaderService for DefaultResponseHeaderService {
     async fn exec(
         &self,
         ai: &RequestHandler,
+        session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        ai.filter_upstream_response(upstream_response, ctx)
+        ai.filter_upstream_response(session, upstream_response, ctx)
             .await
             .map_err(|e| {
                 error!(
@@ -682,7 +715,11 @@ impl ResponseHeaderService for DefaultResponseHeaderService {
                     error = %e,
                     "处理上游响应头失败"
                 );
-                crate::pingora_error!(crate::proxy_err!(internal, "failed to filter upstream response: {}", e))
+                crate::pingora_error!(crate::proxy_err!(
+                    internal,
+                    "failed to filter upstream response: {}",
+                    e
+                ))
             })?;
 
         let response_time = ctx.start_time.elapsed();
@@ -744,14 +781,24 @@ impl ResponseBodyService for DefaultResponseBodyService {
                     ctx.sse_line_buffer = incomplete.to_string();
 
                     fn find_usage<'a>(v: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
-                        if let Some(u) = v.get("usageMetadata") { return Some(u); }
+                        if let Some(u) = v.get("usageMetadata") {
+                            return Some(u);
+                        }
                         match v {
                             serde_json::Value::Object(map) => {
-                                for (_k, val) in map { if let Some(u) = find_usage(val) { return Some(u); } }
+                                for (_k, val) in map {
+                                    if let Some(u) = find_usage(val) {
+                                        return Some(u);
+                                    }
+                                }
                                 None
                             }
                             serde_json::Value::Array(arr) => {
-                                for val in arr { if let Some(u) = find_usage(val) { return Some(u); } }
+                                for val in arr {
+                                    if let Some(u) = find_usage(val) {
+                                        return Some(u);
+                                    }
+                                }
                                 None
                             }
                             _ => None,
@@ -760,10 +807,16 @@ impl ResponseBodyService for DefaultResponseBodyService {
 
                     for line in lines {
                         let line = line.trim();
-                        if line.is_empty() { continue; }
-                        if !line.starts_with("data: ") { continue; }
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
                         let payload = line[6..].trim();
-                        if payload == "[DONE]" { continue; }
+                        if payload == "[DONE]" {
+                            continue;
+                        }
 
                         info!(
                             event = "sse_chunk",
@@ -775,8 +828,10 @@ impl ResponseBodyService for DefaultResponseBodyService {
 
                         if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(payload) {
                             let finish = json_val
-                                .get("candidates").and_then(|c| c.get(0))
-                                .and_then(|c0| c0.get("finishReason")).and_then(|v| v.as_str())
+                                .get("candidates")
+                                .and_then(|c| c.get(0))
+                                .and_then(|c0| c0.get("finishReason"))
+                                .and_then(|v| v.as_str())
                                 .unwrap_or("");
                             let has_usage = json_val.get("usageMetadata").is_some();
                             debug!(
@@ -788,10 +843,24 @@ impl ResponseBodyService for DefaultResponseBodyService {
                                 "SSE JSON 解析结果"
                             );
                             if let Some(usage) = find_usage(&json_val) {
-                                let p = usage.get("promptTokenCount").and_then(|v| v.as_u64()).map(|n| n as u32);
-                                let c = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()).map(|n| n as u32);
-                                let t = usage.get("totalTokenCount").and_then(|v| v.as_u64()).map(|n| n as u32);
-                                ctx.sse_usage_agg = Some(crate::proxy::request_handler::SseUsageAgg { prompt_tokens: p, completion_tokens: c, total_tokens: t });
+                                let p = usage
+                                    .get("promptTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                let c = usage
+                                    .get("candidatesTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                let t = usage
+                                    .get("totalTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32);
+                                ctx.sse_usage_agg =
+                                    Some(crate::proxy::request_handler::SseUsageAgg {
+                                        prompt_tokens: p,
+                                        completion_tokens: c,
+                                        total_tokens: t,
+                                    });
                                 info!(
                                     event = "sse_usage_update",
                                     component = COMPONENT,
@@ -804,7 +873,9 @@ impl ResponseBodyService for DefaultResponseBodyService {
                             }
                             // provider 特定的 SSE 解析扩展点（预留）
                             if let Some(pt) = ctx.provider_type.as_ref() {
-                                if let Some(_name) = provider_strategy::ProviderRegistry::match_name(&pt.name) {
+                                if let Some(_name) =
+                                    provider_strategy::ProviderRegistry::match_name(&pt.name)
+                                {
                                     // 在这里可根据 provider 的自定义事件格式做额外解析/统计
                                 }
                             }
@@ -836,49 +907,62 @@ impl UpstreamPeerService for DefaultUpstreamPeerService {
         _session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<Box<HttpPeer>>> {
-        ai.select_upstream_peer(ctx)
-            .await
-            .map(Some)
-            .map_err(|e| {
-                // 统一错误追踪（异步，不阻塞）：上游选择失败
-                let req_id = ctx.request_id.clone();
-                let tracer = ai.tracing_service().clone();
-                let (code, etype, msg) = match &e {
-                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => (
-                        504,
-                        "connection_timeout".to_string(),
-                        format!("Connection timeout after {}s", timeout_seconds),
-                    ),
-                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => (
-                        504,
-                        "read_timeout".to_string(),
-                        format!("Read timeout after {}s", timeout_seconds),
-                    ),
-                    crate::error::ProxyError::Network { message, .. } => (
-                        502,
-                        "network_error".to_string(),
-                        format!("Network error: {}", message),
-                    ),
-                    _ => (500, "upstream_error".to_string(), e.to_string()),
-                };
-                tokio::spawn(async move {
-                    let _ = tracer
-                        .complete_trace_failure(&req_id, code, Some(etype), Some(msg))
-                        .await;
-                });
-                match e {
-                    crate::error::ProxyError::ConnectionTimeout { timeout_seconds, .. } => {
-                        crate::pingora_error!(crate::proxy_err!(connection_timeout, "Connection timeout after {}s", timeout_seconds))
-                    }
-                    crate::error::ProxyError::ReadTimeout { timeout_seconds, .. } => {
-                        crate::pingora_error!(crate::proxy_err!(read_timeout, "Read timeout after {}s", timeout_seconds))
-                    }
-                    crate::error::ProxyError::Network { message, .. } => {
-                        crate::pingora_error!(crate::proxy_err!(network, "Network error: {}", message))
-                    }
-                    _ => crate::pingora_error!(crate::proxy_err!(internal, "Internal server error"))
+        ai.select_upstream_peer(ctx).await.map(Some).map_err(|e| {
+            // 统一错误追踪（异步，不阻塞）：上游选择失败
+            let req_id = ctx.request_id.clone();
+            let tracer = ai.tracing_service().clone();
+            let (code, etype, msg) = match &e {
+                crate::error::ProxyError::ConnectionTimeout {
+                    timeout_seconds, ..
+                } => (
+                    504,
+                    "connection_timeout".to_string(),
+                    format!("Connection timeout after {}s", timeout_seconds),
+                ),
+                crate::error::ProxyError::ReadTimeout {
+                    timeout_seconds, ..
+                } => (
+                    504,
+                    "read_timeout".to_string(),
+                    format!("Read timeout after {}s", timeout_seconds),
+                ),
+                crate::error::ProxyError::Network { message, .. } => (
+                    502,
+                    "network_error".to_string(),
+                    format!("Network error: {}", message),
+                ),
+                _ => (500, "upstream_error".to_string(), e.to_string()),
+            };
+            tokio::spawn(async move {
+                let _ = tracer
+                    .complete_trace_failure(&req_id, code, Some(etype), Some(msg))
+                    .await;
+            });
+            match e {
+                crate::error::ProxyError::ConnectionTimeout {
+                    timeout_seconds, ..
+                } => {
+                    crate::pingora_error!(crate::proxy_err!(
+                        connection_timeout,
+                        "Connection timeout after {}s",
+                        timeout_seconds
+                    ))
                 }
-            })
+                crate::error::ProxyError::ReadTimeout {
+                    timeout_seconds, ..
+                } => {
+                    crate::pingora_error!(crate::proxy_err!(
+                        read_timeout,
+                        "Read timeout after {}s",
+                        timeout_seconds
+                    ))
+                }
+                crate::error::ProxyError::Network { message, .. } => {
+                    crate::pingora_error!(crate::proxy_err!(network, "Network error: {}", message))
+                }
+                _ => crate::pingora_error!(crate::proxy_err!(internal, "Internal server error")),
+            }
+        })
     }
 }
 
@@ -1030,10 +1114,7 @@ impl ProxyFailureService for DefaultProxyFailureService {
                             None,
                             None,
                             Some(error_type.to_string()),
-                            Some(format!(
-                                "{} (retry_count: {})",
-                                converted_error_msg, retry
-                            )),
+                            Some(format!("{} (retry_count: {})", converted_error_msg, retry)),
                         )
                         .await;
                 });
@@ -1047,7 +1128,10 @@ impl ProxyFailureService for DefaultProxyFailureService {
                 _ => 502,
             };
 
-            return FailToProxy { error_code, can_reuse_downstream: false };
+            return FailToProxy {
+                error_code,
+                can_reuse_downstream: false,
+            };
         }
 
         if let Some(tracer) = tracer {
@@ -1069,7 +1153,10 @@ impl ProxyFailureService for DefaultProxyFailureService {
             });
         }
 
-        FailToProxy { error_code: 500, can_reuse_downstream: false }
+        FailToProxy {
+            error_code: 500,
+            can_reuse_downstream: false,
+        }
     }
 }
 
@@ -1129,7 +1216,7 @@ fn provider_response_body_services(_ctx: &ProxyContext) -> Vec<Arc<dyn ResponseB
 //     async fn exec(&self, ai: &RequestHandler, session: &mut Session, upstream_request: &mut RequestHeader, ctx: &mut ProxyContext) -> pingora_core::Result<()> {
 //         if let Some(pt) = ctx.provider_type.as_ref() {
 //             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&pt.name) {
-//                 if let Some(strategy) = provider_strategy::make_strategy(name) {
+//                 if let Some(strategy) = provider_strategy::make_strategy(name, None) {
 //                     strategy.modify_request(session, upstream_request, ctx)
 //                         .await
 //                         .map_err(|e| crate::pingora_error!(crate::proxy_err!(internal, "provider modify_request error: {}", e)))?;
@@ -1143,7 +1230,9 @@ fn provider_response_body_services(_ctx: &ProxyContext) -> Vec<Arc<dyn ResponseB
 struct EarlyRateLimitService;
 #[async_trait]
 impl EarlyRequestService for EarlyRateLimitService {
-    fn name(&self) -> &'static str { "rate_limit" }
+    fn name(&self) -> &'static str {
+        "rate_limit"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -1153,8 +1242,13 @@ impl EarlyRequestService for EarlyRateLimitService {
         if let Some(user_api) = ctx.user_service_api.as_ref() {
             if let Err(e) = ai.check_rate_limit(user_api).await {
                 warn!(event = "rate_limited", component = COMPONENT, request_id = %ctx.request_id, error = %e, "命中限流");
-                let _ = ai.tracing_service().complete_trace_with_error(&ctx.request_id, &e).await;
-                return Err(crate::pingora_error!(crate::proxy_err!(rate_limit, "{}", e)));
+                let _ = ai
+                    .tracing_service()
+                    .complete_trace_with_error(&ctx.request_id, &e)
+                    .await;
+                return Err(crate::pingora_error!(crate::proxy_err!(
+                    rate_limit, "{}", e
+                )));
             }
         }
         Ok(())
@@ -1165,7 +1259,9 @@ impl EarlyRequestService for EarlyRateLimitService {
 struct EarlyProviderSetupService;
 #[async_trait]
 impl EarlyRequestService for EarlyProviderSetupService {
-    fn name(&self) -> &'static str { "provider_setup" }
+    fn name(&self) -> &'static str {
+        "provider_setup"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -1179,7 +1275,9 @@ impl EarlyRequestService for EarlyProviderSetupService {
         let provider_type = ai
             .get_provider_type(user_api.provider_type_id)
             .await
-            .map_err(|e| crate::pingora_error!(crate::proxy_err!(internal, "provider config error: {}", e)))?;
+            .map_err(|e| {
+                crate::pingora_error!(crate::proxy_err!(internal, "provider config error: {}", e))
+            })?;
 
         let timeout_from_dynamic = if let Ok(Some(pc)) = ai
             .provider_config_manager()
@@ -1207,7 +1305,9 @@ impl EarlyRequestService for EarlyProviderSetupService {
 struct EarlySelectBackendService;
 #[async_trait]
 impl EarlyRequestService for EarlySelectBackendService {
-    fn name(&self) -> &'static str { "select_backend_key" }
+    fn name(&self) -> &'static str {
+        "select_backend_key"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
@@ -1218,7 +1318,13 @@ impl EarlyRequestService for EarlySelectBackendService {
         let selected_backend = ai
             .select_api_key(user_api, &ctx.request_id)
             .await
-            .map_err(|e| crate::pingora_error!(crate::proxy_err!(upstream_not_available, "no backend key available: {}", e)))?;
+            .map_err(|e| {
+                crate::pingora_error!(crate::proxy_err!(
+                    upstream_not_available,
+                    "no backend key available: {}",
+                    e
+                ))
+            })?;
         ctx.selected_backend = Some(selected_backend);
         Ok(())
     }
@@ -1228,23 +1334,31 @@ impl EarlyRequestService for EarlySelectBackendService {
 struct EarlyCredentialResolveService;
 #[async_trait]
 impl EarlyRequestService for EarlyCredentialResolveService {
-    fn name(&self) -> &'static str { "resolve_credential" }
+    fn name(&self) -> &'static str {
+        "resolve_credential"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
         _session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        let selected_backend = ctx.selected_backend.as_ref().expect("selected_backend must exist");
+        let selected_backend = ctx
+            .selected_backend
+            .as_ref()
+            .expect("selected_backend must exist");
         match AuthType::from(selected_backend.auth_type.as_str()) {
             AuthType::ApiKey => {
-                ctx.resolved_credential = Some(ResolvedCredential::ApiKey(selected_backend.api_key.clone()));
+                ctx.resolved_credential =
+                    Some(ResolvedCredential::ApiKey(selected_backend.api_key.clone()));
             }
             AuthType::OAuth => {
                 let token = ai
                     .resolve_oauth_access_token(&selected_backend.api_key, &ctx.request_id)
                     .await
-                    .map_err(|e| crate::pingora_error!(crate::proxy_err!(auth, "oauth session error: {}", e)))?;
+                    .map_err(|e| {
+                        crate::pingora_error!(crate::proxy_err!(auth, "oauth session error: {}", e))
+                    })?;
                 ctx.resolved_credential = Some(ResolvedCredential::OAuthAccessToken(token));
             }
             other => {
@@ -1260,7 +1374,9 @@ impl EarlyRequestService for EarlyCredentialResolveService {
 struct EarlyDownstreamTimeoutService;
 #[async_trait]
 impl EarlyRequestService for EarlyDownstreamTimeoutService {
-    fn name(&self) -> &'static str { "downstream_timeout" }
+    fn name(&self) -> &'static str {
+        "downstream_timeout"
+    }
     async fn exec(
         &self,
         _ai: &RequestHandler,
@@ -1285,14 +1401,18 @@ impl EarlyRequestService for EarlyDownstreamTimeoutService {
 struct EarlyTraceExtendService;
 #[async_trait]
 impl EarlyRequestService for EarlyTraceExtendService {
-    fn name(&self) -> &'static str { "trace_extend" }
+    fn name(&self) -> &'static str {
+        "trace_extend"
+    }
     async fn exec(
         &self,
         ai: &RequestHandler,
         _session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        if let (Some(pt), Some(backend)) = (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref()) {
+        if let (Some(pt), Some(backend)) =
+            (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref())
+        {
             if let Err(err) = ai
                 .tracing_service()
                 .update_extended_trace_info(&ctx.request_id, Some(pt.id), None, Some(backend.id))
@@ -1336,7 +1456,10 @@ impl ProxyHttp for ProxyService {
         let method = session.req_header().method.as_str();
 
         // 收集部分客户端信息用于日志
-        let req_stats = self.ai_handler.statistics_service().collect_request_stats(session);
+        let req_stats = self
+            .ai_handler
+            .statistics_service()
+            .collect_request_stats(session);
 
         // 记录原始请求信息
         let request_url = session.req_header().uri.to_string();
@@ -1374,7 +1497,10 @@ impl ProxyHttp for ProxyService {
                     path = %path,
                     "管理接口请求被发送到代理端口，应使用管理端口(默认: 9090)"
                 );
-                let e = crate::proxy_err!(upstream_not_found, "请使用管理端口访问管理接口(默认端口: 9090)");
+                let e = crate::proxy_err!(
+                    upstream_not_found,
+                    "请使用管理端口访问管理接口(默认端口: 9090)"
+                );
                 return Err(crate::pingora_error!(e));
             } else {
                 warn!(
@@ -1384,7 +1510,10 @@ impl ProxyHttp for ProxyService {
                     path = %path,
                     "非代理端点：该端口仅处理 AI 代理请求"
                 );
-                let e = crate::proxy_err!(upstream_not_found, "该端口仅处理 AI 代理请求(非管理/非静态)");
+                let e = crate::proxy_err!(
+                    upstream_not_found,
+                    "该端口仅处理 AI 代理请求(非管理/非静态)"
+                );
                 return Err(crate::pingora_error!(e));
             }
         }
@@ -1399,7 +1528,6 @@ impl ProxyHttp for ProxyService {
 
         // 早期处理完成
         Ok(())
-
     }
 
     async fn request_filter(
@@ -1409,7 +1537,6 @@ impl ProxyHttp for ProxyService {
     ) -> pingora_core::Result<bool> {
         // 主要工作已在 early_request_filter 完成，这里直接继续
         crate::pingora_continue!()
-
     }
 
     async fn upstream_peer(
@@ -1429,16 +1556,16 @@ impl ProxyHttp for ProxyService {
             tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
         }
         for svc in &self.upstream_peer_services {
-            if let Some(peer) = svc
-                .select(&self.ai_handler, _session, ctx)
-                .await?
-            {
+            if let Some(peer) = svc.select(&self.ai_handler, _session, ctx).await? {
                 return Ok(peer);
             }
         }
 
         // 理论上默认服务已返回 Some；到这里表示未能选择上游
-        Err(crate::pingora_error!(crate::proxy_err!(upstream_not_found, "no upstream peer selected")))
+        Err(crate::pingora_error!(crate::proxy_err!(
+            upstream_not_found,
+            "no upstream peer selected"
+        )))
     }
 
     async fn upstream_request_filter(
@@ -1449,12 +1576,14 @@ impl ProxyHttp for ProxyService {
     ) -> pingora_core::Result<()> {
         for svc in &self.upstream_request_services {
             tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), "run upstream_request step");
-            svc.exec(&self.ai_handler, session, upstream_request, ctx).await?;
+            svc.exec(&self.ai_handler, session, upstream_request, ctx)
+                .await?;
         }
         // provider 特定的上游请求服务（按需注入，默认在通用服务之后执行以便覆盖）
         for svc in provider_upstream_request_services(ctx) {
             tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), provider = ?ctx.provider_type.as_ref().map(|p| p.name.clone()), "run provider upstream_request step");
-            svc.exec(&self.ai_handler, session, upstream_request, ctx).await?;
+            svc.exec(&self.ai_handler, session, upstream_request, ctx)
+                .await?;
         }
         Ok(())
     }
@@ -1467,7 +1596,8 @@ impl ProxyHttp for ProxyService {
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
         for svc in &self.request_body_services {
-            svc.exec(&self.ai_handler, session, body_chunk, end_of_stream, ctx).await?;
+            svc.exec(&self.ai_handler, session, body_chunk, end_of_stream, ctx)
+                .await?;
         }
         Ok(())
     }
@@ -1492,11 +1622,13 @@ impl ProxyHttp for ProxyService {
         );
 
         for svc in &self.response_header_services {
-            svc.exec(&self.ai_handler, upstream_response, ctx).await?;
+            svc.exec(&self.ai_handler, _session, upstream_response, ctx)
+                .await?;
         }
         // provider 特定的响应头服务
         for svc in provider_response_header_services(ctx) {
-            svc.exec(&self.ai_handler, upstream_response, ctx).await?;
+            svc.exec(&self.ai_handler, _session, upstream_response, ctx)
+                .await?;
         }
         Ok(())
     }
@@ -1514,12 +1646,16 @@ impl ProxyHttp for ProxyService {
         let mut next: Option<std::time::Duration> = None;
         for svc in &self.response_body_services {
             let ret = svc.exec(body, end_of_stream, ctx)?;
-            if next.is_none() { next = ret; }
+            if next.is_none() {
+                next = ret;
+            }
         }
         // provider 特定的响应体服务
         for svc in provider_response_body_services(ctx) {
             let ret = svc.exec(body, end_of_stream, ctx)?;
-            if next.is_none() { next = ret; }
+            if next.is_none() {
+                next = ret;
+            }
         }
         Ok(next)
     }
@@ -1554,13 +1690,17 @@ impl ProxyHttp for ProxyService {
             result = Some(svc.handle(tracer.clone(), &self.ai_handler, e, ctx));
             break;
         }
-        result.unwrap_or(FailToProxy { error_code: 500, can_reuse_downstream: false })
+        result.unwrap_or(FailToProxy {
+            error_code: 500,
+            can_reuse_downstream: false,
+        })
     }
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
         // 可插拔日志服务（扩展点）
         for svc in &self.logging_services {
-            svc.exec(&self.ai_handler, self.tracer.clone(), session, e, ctx).await;
+            svc.exec(&self.ai_handler, self.tracer.clone(), session, e, ctx)
+                .await;
         }
 
         let duration = ctx.start_time.elapsed();

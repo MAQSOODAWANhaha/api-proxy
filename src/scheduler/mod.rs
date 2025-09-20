@@ -8,13 +8,12 @@ pub mod pool_manager;
 pub mod types;
 
 pub use algorithms::{
-    ApiKeySelector, ApiKeySelectionResult, SelectionContext,
-    RoundRobinApiKeySelector, HealthBasedApiKeySelector,
-    create_api_key_selector,
+    ApiKeySelectionResult, ApiKeySelector, HealthBasedApiKeySelector, RoundRobinApiKeySelector,
+    SelectionContext, create_api_key_selector,
 };
 pub use api_key_health::{
-    ApiKeyHealthChecker, ApiKeyHealthStatus, ApiKeyCheckResult,
-    ApiKeyHealthConfig, ApiKeyCheckType, ApiKeyErrorCategory,
+    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealthChecker,
+    ApiKeyHealthConfig, ApiKeyHealthStatus,
 };
 pub use pool_manager::{ApiKeyPoolManager, PoolStats, SmartApiKeySelectionResult};
 pub use types::SchedulingStrategy;

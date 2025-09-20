@@ -208,14 +208,21 @@ impl OAuthClient {
         name: &str,
         description: Option<&str>,
     ) -> OAuthResult<AuthorizeUrlResponse> {
-        tracing::info!("🚀 [OAuth] 开始授权流程: user_id={}, provider_name={}, name={}",
-            user_id, provider_name, name);
+        tracing::info!(
+            "🚀 [OAuth] 开始授权流程: user_id={}, provider_name={}, name={}",
+            user_id,
+            provider_name,
+            name
+        );
 
         // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
 
-        tracing::debug!("✅ [OAuth] 提供商配置获取成功: provider_name={}, client_id={}",
-            provider_name, config.client_id);
+        tracing::debug!(
+            "✅ [OAuth] 提供商配置获取成功: provider_name={}, client_id={}",
+            provider_name,
+            config.client_id
+        );
 
         // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
         let provider_type_id = if provider_name.contains(':') {
@@ -226,8 +233,12 @@ impl OAuthClient {
             None
         };
 
-        tracing::debug!("📝 [OAuth] 创建会话: user_id={}, provider_name={}, provider_type_id={:?}",
-            user_id, provider_name, provider_type_id);
+        tracing::debug!(
+            "📝 [OAuth] 创建会话: user_id={}, provider_name={}, provider_type_id={:?}",
+            user_id,
+            provider_name,
+            provider_type_id
+        );
 
         // 创建会话
         let session = self
@@ -242,16 +253,21 @@ impl OAuthClient {
             )
             .await?;
 
-        tracing::info!("✅ [OAuth] 会话创建成功: session_id={}, state={}",
-            session.session_id, session.state);
+        tracing::info!(
+            "✅ [OAuth] 会话创建成功: session_id={}, state={}",
+            session.session_id,
+            session.state
+        );
 
         // 生成授权URL
         let authorize_url = self
             .provider_manager
             .build_authorize_url(&config, &session)?;
 
-        tracing::info!("🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s",
-            session.session_id);
+        tracing::info!(
+            "🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s",
+            session.session_id
+        );
 
         Ok(AuthorizeUrlResponse {
             authorize_url,

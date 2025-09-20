@@ -11,8 +11,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 
-use crate::cache::CacheManager;
 use crate::auth::types::{AuthType, MultiAuthConfig};
+use crate::cache::CacheManager;
 use crate::error::{ProxyError, Result};
 use entity::provider_types::{self, Entity as ProviderTypes};
 
@@ -339,7 +339,8 @@ impl ProviderConfigManager {
         };
 
         // 解析支持的认证类型
-        let supported_auth_types = self.parse_supported_auth_types(&provider.supported_auth_types)?;
+        let supported_auth_types =
+            self.parse_supported_auth_types(&provider.supported_auth_types)?;
 
         // 解析认证配置
         let auth_configs = if let Some(ref json_str) = provider.auth_configs_json {
@@ -383,9 +384,10 @@ impl ProviderConfigManager {
 
     /// 解析支持的认证类型字符串
     fn parse_supported_auth_types(&self, json_str: &str) -> Result<Vec<AuthType>> {
-        let type_strings: Vec<String> = serde_json::from_str(json_str)
-            .map_err(|e| ProxyError::config(&format!("Failed to parse supported_auth_types: {}", e)))?;
-        
+        let type_strings: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
+            ProxyError::config(&format!("Failed to parse supported_auth_types: {}", e))
+        })?;
+
         let mut auth_types = Vec::new();
         for type_str in type_strings {
             match type_str.as_str() {
@@ -398,7 +400,7 @@ impl ProviderConfigManager {
                 }
             }
         }
-        
+
         Ok(auth_types)
     }
 
@@ -439,7 +441,6 @@ impl ProviderConfigManager {
         format!("{}{}", config.https_url, path)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -531,7 +532,7 @@ mod tests {
             supported_auth_types: vec![AuthType::ApiKey],
             auth_configs: None,
         };
-        
+
         assert_eq!(
             manager.get_api_endpoint(&test_config, "/v1/chat/completions"),
             "https://api.openai.com/v1/chat/completions"

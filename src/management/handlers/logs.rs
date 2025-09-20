@@ -2,7 +2,7 @@
 //!
 //! 基于 proxy_tracing 表的日志查询、统计和分析功能
 
-use crate::auth::{extract_user_id_from_headers, check_is_admin_from_headers};
+use crate::auth::{check_is_admin_from_headers, extract_user_id_from_headers};
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
 use ::entity::proxy_tracing;
@@ -163,7 +163,11 @@ pub async fn get_dashboard_stats(
         Ok(stats) => ApiResponse::Success(stats).into_response(),
         Err(e) => {
             tracing::error!("获取日志仪表板统计失败: {}", e);
-            crate::management::response::app_error(crate::proxy_err!(database, "获取统计数据失败: {}", e))
+            crate::management::response::app_error(crate::proxy_err!(
+                database,
+                "获取统计数据失败: {}",
+                e
+            ))
         }
     }
 }
@@ -260,7 +264,11 @@ pub async fn get_traces_list(
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志列表失败: {}", e);
-            crate::management::response::app_error(crate::proxy_err!(database, "获取日志列表失败: {}", e))
+            crate::management::response::app_error(crate::proxy_err!(
+                database,
+                "获取日志列表失败: {}",
+                e
+            ))
         }
     }
 }
@@ -280,7 +288,10 @@ async fn fetch_traces_list(
     // 权限控制：非管理员只能查看自己的日志记录
     if !is_admin {
         select = select.filter(proxy_tracing::Column::UserId.eq(current_user_id));
-        tracing::info!("Non-admin user {} accessing traces - filtering by user_id", current_user_id);
+        tracing::info!(
+            "Non-admin user {} accessing traces - filtering by user_id",
+            current_user_id
+        );
     } else {
         tracing::info!("Admin user {} accessing all traces", current_user_id);
     }
@@ -418,12 +429,18 @@ pub async fn get_trace_detail(
 
     match fetch_trace_detail(&state.database, id).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
-        Ok(None) => crate::management::response::app_error(
-            crate::proxy_err!(business, "ProxyTrace not found: {}", id),
-        ),
+        Ok(None) => crate::management::response::app_error(crate::proxy_err!(
+            business,
+            "ProxyTrace not found: {}",
+            id
+        )),
         Err(e) => {
             tracing::error!("获取日志详情失败: {}", e);
-            crate::management::response::app_error(crate::proxy_err!(database, "获取日志详情失败: {}", e))
+            crate::management::response::app_error(crate::proxy_err!(
+                database,
+                "获取日志详情失败: {}",
+                e
+            ))
         }
     }
 }
@@ -512,7 +529,11 @@ pub async fn get_logs_analytics(
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志统计分析失败: {}", e);
-            crate::management::response::app_error(crate::proxy_err!(database, "获取统计分析失败: {}", e))
+            crate::management::response::app_error(crate::proxy_err!(
+                database,
+                "获取统计分析失败: {}",
+                e
+            ))
         }
     }
 }

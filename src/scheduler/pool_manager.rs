@@ -2,16 +2,16 @@
 //!
 //! 专门管理用户API密钥池的选择和调度，替代传统的负载均衡器概念
 
-use super::algorithms::{ApiKeySelector, ApiKeySelectionResult, SelectionContext};
+use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext};
 use super::api_key_health::ApiKeyHealthChecker;
 use super::types::SchedulingStrategy;
-use crate::auth::{SmartApiKeyProvider, CredentialResult, AuthCredentialType};
+use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider};
 use crate::error::{ProxyError, Result};
 use entity::user_provider_keys;
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter};
-use std::sync::Arc;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
-use tracing::{debug, warn, info, error};
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 /// API密钥池管理器
 /// 职责：管理用户的API密钥池，根据策略选择合适的密钥，并集成OAuth token智能刷新
@@ -42,9 +42,9 @@ impl ApiKeyPoolManager {
 
     /// 创建带有智能密钥提供者的API密钥池管理器
     pub fn new_with_smart_provider(
-        db: Arc<DatabaseConnection>, 
+        db: Arc<DatabaseConnection>,
         health_checker: Arc<ApiKeyHealthChecker>,
-        smart_provider: Arc<SmartApiKeyProvider>
+        smart_provider: Arc<SmartApiKeyProvider>,
     ) -> Self {
         Self {
             db,
@@ -68,18 +68,21 @@ impl ApiKeyPoolManager {
     ) -> Result<ApiKeySelectionResult> {
         // 从service_api中解析user_provider_keys_ids JSON数组
         let provider_key_ids: Vec<i32> = match &service_api.user_provider_keys_ids {
-            sea_orm::prelude::Json::Array(ids) => {
-                ids.iter()
-                    .filter_map(|id| id.as_i64().map(|i| i as i32))
-                    .collect()
-            },
+            sea_orm::prelude::Json::Array(ids) => ids
+                .iter()
+                .filter_map(|id| id.as_i64().map(|i| i as i32))
+                .collect(),
             _ => {
-                return Err(ProxyError::internal("Invalid user_provider_keys_ids format"));
+                return Err(ProxyError::internal(
+                    "Invalid user_provider_keys_ids format",
+                ));
             }
         };
 
         if provider_key_ids.is_empty() {
-            return Err(ProxyError::internal("No provider keys configured in service API"));
+            return Err(ProxyError::internal(
+                "No provider keys configured in service API",
+            ));
         }
 
         // 查询指定的API密钥，并应用基础筛选条件
@@ -94,15 +97,17 @@ impl ApiKeyPoolManager {
         let user_keys = self.filter_valid_keys(&all_candidate_keys).await;
 
         if user_keys.is_empty() {
-            return Err(ProxyError::internal("No active provider keys found for configured IDs"));
+            return Err(ProxyError::internal(
+                "No active provider keys found for configured IDs",
+            ));
         }
 
         // 过滤健康的密钥
         let healthy_keys = self.filter_healthy_keys(&user_keys).await;
-        
+
         // 记录密钥限制信息用于调试
         self.log_key_limits(&user_keys).await;
-        
+
         if healthy_keys.is_empty() {
             // 如果没有健康的密钥，记录警告并使用所有密钥（降级模式）
             warn!(
@@ -121,7 +126,11 @@ impl ApiKeyPoolManager {
         }
 
         // 选择要使用的密钥集合（优先使用健康的，降级时使用全部）
-        let keys_to_use = if healthy_keys.is_empty() { &user_keys } else { &healthy_keys };
+        let keys_to_use = if healthy_keys.is_empty() {
+            &user_keys
+        } else {
+            &healthy_keys
+        };
 
         // 使用配置的调度策略
         let scheduling_strategy = service_api
@@ -132,7 +141,7 @@ impl ApiKeyPoolManager {
 
         // 获取或创建选择器
         let selector = self.get_selector(scheduling_strategy).await;
-        
+
         // 执行密钥选择
         selector.select_key(keys_to_use, context).await
     }
@@ -150,14 +159,18 @@ impl ApiKeyPoolManager {
 
         // 过滤健康的密钥
         let healthy_keys = self.filter_healthy_keys(keys).await;
-        let keys_to_use = if healthy_keys.is_empty() { keys } else { &healthy_keys };
+        let keys_to_use = if healthy_keys.is_empty() {
+            keys
+        } else {
+            &healthy_keys
+        };
 
         let selector = self.get_selector(strategy).await;
         selector.select_key(keys_to_use, context).await
     }
 
     /// 使用智能提供者获取有效的API凭证（支持OAuth token刷新）
-    /// 
+    ///
     /// 这个方法集成了OAuth token的智能刷新功能：
     /// 1. 使用传统的密钥选择逻辑选择API密钥
     /// 2. 通过SmartApiKeyProvider获取有效凭证（自动处理OAuth token刷新）
@@ -168,11 +181,16 @@ impl ApiKeyPoolManager {
         context: &SelectionContext,
     ) -> Result<SmartApiKeySelectionResult> {
         // 先使用传统方法选择密钥
-        let selection_result = self.select_api_key_from_service_api(service_api, context).await?;
-        
+        let selection_result = self
+            .select_api_key_from_service_api(service_api, context)
+            .await?;
+
         // 如果有智能提供者，获取有效凭证
         if let Some(smart_provider) = &self.smart_provider {
-            match smart_provider.get_valid_credential(selection_result.selected_key.id).await {
+            match smart_provider
+                .get_valid_credential(selection_result.selected_key.id)
+                .await
+            {
                 Ok(credential_result) => {
                     info!(
                         key_id = selection_result.selected_key.id,
@@ -180,27 +198,27 @@ impl ApiKeyPoolManager {
                         refreshed = credential_result.refreshed,
                         "Successfully obtained smart API credential"
                     );
-                    
+
                     Ok(SmartApiKeySelectionResult {
                         selection_result,
                         credential: credential_result,
                         smart_enhanced: true,
                     })
-                },
+                }
                 Err(e) => {
                     error!(
                         key_id = selection_result.selected_key.id,
                         error = ?e,
                         "Failed to get smart API credential, falling back to raw key"
                     );
-                    
+
                     // 降级：使用原始API密钥
                     let fallback_credential = CredentialResult {
                         credential: selection_result.selected_key.api_key.clone(),
                         auth_type: AuthCredentialType::ApiKey,
                         refreshed: false,
                     };
-                    
+
                     Ok(SmartApiKeySelectionResult {
                         selection_result,
                         credential: fallback_credential,
@@ -215,7 +233,7 @@ impl ApiKeyPoolManager {
                 auth_type: AuthCredentialType::ApiKey,
                 refreshed: false,
             };
-            
+
             Ok(SmartApiKeySelectionResult {
                 selection_result,
                 credential: basic_credential,
@@ -225,9 +243,13 @@ impl ApiKeyPoolManager {
     }
 
     /// 缓存用户的API密钥池
-    pub async fn cache_user_key_pool(&self, user_id: i32, provider_type_id: i32) -> Result<Vec<user_provider_keys::Model>> {
+    pub async fn cache_user_key_pool(
+        &self,
+        user_id: i32,
+        provider_type_id: i32,
+    ) -> Result<Vec<user_provider_keys::Model>> {
         let cache_key = format!("user_{}_{}", user_id, provider_type_id);
-        
+
         // 查询用户的API密钥
         let user_keys = entity::user_provider_keys::Entity::find()
             .filter(entity::user_provider_keys::Column::UserId.eq(user_id))
@@ -247,7 +269,11 @@ impl ApiKeyPoolManager {
     }
 
     /// 从缓存获取API密钥池
-    pub async fn get_cached_key_pool(&self, user_id: i32, provider_type_id: i32) -> Option<Vec<user_provider_keys::Model>> {
+    pub async fn get_cached_key_pool(
+        &self,
+        user_id: i32,
+        provider_type_id: i32,
+    ) -> Option<Vec<user_provider_keys::Model>> {
         let cache_key = format!("user_{}_{}", user_id, provider_type_id);
         let pools = self.key_pools.read().await;
         pools.get(&cache_key).cloned()
@@ -261,7 +287,7 @@ impl ApiKeyPoolManager {
             .filter(|key| key.starts_with(&format!("user_{}_", user_id)))
             .cloned()
             .collect();
-        
+
         for key in keys_to_remove {
             pools.remove(&key);
         }
@@ -287,7 +313,7 @@ impl ApiKeyPoolManager {
 
         // 创建新的选择器
         let selector = super::algorithms::create_api_key_selector(strategy);
-        
+
         {
             let mut selectors = self.selectors.write().await;
             selectors.insert(strategy, selector.clone());
@@ -297,15 +323,18 @@ impl ApiKeyPoolManager {
     }
 
     /// 过滤有效的API密钥 - 综合考虑认证状态、过期时间等条件
-    async fn filter_valid_keys(&self, keys: &[user_provider_keys::Model]) -> Vec<user_provider_keys::Model> {
+    async fn filter_valid_keys(
+        &self,
+        keys: &[user_provider_keys::Model],
+    ) -> Vec<user_provider_keys::Model> {
         let now = chrono::Utc::now().naive_utc();
-        
+
         keys.iter()
             .filter(|key| {
                 // 1. 检查认证状态
                 if let Some(auth_status) = &key.auth_status {
                     match auth_status.as_str() {
-                        "authorized" => {}, // 认证成功，继续检查其他条件
+                        "authorized" => {} // 认证成功，继续检查其他条件
                         "pending" => {
                             debug!(
                                 key_id = key.id,
@@ -313,7 +342,7 @@ impl ApiKeyPoolManager {
                                 "API key is pending authorization, skipping"
                             );
                             return false;
-                        },
+                        }
                         "expired" => {
                             debug!(
                                 key_id = key.id,
@@ -321,7 +350,7 @@ impl ApiKeyPoolManager {
                                 "API key authorization has expired, skipping"
                             );
                             return false;
-                        },
+                        }
                         "error" => {
                             debug!(
                                 key_id = key.id,
@@ -329,7 +358,7 @@ impl ApiKeyPoolManager {
                                 "API key has authorization error, skipping"
                             );
                             return false;
-                        },
+                        }
                         _ => {
                             // 未知状态，保守地允许通过
                             debug!(
@@ -341,7 +370,7 @@ impl ApiKeyPoolManager {
                         }
                     }
                 }
-                
+
                 // 2. 检查过期时间
                 if let Some(expires_at) = key.expires_at {
                     if now >= expires_at {
@@ -354,22 +383,50 @@ impl ApiKeyPoolManager {
                         return false;
                     }
                 }
-                
-                // 3. 检查健康状态（如果不是"healthy"或"unknown"则跳过）
+
+                // 3. 检查健康状态（现在有4个状态：healthy、rate_limited、unhealthy、error）
                 match key.health_status.as_str() {
                     "healthy" | "unknown" => {
                         // 健康或未知状态允许通过
                         true
-                    },
+                    }
+                    "rate_limited" => {
+                        // 限流状态：检查是否已经解除
+                        if let Some(resets_at) = key.rate_limit_resets_at {
+                            let now = chrono::Utc::now().naive_utc();
+                            if now > resets_at {
+                                // 限流已解除，允许通过
+                                true
+                            } else {
+                                debug!(
+                                    key_id = key.id,
+                                    key_name = %key.name,
+                                    health_status = %key.health_status,
+                                    rate_limit_resets_at = ?resets_at,
+                                    "API key is still rate limited, skipping"
+                                );
+                                false
+                            }
+                        } else {
+                            // 没有重置时间，保守地认为不健康
+                            debug!(
+                                key_id = key.id,
+                                key_name = %key.name,
+                                health_status = %key.health_status,
+                                "API key is rate limited without reset time, skipping"
+                            );
+                            false
+                        }
+                    }
                     "unhealthy" | "error" => {
                         debug!(
                             key_id = key.id,
                             key_name = %key.name,
                             health_status = %key.health_status,
-                            "API key is unhealthy, skipping"
+                            "API key is unhealthy or in error state, skipping"
                         );
                         false
-                    },
+                    }
                     _ => {
                         // 其他状态保守地允许通过
                         debug!(
@@ -385,7 +442,7 @@ impl ApiKeyPoolManager {
             .cloned()
             .collect()
     }
-    
+
     /// 记录密钥限制信息
     async fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
         for key in keys {
@@ -403,19 +460,61 @@ impl ApiKeyPoolManager {
             );
         }
     }
-    
+
     /// 过滤健康的API密钥
-    async fn filter_healthy_keys(&self, keys: &[user_provider_keys::Model]) -> Vec<user_provider_keys::Model> {
+    async fn filter_healthy_keys(
+        &self,
+        keys: &[user_provider_keys::Model],
+    ) -> Vec<user_provider_keys::Model> {
         let healthy_key_ids = self.health_checker.get_healthy_keys().await;
-        
+
         keys.iter()
-            .filter(|key| healthy_key_ids.contains(&key.id))
+            .filter(|key| {
+                // 首先检查健康检查器中的状态
+                let is_healthy_by_checker = healthy_key_ids.contains(&key.id);
+
+                // 然后检查本地的健康状态字段，考虑限流状态的自动恢复
+                let is_locally_healthy = match key.health_status.as_str() {
+                    "healthy" | "unknown" => true,
+                    "rate_limited" => {
+                        // 检查限流是否已经解除
+                        if let Some(resets_at) = key.rate_limit_resets_at {
+                            let now = chrono::Utc::now().naive_utc();
+                            now > resets_at
+                        } else {
+                            // 没有重置时间，保守地认为不健康
+                            false
+                        }
+                    }
+                    "unhealthy" | "error" => false,
+                    _ => true, // 其他状态保守地允许通过
+                };
+
+                let final_result = is_healthy_by_checker && is_locally_healthy;
+
+                if !final_result {
+                    debug!(
+                        key_id = key.id,
+                        key_name = %key.name,
+                        health_status = %key.health_status,
+                        is_healthy_by_checker,
+                        is_locally_healthy,
+                        rate_limit_resets_at = ?key.rate_limit_resets_at,
+                        "Key filtered out due to health status"
+                    );
+                }
+
+                final_result
+            })
             .cloned()
             .collect()
     }
 
     /// 检查指定API密钥的健康状态
-    pub async fn check_key_health(&self, key: &user_provider_keys::Model) -> Result<super::api_key_health::ApiKeyCheckResult> {
+    pub async fn check_key_health(
+        &self,
+        key: &user_provider_keys::Model,
+    ) -> Result<super::api_key_health::ApiKeyCheckResult> {
         self.health_checker
             .check_api_key(key)
             .await
@@ -442,12 +541,17 @@ impl ApiKeyPoolManager {
     }
 
     /// 获取API密钥的健康状态
-    pub async fn get_key_health_status(&self, key_id: i32) -> Option<super::api_key_health::ApiKeyHealthStatus> {
+    pub async fn get_key_health_status(
+        &self,
+        key_id: i32,
+    ) -> Option<super::api_key_health::ApiKeyHealthStatus> {
         self.health_checker.get_key_health_status(key_id).await
     }
 
     /// 获取所有API密钥的健康状态
-    pub async fn get_all_health_status(&self) -> HashMap<i32, super::api_key_health::ApiKeyHealthStatus> {
+    pub async fn get_all_health_status(
+        &self,
+    ) -> HashMap<i32, super::api_key_health::ApiKeyHealthStatus> {
         self.health_checker.get_all_health_status().await
     }
 
@@ -473,7 +577,7 @@ impl ApiKeyPoolManager {
         let selectors = self.selectors.read().await;
         let healthy_key_ids = self.health_checker.get_healthy_keys().await;
         let all_health_status = self.health_checker.get_all_health_status().await;
-        
+
         PoolStats {
             cached_pools: pools.len(),
             total_keys: pools.values().map(|pool| pool.len()).sum(),
@@ -510,16 +614,16 @@ pub struct PoolStats {
 }
 
 /// 智能API密钥选择结果
-/// 
+///
 /// 扩展了传统的ApiKeySelectionResult，增加了OAuth token智能刷新支持
 #[derive(Debug, Clone)]
 pub struct SmartApiKeySelectionResult {
     /// 传统的密钥选择结果
     pub selection_result: ApiKeySelectionResult,
-    
+
     /// 智能凭证（可能是刷新后的OAuth token或原始API密钥）
     pub credential: CredentialResult,
-    
+
     /// 是否启用了智能增强（即是否使用了SmartApiKeyProvider）
     pub smart_enhanced: bool,
 }
@@ -529,27 +633,30 @@ impl SmartApiKeySelectionResult {
     pub fn get_credential(&self) -> &str {
         &self.credential.credential
     }
-    
+
     /// 检查凭证是否是OAuth token
     pub fn is_oauth_token(&self) -> bool {
-        matches!(self.credential.auth_type, AuthCredentialType::OAuthToken { .. })
+        matches!(
+            self.credential.auth_type,
+            AuthCredentialType::OAuthToken { .. }
+        )
     }
-    
+
     /// 检查凭证是否刚刚刷新过
     pub fn is_refreshed(&self) -> bool {
         self.credential.refreshed
     }
-    
+
     /// 获取选中的密钥ID
     pub fn get_key_id(&self) -> i32 {
         self.selection_result.selected_key.id
     }
-    
+
     /// 获取选中的密钥名称
     pub fn get_key_name(&self) -> &str {
         &self.selection_result.selected_key.name
     }
-    
+
     /// 获取用户ID
     pub fn get_user_id(&self) -> i32 {
         self.selection_result.selected_key.user_id

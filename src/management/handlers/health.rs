@@ -3,9 +3,9 @@
 use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use axum::extract::{Path, State};
-use entity::{user_provider_keys, provider_types};
+use entity::{provider_types, user_provider_keys};
 // use pingora_http::StatusCode; // no longer needed with manage_error!
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::error;
@@ -73,7 +73,11 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
         Ok(health_infos) => response::success(health_infos),
         Err(err) => {
             error!(error = %err, "Failed to get API keys health status");
-            crate::manage_error!(crate::proxy_err!(database, "Failed to retrieve API keys health status: {}", err))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to retrieve API keys health status: {}",
+                err
+            ))
         }
     }
 }
@@ -85,7 +89,11 @@ pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::
         Ok(stats) => response::success(stats),
         Err(err) => {
             error!(error = %err, "Failed to get health statistics");
-            crate::manage_error!(crate::proxy_err!(database, "Failed to retrieve health statistics: {}", err))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to retrieve health statistics: {}",
+                err
+            ))
         }
     }
 }
@@ -99,7 +107,12 @@ pub async fn trigger_key_health_check(
         Ok(check_result) => response::success(check_result),
         Err(err) => {
             error!(key_id = key_id, error = %err, "Failed to trigger health check");
-            crate::manage_error!(crate::proxy_err!(database, "Failed to trigger health check for key {}: {}", key_id, err))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to trigger health check for key {}: {}",
+                key_id,
+                err
+            ))
         }
     }
 }
@@ -114,7 +127,12 @@ pub async fn mark_key_unhealthy(
         Ok(_) => response::success("API key marked as unhealthy"),
         Err(err) => {
             error!(key_id = key_id, error = %err, "Failed to mark key unhealthy");
-            crate::manage_error!(crate::proxy_err!(database, "Failed to mark key {} as unhealthy: {}", key_id, err))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to mark key {} as unhealthy: {}",
+                key_id,
+                err
+            ))
         }
     }
 }
@@ -157,7 +175,7 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
 
         // 获取健康状态
         let health_status = health_checker.get_key_health_status(key.id).await;
-        
+
         let health_info = if let Some(status) = health_status {
             ApiKeyHealthInfo {
                 key_id: key.id,
@@ -188,7 +206,7 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
                 error_message: None,
             }
         };
-        
+
         health_infos.push(health_info);
     }
 
@@ -197,26 +215,26 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
 
 async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthCheckStats> {
     let health_infos = get_api_keys_health_internal(state).await?;
-    
+
     let total_keys = health_infos.len();
     let healthy_keys = health_infos.iter().filter(|h| h.is_healthy).count();
     let unhealthy_keys = total_keys - healthy_keys;
-    
+
     // 按提供商分组统计
     let mut provider_stats_map = std::collections::HashMap::new();
-    
+
     for info in &health_infos {
         let entry = provider_stats_map
             .entry(info.provider_name.clone())
             .or_insert((0, 0, Vec::new())); // (total, healthy, scores)
-            
+
         entry.0 += 1; // total count
         if info.is_healthy {
             entry.1 += 1; // healthy count
         }
         entry.2.push(info.health_score); // collect scores
     }
-    
+
     let provider_stats = provider_stats_map
         .into_iter()
         .map(|(provider_name, (total, healthy, scores))| {
@@ -225,7 +243,7 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
             } else {
                 scores.iter().sum::<f32>() / scores.len() as f32
             };
-            
+
             ProviderHealthStats {
                 provider_name,
                 total_keys: total,
@@ -234,7 +252,7 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
             }
         })
         .collect();
-    
+
     // 检查健康检查服务是否运行中
     let health_check_running = state.api_key_health_checker.is_some();
 

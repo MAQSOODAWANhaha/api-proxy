@@ -60,9 +60,7 @@ macro_rules! proxy_ensure {
 /// 将 ProxyError 转为 (StatusCode, JSON 字符串)
 #[macro_export]
 macro_rules! http_error_body {
-    ($err:expr) => {{
-        $err.to_http_status_and_body()
-    }};
+    ($err:expr) => {{ $err.to_http_status_and_body() }};
 }
 
 /// 将 ProxyError 直接转换为 Pingora 错误（ErrorType::HTTPStatus + JSON body）
@@ -78,12 +76,7 @@ macro_rules! pingora_error {
 /// 构造任意 HTTP 状态的 Pingora 错误（用于成功短路或特殊响应）
 #[macro_export]
 macro_rules! pingora_http {
-    ($status:expr, $msg:expr) => {{
-        pingora_core::Error::explain(
-            pingora_core::ErrorType::HTTPStatus(($status) as u16),
-            $msg,
-        )
-    }};
+    ($status:expr, $msg:expr) => {{ pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(($status) as u16), $msg) }};
 }
 
 /// 将 Result<T, ProxyError> 一步转换为 pingora_core::Result<T>
@@ -101,28 +94,28 @@ macro_rules! pingora_try {
 /// 返回 Ok(false)（继续代理）
 #[macro_export]
 macro_rules! pingora_continue {
-    () => { Ok(false) };
+    () => {
+        Ok(false)
+    };
 }
 
 /// 返回 Ok(true)（已响应，下游结束）
 #[macro_export]
 macro_rules! pingora_respond {
-    () => { Ok(true) };
+    () => {
+        Ok(true)
+    };
 }
 
 /// 管理端错误快速返回：将 ProxyError 转为标准管理端响应包裹
 #[macro_export]
 macro_rules! manage_error {
-    ($err:expr) => {{
-        $crate::management::response::app_error($err)
-    }};
+    ($err:expr) => {{ $crate::management::response::app_error($err) }};
 }
 
 /// 管理端临时代码路径：用现有 code/status 直接返回标准错误包裹
 /// 便于逐步从手写 code 过渡到 ProxyError 语义映射
 #[macro_export]
 macro_rules! manage_error_code {
-    ($status:expr, $code:expr, $msg:expr) => {{
-        $crate::management::response::error($status, $code, $msg)
-    }};
+    ($status:expr, $code:expr, $msg:expr) => {{ $crate::management::response::error($status, $code, $msg) }};
 }

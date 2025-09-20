@@ -572,9 +572,12 @@ impl ApiKeyManager {
     // ==================== 共享数据库操作方法 ====================
 
     /// 根据API密钥查询数据库记录（不包含认证逻辑）
-    /// 
+    ///
     /// 返回原始的数据库记录，供不同认证场景使用
-    pub async fn find_api_key_record(&self, api_key: &str) -> Result<Option<user_provider_keys::Model>> {
+    pub async fn find_api_key_record(
+        &self,
+        api_key: &str,
+    ) -> Result<Option<user_provider_keys::Model>> {
         user_provider_keys::Entity::find()
             .filter(user_provider_keys::Column::ApiKey.eq(api_key))
             .filter(user_provider_keys::Column::IsActive.eq(true))
@@ -594,7 +597,7 @@ impl ApiKeyManager {
     }
 
     /// 获取API密钥基本信息（不含权限和速率限制）
-    /// 
+    ///
     /// 用于代理端轻量级认证
     pub async fn get_api_key_info(&self, api_key: &str) -> Result<Option<ApiKeyInfo>> {
         // 检查缓存
@@ -632,7 +635,7 @@ impl ApiKeyManager {
     }
 
     /// 代理端轻量级API密钥验证
-    /// 
+    ///
     /// 只验证密钥存在性和激活状态，不包含权限检查
     pub async fn validate_for_proxy(&self, api_key: &str) -> Result<ApiKeyInfo> {
         if !self.is_valid_api_key_format(api_key) {
@@ -646,13 +649,13 @@ impl ApiKeyManager {
                 } else {
                     Err(ApiKeyError::Inactive.into())
                 }
-            },
+            }
             None => Err(ApiKeyError::NotFound.into()),
         }
     }
 
     /// 管理端完整API密钥验证（保留原有逻辑）
-    /// 
+    ///
     /// 包含权限检查、速率限制等完整功能
     pub async fn validate_for_management(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
         // 使用原有的validate_api_key方法

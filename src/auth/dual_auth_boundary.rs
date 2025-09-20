@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use tracing::{debug, warn};
 
 use crate::auth::{AuthMethod, AuthResult};
-use crate::error::{Result, ProxyError};
+use crate::error::{ProxyError, Result};
 
 /// 端口类型定义
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,7 +36,7 @@ impl PortType {
     pub fn description(&self) -> &'static str {
         match self {
             Self::Management => "Management Port",
-            Self::Proxy => "Proxy Port", 
+            Self::Proxy => "Proxy Port",
         }
     }
 }
@@ -48,7 +48,7 @@ pub struct AuthBoundaryRule {
     pub port_type: PortType,
     /// 允许的认证方法
     pub allowed_methods: HashSet<AuthMethod>,
-    /// 禁止的认证方法 
+    /// 禁止的认证方法
     pub forbidden_methods: HashSet<AuthMethod>,
     /// 是否启用严格模式
     pub strict_mode: bool,
@@ -97,7 +97,7 @@ impl AuthBoundaryRule {
         if self.forbidden_methods.contains(method) {
             return false;
         }
-        
+
         if self.strict_mode {
             self.allowed_methods.contains(method)
         } else {
@@ -118,7 +118,7 @@ impl AuthBoundaryRule {
             format!(
                 "{:?} authentication is not allowed on {} (port {}). Allowed methods: {:?}",
                 method,
-                self.port_type.description(), 
+                self.port_type.description(),
                 self.port_type.port(),
                 self.allowed_methods
             )
@@ -129,7 +129,7 @@ impl AuthBoundaryRule {
 }
 
 /// 双认证边界控制器
-/// 
+///
 /// 负责强化双端口认证机制的边界控制，防止认证方式混用
 pub struct DualAuthBoundaryController {
     /// 管理端认证规则
@@ -171,9 +171,8 @@ impl DualAuthBoundaryController {
             return Ok(());
         }
 
-        let port_type = PortType::from_port(port).ok_or_else(|| {
-            ProxyError::authentication(&format!("Unsupported port: {}", port))
-        })?;
+        let port_type = PortType::from_port(port)
+            .ok_or_else(|| ProxyError::authentication(&format!("Unsupported port: {}", port)))?;
 
         let rule = match port_type {
             PortType::Management => &self.management_rule,
@@ -182,10 +181,10 @@ impl DualAuthBoundaryController {
 
         if !rule.is_method_allowed(method) {
             let violation_reason = rule.get_violation_reason(method);
-            
+
             // 记录违规
             self.record_violation(port_type, method, &violation_reason, request_context);
-            
+
             return Err(ProxyError::authentication(&format!(
                 "Authentication boundary violation: {}",
                 violation_reason
@@ -220,8 +219,10 @@ impl DualAuthBoundaryController {
         reason: &str,
         context: &AuthRequestContext,
     ) {
-        let count = self.violation_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+        let count = self
+            .violation_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         warn!(
             violation_id = count,
             port = port_type.port(),
@@ -238,7 +239,9 @@ impl DualAuthBoundaryController {
     /// 获取违规统计
     pub fn get_violation_stats(&self) -> BoundaryViolationStats {
         BoundaryViolationStats {
-            total_violations: self.violation_count.load(std::sync::atomic::Ordering::Relaxed),
+            total_violations: self
+                .violation_count
+                .load(std::sync::atomic::Ordering::Relaxed),
             management_port_violations: 0, // 可以扩展为详细统计
             proxy_port_violations: 0,
             enabled: self.enabled,
@@ -247,7 +250,8 @@ impl DualAuthBoundaryController {
 
     /// 重置违规计数器
     pub fn reset_violation_count(&self) {
-        self.violation_count.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.violation_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         debug!("Authentication boundary violation counter reset");
     }
 
@@ -355,7 +359,7 @@ pub struct BoundaryViolationStats {
 }
 
 /// 默认的双认证边界控制器实例
-static BOUNDARY_CONTROLLER: std::sync::LazyLock<std::sync::RwLock<DualAuthBoundaryController>> = 
+static BOUNDARY_CONTROLLER: std::sync::LazyLock<std::sync::RwLock<DualAuthBoundaryController>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(DualAuthBoundaryController::new()));
 
 /// 获取全局边界控制器引用
@@ -420,24 +424,32 @@ mod tests {
             .with_path("/api/test".to_string());
 
         // 管理端允许JWT
-        assert!(controller
-            .validate_auth_request(9090, &AuthMethod::Jwt, &context)
-            .is_ok());
+        assert!(
+            controller
+                .validate_auth_request(9090, &AuthMethod::Jwt, &context)
+                .is_ok()
+        );
 
         // 管理端禁止API密钥
-        assert!(controller
-            .validate_auth_request(9090, &AuthMethod::ApiKey, &context)
-            .is_err());
+        assert!(
+            controller
+                .validate_auth_request(9090, &AuthMethod::ApiKey, &context)
+                .is_err()
+        );
 
         // 代理端允许API密钥
-        assert!(controller
-            .validate_auth_request(8080, &AuthMethod::ApiKey, &context)
-            .is_ok());
+        assert!(
+            controller
+                .validate_auth_request(8080, &AuthMethod::ApiKey, &context)
+                .is_ok()
+        );
 
         // 代理端禁止JWT
-        assert!(controller
-            .validate_auth_request(8080, &AuthMethod::Jwt, &context)
-            .is_err());
+        assert!(
+            controller
+                .validate_auth_request(8080, &AuthMethod::Jwt, &context)
+                .is_err()
+        );
     }
 
     #[test]
@@ -446,12 +458,16 @@ mod tests {
         let context = AuthRequestContext::new();
 
         // 禁用时所有组合都应该通过
-        assert!(controller
-            .validate_auth_request(9090, &AuthMethod::ApiKey, &context)
-            .is_ok());
-        assert!(controller
-            .validate_auth_request(8080, &AuthMethod::Jwt, &context)
-            .is_ok());
+        assert!(
+            controller
+                .validate_auth_request(9090, &AuthMethod::ApiKey, &context)
+                .is_ok()
+        );
+        assert!(
+            controller
+                .validate_auth_request(8080, &AuthMethod::Jwt, &context)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -484,7 +500,7 @@ mod tests {
     #[test]
     fn test_global_boundary_controller() {
         let context = AuthRequestContext::new();
-        
+
         // 测试全局控制器
         let result = validate_auth_boundary(9090, &AuthMethod::Jwt, &context);
         assert!(result.is_ok());

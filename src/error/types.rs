@@ -1,8 +1,8 @@
 //! # 错误类型定义
 
+use axum::body::Body as AxumBody;
 use axum::http::StatusCode;
 use axum::response::Response as AxumResponse;
-use axum::body::Body as AxumBody;
 use thiserror::Error;
 
 /// 应用主要错误类型
@@ -31,8 +31,6 @@ pub enum ProxyError {
         #[source]
         source: Option<anyhow::Error>,
     },
-
-    
 
     /// AI服务商错误
     #[error("AI服务错误: {message}")]
@@ -296,21 +294,27 @@ impl ProxyError {
 
         // 附加可选字段（如超时配置）
         match self {
-            ProxyError::ConnectionTimeout { timeout_seconds, .. } => (
+            ProxyError::ConnectionTimeout {
+                timeout_seconds, ..
+            } => (
                 status,
                 format!(
                     "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
                     self, code, timeout_seconds
                 ),
             ),
-            ProxyError::ReadTimeout { timeout_seconds, .. } => (
+            ProxyError::ReadTimeout {
+                timeout_seconds, ..
+            } => (
                 status,
                 format!(
                     "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
                     self, code, timeout_seconds
                 ),
             ),
-            ProxyError::WriteTimeout { timeout_seconds, .. } => (
+            ProxyError::WriteTimeout {
+                timeout_seconds, ..
+            } => (
                 status,
                 format!(
                     "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
@@ -319,10 +323,7 @@ impl ProxyError {
             ),
             _ => (
                 status,
-                format!(
-                    "{{\"error\":\"{}\",\"code\":\"{}\"}}",
-                    self, code
-                ),
+                format!("{{\"error\":\"{}\",\"code\":\"{}\"}}", self, code),
             ),
         }
     }
@@ -333,7 +334,7 @@ impl ProxyError {
             ProxyError::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
             ProxyError::Database { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
             ProxyError::Network { .. } => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR"),
-            
+
             ProxyError::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
             ProxyError::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
             ProxyError::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
@@ -439,8 +440,6 @@ impl ProxyError {
             source: Some(source.into()),
         }
     }
-
-    
 
     /// 创建AI服务商错误
     pub fn ai_provider<T: Into<String>, P: Into<String>>(message: T, provider: P) -> Self {

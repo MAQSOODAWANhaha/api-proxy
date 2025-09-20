@@ -3,7 +3,7 @@
  * 账号（上游服务商）API Keys 管理页：完整的增删改查和统计功能
  */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   Search,
   Plus,
@@ -37,13 +37,75 @@ interface LocalProviderKey extends ProviderKey {
   status: 'active' | 'disabled' | 'error' // 基于 is_active 转换
   createdAt: string // 映射到 created_at
   requestLimitPerMinute: number // 映射到 max_requests_per_minute
-  tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute  
+  tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute
   requestLimitPerDay: number // 映射到 max_requests_per_day
   healthCheck: 'healthy' | 'warning' | 'error' // 映射到 health_status
   cost: number // 从 usage.total_cost 映射
   usage: number // 从 usage.total_requests 映射
+  rateLimitRemainingSeconds?: number // 限流剩余时间（秒）
 }
 
+// 健康状态映射函数：将后端的4个状态映射到前端的3个状态
+const mapHealthStatus = (backendStatus: string): 'healthy' | 'warning' | 'error' => {
+  switch (backendStatus) {
+    case 'healthy':
+      return 'healthy'
+    case 'rate_limited':
+      return 'warning' // 限流状态映射为警告
+    case 'unhealthy':
+    case 'error':
+      return 'error'
+    case 'unknown':
+    default:
+      return 'warning' // 未知状态保守地显示为警告
+  }
+}
+
+// 限流倒计时钩子
+const useRateLimitCountdown = (initialSeconds?: number) => {
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(initialSeconds || null)
+
+  useEffect(() => {
+    if (initialSeconds === undefined || initialSeconds === null) {
+      setRemainingSeconds(null)
+      return
+    }
+
+    setRemainingSeconds(initialSeconds)
+
+    const interval = setInterval(() => {
+      setRemainingSeconds(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(interval)
+          return null
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [initialSeconds])
+
+  const formatTime = useCallback((seconds: number): string => {
+    if (seconds < 60) {
+      return `${seconds}秒`
+    } else if (seconds < 3600) {
+      const minutes = Math.floor(seconds / 60)
+      const remainingSecs = seconds % 60
+      return `${minutes}分${remainingSecs}秒`
+    } else {
+      const hours = Math.floor(seconds / 3600)
+      const minutes = Math.floor((seconds % 3600) / 60)
+      return `${hours}小时${minutes}分`
+    }
+  }, [])
+
+  return {
+    remainingSeconds,
+    formattedTime: remainingSeconds ? formatTime(remainingSeconds) : null,
+    isRateLimited: remainingSeconds !== null && remainingSeconds > 0
+  }
+}
 
 // 数据转换工具函数
 const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
@@ -56,10 +118,12 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
     requestLimitPerMinute: apiKey.max_requests_per_minute,
     tokenLimitPromptPerMinute: apiKey.max_tokens_prompt_per_minute,
     requestLimitPerDay: apiKey.max_requests_per_day,
-    healthCheck: apiKey.health_status === 'healthy' ? 'healthy' : 'error',
+    healthCheck: mapHealthStatus(apiKey.status?.health_status || apiKey.health_status || 'unknown'),
     // 添加缺失的字段，从usage中获取
     cost: apiKey.usage?.total_cost || 0,
     usage: apiKey.usage?.total_requests || 0,
+    // 添加限流剩余时间
+    rateLimitRemainingSeconds: apiKey.status?.rate_limit_remaining_seconds,
   }
 }
 
@@ -331,14 +395,31 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 渲染健康状态
-  const renderHealthStatus = (status: string) => {
+  const renderHealthStatus = (status: string, rateLimitRemainingSeconds?: number) => {
+    const { remainingSeconds, formattedTime, isRateLimited } = useRateLimitCountdown(rateLimitRemainingSeconds)
+
     const statusConfig = {
       healthy: { color: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-200', text: '正常' },
       warning: { color: 'text-yellow-600', bg: 'bg-yellow-50', ring: 'ring-yellow-200', text: '警告' },
       error: { color: 'text-red-600', bg: 'bg-red-50', ring: 'ring-red-200', text: '异常' },
     }
     const config = statusConfig[status as keyof typeof statusConfig]
-    
+
+    // 如果是限流状态且有剩余时间，显示倒计时
+    if (status === 'warning' && isRateLimited && formattedTime) {
+      return (
+        <div className="flex flex-col items-start gap-1">
+          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${config.bg} ${config.color} ring-1 ${config.ring}`}>
+            <Activity size={10} className="mr-1" />
+            限流中
+          </span>
+          <span className="text-xs text-yellow-600 font-medium">
+            {formattedTime}后恢复
+          </span>
+        </div>
+      )
+    }
+
     return (
       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${config.bg} ${config.color} ring-1 ${config.ring}`}>
         <Activity size={10} className="mr-1" />
@@ -534,7 +615,7 @@ const ProviderKeysPage: React.FC = () => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      {renderHealthStatus(item.healthCheck)}
+                      {renderHealthStatus(item.healthCheck, item.rateLimitRemainingSeconds)}
                       <button
                         onClick={() => performHealthCheck(item.id)}
                         className="text-neutral-500 hover:text-neutral-700"

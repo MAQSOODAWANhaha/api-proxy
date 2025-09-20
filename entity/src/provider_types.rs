@@ -26,8 +26,8 @@ pub struct Model {
     pub token_mappings_json: Option<String>,   // Token字段映射配置
     pub model_extraction_json: Option<String>, // 模型提取规则配置
     // 认证配置字段
-    pub supported_auth_types: String,          // 支持的认证类型列表 (JSON数组)
-    pub auth_configs_json: Option<String>,     // 认证配置详情 (JSON对象)
+    pub supported_auth_types: String, // 支持的认证类型列表 (JSON数组)
+    pub auth_configs_json: Option<String>, // 认证配置详情 (JSON对象)
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }
@@ -51,7 +51,6 @@ impl Related<super::user_service_apis::Entity> for Entity {
         Relation::UserServiceApis.def()
     }
 }
-
 
 impl ActiveModelBehavior for ActiveModel {}
 
@@ -77,7 +76,6 @@ impl Model {
         serde_json::from_str(&self.supported_auth_types)
     }
 
-
     /// 检查是否支持指定的认证类型
     pub fn supports_auth_type(&self, auth_type: &str) -> bool {
         self.get_supported_auth_types()
@@ -86,9 +84,13 @@ impl Model {
     }
 
     /// 从AuthConfigsJson中提取特定认证类型的配置
-    pub fn get_auth_config(&self, auth_type: &str) -> Result<Option<serde_json::Value>, serde_json::Error> {
+    pub fn get_auth_config(
+        &self,
+        auth_type: &str,
+    ) -> Result<Option<serde_json::Value>, serde_json::Error> {
         if let Some(ref configs_json) = self.auth_configs_json {
-            let configs: serde_json::Map<String, serde_json::Value> = serde_json::from_str(configs_json)?;
+            let configs: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(configs_json)?;
             Ok(configs.get(auth_type).cloned())
         } else {
             Ok(None)
@@ -96,7 +98,10 @@ impl Model {
     }
 
     /// 获取OAuth配置
-    pub fn get_oauth_config(&self, oauth_type: &str) -> Result<Option<OAuthConfig>, serde_json::Error> {
+    pub fn get_oauth_config(
+        &self,
+        oauth_type: &str,
+    ) -> Result<Option<OAuthConfig>, serde_json::Error> {
         if let Some(config_value) = self.get_auth_config(oauth_type)? {
             let oauth_config: OAuthConfig = serde_json::from_value(config_value)?;
             Ok(Some(oauth_config))
@@ -113,7 +118,8 @@ impl Model {
     /// 获取所有OAuth配置类型
     pub fn get_oauth_types(&self) -> Vec<String> {
         let oauth_types = vec!["oauth"];
-        oauth_types.into_iter()
+        oauth_types
+            .into_iter()
             .filter(|&auth_type| self.supports_auth_type(auth_type))
             .map(|s| s.to_string())
             .collect()
@@ -133,7 +139,7 @@ impl Model {
                 if config.token_url.is_empty() {
                     return Err("token_url is required".to_string());
                 }
-                
+
                 // 验证URL格式
                 if let Err(e) = url::Url::parse(&config.authorize_url) {
                     return Err(format!("Invalid authorize_url: {}", e));
@@ -141,7 +147,7 @@ impl Model {
                 if let Err(e) = url::Url::parse(&config.token_url) {
                     return Err(format!("Invalid token_url: {}", e));
                 }
-                
+
                 // 验证redirect_uri（如果存在）
                 if let Some(ref redirect_uri) = config.redirect_uri
                     && !redirect_uri.is_empty()
@@ -149,17 +155,19 @@ impl Model {
                 {
                     return Err(format!("Invalid redirect_uri: {}", e));
                 }
-                
+
                 // 验证scopes格式
                 if config.scopes.is_empty() {
                     return Err("At least one scope is required".to_string());
                 }
-                
+
                 // 对于公共客户端（没有client_secret），验证PKCE要求
                 if config.client_secret.is_none() && !config.pkce_required {
-                    return Err("PKCE is required for public clients (no client_secret)".to_string());
+                    return Err(
+                        "PKCE is required for public clients (no client_secret)".to_string()
+                    );
                 }
-                
+
                 Ok(true)
             }
             Ok(None) => Err(format!("OAuth config for '{}' not found", oauth_type)),
@@ -171,7 +179,7 @@ impl Model {
     pub fn validate_all_oauth_configs(&self) -> Result<Vec<(String, bool)>, String> {
         let oauth_types = self.get_oauth_types();
         let mut results = Vec::new();
-        
+
         for oauth_type in oauth_types {
             match self.validate_oauth_config(&oauth_type) {
                 Ok(is_valid) => {
@@ -182,7 +190,7 @@ impl Model {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
@@ -199,10 +207,10 @@ impl Model {
     pub fn get_oauth_security_level(&self, oauth_type: &str) -> Result<String, serde_json::Error> {
         if let Some(config) = self.get_oauth_config(oauth_type)? {
             let security_level = match (config.client_secret.is_some(), config.pkce_required) {
-                (true, true) => "HIGH", // 机密客户端 + PKCE
+                (true, true) => "HIGH",    // 机密客户端 + PKCE
                 (true, false) => "MEDIUM", // 机密客户端，无PKCE
                 (false, true) => "MEDIUM", // 公共客户端 + PKCE
-                (false, false) => "LOW", // 公共客户端，无PKCE
+                (false, false) => "LOW",   // 公共客户端，无PKCE
             };
             Ok(security_level.to_string())
         } else {
@@ -211,7 +219,11 @@ impl Model {
     }
 
     /// 替换动态参数
-    pub fn replace_dynamic_params(&self, oauth_config: &mut OAuthConfig, params: &std::collections::HashMap<String, String>) {
+    pub fn replace_dynamic_params(
+        &self,
+        oauth_config: &mut OAuthConfig,
+        params: &std::collections::HashMap<String, String>,
+    ) {
         // 替换extra_params中的动态参数
         if let Some(ref mut extra_params) = oauth_config.extra_params {
             if let Some(project_id) = extra_params.get_mut("project_id")

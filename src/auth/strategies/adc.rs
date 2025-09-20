@@ -3,7 +3,7 @@
 //! 实现Google Application Default Credentials认证策略
 
 use super::traits::{AuthStrategy, OAuthTokenResult};
-use crate::auth::types::{AuthType, AuthError};
+use crate::auth::types::{AuthError, AuthType};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value;
@@ -25,9 +25,8 @@ pub struct AdcStrategy {
 
 impl AdcStrategy {
     /// Google默认元数据服务端点
-    pub const GOOGLE_METADATA_TOKEN_URL: &'static str = 
-        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
-    
+    pub const GOOGLE_METADATA_TOKEN_URL: &'static str = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+
     /// Google OAuth2 Token端点
     pub const GOOGLE_TOKEN_URL: &'static str = "https://oauth2.googleapis.com/token";
 
@@ -94,7 +93,7 @@ impl AdcStrategy {
                 .join(".config")
                 .join("gcloud")
                 .join("application_default_credentials.json");
-            
+
             if default_path.exists() {
                 return Some(default_path);
             }
@@ -105,45 +104,59 @@ impl AdcStrategy {
 
     /// 从文件加载凭据
     async fn load_credentials_from_file(&self, path: &PathBuf) -> Result<Value, AuthError> {
-        let content = fs::read_to_string(path).await
-            .map_err(|e| AuthError::ConfigError(format!("Failed to read credentials file: {}", e)))?;
-        
-        let credentials: Value = serde_json::from_str(&content)
-            .map_err(|e| AuthError::ConfigError(format!("Invalid credentials file format: {}", e)))?;
-        
+        let content = fs::read_to_string(path).await.map_err(|e| {
+            AuthError::ConfigError(format!("Failed to read credentials file: {}", e))
+        })?;
+
+        let credentials: Value = serde_json::from_str(&content).map_err(|e| {
+            AuthError::ConfigError(format!("Invalid credentials file format: {}", e))
+        })?;
+
         Ok(credentials)
     }
 
     /// 从元数据服务获取token（GCE/GKE环境）
-    async fn get_token_from_metadata_service(&self, scopes: &[String]) -> Result<OAuthTokenResult, AuthError> {
+    async fn get_token_from_metadata_service(
+        &self,
+        scopes: &[String],
+    ) -> Result<OAuthTokenResult, AuthError> {
         let mut url = Self::GOOGLE_METADATA_TOKEN_URL.to_string();
-        
+
         if !scopes.is_empty() {
             url.push_str(&format!("?scopes={}", scopes.join(",")));
         }
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Metadata-Flavor", "Google")
             .send()
             .await
-            .map_err(|e| AuthError::NetworkError(format!("Failed to call metadata service: {}", e)))?;
+            .map_err(|e| {
+                AuthError::NetworkError(format!("Failed to call metadata service: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(AuthError::NetworkError(format!(
-                "Metadata service returned status: {}", response.status()
+                "Metadata service returned status: {}",
+                response.status()
             )));
         }
 
-        let token_response: Value = response.json().await
-            .map_err(|e| AuthError::NetworkError(format!("Failed to parse metadata response: {}", e)))?;
+        let token_response: Value = response.json().await.map_err(|e| {
+            AuthError::NetworkError(format!("Failed to parse metadata response: {}", e))
+        })?;
 
-        let access_token = token_response.get("access_token")
+        let access_token = token_response
+            .get("access_token")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::NetworkError("No access token in metadata response".to_string()))?
+            .ok_or_else(|| {
+                AuthError::NetworkError("No access token in metadata response".to_string())
+            })?
             .to_string();
 
-        let expires_in = token_response.get("expires_in")
+        let expires_in = token_response
+            .get("expires_in")
             .and_then(|v| v.as_i64())
             .unwrap_or(self.token_expiry);
 
@@ -158,23 +171,36 @@ impl AdcStrategy {
     }
 
     /// 使用服务账户凭据获取token
-    async fn get_token_from_service_account(&self, credentials: &Value, _scopes: &[String]) -> Result<OAuthTokenResult, AuthError> {
+    async fn get_token_from_service_account(
+        &self,
+        credentials: &Value,
+        _scopes: &[String],
+    ) -> Result<OAuthTokenResult, AuthError> {
         // 从凭据中提取必要信息
-        let _client_email = credentials.get("client_email")
+        let _client_email = credentials
+            .get("client_email")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::ConfigError("Missing client_email in credentials".to_string()))?;
+            .ok_or_else(|| {
+                AuthError::ConfigError("Missing client_email in credentials".to_string())
+            })?;
 
-        let _private_key = credentials.get("private_key")
+        let _private_key = credentials
+            .get("private_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::ConfigError("Missing private_key in credentials".to_string()))?;
+            .ok_or_else(|| {
+                AuthError::ConfigError("Missing private_key in credentials".to_string())
+            })?;
 
-        let _token_uri = credentials.get("token_uri")
+        let _token_uri = credentials
+            .get("token_uri")
             .and_then(|v| v.as_str())
             .unwrap_or(Self::GOOGLE_TOKEN_URL);
 
         // 创建JWT断言 - 这里需要使用JWT库，为了简化这里返回错误
         // 在实际实现中需要使用jsonwebtoken或similar库来生成JWT
-        Err(AuthError::ConfigError("Service account JWT generation not implemented in ADC strategy".to_string()))
+        Err(AuthError::ConfigError(
+            "Service account JWT generation not implemented in ADC strategy".to_string(),
+        ))
     }
 }
 
@@ -201,7 +227,9 @@ impl AuthStrategy for AdcStrategy {
         if let Some(ref path) = self.credential_path {
             match self.load_credentials_from_file(path).await {
                 Ok(credentials) => {
-                    return self.get_token_from_service_account(&credentials, &scopes).await;
+                    return self
+                        .get_token_from_service_account(&credentials, &scopes)
+                        .await;
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load credentials from specified path: {}", e);
@@ -213,7 +241,9 @@ impl AuthStrategy for AdcStrategy {
         if let Some(env_path) = self.get_credential_path_from_env() {
             match self.load_credentials_from_file(&env_path).await {
                 Ok(credentials) => {
-                    return self.get_token_from_service_account(&credentials, &scopes).await;
+                    return self
+                        .get_token_from_service_account(&credentials, &scopes)
+                        .await;
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load credentials from environment path: {}", e);
@@ -286,6 +316,9 @@ mod tests {
 
         let strategy = AdcStrategy::from_config(&config).unwrap();
         assert_eq!(strategy.default_scopes.len(), 2);
-        assert_eq!(strategy.default_scopes[0], "https://www.googleapis.com/auth/generative-language");
+        assert_eq!(
+            strategy.default_scopes[0],
+            "https://www.googleapis.com/auth/generative-language"
+        );
     }
 }

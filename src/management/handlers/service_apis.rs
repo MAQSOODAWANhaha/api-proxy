@@ -212,7 +212,11 @@ pub async fn get_user_service_cards(
         Ok(count) => count as i32,
         Err(err) => {
             tracing::error!("Failed to count user service APIs: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to count user service APIs: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to count user service APIs: {}",
+                err
+            ));
         }
     };
 
@@ -226,7 +230,11 @@ pub async fn get_user_service_cards(
         Ok(count) => count as i32,
         Err(err) => {
             tracing::error!("Failed to count active user service APIs: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to count active user service APIs: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to count active user service APIs: {}",
+                err
+            ));
         }
     };
 
@@ -239,7 +247,11 @@ pub async fn get_user_service_cards(
         Ok(count) => count as i64,
         Err(err) => {
             tracing::error!("Failed to count user requests: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to count user requests: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to count user requests: {}",
+                err
+            ));
         }
     };
 
@@ -299,7 +311,11 @@ pub async fn list_user_service_keys(
         Ok(count) => count,
         Err(err) => {
             tracing::error!("Failed to count user service APIs: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to count user service APIs: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to count user service APIs: {}",
+                err
+            ));
         }
     };
 
@@ -327,7 +343,11 @@ pub async fn list_user_service_keys(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch user service APIs: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch user service APIs: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user service APIs: {}",
+                err
+            ));
         }
     };
 
@@ -445,10 +465,16 @@ pub async fn create_user_service_key(
         .await
     {
         Ok(Some(pt)) => pt,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "无效的服务商类型")); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(business, "无效的服务商类型"));
+        }
         Err(err) => {
             tracing::error!("Failed to query provider type: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to query provider type: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to query provider type: {}",
+                err
+            ));
         }
     };
 
@@ -463,7 +489,11 @@ pub async fn create_user_service_key(
         Ok(keys) => keys,
         Err(err) => {
             tracing::error!("Failed to query provider keys: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to query provider keys: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to query provider keys: {}",
+                err
+            ));
         }
     };
 
@@ -482,7 +512,12 @@ pub async fn create_user_service_key(
     let expires_at = if let Some(expires_str) = &request.expires_at {
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
-            Err(_) => { return crate::manage_error!(crate::proxy_err!(business, "过期时间格式错误，请使用ISO 8601格式")); }
+            Err(_) => {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "过期时间格式错误，请使用ISO 8601格式"
+                ));
+            }
         }
     } else {
         None
@@ -520,7 +555,11 @@ pub async fn create_user_service_key(
         Ok(data) => data,
         Err(e) => {
             tracing::error!("Failed to insert user service API: {}", e);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to create API Key: {}", e));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to create API Key: {}",
+                e
+            ));
         }
     };
 
@@ -548,7 +587,9 @@ pub async fn get_user_service_key(
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-    if api_id <= 0 { return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID")); }
+    if api_id <= 0 {
+        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+    }
 
     let db = state.database.as_ref();
 
@@ -565,20 +606,40 @@ pub async fn get_user_service_key(
         .await
     {
         Ok(Some(api)) => api,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch API Key: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
     // 获取provider type信息
     let provider_type = match ProviderType::find_by_id(api.provider_type_id).one(db).await {
         Ok(Some(pt)) => pt,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "Provider type not found: {}", api.provider_type_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "Provider type not found: {}",
+                api.provider_type_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch provider type: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch provider type: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider type: {}",
+                err
+            ));
         }
     };
 
@@ -652,13 +713,19 @@ pub async fn update_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to fetch API Key: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
@@ -667,7 +734,10 @@ pub async fn update_user_service_key(
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
             Err(_) => {
-                return crate::manage_error!(crate::proxy_err!(business, "过期时间格式错误，请使用ISO 8601格式"));
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "过期时间格式错误，请使用ISO 8601格式"
+                ));
             }
         }
     } else {
@@ -730,9 +800,11 @@ pub async fn update_user_service_key(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to update user service API: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to update API Key: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to update API Key: {}",
+                err
+            ));
         }
     };
 
@@ -774,13 +846,19 @@ pub async fn delete_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to fetch API Key: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
@@ -789,9 +867,11 @@ pub async fn delete_user_service_key(
         Ok(result) => result,
         Err(err) => {
             tracing::error!("Failed to delete user service API: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to delete API Key: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to delete API Key: {}",
+                err
+            ));
         }
     };
 
@@ -832,13 +912,19 @@ pub async fn get_user_service_key_usage(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to fetch API Key: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
@@ -904,7 +990,11 @@ pub async fn get_user_service_key_usage(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch proxy tracings: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch usage statistics: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch usage statistics: {}",
+                err
+            ));
         }
     };
 
@@ -986,7 +1076,9 @@ pub async fn regenerate_user_service_key(
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
-    if api_id <= 0 { return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID")); }
+    if api_id <= 0 {
+        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+    }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
@@ -1002,10 +1094,20 @@ pub async fn regenerate_user_service_key(
         .await
     {
         Ok(Some(api)) => api,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch API Key: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
@@ -1024,7 +1126,11 @@ pub async fn regenerate_user_service_key(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to regenerate API key: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to regenerate API key: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to regenerate API key: {}",
+                err
+            ));
         }
     };
 
@@ -1047,7 +1153,9 @@ pub async fn update_user_service_key_status(
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
-    if api_id <= 0 { return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID")); }
+    if api_id <= 0 {
+        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+    }
 
     let db = state.database.as_ref();
     // 从JWT token中提取用户ID
@@ -1063,10 +1171,20 @@ pub async fn update_user_service_key_status(
         .await
     {
         Ok(Some(api)) => api,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "API Key not found: {}", api_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "API Key not found: {}",
+                api_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user service API: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch API Key: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch API Key: {}",
+                err
+            ));
         }
     };
 
@@ -1082,7 +1200,11 @@ pub async fn update_user_service_key_status(
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to update API key status: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to update API key status: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to update API key status: {}",
+                err
+            ));
         }
     };
 

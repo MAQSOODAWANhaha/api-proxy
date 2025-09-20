@@ -1,17 +1,17 @@
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::{RwLock, oneshot};
-use tokio::task::JoinHandle;
-use tracing::{info, error, warn};
 use chrono::{DateTime, Utc};
 use sea_orm::DatabaseConnection;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{RwLock, oneshot};
+use tokio::task::JoinHandle;
+use tracing::{error, info, warn};
 
+use super::oauth_cleanup_task::{OAuthCleanupStats, OAuthCleanupTask};
+use super::oauth_token_refresh_service::OAuthTokenRefreshService;
+use super::oauth_token_refresh_task::{OAuthTokenRefreshTask, RefreshTaskConfig};
 use crate::config::OAuthCleanupConfig;
 use crate::error::{ProxyError, Result};
-use super::oauth_cleanup_task::{OAuthCleanupTask, OAuthCleanupStats};
-use super::oauth_token_refresh_task::{OAuthTokenRefreshTask, RefreshTaskConfig};
-use super::oauth_token_refresh_service::OAuthTokenRefreshService;
 
 /// 后台任务类型
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,17 +58,17 @@ pub struct BackgroundTaskInfo {
 pub struct BackgroundTaskManager {
     /// 数据库连接
     db: DatabaseConnection,
-    
+
     /// OAuth 清理任务
     oauth_cleanup_task: Option<Arc<OAuthCleanupTask>>,
     oauth_cleanup_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-    
+
     /// OAuth Token 刷新任务
     oauth_token_refresh_task: Option<Arc<OAuthTokenRefreshTask>>,
-    
+
     /// 任务状态信息
     task_info: Arc<RwLock<HashMap<BackgroundTaskType, BackgroundTaskInfo>>>,
-    
+
     /// 停止信号
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
 }
@@ -92,19 +92,22 @@ impl BackgroundTaskManager {
 
         let cleanup_task = Arc::new(OAuthCleanupTask::new(self.db.clone(), config));
         self.oauth_cleanup_task = Some(cleanup_task);
-        
+
         // 初始化任务信息
         let mut task_info = self.task_info.write().await;
-        task_info.insert(BackgroundTaskType::OAuthCleanup, BackgroundTaskInfo {
-            task_type: BackgroundTaskType::OAuthCleanup,
-            status: BackgroundTaskStatus::NotStarted,
-            started_at: None,
-            last_run_at: None,
-            next_run_at: None,
-            run_count: 0,
-            error_count: 0,
-            last_error: None,
-        });
+        task_info.insert(
+            BackgroundTaskType::OAuthCleanup,
+            BackgroundTaskInfo {
+                task_type: BackgroundTaskType::OAuthCleanup,
+                status: BackgroundTaskStatus::NotStarted,
+                started_at: None,
+                last_run_at: None,
+                next_run_at: None,
+                run_count: 0,
+                error_count: 0,
+                last_error: None,
+            },
+        );
 
         info!("OAuth cleanup task initialized");
         Ok(())
@@ -112,9 +115,9 @@ impl BackgroundTaskManager {
 
     /// 初始化 OAuth Token 刷新任务
     pub async fn setup_oauth_token_refresh_task(
-        &mut self, 
+        &mut self,
         refresh_service: Arc<OAuthTokenRefreshService>,
-        config: RefreshTaskConfig
+        config: RefreshTaskConfig,
     ) -> Result<()> {
         if !config.enabled {
             info!("OAuth token refresh task is disabled");
@@ -123,19 +126,22 @@ impl BackgroundTaskManager {
 
         let token_refresh_task = Arc::new(OAuthTokenRefreshTask::new(refresh_service, config));
         self.oauth_token_refresh_task = Some(token_refresh_task);
-        
+
         // 初始化任务信息
         let mut task_info = self.task_info.write().await;
-        task_info.insert(BackgroundTaskType::OAuthTokenRefresh, BackgroundTaskInfo {
-            task_type: BackgroundTaskType::OAuthTokenRefresh,
-            status: BackgroundTaskStatus::NotStarted,
-            started_at: None,
-            last_run_at: None,
-            next_run_at: None,
-            run_count: 0,
-            error_count: 0,
-            last_error: None,
-        });
+        task_info.insert(
+            BackgroundTaskType::OAuthTokenRefresh,
+            BackgroundTaskInfo {
+                task_type: BackgroundTaskType::OAuthTokenRefresh,
+                status: BackgroundTaskStatus::NotStarted,
+                started_at: None,
+                last_run_at: None,
+                next_run_at: None,
+                run_count: 0,
+                error_count: 0,
+                last_error: None,
+            },
+        );
 
         info!("OAuth token refresh task initialized");
         Ok(())
@@ -144,7 +150,7 @@ impl BackgroundTaskManager {
     /// 启动所有任务
     pub async fn start_all_tasks(&self) -> Result<()> {
         info!("Starting all background tasks");
-        
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.write().await = Some(shutdown_tx);
 
@@ -152,10 +158,10 @@ impl BackgroundTaskManager {
         if let Some(cleanup_task) = &self.oauth_cleanup_task {
             let task = Arc::clone(cleanup_task);
             let task_info = Arc::clone(&self.task_info);
-            
+
             let handle = tokio::spawn(async move {
                 let mut shutdown_rx = shutdown_rx;
-                
+
                 // 更新任务状态
                 {
                     let mut info = task_info.write().await;
@@ -183,7 +189,7 @@ impl BackgroundTaskManager {
                     }
                 }
             });
-            
+
             *self.oauth_cleanup_handle.write().await = Some(handle);
         }
 
@@ -193,7 +199,7 @@ impl BackgroundTaskManager {
                 error!("Failed to start OAuth token refresh task: {:?}", e);
                 return Err(e);
             }
-            
+
             // 更新任务状态
             let mut task_info = self.task_info.write().await;
             if let Some(info) = task_info.get_mut(&BackgroundTaskType::OAuthTokenRefresh) {
@@ -240,7 +246,10 @@ impl BackgroundTaskManager {
     }
 
     /// 获取任务状态
-    pub async fn get_task_status(&self, task_type: BackgroundTaskType) -> Option<BackgroundTaskInfo> {
+    pub async fn get_task_status(
+        &self,
+        task_type: BackgroundTaskType,
+    ) -> Option<BackgroundTaskInfo> {
         self.task_info.read().await.get(&task_type).cloned()
     }
 
@@ -252,9 +261,10 @@ impl BackgroundTaskManager {
     /// 获取 OAuth 清理统计信息
     pub async fn get_oauth_cleanup_stats(&self) -> Result<Option<OAuthCleanupStats>> {
         if let Some(cleanup_task) = &self.oauth_cleanup_task {
-            let stats = cleanup_task.get_cleanup_stats().await.map_err(|e| {
-                ProxyError::business(format!("Failed to get cleanup stats: {}", e))
-            })?;
+            let stats = cleanup_task
+                .get_cleanup_stats()
+                .await
+                .map_err(|e| ProxyError::business(format!("Failed to get cleanup stats: {}", e)))?;
             Ok(Some(stats))
         } else {
             Ok(None)
@@ -264,17 +274,18 @@ impl BackgroundTaskManager {
     /// 手动执行 OAuth 清理
     pub async fn execute_oauth_cleanup_now(&self) -> Result<()> {
         if let Some(cleanup_task) = &self.oauth_cleanup_task {
-            cleanup_task.cleanup_expired_sessions().await.map_err(|e| {
-                ProxyError::business(format!("Manual cleanup failed: {}", e))
-            })?;
-            
+            cleanup_task
+                .cleanup_expired_sessions()
+                .await
+                .map_err(|e| ProxyError::business(format!("Manual cleanup failed: {}", e)))?;
+
             // 更新运行统计
             let mut task_info = self.task_info.write().await;
             if let Some(info) = task_info.get_mut(&BackgroundTaskType::OAuthCleanup) {
                 info.run_count += 1;
                 info.last_run_at = Some(Utc::now());
             }
-            
+
             info!("Manual OAuth cleanup executed successfully");
             Ok(())
         } else {
@@ -289,7 +300,9 @@ impl BackgroundTaskManager {
             info!("Manual OAuth token refresh triggered");
             Ok(())
         } else {
-            Err(ProxyError::business("OAuth token refresh task not initialized"))
+            Err(ProxyError::business(
+                "OAuth token refresh task not initialized",
+            ))
         }
     }
 
@@ -304,16 +317,18 @@ impl BackgroundTaskManager {
             BackgroundTaskType::OAuthTokenRefresh => {
                 if let Some(task) = &self.oauth_token_refresh_task {
                     task.pause().await?;
-                    
+
                     // 更新状态
                     let mut task_info = self.task_info.write().await;
                     if let Some(info) = task_info.get_mut(&task_type) {
                         info.status = BackgroundTaskStatus::Paused;
                     }
-                    
+
                     Ok(())
                 } else {
-                    Err(ProxyError::business("OAuth token refresh task not initialized"))
+                    Err(ProxyError::business(
+                        "OAuth token refresh task not initialized",
+                    ))
                 }
             }
         }
@@ -330,16 +345,18 @@ impl BackgroundTaskManager {
             BackgroundTaskType::OAuthTokenRefresh => {
                 if let Some(task) = &self.oauth_token_refresh_task {
                     task.resume().await?;
-                    
+
                     // 更新状态
                     let mut task_info = self.task_info.write().await;
                     if let Some(info) = task_info.get_mut(&task_type) {
                         info.status = BackgroundTaskStatus::Running;
                     }
-                    
+
                     Ok(())
                 } else {
-                    Err(ProxyError::business("OAuth token refresh task not initialized"))
+                    Err(ProxyError::business(
+                        "OAuth token refresh task not initialized",
+                    ))
                 }
             }
         }
@@ -360,10 +377,16 @@ mod tests {
 
     // 注意：由于当前 sea-orm 版本不支持 MockDatabase，这些测试被注释掉
     // 完整的功能测试将在集成测试中进行
-    
+
     #[test]
     fn test_background_task_type_display() {
-        assert_eq!(BackgroundTaskType::OAuthCleanup.to_string(), "oauth-cleanup");
-        assert_eq!(BackgroundTaskType::OAuthTokenRefresh.to_string(), "oauth-token-refresh");
+        assert_eq!(
+            BackgroundTaskType::OAuthCleanup.to_string(),
+            "oauth-cleanup"
+        );
+        assert_eq!(
+            BackgroundTaskType::OAuthTokenRefresh.to_string(),
+            "oauth-token-refresh"
+        );
     }
 }

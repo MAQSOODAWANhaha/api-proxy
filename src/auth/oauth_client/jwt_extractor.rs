@@ -4,7 +4,7 @@
 //! 从 JWT payload 中提取 chatgpt_account_id 等关键信息
 
 use crate::auth::oauth_client::OAuthError;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -64,10 +64,14 @@ impl JWTParser {
     }
 
     /// 从 access_token 中解析 OpenAI 用户信息
-    pub fn extract_openai_info(&self, access_token: &str) -> Result<Option<OpenAIAuthInfo>, OAuthError> {
+    pub fn extract_openai_info(
+        &self,
+        access_token: &str,
+    ) -> Result<Option<OpenAIAuthInfo>, OAuthError> {
         // 解析 JWT token
-        let token_data = decode::<OpenAIJWTPayload>(access_token, &self.decoding_key, &self.validation)
-            .map_err(|e| OAuthError::InvalidToken(format!("JWT 解析失败: {}", e)))?;
+        let token_data =
+            decode::<OpenAIJWTPayload>(access_token, &self.decoding_key, &self.validation)
+                .map_err(|e| OAuthError::InvalidToken(format!("JWT 解析失败: {}", e)))?;
 
         // 提取 OpenAI 认证信息
         if let Some(openai_auth) = token_data.claims.openai_auth {
@@ -84,7 +88,10 @@ impl JWTParser {
     }
 
     /// 从 access_token 中提取 chatgpt_account_id
-    pub fn extract_chatgpt_account_id(&self, access_token: &str) -> Result<Option<String>, OAuthError> {
+    pub fn extract_chatgpt_account_id(
+        &self,
+        access_token: &str,
+    ) -> Result<Option<String>, OAuthError> {
         match self.extract_openai_info(access_token) {
             Ok(Some(info)) => Ok(Some(info.chatgpt_account_id)),
             Ok(None) => Ok(None),

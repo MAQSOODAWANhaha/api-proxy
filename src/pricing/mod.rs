@@ -121,12 +121,7 @@ impl PricingCalculatorService {
         // 计算completion tokens费用
         if let Some(completion_tokens) = token_usage.completion_tokens {
             let cost = self
-                .calculate_tiered_cost(
-                    "completion",
-                    completion_tokens,
-                    &pricing_tiers,
-                    request_id,
-                )
+                .calculate_tiered_cost("completion", completion_tokens, &pricing_tiers, request_id)
                 .await;
             cost_breakdown.insert("completion_tokens".to_string(), cost);
             total_cost += cost;
@@ -344,8 +339,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_pricing_with_data() {
-        use entity::{provider_types, model_pricing, model_pricing_tiers};
-        use sea_orm::{Set, NotSet};
+        use entity::{model_pricing, model_pricing_tiers, provider_types};
+        use sea_orm::{NotSet, Set};
 
         let db = setup_test_db().await;
         let pricing_service = PricingCalculatorService::new(db.clone());
@@ -379,10 +374,11 @@ mod tests {
             created_at: Set(Utc::now().naive_utc()),
             updated_at: Set(Utc::now().naive_utc()),
         };
-        let model_pricing_insert_result = entity::model_pricing::Entity::insert(model_pricing_record)
-            .exec(&*db)
-            .await
-            .unwrap();
+        let model_pricing_insert_result =
+            entity::model_pricing::Entity::insert(model_pricing_record)
+                .exec(&*db)
+                .await
+                .unwrap();
         let model_pricing_id = model_pricing_insert_result.last_insert_id;
 
         // 插入model_pricing_tiers测试数据
@@ -418,7 +414,7 @@ mod tests {
 
         // 测试费用计算
         let token_usage = TokenUsage {
-            prompt_tokens: Some(1000), // 1000 prompt tokens
+            prompt_tokens: Some(1000),    // 1000 prompt tokens
             completion_tokens: Some(500), // 500 completion tokens
             cache_create_tokens: None,
             cache_read_tokens: None,
@@ -431,24 +427,33 @@ mod tests {
 
         assert!(!result.used_fallback);
         assert_eq!(result.currency, "USD");
-        
+
         // 期望费用: (1000 * 0.00003) + (500 * 0.00006) = 0.03 + 0.03 = 0.06
         // 使用容差比较来处理浮点精度问题
         const EPSILON: f64 = 1e-10;
-        assert!((result.total_cost - 0.06).abs() < EPSILON, 
-                "Expected total cost ~0.06, got {}", result.total_cost);
-        
+        assert!(
+            (result.total_cost - 0.06).abs() < EPSILON,
+            "Expected total cost ~0.06, got {}",
+            result.total_cost
+        );
+
         assert_eq!(result.cost_breakdown.len(), 2);
-        assert!((result.cost_breakdown.get("prompt_tokens").unwrap() - 0.03).abs() < EPSILON,
-                "Expected prompt tokens cost ~0.03, got {}", result.cost_breakdown.get("prompt_tokens").unwrap());
-        assert!((result.cost_breakdown.get("completion_tokens").unwrap() - 0.03).abs() < EPSILON,
-                "Expected completion tokens cost ~0.03, got {}", result.cost_breakdown.get("completion_tokens").unwrap());
+        assert!(
+            (result.cost_breakdown.get("prompt_tokens").unwrap() - 0.03).abs() < EPSILON,
+            "Expected prompt tokens cost ~0.03, got {}",
+            result.cost_breakdown.get("prompt_tokens").unwrap()
+        );
+        assert!(
+            (result.cost_breakdown.get("completion_tokens").unwrap() - 0.03).abs() < EPSILON,
+            "Expected completion tokens cost ~0.03, got {}",
+            result.cost_breakdown.get("completion_tokens").unwrap()
+        );
     }
 
     #[tokio::test]
     async fn test_provider_type_id_validation() {
-        use entity::{provider_types, model_pricing};
-        use sea_orm::{Set, NotSet};
+        use entity::{model_pricing, provider_types};
+        use sea_orm::{NotSet, Set};
 
         let db = setup_test_db().await;
         let pricing_service = PricingCalculatorService::new(db.clone());
@@ -474,7 +479,7 @@ mod tests {
 
         // 插入model_pricing测试数据，但使用不同的provider_type_id
         let model_pricing_record = model_pricing::ActiveModel {
-            id: NotSet, // 让数据库自动生成ID
+            id: NotSet,                              // 让数据库自动生成ID
             provider_type_id: Set(provider_type_id), // 使用自动生成的provider_type_id
             model_name: Set("gpt-4".to_string()),
             description: Set(Some("GPT-4 model".to_string())),

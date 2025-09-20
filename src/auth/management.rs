@@ -63,9 +63,10 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Some(header) => header,
         None => {
             tracing::warn!("Missing Authorization header");
-            return Err(crate::manage_error!(
-                crate::proxy_err!(auth, "Authorization header required")
-            ));
+            return Err(crate::manage_error!(crate::proxy_err!(
+                auth,
+                "Authorization header required"
+            )));
         }
     };
 
@@ -74,9 +75,10 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Some(token) => token,
         None => {
             tracing::warn!("Invalid Authorization header format - not a Bearer token");
-            return Err(crate::manage_error!(
-                crate::proxy_err!(business, "Invalid Authorization header format - Bearer token required")
-            ));
+            return Err(crate::manage_error!(crate::proxy_err!(
+                business,
+                "Invalid Authorization header format - Bearer token required"
+            )));
         }
     };
 
@@ -94,9 +96,10 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         Ok(data) => data,
         Err(err) => {
             tracing::warn!("JWT token validation failed: {}", err);
-            return Err(crate::manage_error!(
-                crate::proxy_err!(auth, "Invalid or expired token")
-            ));
+            return Err(crate::manage_error!(crate::proxy_err!(
+                auth,
+                "Invalid or expired token"
+            )));
         }
     };
 
@@ -108,9 +111,10 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
                 "Failed to parse user ID from JWT token: {}",
                 token_data.claims.sub
             );
-            return Err(crate::manage_error!(
-                crate::proxy_err!(internal, "Invalid user ID in token")
-            ));
+            return Err(crate::manage_error!(crate::proxy_err!(
+                internal,
+                "Invalid user ID in token"
+            )));
         }
     };
 

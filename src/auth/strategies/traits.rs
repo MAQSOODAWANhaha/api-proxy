@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::types::{AuthType, AuthError};
+use crate::auth::types::{AuthError, AuthType};
 
 /// OAuth认证返回结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,7 +31,10 @@ pub trait AuthStrategy: Send + Sync {
     fn auth_type(&self) -> AuthType;
 
     /// 验证认证凭据
-    async fn authenticate(&self, credentials: &serde_json::Value) -> Result<OAuthTokenResult, AuthError>;
+    async fn authenticate(
+        &self,
+        credentials: &serde_json::Value,
+    ) -> Result<OAuthTokenResult, AuthError>;
 
     /// 刷新认证凭据（如果支持）
     async fn refresh(&self, _refresh_token: &str) -> Result<OAuthTokenResult, AuthError> {
@@ -52,7 +55,11 @@ pub trait AuthStrategy: Send + Sync {
     }
 
     /// 处理回调（用于OAuth流程）
-    async fn handle_callback(&self, _code: &str, _state: &str) -> Result<OAuthTokenResult, AuthError> {
+    async fn handle_callback(
+        &self,
+        _code: &str,
+        _state: &str,
+    ) -> Result<OAuthTokenResult, AuthError> {
         Err(AuthError::ConfigError("不支持回调处理".to_string()))
     }
 }

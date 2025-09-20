@@ -2,12 +2,12 @@
 //!
 //! 提供统一的服务器初始化逻辑，避免代码重复
 
-use crate::auth::{AuthService, AuthManager};
+use crate::auth::{AuthManager, AuthService};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
-use crate::proxy::service::ProxyService;
 use crate::logging::LogComponent;
+use crate::proxy::service::ProxyService;
 use crate::proxy_info;
 use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
@@ -148,14 +148,17 @@ impl ProxyServerBuilder {
     ) -> Result<Arc<AuthManager>> {
         // 创建认证配置 - 使用默认配置
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
-        
+
         // 创建JWT和API密钥管理器
         let jwt_manager = Arc::new(
             crate::auth::JwtManager::new(auth_config.clone())
-                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {}", e)))?
+                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {}", e)))?,
         );
-        let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(db.clone(), auth_config.clone()));
-        
+        let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(
+            db.clone(),
+            auth_config.clone(),
+        ));
+
         // 创建认证服务
         let auth_service = Arc::new(AuthService::new(
             jwt_manager,
@@ -163,14 +166,9 @@ impl ProxyServerBuilder {
             db.clone(),
             auth_config.clone(),
         ));
-        
+
         // 创建统一认证管理器
-        let auth_manager = AuthManager::new(
-            auth_service,
-            auth_config,
-            db,
-            cache,
-        ).await?;
+        let auth_manager = AuthManager::new(auth_service, auth_config, db, cache).await?;
 
         proxy_info!(
             "server_builder",
@@ -198,9 +196,10 @@ impl ProxyServerBuilder {
         );
 
         // 创建统一认证管理器
-        let auth_manager = self.create_auth_manager(db.clone(), cache.clone())
+        let auth_manager = self
+            .create_auth_manager(db.clone(), cache.clone())
             .await
-            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败",))?;
+            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
 
         ProxyService::new(
             self.config.clone(),
@@ -250,7 +249,6 @@ impl ProxyServerBuilder {
             self.config.server.as_ref().map_or(8080, |s| s.port)
         )
     }
-
 }
 
 /// 代理服务器组件集合

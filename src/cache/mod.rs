@@ -9,7 +9,7 @@ pub mod keys;
 pub mod strategies;
 
 pub use abstract_cache::{
-    CacheProvider, CacheProviderType, CacheStats, MemoryCache, RedisCache, CacheManager,
+    CacheManager, CacheProvider, CacheProviderType, CacheStats, MemoryCache, RedisCache,
 };
 pub use client::{CacheClient, RedisConfig};
 pub use integration::{CacheDecorator, CacheFacade};

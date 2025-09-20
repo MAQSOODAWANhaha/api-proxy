@@ -33,11 +33,17 @@ impl OAuthProviderManager {
 
         // 先检查缓存
         if let Some(config) = self.get_from_cache(provider_name) {
-            tracing::debug!("✅ [OAuth] 从缓存获取配置成功: provider_name={}", provider_name);
+            tracing::debug!(
+                "✅ [OAuth] 从缓存获取配置成功: provider_name={}",
+                provider_name
+            );
             return Ok(config);
         }
 
-        tracing::debug!("📡 [OAuth] 从数据库加载配置: provider_name={}", provider_name);
+        tracing::debug!(
+            "📡 [OAuth] 从数据库加载配置: provider_name={}",
+            provider_name
+        );
 
         // 从数据库加载
         let config = self.load_from_db(provider_name).await?;
@@ -45,8 +51,12 @@ impl OAuthProviderManager {
         // 更新缓存
         self.update_cache(provider_name.to_string(), config.clone());
 
-        tracing::debug!("💾 [OAuth] 配置加载完成并缓存: provider_name={}, client_id={}, authorize_url={}",
-            provider_name, config.client_id, config.authorize_url);
+        tracing::debug!(
+            "💾 [OAuth] 配置加载完成并缓存: provider_name={}, client_id={}, authorize_url={}",
+            provider_name,
+            config.client_id,
+            config.authorize_url
+        );
 
         Ok(config)
     }
@@ -79,8 +89,11 @@ impl OAuthProviderManager {
         config: &OAuthProviderConfig,
         session: &entity::oauth_client_sessions::Model,
     ) -> OAuthResult<String> {
-        tracing::debug!("🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
-            config.provider_name, session.session_id);
+        tracing::debug!(
+            "🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
+            config.provider_name,
+            session.session_id
+        );
 
         let mut url = Url::parse(&config.authorize_url)
             .map_err(|e| OAuthError::NetworkError(format!("Invalid authorize URL: {}", e)))?;
@@ -95,14 +108,20 @@ impl OAuthProviderManager {
         ];
 
         // 添加response_type，优先使用配置中的值，否则使用默认值
-        let response_type = config.extra_params
+        let response_type = config
+            .extra_params
             .get("response_type")
             .map(|s| s.as_str())
             .unwrap_or("code");
         params.push(("response_type", response_type));
 
-        tracing::debug!("⚙️ [OAuth] 基础参数: client_id={}, redirect_uri={}, response_type={}, scopes={}",
-            config.client_id, config.redirect_uri, response_type, scope);
+        tracing::debug!(
+            "⚙️ [OAuth] 基础参数: client_id={}, redirect_uri={}, response_type={}, scopes={}",
+            config.client_id,
+            config.redirect_uri,
+            response_type,
+            scope
+        );
 
         // PKCE参数
         if config.pkce_required {
@@ -112,7 +131,10 @@ impl OAuthProviderManager {
         }
 
         // 额外参数（排除已经添加的参数）
-        let already_added = params.iter().map(|(k, _)| *k).collect::<std::collections::HashSet<_>>();
+        let already_added = params
+            .iter()
+            .map(|(k, _)| *k)
+            .collect::<std::collections::HashSet<_>>();
         let extra_params: Vec<(&str, &str)> = config
             .extra_params
             .iter()
@@ -129,8 +151,11 @@ impl OAuthProviderManager {
         url.query_pairs_mut().extend_pairs(params);
 
         let final_url = url.to_string();
-        tracing::debug!("🌐 [OAuth] 授权URL构建完成: session_id={}, url_length={}",
-            session.session_id, final_url.len());
+        tracing::debug!(
+            "🌐 [OAuth] 授权URL构建完成: session_id={}, url_length={}",
+            session.session_id,
+            final_url.len()
+        );
 
         Ok(final_url)
     }
@@ -242,8 +267,11 @@ impl OAuthProviderManager {
         // 直接使用数据库配置的extra_params，包含所有需要的参数
         if let Some(ref config_extra_params) = oauth_config.extra_params {
             extra_params.extend(config_extra_params.clone());
-            tracing::debug!("📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
-                extra_params.len(), extra_params.keys().collect::<Vec<_>>());
+            tracing::debug!(
+                "📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
+                extra_params.len(),
+                extra_params.keys().collect::<Vec<_>>()
+            );
         } else {
             tracing::debug!("📊 [OAuth] 数据库中没有配置extra_params");
         }

@@ -2,17 +2,17 @@
 //!
 //! 测试Claude OAuth配置的scope处理问题
 
-use api_proxy::auth::oauth_client::providers::{OAuthProviderManager, ProviderConfigBuilder};
 use api_proxy::auth::oauth_client::OAuthProviderConfig;
+use api_proxy::auth::oauth_client::providers::OAuthProviderManager;
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::DatabaseConnection;
     use entity::oauth_client_sessions::Model;
     use migration::{Migrator, MigratorTrait};
+    use sea_orm::DatabaseConnection;
     use url::Url;
 
     /// 创建测试用的数据库连接
@@ -117,24 +117,49 @@ mod tests {
         let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
         // 验证必需参数存在
-        assert_eq!(params.get("client_id"), Some(&"9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string()));
-        assert_eq!(params.get("redirect_uri"), Some(&"https://console.anthropic.com/oauth/code/callback".to_string()));
-        assert_eq!(params.get("state"), Some(&"test_claude_state_456".to_string()));
+        assert_eq!(
+            params.get("client_id"),
+            Some(&"9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string())
+        );
+        assert_eq!(
+            params.get("redirect_uri"),
+            Some(&"https://console.anthropic.com/oauth/code/callback".to_string())
+        );
+        assert_eq!(
+            params.get("state"),
+            Some(&"test_claude_state_456".to_string())
+        );
         assert_eq!(params.get("response_type"), Some(&"code".to_string()));
         assert_eq!(params.get("code"), Some(&"true".to_string()));
 
         // 关键测试：验证所有scope都存在
         let expected_scope = "org:create_api_key user:profile user:inference";
-        assert_eq!(params.get("scope"), Some(&expected_scope.to_string()),
-            "Scope应该包含所有三个权限，实际: {:?}", params.get("scope"));
+        assert_eq!(
+            params.get("scope"),
+            Some(&expected_scope.to_string()),
+            "Scope应该包含所有三个权限，实际: {:?}",
+            params.get("scope")
+        );
 
         // 验证PKCE参数
-        assert_eq!(params.get("code_challenge"), Some(&"test_code_challenge_789".to_string()));
-        assert_eq!(params.get("code_challenge_method"), Some(&"S256".to_string()));
+        assert_eq!(
+            params.get("code_challenge"),
+            Some(&"test_code_challenge_789".to_string())
+        );
+        assert_eq!(
+            params.get("code_challenge_method"),
+            Some(&"S256".to_string())
+        );
 
         // 验证参数总数
         let expected_params = 8; // client_id, redirect_uri, state, scope, response_type, code, code_challenge, code_challenge_method
-        assert_eq!(params.len(), expected_params, "URL应该包含{}个参数，但包含了{}个", expected_params, params.len());
+        assert_eq!(
+            params.len(),
+            expected_params,
+            "URL应该包含{}个参数，但包含了{}个",
+            expected_params,
+            params.len()
+        );
 
         println!("✅ [测试] Claude多scope测试通过，所有scope都正确显示");
     }
@@ -165,8 +190,14 @@ mod tests {
             println!("🔍 [测试] join后: '{}'", rejoined);
 
             // 验证往返转换的一致性
-            assert_eq!(scope_string, rejoined, "Scope往返转换应该一致: '{}' -> '{}' -> '{}'",
-                scope_string, scopes.join(" "), rejoined);
+            assert_eq!(
+                scope_string,
+                rejoined,
+                "Scope往返转换应该一致: '{}' -> '{}' -> '{}'",
+                scope_string,
+                scopes.join(" "),
+                rejoined
+            );
         }
     }
 
@@ -184,7 +215,11 @@ mod tests {
             authorize_url: "https://claude.ai/oauth/authorize".to_string(),
             token_url: "https://console.anthropic.com/v1/oauth/token".to_string(),
             redirect_uri: "https://console.anthropic.com/oauth/code/callback".to_string(),
-            scopes: vec!["org:create_api_key".to_string(), "user:profile".to_string(), "user:inference".to_string()],
+            scopes: vec![
+                "org:create_api_key".to_string(),
+                "user:profile".to_string(),
+                "user:inference".to_string(),
+            ],
             pkce_required: true,
             extra_params: {
                 let mut params = HashMap::new();
@@ -202,10 +237,14 @@ mod tests {
 
         // 解析URL验证scope编码
         let parsed_url = Url::parse(&url).unwrap();
-        let scope_param = parsed_url.query_pairs()
+        let scope_param = parsed_url
+            .query_pairs()
             .find(|(k, _)| k == "scope")
             .map(|(_, v)| v.to_string());
 
-        assert_eq!(scope_param, Some("org:create_api_key user:profile user:inference".to_string()));
+        assert_eq!(
+            scope_param,
+            Some("org:create_api_key user:profile user:inference".to_string())
+        );
     }
 }

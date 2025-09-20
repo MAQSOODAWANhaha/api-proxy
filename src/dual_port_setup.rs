@@ -29,8 +29,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
     info!("🚀 Starting dual-port architecture servers...");
 
     // 初始化共享资源
-    let (config, db, shared_services, trace_system) =
-        initialize_shared_services().await?;
+    let (config, db, shared_services, trace_system) = initialize_shared_services().await?;
 
     // 创建管理服务器配置 - 使用dual_port配置或默认值
     let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
@@ -76,9 +75,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         Some(shared_services.oauth_client.clone()),
         Some(shared_services.smart_api_key_provider.clone()),
     )
-    .map_err(|e| {
-        ProxyError::server_init(format!("Failed to create management server: {}", e))
-    })?;
+    .map_err(|e| ProxyError::server_init(format!("Failed to create management server: {}", e)))?;
 
     // 创建代理服务器，传递数据库连接和追踪系统
     let proxy_server =
@@ -88,7 +85,10 @@ pub async fn run_dual_port_servers() -> Result<()> {
     info!("🔄 Starting OAuth token refresh background task...");
     if let Err(e) = shared_services.oauth_token_refresh_task.start().await {
         error!("Failed to start OAuth token refresh task: {:?}", e);
-        return Err(ProxyError::server_init(format!("OAuth token refresh task startup failed: {}", e)));
+        return Err(ProxyError::server_init(format!(
+            "OAuth token refresh task startup failed: {}",
+            e
+        )));
     }
     info!("✅ OAuth token refresh background task started successfully");
 
@@ -178,11 +178,8 @@ pub async fn initialize_shared_services() -> Result<(
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
-        crate::cache::abstract_cache::CacheManager::new(
-            &config_arc.cache,
-            &config_arc.redis.url,
-        )
-        .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
+        crate::cache::abstract_cache::CacheManager::new(&config_arc.cache, &config_arc.redis.url)
+            .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
     );
 
     // 初始化服务商配置管理器
@@ -209,12 +206,15 @@ pub async fn initialize_shared_services() -> Result<(
     ));
 
     // 创建统一认证管理器
-    let unified_auth_manager = Arc::new(AuthManager::new(
-        auth_service.clone(),
-        auth_config,
-        db.clone(),
-        unified_cache_manager.clone(),
-    ).await?);
+    let unified_auth_manager = Arc::new(
+        AuthManager::new(
+            auth_service.clone(),
+            auth_config,
+            db.clone(),
+            unified_cache_manager.clone(),
+        )
+        .await?,
+    );
 
     // unified_auth_manager已经是Arc类型
 
@@ -231,10 +231,11 @@ pub async fn initialize_shared_services() -> Result<(
 
     // 初始化API密钥健康检查器
     info!("🏥 Initializing API key health checker...");
-    let api_key_health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
-        db.clone(),
-        None, // 使用默认配置
-    ));
+    let api_key_health_checker =
+        Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
+            db.clone(),
+            None, // 使用默认配置
+        ));
     info!("✅ API key health checker initialized successfully");
 
     // 初始化OAuth客户端
@@ -249,7 +250,7 @@ pub async fn initialize_shared_services() -> Result<(
             db.clone(),
             oauth_client.clone(),
             crate::auth::oauth_token_refresh_service::RefreshServiceConfig::default(),
-        )
+        ),
     );
     info!("✅ OAuth token refresh service initialized successfully");
 
@@ -260,7 +261,7 @@ pub async fn initialize_shared_services() -> Result<(
             db.clone(),
             oauth_client.clone(),
             oauth_refresh_service.clone(),
-        )
+        ),
     );
     info!("✅ Smart API key provider initialized successfully");
 
@@ -270,7 +271,7 @@ pub async fn initialize_shared_services() -> Result<(
         crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(
             oauth_refresh_service.clone(),
             crate::auth::oauth_token_refresh_task::RefreshTaskConfig::default(),
-        )
+        ),
     );
     info!("✅ OAuth token refresh task initialized successfully");
 

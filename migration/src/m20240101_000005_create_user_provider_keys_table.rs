@@ -102,6 +102,22 @@ impl MigrationTrait for Migration {
                             .string_len(100)
                             .null(),
                     )
+                    // 健康状态增强字段
+                    .col(
+                        ColumnDef::new(UserProviderKeys::HealthStatusDetail)
+                            .json()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(UserProviderKeys::RateLimitResetsAt)
+                            .timestamp()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(UserProviderKeys::LastErrorTime)
+                            .timestamp()
+                            .null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_user_provider_keys_user_id")
@@ -201,6 +217,27 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // 健康状态增强字段索引
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_health_status")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::HealthStatus)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_user_provider_keys_rate_limit_reset")
+                    .table(UserProviderKeys::Table)
+                    .col(UserProviderKeys::RateLimitResetsAt)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -234,6 +271,10 @@ enum UserProviderKeys {
     LastAuthCheck,
     // Gemini项目ID字段
     ProjectId,
+    // 健康状态增强字段
+    HealthStatusDetail,
+    RateLimitResetsAt,
+    LastErrorTime,
 }
 
 #[derive(DeriveIden)]

@@ -143,7 +143,7 @@ pub struct OAuthCleanupConfig {
 impl Default for OAuthCleanupConfig {
     fn default() -> Self {
         Self {
-            pending_expire_minutes: 30, // 30分钟过期
+            pending_expire_minutes: 30,    // 30分钟过期
             cleanup_interval_seconds: 300, // 5分钟执行一次
             max_cleanup_records: 1000,
             expired_records_retention_days: 7, // 保留7天
@@ -269,13 +269,11 @@ impl AppConfig {
                 .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
                 .collect()
         } else if let Some(server) = &self.server {
-            vec![
-                (
-                    "server-http".to_string(),
-                    format!("{}:{}", server.host, server.port),
-                    "HTTP".to_string(),
-                )
-            ]
+            vec![(
+                "server-http".to_string(),
+                format!("{}:{}", server.host, server.port),
+                "HTTP".to_string(),
+            )]
         } else {
             Vec::new()
         }

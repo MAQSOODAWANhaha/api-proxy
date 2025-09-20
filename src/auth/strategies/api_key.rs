@@ -4,12 +4,15 @@
 //! 集成共享的ApiKeyManager进行数据库验证
 
 use super::traits::{AuthStrategy, OAuthTokenResult};
-use crate::auth::{types::{AuthType, AuthError}, ApiKeyManager};
+use crate::auth::{
+    ApiKeyManager,
+    types::{AuthError, AuthType},
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
 /// API密钥认证策略
-/// 
+///
 /// 管理端使用，提供OAuth风格的API密钥认证，包含完整的权限验证
 pub struct ApiKeyStrategy {
     /// 认证头名称（默认：Authorization）
@@ -41,12 +44,12 @@ impl ApiKeyStrategy {
     }
 
     /// 创建带有API密钥管理器的认证策略
-    /// 
+    ///
     /// 用于实际的数据库验证，适用于生产环境
     pub fn with_manager(
-        header_name: &str, 
+        header_name: &str,
         value_format: &str,
-        api_key_manager: Arc<ApiKeyManager>
+        api_key_manager: Arc<ApiKeyManager>,
     ) -> Self {
         Self {
             header_name: header_name.to_string(),
@@ -57,11 +60,13 @@ impl ApiKeyStrategy {
 
     /// 从配置创建策略
     pub fn from_config(config: &serde_json::Value) -> Result<Self, AuthError> {
-        let header_name = config.get("header_name")
+        let header_name = config
+            .get("header_name")
             .and_then(|v| v.as_str())
             .unwrap_or("Authorization");
-        
-        let value_format = config.get("value_format")
+
+        let value_format = config
+            .get("value_format")
             .and_then(|v| v.as_str())
             .unwrap_or("Bearer {key}");
 
@@ -69,7 +74,7 @@ impl ApiKeyStrategy {
     }
 
     /// 设置API密钥管理器
-    /// 
+    ///
     /// 允许后续设置管理器用于实际验证
     pub fn set_api_key_manager(&mut self, manager: Arc<ApiKeyManager>) {
         self.api_key_manager = Some(manager);
@@ -108,8 +113,12 @@ impl AuthStrategy for ApiKeyStrategy {
         AuthType::ApiKey
     }
 
-    async fn authenticate(&self, credentials: &serde_json::Value) -> Result<OAuthTokenResult, AuthError> {
-        let api_key = credentials.get("api_key")
+    async fn authenticate(
+        &self,
+        credentials: &serde_json::Value,
+    ) -> Result<OAuthTokenResult, AuthError> {
+        let api_key = credentials
+            .get("api_key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AuthError::ConfigError("缺少api_key参数".to_string()))?;
 
@@ -134,13 +143,17 @@ impl AuthStrategy for ApiKeyStrategy {
                         refresh_token: None,
                         token_type: "ApiKey".to_string(),
                         expires_in: None, // API密钥通常不过期
-                        scope: Some(validation_result.permissions.into_iter()
-                            .map(|p| format!("{:?}", p))
-                            .collect::<Vec<_>>()
-                            .join(" ")),
+                        scope: Some(
+                            validation_result
+                                .permissions
+                                .into_iter()
+                                .map(|p| format!("{:?}", p))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
                         user_info: Some(user_info),
                     })
-                },
+                }
                 Err(e) => {
                     tracing::warn!(
                         api_key_preview = %&api_key[..std::cmp::min(8, api_key.len())],
@@ -151,15 +164,15 @@ impl AuthStrategy for ApiKeyStrategy {
                     match e {
                         crate::error::ProxyError::Authentication { .. } => {
                             Err(AuthError::InvalidToken)
-                        },
-                        _ => Err(AuthError::InternalError(e.to_string()))
+                        }
+                        _ => Err(AuthError::InternalError(e.to_string())),
                     }
                 }
             }
         } else {
             // 回退到基础格式验证（用于测试或没有管理器的场景）
             tracing::warn!("ApiKeyStrategy: 没有配置API密钥管理器，使用基础验证");
-            
+
             // 基础格式检查
             if !api_key.starts_with("sk-") || api_key.len() < 20 {
                 return Err(AuthError::InvalidToken);
@@ -181,18 +194,24 @@ impl AuthStrategy for ApiKeyStrategy {
         // 验证必需的配置字段
         if let Some(header_name) = config.get("header_name") {
             if !header_name.is_string() {
-                return Err(AuthError::ConfigError("header_name必须是字符串".to_string()));
+                return Err(AuthError::ConfigError(
+                    "header_name必须是字符串".to_string(),
+                ));
             }
         }
 
         if let Some(value_format) = config.get("value_format") {
             if !value_format.is_string() {
-                return Err(AuthError::ConfigError("value_format必须是字符串".to_string()));
+                return Err(AuthError::ConfigError(
+                    "value_format必须是字符串".to_string(),
+                ));
             }
-            
+
             let format_str = value_format.as_str().unwrap();
             if !format_str.contains("{key}") {
-                return Err(AuthError::ConfigError("value_format必须包含{key}占位符".to_string()));
+                return Err(AuthError::ConfigError(
+                    "value_format必须包含{key}占位符".to_string(),
+                ));
             }
         }
 
@@ -258,13 +277,20 @@ mod tests {
     async fn test_authenticate() {
         let strategy = ApiKeyStrategy::default();
         let credentials = json!({
-            "api_key": "sk-12345"
+            "api_key": "sk-1234567890abcdef1234"  // 符合长度要求
         });
 
-        let result = strategy.authenticate(&credentials).await.unwrap();
-        assert_eq!(result.access_token, "sk-12345");
-        assert_eq!(result.token_type, "ApiKey");
-        assert!(result.refresh_token.is_none());
+        let result = strategy.authenticate(&credentials).await;
+        match result {
+            Ok(r) => {
+                assert_eq!(r.access_token, "sk-1234567890abcdef1234");
+                assert_eq!(r.token_type, "ApiKey");
+                assert!(r.refresh_token.is_none());
+            }
+            Err(e) => {
+                panic!("Authentication failed: {:?}", e);
+            }
+        }
     }
 
     #[tokio::test]

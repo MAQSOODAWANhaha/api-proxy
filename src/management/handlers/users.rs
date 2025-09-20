@@ -1,6 +1,6 @@
 //! # 用户管理处理器
 
-use crate::auth::{extract_user_id_from_headers, check_is_admin_from_headers};
+use crate::auth::{check_is_admin_from_headers, extract_user_id_from_headers};
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -253,24 +253,37 @@ pub async fn list_users(
             .await
         {
             Ok(Some(user)) => user,
-            Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id)); }
+            Ok(None) => {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "User not found: {}",
+                    user_id
+                ));
+            }
             Err(err) => {
                 tracing::error!("获取用户信息失败: {}", err);
-                return crate::manage_error!(crate::proxy_err!(database, "获取用户信息失败: {}", err));
+                return crate::manage_error!(crate::proxy_err!(
+                    database,
+                    "获取用户信息失败: {}",
+                    err
+                ));
             }
         };
 
         let user_stats = get_user_statistics(self_user.id, state.database.as_ref()).await;
         let user_response = UserResponse::from_user_with_stats(self_user, user_stats);
-        
+
         let pagination = response::Pagination {
             page: 1,
             limit: 1,
             total: 1,
             pages: 1,
         };
-        
-        tracing::info!("Non-admin user {} accessing only their own user info", user_id);
+
+        tracing::info!(
+            "Non-admin user {} accessing only their own user info",
+            user_id
+        );
         return response::paginated(vec![user_response], pagination);
     }
 
@@ -391,15 +404,24 @@ pub async fn create_user(
 ) -> axum::response::Response {
     // 验证输入
     if request.username.len() < 3 || request.username.len() > 50 {
-        return crate::manage_error!(crate::proxy_err!(business, "用户名长度必须在3-50字符之间 (field: username)"));
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "用户名长度必须在3-50字符之间 (field: username)"
+        ));
     }
 
     if request.email.len() > 100 || !request.email.contains('@') {
-        return crate::manage_error!(crate::proxy_err!(business, "邮箱格式无效或长度超过100字符 (field: email)"));
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "邮箱格式无效或长度超过100字符 (field: email)"
+        ));
     }
 
     if request.password.len() < 8 {
-        return crate::manage_error!(crate::proxy_err!(business, "密码长度至少8字符 (field: password)"));
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "密码长度至少8字符 (field: password)"
+        ));
     }
 
     // 检查用户名和邮箱是否已存在
@@ -415,13 +437,25 @@ pub async fn create_user(
     match existing_user {
         Ok(Some(existing)) => {
             if existing.username == request.username {
-                return crate::manage_error!(crate::proxy_err!(business, "User conflict: {}", request.username));
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "User conflict: {}",
+                    request.username
+                ));
             }
-            return crate::manage_error!(crate::proxy_err!(business, "UserEmail conflict: {}", request.email));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "UserEmail conflict: {}",
+                request.email
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to check existing user: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to check existing user: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to check existing user: {}",
+                err
+            ));
         }
         Ok(None) => {}
     }
@@ -437,7 +471,11 @@ pub async fn create_user(
         Ok(hash) => hash,
         Err(err) => {
             tracing::error!("Failed to hash password: {}", err);
-            return crate::manage_error!(crate::proxy_err!(internal, "Failed to hash password: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                internal,
+                "Failed to hash password: {}",
+                err
+            ));
         }
     };
 
@@ -464,7 +502,11 @@ pub async fn create_user(
         Ok(result) => result.last_insert_id,
         Err(err) => {
             tracing::error!("Failed to create user: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to create user: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to create user: {}",
+                err
+            ));
         }
     };
 
@@ -476,11 +518,18 @@ pub async fn create_user(
         Ok(Some(user)) => user,
         Ok(None) => {
             tracing::error!("User not found after creation");
-            return crate::manage_error!(crate::proxy_err!(database, "User not found after creation"));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "User not found after creation"
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to fetch created user: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch created user: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch created user: {}",
+                err
+            ));
         }
     };
 
@@ -505,10 +554,20 @@ pub async fn get_user(
         .await
     {
         Ok(Some(user)) => user,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user {}: {}", user_id, err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch user: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user: {}",
+                err
+            ));
         }
     };
 
@@ -549,11 +608,15 @@ pub async fn get_user_profile(
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
-        Err(_status_code) => { return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token")); }
+        Err(_status_code) => {
+            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
+        }
     };
     let user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
-        Err(_) => { return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token")); }
+        Err(_) => {
+            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
+        }
     };
 
     let user = match Users::find_by_id(user_id)
@@ -561,10 +624,20 @@ pub async fn get_user_profile(
         .await
     {
         Ok(Some(user)) => user,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user profile: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch user profile: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user profile: {}",
+                err
+            ));
         }
     };
 
@@ -590,11 +663,15 @@ pub async fn update_user_profile(
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
-        Err(_status_code) => { return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token")); }
+        Err(_status_code) => {
+            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
+        }
     };
     let user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
-        Err(_) => { return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token")); }
+        Err(_) => {
+            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
+        }
     };
 
     // 验证邮箱格式
@@ -610,10 +687,20 @@ pub async fn update_user_profile(
         .await
     {
         Ok(Some(user)) => user,
-        Ok(None) => { return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id)); }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
+        }
         Err(err) => {
             tracing::error!("Failed to fetch user for update: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch user for update: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user for update: {}",
+                err
+            ));
         }
     };
 
@@ -643,7 +730,11 @@ pub async fn update_user_profile(
         }
         Err(err) => {
             tracing::error!("Failed to update user profile: {}", err);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to update user profile: {}", err))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to update user profile: {}",
+                err
+            ))
         }
     }
 }
@@ -657,15 +748,24 @@ pub async fn change_password(
     // 从JWT token中获取用户信息
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
-        Err(_status_code) => { return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token")); }
+        Err(_status_code) => {
+            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
+        }
     };
     let user_id: i32 = match claims.sub.parse() {
         Ok(id) => id,
-        Err(_) => { return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token")); }
+        Err(_) => {
+            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
+        }
     };
 
     // 验证新密码强度
-    if request.new_password.len() < 6 { return crate::manage_error!(crate::proxy_err!(business, "New password must be at least 6 characters long")); }
+    if request.new_password.len() < 6 {
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "New password must be at least 6 characters long"
+        ));
+    }
 
     // 获取现有用户
     let user = match Users::find_by_id(user_id)
@@ -674,13 +774,19 @@ pub async fn change_password(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to fetch user for password change: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to fetch user for password change: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user for password change: {}",
+                err
+            ));
         }
     };
 
@@ -688,11 +794,18 @@ pub async fn change_password(
     match bcrypt::verify(&request.current_password, &user.password_hash) {
         Ok(true) => {}
         Ok(false) => {
-            return crate::manage_error!(crate::proxy_err!(business, "Current password is incorrect"));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "Current password is incorrect"
+            ));
         }
         Err(err) => {
             tracing::error!("Failed to verify current password: {}", err);
-            return crate::manage_error!(crate::proxy_err!(internal, "Failed to verify current password: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                internal,
+                "Failed to verify current password: {}",
+                err
+            ));
         }
     }
 
@@ -701,7 +814,11 @@ pub async fn change_password(
         Ok(hash) => hash,
         Err(err) => {
             tracing::error!("Failed to hash new password: {}", err);
-            return crate::manage_error!(crate::proxy_err!(internal, "Failed to hash new password: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                internal,
+                "Failed to hash new password: {}",
+                err
+            ));
         }
     };
 
@@ -714,9 +831,11 @@ pub async fn change_password(
         Ok(_) => response::success_without_data("Password changed successfully"),
         Err(err) => {
             tracing::error!("Failed to update password: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "Failed to update password: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to update password: {}",
+                err
+            ))
         }
     }
 }
@@ -732,7 +851,7 @@ pub async fn update_user(
     let claims = match extract_user_from_jwt(&headers) {
         Ok(claims) => claims,
         Err(_status_code) => {
-        return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
+            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
         }
     };
 
@@ -757,13 +876,19 @@ pub async fn update_user(
     // 验证输入
     if let Some(ref username) = request.username {
         if username.len() < 3 || username.len() > 50 {
-            return crate::manage_error!(crate::proxy_err!(business, "用户名长度必须在3-50字符之间"));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "用户名长度必须在3-50字符之间"
+            ));
         }
     }
 
     if let Some(ref email) = request.email {
         if email.len() > 100 || !email.contains('@') {
-            return crate::manage_error!(crate::proxy_err!(business, "邮箱格式无效或长度超过100字符"));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "邮箱格式无效或长度超过100字符"
+            ));
         }
     }
 
@@ -780,13 +905,15 @@ pub async fn update_user(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "获取用户失败: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
 
@@ -805,12 +932,20 @@ pub async fn update_user(
         if let Ok(Some(existing)) = check_query.one(state.database.as_ref()).await {
             if let Some(ref username) = request.username {
                 if existing.username == *username {
-                    return crate::manage_error!(crate::proxy_err!(business, "username conflict: {}", username.clone()));
+                    return crate::manage_error!(crate::proxy_err!(
+                        business,
+                        "username conflict: {}",
+                        username.clone()
+                    ));
                 }
             }
             if let Some(ref email) = request.email {
                 if existing.email == *email {
-                    return crate::manage_error!(crate::proxy_err!(business, "email conflict: {}", email.clone()));
+                    return crate::manage_error!(crate::proxy_err!(
+                        business,
+                        "email conflict: {}",
+                        email.clone()
+                    ));
                 }
             }
         }
@@ -857,9 +992,7 @@ pub async fn update_user(
         }
         Err(err) => {
             tracing::error!("更新用户失败: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "更新用户失败: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(database, "更新用户失败: {}", err))
         }
     }
 }
@@ -902,13 +1035,15 @@ pub async fn delete_user(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "获取用户失败: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
 
@@ -920,9 +1055,7 @@ pub async fn delete_user(
         Ok(_) => response::success_without_data("用户删除成功"),
         Err(err) => {
             tracing::error!("删除用户失败: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "删除用户失败: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(database, "删除用户失败: {}", err))
         }
     }
 }
@@ -974,9 +1107,7 @@ pub async fn batch_delete_users(
         }
         Err(err) => {
             tracing::error!("批量删除用户失败: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "批量删除用户失败: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(database, "批量删除用户失败: {}", err))
         }
     }
 }
@@ -1007,13 +1138,15 @@ pub async fn toggle_user_status(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "获取用户失败: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
 
@@ -1024,15 +1157,14 @@ pub async fn toggle_user_status(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
-            let user_status_stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
+            let user_status_stats =
+                get_user_statistics(updated_user.id, state.database.as_ref()).await;
             let user_response = UserResponse::from_user_with_stats(updated_user, user_status_stats);
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {
             tracing::error!("更新用户状态失败: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "更新用户状态失败: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(database, "更新用户状态失败: {}", err))
         }
     }
 }
@@ -1069,13 +1201,15 @@ pub async fn reset_user_password(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "User not found: {}", user_id));
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "User not found: {}",
+                user_id
+            ));
         }
         Err(err) => {
             tracing::error!("获取用户失败: {}", err);
-            return crate::manage_error!(
-                crate::proxy_err!(database, "获取用户失败: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
 
@@ -1097,9 +1231,7 @@ pub async fn reset_user_password(
         Ok(_) => response::success_without_data("密码重置成功"),
         Err(err) => {
             tracing::error!("重置密码失败: {}", err);
-            crate::manage_error!(
-                crate::proxy_err!(database, "重置密码失败: {}", err)
-            )
+            crate::manage_error!(crate::proxy_err!(database, "重置密码失败: {}", err))
         }
     }
 }

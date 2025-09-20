@@ -51,7 +51,7 @@ impl Model {
         if tokens < self.min_tokens {
             return false;
         }
-        
+
         match self.max_tokens {
             Some(max) => tokens <= max,
             None => true, // 无上限
@@ -63,14 +63,14 @@ impl Model {
         if total_tokens <= self.min_tokens {
             return 0;
         }
-        
+
         let tokens_above_min = total_tokens - self.min_tokens;
-        
+
         match self.max_tokens {
             Some(max) => {
                 let tier_capacity = max - self.min_tokens + 1;
                 tokens_above_min.min(tier_capacity)
-            },
+            }
             None => tokens_above_min, // 无上限，返回所有超过最小值的tokens
         }
     }

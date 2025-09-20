@@ -5,8 +5,8 @@
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
 use entity::user_provider_keys;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 选择上下文
 #[derive(Debug, Clone)]
@@ -122,10 +122,8 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         }
 
         // 过滤活跃的密钥
-        let active_keys: Vec<&user_provider_keys::Model> = keys
-            .iter()
-            .filter(|key| key.is_active)
-            .collect();
+        let active_keys: Vec<&user_provider_keys::Model> =
+            keys.iter().filter(|key| key.is_active).collect();
 
         if active_keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
@@ -220,11 +218,10 @@ impl ApiKeySelector for HealthBasedApiKeySelector {
         active_keys.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
 
         let (selected_index, selected_key) = active_keys[0];
-        
+
         let reason = format!(
             "Health-based selection: newest key created at {}, key_id={}",
-            selected_key.created_at,
-            selected_key.id
+            selected_key.created_at, selected_key.id
         );
 
         tracing::debug!(

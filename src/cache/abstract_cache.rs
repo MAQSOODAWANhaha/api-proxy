@@ -523,7 +523,7 @@ impl CacheManager {
     /// 创建仅内存缓存管理器（用于测试）
     pub fn memory_only() -> Self {
         Self {
-            provider: CacheProviderType::Memory(MemoryCache::new(1000))
+            provider: CacheProviderType::Memory(MemoryCache::new(1000)),
         }
     }
 

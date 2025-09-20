@@ -145,17 +145,13 @@ impl DynamicAdapterManager {
 
     /// 获取指定提供商的适配器引用进行操作
     /// 使用回调模式避免所有权问题
-    pub async fn with_adapter<F, R>(
-        &self,
-        provider_id: &ProviderId,
-        operation: F,
-    ) -> Option<R>
+    pub async fn with_adapter<F, R>(&self, provider_id: &ProviderId, operation: F) -> Option<R>
     where
         F: FnOnce(&dyn ProviderAdapter) -> R + Send,
         R: Send,
     {
         let adapters = self.adapters.read().await;
-        
+
         if let Some(adapter) = adapters.get(provider_id) {
             Some(operation(adapter.as_ref()))
         } else {
@@ -168,25 +164,26 @@ impl DynamicAdapterManager {
     pub async fn get_adapter_info(&self, provider_id: &ProviderId) -> Option<AdapterInfo> {
         let adapters = self.adapters.read().await;
         let stats = self.stats.read().await;
-        
+
         if let Some(_adapter) = adapters.get(provider_id) {
             // 从统计信息中获取适配器基本信息
             let provider_id_str = format!("{:?}", provider_id);
-            let adapter_stat = stats.values()
+            let adapter_stat = stats
+                .values()
                 .find(|stat| stat.provider_id == provider_id_str)
                 .cloned();
-                
+
             Some(AdapterInfo {
                 provider_id: *provider_id,
-                name: adapter_stat.as_ref()
+                name: adapter_stat
+                    .as_ref()
                     .map(|s| s.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string()),
-                api_format: adapter_stat.as_ref()
+                api_format: adapter_stat
+                    .as_ref()
                     .map(|s| s.api_format.clone())
                     .unwrap_or_else(|| "Unknown".to_string()),
-                is_active: adapter_stat
-                    .map(|s| s.is_active)
-                    .unwrap_or(false),
+                is_active: adapter_stat.map(|s| s.is_active).unwrap_or(false),
             })
         } else {
             None
@@ -205,14 +202,14 @@ impl DynamicAdapterManager {
         provider_id: &ProviderId,
         request: &AdapterRequest,
     ) -> ProviderResult<AdapterRequest> {
-        self.with_adapter(provider_id, |adapter| {
-            adapter.transform_request(request)
-        }).await.ok_or_else(|| {
-            ProviderError::UnsupportedOperation(format!(
-                "No adapter found for provider ID: {:?}",
-                provider_id
-            ))
-        })?
+        self.with_adapter(provider_id, |adapter| adapter.transform_request(request))
+            .await
+            .ok_or_else(|| {
+                ProviderError::UnsupportedOperation(format!(
+                    "No adapter found for provider ID: {:?}",
+                    provider_id
+                ))
+            })?
     }
 
     /// 处理响应
@@ -224,7 +221,9 @@ impl DynamicAdapterManager {
     ) -> ProviderResult<AdapterResponse> {
         self.with_adapter(provider_id, |adapter| {
             adapter.transform_response(response, original_request)
-        }).await.ok_or_else(|| {
+        })
+        .await
+        .ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
@@ -241,7 +240,9 @@ impl DynamicAdapterManager {
     ) -> ProviderResult<Option<StreamChunk>> {
         self.with_adapter(provider_id, |adapter| {
             adapter.handle_streaming_chunk(chunk, request)
-        }).await.ok_or_else(|| {
+        })
+        .await
+        .ok_or_else(|| {
             ProviderError::UnsupportedOperation(format!(
                 "No adapter found for provider ID: {:?}",
                 provider_id
@@ -255,14 +256,14 @@ impl DynamicAdapterManager {
         provider_id: &ProviderId,
         request: &AdapterRequest,
     ) -> ProviderResult<()> {
-        self.with_adapter(provider_id, |adapter| {
-            adapter.validate_request(request)
-        }).await.ok_or_else(|| {
-            ProviderError::UnsupportedOperation(format!(
-                "No adapter found for provider ID: {:?}",
-                provider_id
-            ))
-        })?
+        self.with_adapter(provider_id, |adapter| adapter.validate_request(request))
+            .await
+            .ok_or_else(|| {
+                ProviderError::UnsupportedOperation(format!(
+                    "No adapter found for provider ID: {:?}",
+                    provider_id
+                ))
+            })?
     }
 
     /// 获取所有支持的提供商ID

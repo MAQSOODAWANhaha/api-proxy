@@ -161,7 +161,9 @@ impl AuthService {
             auth_method: AuthMethod::Jwt,
             token_preview: self.sanitize_token(token),
             token_info: None, // JWT认证不需要OAuth token信息
-            expires_at: Some(chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(chrono::Utc::now)),
+            expires_at: Some(
+                chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(chrono::Utc::now),
+            ),
             session_info: None,
         })
     }

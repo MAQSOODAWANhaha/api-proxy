@@ -21,8 +21,12 @@ pub struct TokenResponse {
     pub refresh_token: Option<String>,
     pub id_token: Option<String>,
     pub scope: Option<String>,
-    // 错误响应字段
-    pub error: Option<String>,
+}
+
+/// OAuth错误响应结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthErrorResponse {
+    pub error: String,
     pub error_description: Option<String>,
     pub error_uri: Option<String>,
 }
@@ -345,14 +349,12 @@ impl TokenExchangeClient {
             );
 
             // 尝试解析错误响应
-            if let Ok(error_response) = serde_json::from_str::<TokenResponse>(&error_text) {
-                if let Some(error) = error_response.error {
-                    return Err(OAuthError::TokenExchangeFailed(format!(
-                        "{}: {}",
-                        error,
-                        error_response.error_description.unwrap_or_default()
-                    )));
-                }
+            if let Ok(error_response) = serde_json::from_str::<OAuthErrorResponse>(&error_text) {
+                return Err(OAuthError::TokenExchangeFailed(format!(
+                    "{}: {}",
+                    error_response.error,
+                    error_response.error_description.unwrap_or_default()
+                )));
             }
             return Err(OAuthError::TokenExchangeFailed(format!(
                 "HTTP {}: {}",
@@ -368,7 +370,7 @@ impl TokenExchangeClient {
 
         // 打印完整的原始JSON响应（注意：生产环境中应该小心处理敏感信息）
         tracing::info!(
-            "🌟 Token exchange complete raw response: status={}, body={}",
+            "🌟 Token exchange complete: status={}, body={}",
             status,
             data
         );
@@ -377,18 +379,6 @@ impl TokenExchangeClient {
         let response = serde_json::from_str::<TokenResponse>(&data).map_err(|e| {
             OAuthError::SerdeError(format!("Failed to parse token response: {}", e))
         })?;
-
-  
-        // 打印结构化的关键信息
-        tracing::info!(
-            "🌟 Token exchange structured response: status={}, token_type={}, expires_in={:?}, has_refresh_token={}, has_id_token={}, scope={:?}",
-            status,
-            response.token_type,
-            response.expires_in,
-            response.refresh_token.is_some(),
-            response.id_token.is_some(),
-            response.scope
-        );
 
         Ok(response)
     }
@@ -399,15 +389,6 @@ impl TokenExchangeClient {
         response: TokenResponse,
         session_id: &str,
     ) -> OAuthResult<OAuthTokenResponse> {
-        // 检查是否有错误
-        if let Some(error) = response.error {
-            return Err(OAuthError::TokenExchangeFailed(format!(
-                "{}: {}",
-                error,
-                response.error_description.unwrap_or_default()
-            )));
-        }
-
         // 解析作用域
         let scopes = response
             .scope
@@ -560,8 +541,8 @@ mod tests {
         }"#;
 
         let response: TokenResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.access_token, "test_token");
-        assert_eq!(response.token_type, "Bearer");
+        assert_eq!(response.access_token, "test_token".to_string());
+        assert_eq!(response.token_type, "Bearer".to_string());
         assert_eq!(response.expires_in, Some(3600));
         assert_eq!(response.scope, Some("read write".to_string()));
     }
@@ -573,8 +554,8 @@ mod tests {
             "error_description": "The authorization code is invalid"
         }"#;
 
-        let response: TokenResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.error, Some("invalid_grant".to_string()));
+        let response: OAuthErrorResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.error, "invalid_grant".to_string());
         assert_eq!(
             response.error_description,
             Some("The authorization code is invalid".to_string())

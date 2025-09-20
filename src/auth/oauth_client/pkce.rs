@@ -24,13 +24,13 @@ const DEFAULT_CODE_VERIFIER_LENGTH: usize = 64;
 pub enum PkceError {
     #[error("Invalid code verifier length: {0}. Must be between {1} and {2}")]
     InvalidVerifierLength(usize, usize, usize),
-    
+
     #[error("Invalid code verifier format: contains non-ASCII characters")]
     InvalidVerifierFormat,
-    
+
     #[error("Code challenge verification failed")]
     VerificationFailed,
-    
+
     #[error("Encoding error: {0}")]
     EncodingError(String),
 }
@@ -96,10 +96,11 @@ impl PkceVerifier {
             ));
         }
 
-        // 验证字符集：只能包含[A-Z] [a-z] [0-9] - . _ ~ 
-        if !verifier.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~')
-        }) {
+        // 验证字符集：只能包含[A-Z] [a-z] [0-9] - . _ ~
+        if !verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~'))
+        {
             return Err(PkceError::InvalidVerifierFormat);
         }
 
@@ -202,14 +203,20 @@ impl PkceParams {
     pub fn new() -> Self {
         let verifier = PkceVerifier::new();
         let challenge = verifier.create_challenge();
-        Self { verifier, challenge }
+        Self {
+            verifier,
+            challenge,
+        }
     }
 
     /// 生成指定长度的PKCE参数对
     pub fn with_length(length: usize) -> Self {
         let verifier = PkceVerifier::with_length(length);
         let challenge = verifier.create_challenge();
-        Self { verifier, challenge }
+        Self {
+            verifier,
+            challenge,
+        }
     }
 
     /// 验证Code Verifier是否匹配Challenge
@@ -221,7 +228,10 @@ impl PkceParams {
     pub fn authorization_params(&self) -> Vec<(&'static str, String)> {
         vec![
             ("code_challenge", self.challenge.as_str().to_string()),
-            ("code_challenge_method", self.challenge.method_str().to_string()),
+            (
+                "code_challenge_method",
+                self.challenge.method_str().to_string(),
+            ),
         ]
     }
 
@@ -271,10 +281,8 @@ impl PkceUtils {
         method: Option<ChallengeMethod>,
     ) -> Result<bool, PkceError> {
         let verifier = PkceVerifier::from_string(code_verifier.to_string())?;
-        let challenge = PkceChallenge::from_verifier_with_method(
-            &verifier,
-            method.unwrap_or_default(),
-        );
+        let challenge =
+            PkceChallenge::from_verifier_with_method(&verifier, method.unwrap_or_default());
         Ok(challenge.as_str() == code_challenge)
     }
 
@@ -300,7 +308,7 @@ mod tests {
     fn test_code_challenge_generation() {
         let verifier = PkceVerifier::new();
         let challenge = verifier.create_challenge();
-        
+
         assert_eq!(challenge.method(), ChallengeMethod::S256);
         assert!(!challenge.as_str().is_empty());
     }
@@ -315,9 +323,9 @@ mod tests {
     fn test_challenge_verification() {
         let verifier = PkceVerifier::new();
         let challenge = verifier.create_challenge();
-        
+
         assert!(challenge.verify(&verifier).unwrap());
-        
+
         let wrong_verifier = PkceVerifier::new();
         assert!(!challenge.verify(&wrong_verifier).unwrap());
     }
@@ -325,14 +333,17 @@ mod tests {
     #[test]
     fn test_invalid_verifier_length() {
         let result = PkceVerifier::from_string("short".to_string());
-        assert!(matches!(result, Err(PkceError::InvalidVerifierLength(_, _, _))));
+        assert!(matches!(
+            result,
+            Err(PkceError::InvalidVerifierLength(_, _, _))
+        ));
     }
 
     #[test]
     fn test_authorization_params() {
         let params = PkceParams::new();
         let auth_params = params.authorization_params();
-        
+
         assert_eq!(auth_params.len(), 2);
         assert_eq!(auth_params[0].0, "code_challenge");
         assert_eq!(auth_params[1].0, "code_challenge_method");
@@ -343,7 +354,7 @@ mod tests {
     fn test_token_params() {
         let params = PkceParams::new();
         let token_params = params.token_params();
-        
+
         assert_eq!(token_params.len(), 1);
         assert_eq!(token_params[0].0, "code_verifier");
     }
@@ -352,10 +363,13 @@ mod tests {
     fn test_utils_functions() {
         let verifier = PkceUtils::generate_code_verifier();
         assert!(PkceUtils::is_valid_code_verifier(&verifier));
-        
+
         let challenge = PkceUtils::generate_code_challenge(&verifier).unwrap();
         assert!(!challenge.is_empty());
-        
-        assert!(PkceUtils::verify_challenge(&verifier, &challenge, Some(ChallengeMethod::S256)).unwrap());
+
+        assert!(
+            PkceUtils::verify_challenge(&verifier, &challenge, Some(ChallengeMethod::S256))
+                .unwrap()
+        );
     }
 }

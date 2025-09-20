@@ -10,7 +10,9 @@ mod manager;
 mod provider_config;
 mod watcher;
 
-pub use app_config::{AppConfig, CacheConfig, CacheType, OAuthCleanupConfig, RedisConfig, ServerConfig};
+pub use app_config::{
+    AppConfig, CacheConfig, CacheType, OAuthCleanupConfig, RedisConfig, ServerConfig,
+};
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use database::DatabaseConfig;
 pub use dual_port_config::{DualPortServerConfig, ManagementPortConfig, ProxyPortConfig};
@@ -54,7 +56,6 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
                 server.port
             )));
         }
-
 
         if server.workers == 0 {
             return Err(crate::error::ProxyError::config("工作线程数必须大于0"));

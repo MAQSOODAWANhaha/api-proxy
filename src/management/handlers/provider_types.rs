@@ -20,7 +20,11 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Failed to fetch provider types: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch provider types: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider types: {}",
+                err
+            ));
         }
     };
 
@@ -29,10 +33,13 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
         .into_iter()
         .map(|provider| {
             // 解析支持的认证类型
-            let supported_auth_types: Vec<String> = serde_json::from_str::<Vec<String>>(&provider.supported_auth_types).unwrap_or_else(|_| vec!["api_key".to_string()]);
+            let supported_auth_types: Vec<String> =
+                serde_json::from_str::<Vec<String>>(&provider.supported_auth_types)
+                    .unwrap_or_else(|_| vec!["api_key".to_string()]);
 
             // 解析认证配置
-            let auth_configs: Option<serde_json::Value> = provider.auth_configs_json
+            let auth_configs: Option<serde_json::Value> = provider
+                .auth_configs_json
                 .as_ref()
                 .and_then(|config_json| serde_json::from_str(config_json).ok());
 

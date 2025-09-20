@@ -164,7 +164,11 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch today's traces: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch today's data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch today's data: {}",
+                err
+            ));
         }
     };
 
@@ -179,7 +183,11 @@ pub async fn get_today_dashboard_cards(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch yesterday's traces: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch yesterday's data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch yesterday's data: {}",
+                err
+            ));
         }
     };
 
@@ -283,7 +291,11 @@ pub async fn get_models_usage_rate(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models rate: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch data: {}",
+                err
+            ));
         }
     };
 
@@ -349,7 +361,11 @@ pub async fn get_models_statistics(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for models statistics: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch data: {}",
+                err
+            ));
         }
     };
 
@@ -412,7 +428,11 @@ pub async fn get_tokens_trend(
         Ok(traces) => traces,
         Err(err) => {
             tracing::error!("Failed to fetch traces for tokens trend: {}", err);
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch data: {}",
+                err
+            ));
         }
     };
 
@@ -524,7 +544,11 @@ pub async fn get_user_api_keys_request_trend(
                 "Failed to fetch traces for user API keys request trend: {}",
                 err
             );
-            return crate::manage_error!(crate::proxy_err!(database, "Failed to fetch data: {}", err));
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch data: {}",
+                err
+            ));
         }
     };
 
@@ -611,9 +635,11 @@ pub async fn get_user_api_keys_token_trend(
                 "Failed to fetch traces for user API keys token trend: {}",
                 err
             );
-            return crate::manage_error!(
-                crate::proxy_err!(database, "Failed to fetch data: {}", err)
-            );
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch data: {}",
+                err
+            ));
         }
     };
 
@@ -702,15 +728,17 @@ fn parse_time_range(
                         DateTime::from_naive_utc_and_offset(start_datetime, Utc)
                     }
                     Err(_) => {
-                        return Err(crate::manage_error!(
-                            crate::proxy_err!(business, "Invalid start date format. Use YYYY-MM-DD")
-                        ));
+                        return Err(crate::manage_error!(crate::proxy_err!(
+                            business,
+                            "Invalid start date format. Use YYYY-MM-DD"
+                        )));
                     }
                 }
             } else {
-                return Err(crate::manage_error!(
-                    crate::proxy_err!(business, "Custom range requires both start and end dates")
-                ));
+                return Err(crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "Custom range requires both start and end dates"
+                )));
             }
         }
         _ => end_time - Duration::days(7), // 默认7天

@@ -6,8 +6,8 @@ use super::builder::ProxyServerBuilder;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 // 使用 tracing 替代 log
-use crate::trace::TraceSystem;
 use crate::logging::LogComponent;
+use crate::trace::TraceSystem;
 use crate::{proxy_info, proxy_warn};
 use pingora_core::server::{Server, configuration::Opt};
 use pingora_proxy::http_proxy_service;
@@ -56,7 +56,7 @@ impl PingoraProxyServer {
     /// 创建Pingora服务器选项（基本配置）
     fn create_pingora_options(&self) -> Result<Opt> {
         let opt = Opt::default();
-        
+
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
@@ -64,7 +64,7 @@ impl PingoraProxyServer {
             "creating_pingora_options",
             "创建Pingora基础配置选项",
         );
-        
+
         Ok(opt)
     }
 
@@ -141,7 +141,6 @@ impl PingoraProxyServer {
 
         // 添加监听地址
         proxy_service.add_tcp(&builder.get_server_address());
-
 
         // 注册服务并启动
         server.add_service(proxy_service);

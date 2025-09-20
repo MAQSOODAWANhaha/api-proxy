@@ -127,7 +127,10 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
                 let (status, code, message) = error.as_http_parts();
                 let error_response = ErrorResponse {
                     success: false,
-                    error: ErrorInfo { code: code.to_string(), message },
+                    error: ErrorInfo {
+                        code: code.to_string(),
+                        message,
+                    },
                     timestamp: Utc::now(),
                 };
                 (status, Json(error_response)).into_response()
@@ -167,7 +170,10 @@ pub fn app_error(error: ProxyError) -> axum::response::Response {
     let (status, code, message) = error.as_http_parts();
     let body = ErrorResponse {
         success: false,
-        error: ErrorInfo { code: code.to_string(), message },
+        error: ErrorInfo {
+            code: code.to_string(),
+            message,
+        },
         timestamp: Utc::now(),
     };
     (status, Json(body)).into_response()

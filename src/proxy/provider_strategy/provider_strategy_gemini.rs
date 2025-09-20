@@ -10,6 +10,8 @@ use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::proxy::ProxyContext;
 use crate::{proxy_debug, proxy_info};
+use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 
 use super::ProviderStrategy;
 
@@ -30,13 +32,24 @@ impl GeminiProxyMode {
     }
 }
 
-#[derive(Default)]
-pub struct GeminiStrategy;
+pub struct GeminiStrategy {
+    db: Option<Arc<DatabaseConnection>>,
+}
+
+impl Default for GeminiStrategy {
+    fn default() -> Self {
+        Self { db: None }
+    }
+}
 
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
     fn name(&self) -> &'static str {
         "gemini"
+    }
+
+    fn set_db_connection(&mut self, db: Option<Arc<DatabaseConnection>>) {
+        self.db = db;
     }
 
     async fn select_upstream_host(
@@ -81,8 +94,8 @@ impl ProviderStrategy for GeminiStrategy {
                         if path.contains("generateContent") {
                             // 使用原始项目ID格式，不添加 projects/ 前缀
                             let header_val = format!("project={}", pid);
-                            let _ =
-                                upstream_request.insert_header("x-goog-request-params", &header_val);
+                            let _ = upstream_request
+                                .insert_header("x-goog-request-params", &header_val);
                             proxy_info!(
                                 &ctx.request_id,
                                 LogStage::RequestModify,
@@ -282,7 +295,11 @@ fn inject_generatecontent_fields(
         }
 
         // 如果request对象存在，project已经在request外部设置
-        if obj.get_mut("request").and_then(|v| v.as_object_mut()).is_some() {
+        if obj
+            .get_mut("request")
+            .and_then(|v| v.as_object_mut())
+            .is_some()
+        {
             proxy_debug!(
                 request_id,
                 LogStage::RequestModify,
@@ -386,6 +403,9 @@ mod tests {
             max_requests_per_day: Some(100000),
             is_active: true,
             health_status: "healthy".to_string(),
+            health_status_detail: None,
+            rate_limit_resets_at: None,
+            last_error_time: None,
             auth_status: Some("authorized".to_string()),
             expires_at: None,
             last_auth_check: Some(now),

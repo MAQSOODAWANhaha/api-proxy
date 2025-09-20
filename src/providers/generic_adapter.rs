@@ -163,9 +163,15 @@ impl GenericAdapter {
     fn extract_usage_info(&self, response: &Value) -> Option<Usage> {
         // 简化后移除了通用field_extractor，优先使用专门的token_field_extractor
         if let Some(token_extractor) = &self.config.token_field_extractor {
-            let input_tokens = token_extractor.extract_token_u32(response, "tokens_prompt").unwrap_or(0);
-            let output_tokens = token_extractor.extract_token_u32(response, "tokens_completion").unwrap_or(0);
-            let total_tokens = token_extractor.extract_token_u32(response, "tokens_total").unwrap_or(input_tokens + output_tokens);
+            let input_tokens = token_extractor
+                .extract_token_u32(response, "tokens_prompt")
+                .unwrap_or(0);
+            let output_tokens = token_extractor
+                .extract_token_u32(response, "tokens_completion")
+                .unwrap_or(0);
+            let total_tokens = token_extractor
+                .extract_token_u32(response, "tokens_total")
+                .unwrap_or(input_tokens + output_tokens);
 
             debug!(
                 provider = %self.config.provider_name,
@@ -197,7 +203,8 @@ impl GenericAdapter {
     /// 提取内容（简化版）
     fn extract_content(&self, response: &Value) -> String {
         // 简化后使用通用的响应提取逻辑
-        response.get("content")
+        response
+            .get("content")
             .and_then(|c| c.as_str())
             .unwrap_or("")
             .to_string()
@@ -207,9 +214,14 @@ impl GenericAdapter {
     fn extract_model_name(&self, response: &Value, fallback: &str) -> String {
         // 简化后的模型提取逻辑：从响应中直接提取
         // ModelExtractor主要用于从请求阶段提取，这里简化为直接提取
-        response.get("model")
+        response
+            .get("model")
             .and_then(|m| m.as_str())
-            .or_else(|| response.pointer("/choices/0/model").and_then(|m| m.as_str()))  // 兼容某些格式
+            .or_else(|| {
+                response
+                    .pointer("/choices/0/model")
+                    .and_then(|m| m.as_str())
+            }) // 兼容某些格式
             .unwrap_or(fallback)
             .to_string()
     }
@@ -217,7 +229,8 @@ impl GenericAdapter {
     /// 提取完成原因（简化版）
     fn extract_finish_reason(&self, response: &Value) -> Option<String> {
         // 简化后使用通用的提取逻辑
-        response.get("finish_reason")
+        response
+            .get("finish_reason")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .or_else(|| Some("stop".to_string()))
@@ -243,10 +256,22 @@ impl GenericAdapter {
         // 简化的非Token字段提取
         let (cost, cost_currency, model_name, error_type, error_message) = (
             response.get("cost").and_then(|v| v.as_f64()),
-            response.get("cost_currency").and_then(|v| v.as_str()).map(String::from),
-            response.get("model").and_then(|v| v.as_str()).map(String::from),
-            response.get("error_type").and_then(|v| v.as_str()).map(String::from),
-            response.get("error_message").and_then(|v| v.as_str()).map(String::from),
+            response
+                .get("cost_currency")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            response
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            response
+                .get("error_type")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            response
+                .get("error_message")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         );
 
         TraceStats {

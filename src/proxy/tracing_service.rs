@@ -7,13 +7,13 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::error::ProxyError;
-use crate::proxy::ProxyContext;
 use crate::logging::LogComponent;
-use crate::{proxy_warn, proxy_debug, proxy_info};
+use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
+use crate::{proxy_debug, proxy_info, proxy_warn};
 
 /// 代理端追踪服务
-/// 
+///
 /// 专门处理代理请求的追踪逻辑，从RequestHandler中分离出来
 /// 包含请求追踪的完整生命周期管理
 pub struct TracingService {
@@ -28,7 +28,7 @@ impl TracingService {
     }
 
     /// 开始请求追踪
-    /// 
+    ///
     /// 在认证成功后调用，记录请求开始信息
     pub async fn start_trace(
         &self,
@@ -61,7 +61,10 @@ impl TracingService {
                     "即时追踪启动失败",
                     error = format!("{:?}", e)
                 );
-                return Err(ProxyError::internal(format!("Failed to start trace: {}", e)));
+                return Err(ProxyError::internal(format!(
+                    "Failed to start trace: {}",
+                    e
+                )));
             }
 
             proxy_debug!(
@@ -78,7 +81,7 @@ impl TracingService {
     }
 
     /// 更新扩展追踪信息
-    /// 
+    ///
     /// 在选择后端API密钥后或响应处理时更新额外的追踪信息
     pub async fn update_extended_trace_info(
         &self,
@@ -105,7 +108,10 @@ impl TracingService {
                     "扩展追踪信息更新失败",
                     error = format!("{:?}", e)
                 );
-                return Err(ProxyError::internal(format!("Failed to update trace: {}", e)));
+                return Err(ProxyError::internal(format!(
+                    "Failed to update trace: {}",
+                    e
+                )));
             }
 
             proxy_debug!(
@@ -114,9 +120,9 @@ impl TracingService {
                 LogComponent::TracingService,
                 "trace_info_updated",
                 "扩展追踪信息更新成功",
-                provider_type_id =provider_type_id,
-                model_used =model_used,
-                user_provider_key_id =user_provider_key_id
+                provider_type_id = provider_type_id,
+                model_used = model_used,
+                user_provider_key_id = user_provider_key_id
             );
         }
 
@@ -124,7 +130,7 @@ impl TracingService {
     }
 
     /// 完成请求追踪（成功情况）
-    /// 
+    ///
     /// 在请求成功处理完成时调用
     pub async fn complete_trace_success(
         &self,
@@ -156,7 +162,10 @@ impl TracingService {
                     "成功请求追踪完成失败",
                     error = format!("{:?}", e)
                 );
-                return Err(ProxyError::internal(format!("Failed to complete trace: {}", e)));
+                return Err(ProxyError::internal(format!(
+                    "Failed to complete trace: {}",
+                    e
+                )));
             }
 
             proxy_info!(
@@ -166,10 +175,10 @@ impl TracingService {
                 "success_trace_completed",
                 "成功请求追踪完成",
                 status_code = status_code,
-                tokens_prompt =tokens_prompt,
-                tokens_completion =tokens_completion,
-                tokens_total =tokens_total,
-                model_used =model_used
+                tokens_prompt = tokens_prompt,
+                tokens_completion = tokens_completion,
+                tokens_total = tokens_total,
+                model_used = model_used
             );
         }
 
@@ -177,7 +186,7 @@ impl TracingService {
     }
 
     /// 完成请求追踪（失败情况）
-    /// 
+    ///
     /// 在请求处理失败时调用
     pub async fn complete_trace_failure(
         &self,
@@ -207,7 +216,10 @@ impl TracingService {
                     "失败请求追踪完成失败",
                     error = format!("{:?}", e)
                 );
-                return Err(ProxyError::internal(format!("Failed to complete trace: {}", e)));
+                return Err(ProxyError::internal(format!(
+                    "Failed to complete trace: {}",
+                    e
+                )));
             }
 
             proxy_info!(
@@ -217,8 +229,8 @@ impl TracingService {
                 "failure_trace_completed",
                 "失败请求追踪完成",
                 status_code = status_code,
-                error_type =error_type,
-                error_message =error_message
+                error_type = error_type,
+                error_message = error_message
             );
         }
 
@@ -226,7 +238,7 @@ impl TracingService {
     }
 
     /// 批量完成追踪（用于通用错误处理）
-    /// 
+    ///
     /// 提供一个便捷的方法来完成失败的追踪，使用标准的错误码和消息
     pub async fn complete_trace_with_error(
         &self,
@@ -234,37 +246,48 @@ impl TracingService {
         error: &ProxyError,
     ) -> Result<(), ProxyError> {
         let (status_code, error_type, error_message) = match error {
-            ProxyError::Authentication { message, .. } => {
-                (401, Some("authentication_error".to_string()), Some(message.clone()))
-            }
-            ProxyError::RateLimit { message, .. } => {
-                (429, Some("rate_limit_exceeded".to_string()), Some(message.clone()))
-            }
-            ProxyError::UpstreamNotAvailable { message, .. } | ProxyError::UpstreamNotFound { message, .. } => {
-                (502, Some("upstream_error".to_string()), Some(message.clone()))
-            }
-            ProxyError::Config { message, .. } => {
-                (500, Some("configuration_error".to_string()), Some(message.clone()))
-            }
-            ProxyError::Internal { message, .. } => {
-                (500, Some("internal_error".to_string()), Some(message.clone()))
-            }
-            ProxyError::ConnectionTimeout { message, .. } | 
-            ProxyError::ReadTimeout { message, .. } | 
-            ProxyError::WriteTimeout { message, .. } => {
-                (504, Some("timeout_error".to_string()), Some(message.clone()))
-            }
-            _ => {
-                (500, Some("unknown_error".to_string()), Some(error.to_string()))
-            }
+            ProxyError::Authentication { message, .. } => (
+                401,
+                Some("authentication_error".to_string()),
+                Some(message.clone()),
+            ),
+            ProxyError::RateLimit { message, .. } => (
+                429,
+                Some("rate_limit_exceeded".to_string()),
+                Some(message.clone()),
+            ),
+            ProxyError::UpstreamNotAvailable { message, .. }
+            | ProxyError::UpstreamNotFound { message, .. } => (
+                502,
+                Some("upstream_error".to_string()),
+                Some(message.clone()),
+            ),
+            ProxyError::Config { message, .. } => (
+                500,
+                Some("configuration_error".to_string()),
+                Some(message.clone()),
+            ),
+            ProxyError::Internal { message, .. } => (
+                500,
+                Some("internal_error".to_string()),
+                Some(message.clone()),
+            ),
+            ProxyError::ConnectionTimeout { message, .. }
+            | ProxyError::ReadTimeout { message, .. }
+            | ProxyError::WriteTimeout { message, .. } => (
+                504,
+                Some("timeout_error".to_string()),
+                Some(message.clone()),
+            ),
+            _ => (
+                500,
+                Some("unknown_error".to_string()),
+                Some(error.to_string()),
+            ),
         };
 
-        self.complete_trace_failure(
-            request_id,
-            status_code,
-            error_type,
-            error_message,
-        ).await
+        self.complete_trace_failure(request_id, status_code, error_type, error_message)
+            .await
     }
 
     /// 检查是否启用了追踪
@@ -283,7 +306,8 @@ impl TracingService {
             401,
             Some("authentication_failed".to_string()),
             Some(message.to_string()),
-        ).await
+        )
+        .await
     }
 
     /// 完成速率限制失败的追踪
@@ -297,7 +321,8 @@ impl TracingService {
             429,
             Some("rate_limit_exceeded".to_string()),
             Some(message.to_string()),
-        ).await
+        )
+        .await
     }
 
     /// 完成配置错误的追踪
@@ -311,7 +336,8 @@ impl TracingService {
             500,
             Some("configuration_error".to_string()),
             Some(message.to_string()),
-        ).await
+        )
+        .await
     }
 
     /// 完成API密钥选择失败的追踪
@@ -325,7 +351,8 @@ impl TracingService {
             503,
             Some("api_key_selection_failed".to_string()),
             Some(message.to_string()),
-        ).await
+        )
+        .await
     }
 
     /// 完成上游服务错误的追踪
@@ -339,19 +366,22 @@ impl TracingService {
             502,
             Some("upstream_error".to_string()),
             Some(message.to_string()),
-        ).await
+        )
+        .await
     }
 }
 
 /// 追踪上下文助手
-/// 
+///
 /// 提供从ProxyContext中提取追踪所需信息的便捷方法
 pub struct TracingContextHelper;
 
 impl TracingContextHelper {
     /// 从ProxyContext提取用户服务API信息
     pub fn extract_user_service_api_info(ctx: &ProxyContext) -> Option<(i32, Option<i32>)> {
-        ctx.user_service_api.as_ref().map(|api| (api.id, Some(api.user_id)))
+        ctx.user_service_api
+            .as_ref()
+            .map(|api| (api.id, Some(api.user_id)))
     }
 
     /// 从ProxyContext提取提供商信息
@@ -372,9 +402,11 @@ impl TracingContextHelper {
     /// 从ProxyContext提取token信息
     pub fn extract_token_info(ctx: &ProxyContext) -> (Option<u32>, Option<u32>, Option<u32>) {
         let tokens = &ctx.token_usage;
-        (tokens.prompt_tokens, 
-         tokens.completion_tokens, 
-         Some(tokens.total_tokens))
+        (
+            tokens.prompt_tokens,
+            tokens.completion_tokens,
+            Some(tokens.total_tokens),
+        )
     }
 }
 
@@ -391,13 +423,13 @@ mod tests {
     #[test]
     fn test_tracing_context_helper() {
         let ctx = ProxyContext::default();
-        
+
         // 测试默认上下文的提取
         assert!(TracingContextHelper::extract_user_service_api_info(&ctx).is_none());
         assert!(TracingContextHelper::extract_provider_info(&ctx).is_none());
         assert!(TracingContextHelper::extract_backend_key_info(&ctx).is_none());
         assert!(TracingContextHelper::extract_model_info(&ctx).is_none());
-        
+
         let (prompt, completion, total) = TracingContextHelper::extract_token_info(&ctx);
         assert!(prompt.is_none());
         assert!(completion.is_none());
@@ -407,11 +439,51 @@ mod tests {
     #[tokio::test]
     async fn test_tracing_service_without_tracer() {
         let service = TracingService::new(None);
-        
+
         // 所有方法在没有tracer的情况下都应该成功返回
-        assert!(service.start_trace("test", 1, Some(1), "GET", Some("/test".to_string()), None, None).await.is_ok());
-        assert!(service.update_extended_trace_info("test", Some(1), Some("model".to_string()), Some(1)).await.is_ok());
-        assert!(service.complete_trace_success("test", 200, Some(10), Some(20), Some(30), Some("model".to_string())).await.is_ok());
-        assert!(service.complete_trace_failure("test", 500, Some("error".to_string()), Some("message".to_string())).await.is_ok());
+        assert!(
+            service
+                .start_trace(
+                    "test",
+                    1,
+                    Some(1),
+                    "GET",
+                    Some("/test".to_string()),
+                    None,
+                    None
+                )
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .update_extended_trace_info("test", Some(1), Some("model".to_string()), Some(1))
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .complete_trace_success(
+                    "test",
+                    200,
+                    Some(10),
+                    Some(20),
+                    Some(30),
+                    Some("model".to_string())
+                )
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .complete_trace_failure(
+                    "test",
+                    500,
+                    Some("error".to_string()),
+                    Some("message".to_string())
+                )
+                .await
+                .is_ok()
+        );
     }
 }

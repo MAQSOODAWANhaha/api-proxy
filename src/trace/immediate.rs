@@ -410,6 +410,7 @@ impl ImmediateProxyTracer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use chrono::Utc;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{Database, EntityTrait, PaginatorTrait, Set};
@@ -426,6 +427,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_immediate_trace_lifecycle() {
         let db = setup_test_db().await;
         let config = ImmediateTracerConfig::default();
@@ -433,10 +435,10 @@ mod tests {
 
         // Insert a user record
         let user = entity::users::ActiveModel {
-            id: Set(1),
-            username: Set("testuser".to_string()),
+            id: Set(999), // 使用不同的ID避免冲突
+            username: Set("testuser_immediate".to_string()),
             password_hash: Set("...".to_string()),
-            email: Set("test@test.com".to_string()),
+            email: Set("test_immediate@test.com".to_string()),
             salt: Set("salt".to_string()),
             is_admin: Set(false),
             is_active: Set(true),
@@ -451,8 +453,10 @@ mod tests {
 
         // Insert a user_service_api record
         let user_service_api = entity::user_service_apis::ActiveModel {
-            id: Set(1),
-            user_id: Set(1),
+            id: Set(999),
+            user_id: Set(999),
+            provider_type_id: Set(1), // 添加必需的provider_type_id
+            api_key: Set("test-api-key-999".to_string()), // 添加必需的api_key
             name: Set(Some("Test API".to_string())),
             is_active: Set(true),
             created_at: Set(Utc::now().naive_utc()),
@@ -470,8 +474,8 @@ mod tests {
         tracer
             .start_trace(
                 request_id.clone(),
-                1,
-                Some(1), // user_id
+                999,
+                Some(999), // user_id
                 "POST".to_string(),
                 Some("/v1/chat/completions".to_string()),
                 Some("127.0.0.1".to_string()),

@@ -91,9 +91,11 @@ pub async fn start_authorization(
         .await
     {
         Ok(authorize_response) => response::success(authorize_response),
-        Err(OAuthError::ProviderNotFound(provider)) => crate::manage_error!(
-            crate::proxy_err!(business, "Unsupported OAuth provider: {}", provider)
-        ),
+        Err(OAuthError::ProviderNotFound(provider)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Unsupported OAuth provider: {}",
+            provider
+        )),
         Err(e) => {
             tracing::error!("Failed to start OAuth authorization: {:?}", e);
             crate::manage_error!(crate::proxy_err!(internal, "Failed to start authorization"))
@@ -124,15 +126,20 @@ pub async fn poll_session(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
+        return crate::manage_error!(crate::proxy_err!(
+            auth,
+            "Session not found or access denied"
+        ));
     }
 
     // 轮询会话状态
     match oauth_client.poll_session(&query.session_id).await {
         Ok(polling_status) => response::success(polling_status),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
-            crate::proxy_err!(business, "Session not found: {}", query.session_id)
-        ),
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Session not found: {}",
+            query.session_id
+        )),
         Err(e) => {
             tracing::error!("Failed to poll session: {:?}", e);
             crate::manage_error!(crate::proxy_err!(internal, "Failed to poll session"))
@@ -163,7 +170,10 @@ pub async fn exchange_token(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
+        return crate::manage_error!(crate::proxy_err!(
+            auth,
+            "Session not found or access denied"
+        ));
     }
 
     // 添加详细日志记录
@@ -185,15 +195,19 @@ pub async fn exchange_token(
         .await
     {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
-            crate::proxy_err!(business, "Session not found: {}", request.session_id)
-        ),
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Session not found: {}",
+            request.session_id
+        )),
         Err(OAuthError::SessionExpired(_)) => {
             crate::manage_error!(crate::proxy_err!(business, "Session expired"))
         }
-        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(
-            crate::proxy_err!(business, "Token exchange failed: {}", msg)
-        ),
+        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Token exchange failed: {}",
+            msg
+        )),
         Err(e) => {
             tracing::error!("Failed to exchange token: {:?}", e);
             crate::manage_error!(crate::proxy_err!(internal, "Failed to exchange token"))
@@ -219,7 +233,11 @@ pub async fn list_sessions(State(state): State<AppState>, headers: HeaderMap) ->
         Ok(sessions) => response::success(sessions),
         Err(e) => {
             tracing::error!("Failed to list sessions: {:?}", e);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to list sessions: {:?}", e))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to list sessions: {:?}",
+                e
+            ))
         }
     }
 }
@@ -244,12 +262,18 @@ pub async fn delete_session(
     // 删除会话
     match oauth_client.delete_session(&session_id, user_id).await {
         Ok(()) => response::success("Session deleted successfully"),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
-            crate::proxy_err!(business, "Session not found: {}", session_id)
-        ),
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Session not found: {}",
+            session_id
+        )),
         Err(e) => {
             tracing::error!("Failed to delete session: {:?}", e);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to delete session: {:?}", e))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to delete session: {:?}",
+                e
+            ))
         }
     }
 }
@@ -277,18 +301,23 @@ pub async fn refresh_token(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(auth, "Session not found or access denied"));
+        return crate::manage_error!(crate::proxy_err!(
+            auth,
+            "Session not found or access denied"
+        ));
     }
 
     // 刷新令牌
     match oauth_client.refresh_token(&session_id).await {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(
-            crate::proxy_err!(business, "Session not found: {}", session_id)
-        ),
-        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(
-            crate::proxy_err!(business, "Token refresh failed: {}", msg)
-        ),
+        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
+            business,
+            "Session not found: {}",
+            session_id
+        )),
+        Err(OAuthError::TokenExchangeFailed(msg)) => {
+            crate::manage_error!(crate::proxy_err!(business, "Token refresh failed: {}", msg))
+        }
         Err(e) => {
             tracing::error!("Failed to refresh token: {:?}", e);
             crate::manage_error!(crate::proxy_err!(internal, "Failed to refresh token"))
@@ -317,7 +346,11 @@ pub async fn get_statistics(
         Ok(statistics) => response::success(statistics),
         Err(e) => {
             tracing::error!("Failed to get statistics: {:?}", e);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to get statistics: {:?}", e))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to get statistics: {:?}",
+                e
+            ))
         }
     }
 }
@@ -348,7 +381,11 @@ pub async fn cleanup_expired_sessions(
         })),
         Err(e) => {
             tracing::error!("Failed to cleanup sessions: {:?}", e);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to cleanup sessions: {:?}", e))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to cleanup sessions: {:?}",
+                e
+            ))
         }
     }
 }
@@ -378,7 +415,11 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
         }
         Err(e) => {
             tracing::error!("Failed to list providers: {:?}", e);
-            crate::manage_error!(crate::proxy_err!(database, "Failed to list providers: {:?}", e))
+            crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to list providers: {:?}",
+                e
+            ))
         }
     }
 }

@@ -255,7 +255,7 @@ impl AuthConfig {
             session_timeout: 3600,
             max_login_attempts: 10,
             login_lockout_duration: 60, // 较短的锁定时间
-            cache_ttl_minutes: 1, // 短缓存时间便于测试
+            cache_ttl_minutes: 1,       // 短缓存时间便于测试
             max_failed_attempts: Some(10),
         }
     }
@@ -265,10 +265,10 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             jwt_secret: "your-secret-key".to_string(),
-            jwt_expires_in: 3600,       // 1 小时
+            jwt_expires_in: 3600,        // 1 小时
             refresh_expires_in: 604_800, // 7 天
             enable_rate_limiting: true,
-            default_request_rate_limit: 100,  // 每分钟 100 请求
+            default_request_rate_limit: 100,   // 每分钟 100 请求
             default_token_rate_limit: 100_000, // 每日 100k tokens
             min_password_length: 8,
             require_password_numbers: true,
@@ -347,10 +347,7 @@ pub enum AuthError {
     InternalError(String),
     /// 不支持的认证方法
     #[error("端口 {port} 不支持认证方法: {method}")]
-    AuthMethodNotSupported {
-        method: String,
-        port: String,
-    },
+    AuthMethodNotSupported { method: String, port: String },
     /// 无效的认证格式
     #[error("无效的认证格式: {0}")]
     InvalidAuthFormat(String),
@@ -359,11 +356,11 @@ pub enum AuthError {
 // Display和Error trait现在由thiserror自动实现
 
 /// 支持的认证类型 - 表示具体的认证策略类型（配置输入）
-/// 
+///
 /// 注意：与 `AuthMethod` 的区别：
 /// - `AuthType` 表示认证策略的具体类型，用于配置和策略选择
 /// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
-/// 
+///
 /// 例如：`AuthType::GoogleOAuth` 策略执行后，可能产生 `AuthMethod::OAuth` 结果
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -507,10 +504,22 @@ impl MultiAuthConfig {
     /// 创建OAuth认证配置
     pub fn oauth(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
         let mut config = serde_json::Map::new();
-        config.insert("client_id".to_string(), serde_json::Value::String(client_id.to_string()));
-        config.insert("client_secret".to_string(), serde_json::Value::String(client_secret.to_string()));
-        config.insert("auth_url".to_string(), serde_json::Value::String(auth_url.to_string()));
-        config.insert("token_url".to_string(), serde_json::Value::String(token_url.to_string()));
+        config.insert(
+            "client_id".to_string(),
+            serde_json::Value::String(client_id.to_string()),
+        );
+        config.insert(
+            "client_secret".to_string(),
+            serde_json::Value::String(client_secret.to_string()),
+        );
+        config.insert(
+            "auth_url".to_string(),
+            serde_json::Value::String(auth_url.to_string()),
+        );
+        config.insert(
+            "token_url".to_string(),
+            serde_json::Value::String(token_url.to_string()),
+        );
 
         Self {
             auth_type: AuthType::OAuth,
@@ -656,14 +665,18 @@ mod tests {
         assert_eq!(AuthStatus::Revoked.to_string(), "revoked");
     }
 
-
     #[test]
     fn test_multi_auth_config_creation() {
         let api_config = MultiAuthConfig::api_key();
         assert_eq!(api_config.auth_type, AuthType::ApiKey);
         assert_eq!(api_config.extra_config, None);
 
-        let oauth_config = MultiAuthConfig::oauth("client123", "secret456", "https://auth.example.com", "https://token.example.com");
+        let oauth_config = MultiAuthConfig::oauth(
+            "client123",
+            "secret456",
+            "https://auth.example.com",
+            "https://token.example.com",
+        );
         assert_eq!(oauth_config.auth_type, AuthType::OAuth);
         assert!(oauth_config.extra_config.is_some());
     }

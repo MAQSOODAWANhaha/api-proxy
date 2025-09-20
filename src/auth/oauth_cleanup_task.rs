@@ -1,10 +1,13 @@
-use std::time::Duration;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, QuerySelect, PaginatorTrait};
-use tokio::time;
-use tracing::{info, error};
+use crate::config::OAuthCleanupConfig;
 use chrono::Utc;
 use entity::oauth_client_sessions;
-use crate::config::OAuthCleanupConfig;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QuerySelect, Set,
+};
+use std::time::Duration;
+use tokio::time;
+use tracing::{error, info};
 
 /// OAuth 会话清理任务
 pub struct OAuthCleanupTask {
@@ -26,11 +29,12 @@ impl OAuthCleanupTask {
             self.config.cleanup_interval_seconds, self.config.pending_expire_minutes
         );
 
-        let mut interval = time::interval(Duration::from_secs(self.config.cleanup_interval_seconds));
+        let mut interval =
+            time::interval(Duration::from_secs(self.config.cleanup_interval_seconds));
 
         loop {
             interval.tick().await;
-            
+
             if let Err(e) = self.cleanup_expired_sessions().await {
                 error!("Failed to cleanup expired OAuth sessions: {}", e);
             }
@@ -38,9 +42,12 @@ impl OAuthCleanupTask {
     }
 
     /// 清理过期的 OAuth 会话
-    pub async fn cleanup_expired_sessions(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let cutoff_time = Utc::now() - chrono::Duration::minutes(self.config.pending_expire_minutes as i64);
-        
+    pub async fn cleanup_expired_sessions(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let cutoff_time =
+            Utc::now() - chrono::Duration::minutes(self.config.pending_expire_minutes as i64);
+
         // 查找需要清理的会话
         let expired_sessions = oauth_client_sessions::Entity::find()
             .filter(oauth_client_sessions::Column::Status.eq("pending"))
@@ -51,14 +58,20 @@ impl OAuthCleanupTask {
 
         if !expired_sessions.is_empty() {
             let cleanup_count = expired_sessions.len();
-            info!("Found {} expired pending OAuth sessions to cleanup", cleanup_count);
+            info!(
+                "Found {} expired pending OAuth sessions to cleanup",
+                cleanup_count
+            );
 
             // 批量更新状态为 expired，而不是直接删除
             // 这样可以保留审计记录，便于后续分析
             for session in expired_sessions {
                 let mut active_session: oauth_client_sessions::ActiveModel = session.into();
                 active_session.status = Set("expired".to_string());
-                active_session.error_message = Set(Some(format!("Session expired after {} minutes", self.config.pending_expire_minutes)));
+                active_session.error_message = Set(Some(format!(
+                    "Session expired after {} minutes",
+                    self.config.pending_expire_minutes
+                )));
                 active_session.updated_at = Set(Utc::now().naive_utc());
 
                 if let Err(e) = active_session.update(&self.db).await {
@@ -66,7 +79,10 @@ impl OAuthCleanupTask {
                 }
             }
 
-            info!("Successfully marked {} expired pending OAuth sessions", cleanup_count);
+            info!(
+                "Successfully marked {} expired pending OAuth sessions",
+                cleanup_count
+            );
         }
 
         // 清理过期时间更长的已标记为 expired 的记录
@@ -77,11 +93,13 @@ impl OAuthCleanupTask {
 
     /// 清理更老的已标记为 expired 的会话记录
     /// 这些记录保留一段时间后可以完全删除
-    async fn cleanup_old_expired_sessions(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn cleanup_old_expired_sessions(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // 删除配置天数前标记为 expired 的记录
         let retention_days = self.config.expired_records_retention_days;
         let delete_cutoff_time = Utc::now() - chrono::Duration::days(retention_days as i64);
-        
+
         let delete_result = oauth_client_sessions::Entity::delete_many()
             .filter(oauth_client_sessions::Column::Status.eq("expired"))
             .filter(oauth_client_sessions::Column::UpdatedAt.lt(delete_cutoff_time.naive_utc()))
@@ -89,14 +107,19 @@ impl OAuthCleanupTask {
             .await?;
 
         if delete_result.rows_affected > 0 {
-            info!("Deleted {} old expired OAuth session records", delete_result.rows_affected);
+            info!(
+                "Deleted {} old expired OAuth session records",
+                delete_result.rows_affected
+            );
         }
 
         Ok(())
     }
 
     /// 获取清理统计信息
-    pub async fn get_cleanup_stats(&self) -> Result<OAuthCleanupStats, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_cleanup_stats(
+        &self,
+    ) -> Result<OAuthCleanupStats, Box<dyn std::error::Error + Send + Sync>> {
         let pending_count = oauth_client_sessions::Entity::find()
             .filter(oauth_client_sessions::Column::Status.eq("pending"))
             .count(&self.db)
@@ -107,7 +130,8 @@ impl OAuthCleanupTask {
             .count(&self.db)
             .await?;
 
-        let cutoff_time = Utc::now() - chrono::Duration::minutes(self.config.pending_expire_minutes as i64);
+        let cutoff_time =
+            Utc::now() - chrono::Duration::minutes(self.config.pending_expire_minutes as i64);
         let expired_pending_count = oauth_client_sessions::Entity::find()
             .filter(oauth_client_sessions::Column::Status.eq("pending"))
             .filter(oauth_client_sessions::Column::CreatedAt.lt(cutoff_time.naive_utc()))

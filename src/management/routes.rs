@@ -68,7 +68,6 @@ fn system_routes() -> Router<AppState> {
         )
 }
 
-
 /// 统计查询路由
 fn statistics_routes() -> Router<AppState> {
     Router::new()
@@ -325,21 +324,48 @@ fn oauth_v2_routes() -> Router<AppState> {
     use axum::routing::delete;
     Router::new()
         // 开始OAuth授权流程
-        .route("/authorize", post(crate::management::handlers::oauth_v2::start_authorization))
+        .route(
+            "/authorize",
+            post(crate::management::handlers::oauth_v2::start_authorization),
+        )
         // 轮询OAuth会话状态
-        .route("/poll", get(crate::management::handlers::oauth_v2::poll_session))
+        .route(
+            "/poll",
+            get(crate::management::handlers::oauth_v2::poll_session),
+        )
         // 交换授权码获取令牌
-        .route("/exchange", post(crate::management::handlers::oauth_v2::exchange_token))
+        .route(
+            "/exchange",
+            post(crate::management::handlers::oauth_v2::exchange_token),
+        )
         // 获取用户会话列表
-        .route("/sessions", get(crate::management::handlers::oauth_v2::list_sessions))
+        .route(
+            "/sessions",
+            get(crate::management::handlers::oauth_v2::list_sessions),
+        )
         // 删除会话
-        .route("/sessions/{session_id}", delete(crate::management::handlers::oauth_v2::delete_session))
+        .route(
+            "/sessions/{session_id}",
+            delete(crate::management::handlers::oauth_v2::delete_session),
+        )
         // 刷新令牌
-        .route("/sessions/{session_id}/refresh", post(crate::management::handlers::oauth_v2::refresh_token))
+        .route(
+            "/sessions/{session_id}/refresh",
+            post(crate::management::handlers::oauth_v2::refresh_token),
+        )
         // 获取统计信息
-        .route("/statistics", get(crate::management::handlers::oauth_v2::get_statistics))
+        .route(
+            "/statistics",
+            get(crate::management::handlers::oauth_v2::get_statistics),
+        )
         // 清理过期会话（管理员接口）
-        .route("/cleanup", post(crate::management::handlers::oauth_v2::cleanup_expired_sessions))
+        .route(
+            "/cleanup",
+            post(crate::management::handlers::oauth_v2::cleanup_expired_sessions),
+        )
         // 获取支持的提供商列表
-        .route("/providers", get(crate::management::handlers::oauth_v2::list_providers))
+        .route(
+            "/providers",
+            get(crate::management::handlers::oauth_v2::list_providers),
+        )
 }

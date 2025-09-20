@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::proxy::types::ProviderId;
 use entity::{provider_types, user_provider_keys};
+use sea_orm::{ActiveModelTrait, Set};
 
 /// API密钥健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +168,9 @@ impl ApiKeyHealthChecker {
         if *running {
             return Ok(());
         }
+
+        // 从数据库加载现有的健康状态
+        self.load_health_status_from_database().await?;
 
         *running = true;
         info!("API key health checker started");
@@ -466,6 +470,10 @@ impl ApiKeyHealthChecker {
         // 计算健康分数
         status.health_score = self.calculate_health_score(status);
 
+        // 同步状态到数据库
+        self.sync_health_status_to_database(key_id, status, &check_result)
+            .await?;
+
         // 记录状态变化
         if was_healthy != status.is_healthy {
             if status.is_healthy {
@@ -481,6 +489,121 @@ impl ApiKeyHealthChecker {
         }
 
         Ok(())
+    }
+
+    /// 同步健康状态到数据库
+    async fn sync_health_status_to_database(
+        &self,
+        key_id: i32,
+        status: &ApiKeyHealthStatus,
+        check_result: &ApiKeyCheckResult,
+    ) -> Result<()> {
+        // 确定数据库健康状态
+        let db_health_status = if status.is_healthy {
+            "healthy"
+        } else if check_result.status_code == Some(429) {
+            "rate_limited"
+        } else {
+            "unhealthy"
+        };
+
+        // 准备健康状态详情
+        let health_status_detail = if !status.is_healthy {
+            Some(
+                serde_json::json!({
+                    "error_message": status.last_error,
+                    "error_category": check_result.error_category,
+                    "status_code": check_result.status_code,
+                    "consecutive_failures": status.consecutive_failures,
+                    "health_score": status.health_score,
+                    "last_check": status.last_check,
+                    "avg_response_time_ms": status.avg_response_time_ms
+                })
+                .to_string(),
+            )
+        } else {
+            None
+        };
+
+        // 确定429限流重置时间
+        let rate_limit_resets_at = if check_result.status_code == Some(429) {
+            // 从错误消息中尝试解析resets_in_seconds
+            if let Some(ref error_msg) = status.last_error {
+                if let Some(resets_in_seconds) = self.parse_resets_in_seconds_from_error(error_msg)
+                {
+                    Some(
+                        chrono::Utc::now().naive_utc()
+                            + chrono::Duration::seconds(resets_in_seconds),
+                    )
+                } else {
+                    // 默认1分钟后重试
+                    Some(chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1))
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // 最后错误时间
+        let last_error_time = if !status.is_healthy {
+            Some(chrono::Utc::now().naive_utc())
+        } else {
+            None
+        };
+
+        // 更新数据库
+        let now = chrono::Utc::now().naive_utc();
+        let mut key: user_provider_keys::ActiveModel =
+            user_provider_keys::Entity::find_by_id(key_id)
+                .one(&*self.db)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {}", key_id))?
+                .into();
+
+        // 更新健康状态字段
+        key.health_status = Set(db_health_status.to_string());
+        key.health_status_detail = Set(health_status_detail);
+        key.rate_limit_resets_at = Set(rate_limit_resets_at);
+        key.last_error_time = Set(last_error_time);
+        key.updated_at = Set(now);
+
+        key.update(&*self.db).await?;
+
+        debug!(
+            key_id = key_id,
+            health_status = %db_health_status,
+            health_score = status.health_score,
+            "API key health status synced to database"
+        );
+
+        Ok(())
+    }
+
+    /// 从错误消息中解析resets_in_seconds
+    fn parse_resets_in_seconds_from_error(&self, error_msg: &str) -> Option<i64> {
+        // 尝试从OpenAI 429错误中解析resets_in_seconds
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(error_msg) {
+            if let Some(error_obj) = json_value.get("error") {
+                if let Some(resets_in_seconds) = error_obj.get("resets_in_seconds") {
+                    return resets_in_seconds.as_i64();
+                }
+            }
+        }
+
+        // 尝试从文本中提取数字
+        if let Some(seconds_str) = error_msg.split("resets_in_seconds").nth(1) {
+            if let Some(start) = seconds_str.find(|c: char| c.is_ascii_digit()) {
+                if let Some(end) = seconds_str[start..].find(|c: char| !c.is_ascii_digit()) {
+                    if let Ok(seconds) = seconds_str[start..start + end].parse::<i64>() {
+                        return Some(seconds);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// 计算健康分数
@@ -549,9 +672,110 @@ impl ApiKeyHealthChecker {
             status.consecutive_successes = 0;
             status.last_error = Some(format!("Manually marked unhealthy: {}", reason));
 
+            // 同步到数据库
+            self.mark_key_unhealthy_in_database(key_id, &reason).await?;
+
             warn!(key_id = key_id, reason = %reason, "Manually marked API key as unhealthy");
         }
 
+        Ok(())
+    }
+
+    /// 在数据库中标记密钥为不健康
+    async fn mark_key_unhealthy_in_database(&self, key_id: i32, reason: &str) -> Result<()> {
+        let now = chrono::Utc::now().naive_utc();
+        let mut key: user_provider_keys::ActiveModel =
+            user_provider_keys::Entity::find_by_id(key_id)
+                .one(&*self.db)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {}", key_id))?
+                .into();
+
+        // 更新健康状态字段
+        key.health_status = Set("unhealthy".to_string());
+        key.health_status_detail = Set(Some(
+            serde_json::json!({
+                "error_message": format!("Manually marked unhealthy: {}", reason),
+                "error_category": "manual",
+                "consecutive_failures": 1,
+                "health_score": 0.0,
+                "marked_at": now
+            })
+            .to_string(),
+        ));
+        key.last_error_time = Set(Some(now));
+        key.updated_at = Set(now);
+
+        key.update(&*self.db).await?;
+
+        debug!(
+            key_id = key_id,
+            reason = %reason,
+            "API key manually marked as unhealthy in database"
+        );
+
+        Ok(())
+    }
+
+    /// 从数据库加载健康状态到内存
+    pub async fn load_health_status_from_database(&self) -> Result<()> {
+        // 获取所有API密钥
+        let keys = user_provider_keys::Entity::find().all(&*self.db).await?;
+
+        let mut health_map = self.health_status.write().await;
+
+        for key in keys {
+            let status = health_map
+                .entry(key.id)
+                .or_insert_with(|| ApiKeyHealthStatus {
+                    key_id: key.id,
+                    provider_type_id: key.provider_type_id,
+                    provider_id: ProviderId::from_database_id(key.provider_type_id),
+                    is_healthy: key.health_status == "healthy" || key.health_status.is_empty(),
+                    last_check: None,
+                    last_healthy: None,
+                    consecutive_failures: 0,
+                    consecutive_successes: 0,
+                    avg_response_time_ms: 0,
+                    health_score: 100.0,
+                    last_error: None,
+                    recent_results: Vec::new(),
+                });
+
+            // 更新状态为数据库中的状态
+            status.is_healthy = key.health_status == "healthy" || key.health_status.is_empty();
+
+            // 如果数据库中有健康状态详情，解析它
+            if let Some(ref detail) = key.health_status_detail {
+                if let Ok(detail_json) = serde_json::from_str::<serde_json::Value>(detail) {
+                    if let Some(error_msg) =
+                        detail_json.get("error_message").and_then(|v| v.as_str())
+                    {
+                        status.last_error = Some(error_msg.to_string());
+                    }
+                    if let Some(score) = detail_json.get("health_score").and_then(|v| v.as_f64()) {
+                        status.health_score = score as f32;
+                    }
+                    if let Some(failures) = detail_json
+                        .get("consecutive_failures")
+                        .and_then(|v| v.as_u64())
+                    {
+                        status.consecutive_failures = failures as u32;
+                    }
+                }
+            }
+
+            debug!(
+                key_id = key.id,
+                health_status = %key.health_status,
+                "Loaded health status from database"
+            );
+        }
+
+        info!(
+            "Loaded {} API keys health status from database",
+            health_map.len()
+        );
         Ok(())
     }
 

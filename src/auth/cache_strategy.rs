@@ -5,8 +5,8 @@
 use std::time::Duration;
 use tracing::debug;
 
-use crate::cache::CacheManager;
 use crate::auth::types::AuthConfig;
+use crate::cache::CacheManager;
 use crate::error::Result;
 use std::sync::Arc;
 
@@ -45,19 +45,19 @@ impl AuthCacheKey {
         match self {
             // JWT认证结果：15分钟（JWT token通常较长期有效）
             Self::JwtAuth(_) => Duration::from_secs(900),
-            
+
             // JWT黑名单：1小时（安全相关，需要较长时间生效）
             Self::JwtBlacklist(_) => Duration::from_secs(3600),
-            
+
             // API密钥认证：5分钟（平衡性能和安全性）
             Self::ApiKeyAuth(_) => Duration::from_secs(300),
-            
+
             // Basic认证失败计数：1小时（防止暴力破解）
             Self::BasicFailure(_) => Duration::from_secs(3600),
-            
+
             // Basic认证结果：10分钟（包含密码信息，较短TTL）
             Self::BasicAuth(_) => Duration::from_secs(600),
-            
+
             // OAuth会话：30分钟（OAuth流程通常需要较长时间）
             Self::OAuthSession(_) => Duration::from_secs(1800),
         }
@@ -68,13 +68,13 @@ impl AuthCacheKey {
         match self {
             // 安全相关的缓存
             Self::JwtAuth(_) | Self::JwtBlacklist(_) | Self::ApiKeyAuth(_) => true,
-            
+
             // Basic认证失败计数总是缓存（安全需要）
             Self::BasicFailure(_) => true,
-            
+
             // Basic认证结果可配置缓存（包含敏感信息）
             Self::BasicAuth(_) => true, // 可以通过配置禁用
-            
+
             // OAuth会话缓存
             Self::OAuthSession(_) => true,
         }
@@ -82,7 +82,7 @@ impl AuthCacheKey {
 }
 
 /// 统一认证缓存管理器
-/// 
+///
 /// 提供高级的缓存操作接口，隐藏底层缓存实现细节
 pub struct UnifiedAuthCacheManager {
     /// 底层缓存管理器
@@ -93,10 +93,7 @@ pub struct UnifiedAuthCacheManager {
 
 impl UnifiedAuthCacheManager {
     /// 创建新的统一认证缓存管理器
-    pub fn new(
-        cache_manager: Arc<CacheManager>,
-        config: Arc<AuthConfig>,
-    ) -> Self {
+    pub fn new(cache_manager: Arc<CacheManager>, config: Arc<AuthConfig>) -> Self {
         Self {
             cache_manager,
             config,
@@ -104,7 +101,7 @@ impl UnifiedAuthCacheManager {
     }
 
     /// 缓存认证结果
-    pub async fn cache_auth_result<T>(&self, key: &AuthCacheKey, value: &T) -> Result<()> 
+    pub async fn cache_auth_result<T>(&self, key: &AuthCacheKey, value: &T) -> Result<()>
     where
         T: serde::Serialize + Send + Sync,
     {
@@ -116,7 +113,8 @@ impl UnifiedAuthCacheManager {
         let cache_key = key.to_key();
         let ttl = self.get_effective_ttl(key);
 
-        match self.cache_manager
+        match self
+            .cache_manager
             .provider()
             .set(&cache_key, value, Some(ttl))
             .await
@@ -148,11 +146,7 @@ impl UnifiedAuthCacheManager {
     {
         let cache_key = key.to_key();
 
-        match self.cache_manager
-            .provider()
-            .get::<T>(&cache_key)
-            .await
-        {
+        match self.cache_manager.provider().get::<T>(&cache_key).await {
             Ok(Some(value)) => {
                 debug!(
                     cache_key = %cache_key,
@@ -181,9 +175,10 @@ impl UnifiedAuthCacheManager {
     /// 移除缓存条目
     pub async fn invalidate_cache(&self, key: &AuthCacheKey) -> Result<()> {
         let cache_key = key.to_key();
-        
+
         // 由于CacheManager可能不支持删除，我们设置极短的TTL来"删除"
-        let result = self.cache_manager
+        let result = self
+            .cache_manager
             .provider()
             .set(&cache_key, Option::<()>::None, Some(Duration::from_secs(1)))
             .await;
@@ -200,8 +195,9 @@ impl UnifiedAuthCacheManager {
     /// 检查缓存条目是否存在
     pub async fn cache_exists(&self, key: &AuthCacheKey) -> bool {
         let cache_key = key.to_key();
-        
-        match self.cache_manager
+
+        match self
+            .cache_manager
             .provider()
             .get::<serde_json::Value>(&cache_key)
             .await
@@ -212,16 +208,15 @@ impl UnifiedAuthCacheManager {
     }
 
     /// 获取有效的TTL
-    /// 
+    ///
     /// 考虑配置覆盖和默认值
     fn get_effective_ttl(&self, key: &AuthCacheKey) -> Duration {
         // 根据配置调整TTL
         let base_ttl = key.default_ttl();
-        
+
         match key {
             AuthCacheKey::JwtAuth(_) => {
-                Duration::from_secs((self.config.cache_ttl_minutes * 60) as u64)
-                    .min(base_ttl) // 不超过默认值
+                Duration::from_secs((self.config.cache_ttl_minutes * 60) as u64).min(base_ttl) // 不超过默认值
             }
             _ => base_ttl,
         }
@@ -252,7 +247,7 @@ impl UnifiedAuthCacheManager {
     }
 
     /// 预热缓存
-    /// 
+    ///
     /// 为常用的认证结果预填充缓存
     pub async fn warm_cache(&self, _warm_entries: Vec<AuthCacheKey>) -> Result<()> {
         // 预热逻辑可以根据实际需要实现
@@ -383,7 +378,7 @@ mod tests {
         let token = "test_token_123";
         let hash1 = hash_token(token);
         let hash2 = hash_token(token);
-        
+
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 64); // SHA256产生64字符的hex字符串
     }
@@ -392,13 +387,13 @@ mod tests {
     fn test_hash_credentials_consistency() {
         let username = "user";
         let password = "pass";
-        
+
         let hash1 = hash_credentials(username, password);
         let hash2 = hash_credentials(username, password);
-        
+
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 64);
-        
+
         // 不同凭据应该产生不同的哈希
         let different_hash = hash_credentials("other", "pass");
         assert_ne!(hash1, different_hash);

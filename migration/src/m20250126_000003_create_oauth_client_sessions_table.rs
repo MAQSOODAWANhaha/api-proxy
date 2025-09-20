@@ -35,10 +35,7 @@ impl MigrationTrait for Migration {
                             .string_len(50)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::ProviderTypeId)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::ProviderTypeId).integer())
                     .col(
                         ColumnDef::new(OAuthClientSessions::CodeVerifier)
                             .string_len(128)
@@ -59,46 +56,28 @@ impl MigrationTrait for Migration {
                             .string_len(100)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::Description)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::Description).text())
                     .col(
                         ColumnDef::new(OAuthClientSessions::Status)
                             .string_len(20)
                             .not_null()
                             .default("pending"),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::AccessToken)
-                            .text(),
-                    )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::RefreshToken)
-                            .text(),
-                    )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::IdToken)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::AccessToken).text())
+                    .col(ColumnDef::new(OAuthClientSessions::RefreshToken).text())
+                    .col(ColumnDef::new(OAuthClientSessions::IdToken).text())
                     .col(
                         ColumnDef::new(OAuthClientSessions::TokenType)
                             .string_len(20)
                             .default("Bearer"),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::ExpiresIn)
-                            .integer(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::ExpiresIn).integer())
                     .col(
                         ColumnDef::new(OAuthClientSessions::ExpiresAt)
                             .timestamp()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::ErrorMessage)
-                            .text(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::ErrorMessage).text())
                     .col(
                         ColumnDef::new(OAuthClientSessions::CreatedAt)
                             .timestamp()
@@ -111,10 +90,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(
-                        ColumnDef::new(OAuthClientSessions::CompletedAt)
-                            .timestamp(),
-                    )
+                    .col(ColumnDef::new(OAuthClientSessions::CompletedAt).timestamp())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_oauth_client_sessions_user_id")
@@ -126,7 +102,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_oauth_client_sessions_provider_name")
-                            .from(OAuthClientSessions::Table, OAuthClientSessions::ProviderName)
+                            .from(
+                                OAuthClientSessions::Table,
+                                OAuthClientSessions::ProviderName,
+                            )
                             .to(ProviderTypes::Table, ProviderTypes::Name)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Restrict),
@@ -134,7 +113,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_oauth_client_sessions_provider_type_id")
-                            .from(OAuthClientSessions::Table, OAuthClientSessions::ProviderTypeId)
+                            .from(
+                                OAuthClientSessions::Table,
+                                OAuthClientSessions::ProviderTypeId,
+                            )
                             .to(ProviderTypes::Table, ProviderTypes::Id)
                             .on_update(ForeignKeyAction::Cascade)
                             .on_delete(ForeignKeyAction::Restrict),
@@ -205,7 +187,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-
         Ok(())
     }
 
@@ -258,4 +239,3 @@ enum ProviderTypes {
     Id,
     Name,
 }
-

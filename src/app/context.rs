@@ -29,6 +29,13 @@ impl AppContext {
         auth: Arc<AuthManager>,
         trace: Arc<TraceSystem>,
     ) -> Self {
-        Self { config, db, cache, provider_config, auth, trace }
+        Self {
+            config,
+            db,
+            cache,
+            provider_config,
+            auth,
+            trace,
+        }
     }
 }
