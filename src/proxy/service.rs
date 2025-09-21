@@ -737,7 +737,7 @@ impl ResponseHeaderService for DefaultResponseHeaderService {
     }
 }
 
-trait ResponseBodyService: Send + Sync {
+pub trait ResponseBodyService: Send + Sync {
     fn exec(
         &self,
         body: &mut Option<Bytes>,
@@ -1205,8 +1205,26 @@ fn provider_response_header_services(_ctx: &ProxyContext) -> Vec<Arc<dyn Respons
     Vec::new()
 }
 
-fn provider_response_body_services(_ctx: &ProxyContext) -> Vec<Arc<dyn ResponseBodyService>> {
-    Vec::new()
+fn provider_response_body_services(ctx: &ProxyContext) -> Vec<Arc<dyn ResponseBodyService>> {
+    let mut services = Vec::new();
+
+    // 根据provider类型注册相应的响应体处理服务
+    if let Some(provider) = ctx.provider_type.as_ref() {
+        if let Some(strategy_name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name) {
+            match strategy_name {
+                "openai" => {
+                    // 创建OpenAI策略并作为ResponseBodyService返回
+                    // 数据库连接将在后续的handle_response_body中设置
+                    let strategy = crate::proxy::provider_strategy::provider_strategy_openai::OpenAIStrategy::new();
+                    services.push(Arc::new(strategy) as Arc<dyn ResponseBodyService>);
+                },
+                // 其他provider可以在这里扩展
+                _ => {}
+            }
+        }
+    }
+
+    services
 }
 
 // 示例占位：如需对某 provider 进行更强定制，可实现如下结构体并在上面的注册函数中返回
