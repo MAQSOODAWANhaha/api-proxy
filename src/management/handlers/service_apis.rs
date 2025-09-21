@@ -355,16 +355,46 @@ pub async fn list_user_service_keys(
     let mut service_api_keys = Vec::new();
 
     for (api, provider_type) in apis {
-        // 获取使用统计
-        let (success_count, failure_count) = (ProxyTracing::find()
+        // 获取完整的使用统计
+        let tracings = match ProxyTracing::find()
             .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
             .all(db)
-            .await)
-            .map_or((0, 0), |tracings| {
-                let success = tracings.iter().filter(|t| t.is_success).count();
-                let failure = tracings.len() - success;
-                (success as i32, failure as i32)
-            });
+            .await
+        {
+            Ok(data) => data,
+            Err(_) => Vec::new(),
+        };
+
+        let success_count = tracings.iter().filter(|t| t.is_success).count() as i32;
+        let failure_count = tracings.len() as i32 - success_count;
+        let total_requests = success_count + failure_count;
+
+        // 计算成功率
+        let success_rate = if total_requests > 0 {
+            (success_count as f64 / total_requests as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        // 计算平均响应时间
+        let total_response_time: i64 = tracings.iter()
+            .filter_map(|t| t.duration_ms)
+            .sum();
+        let avg_response_time = if success_count > 0 {
+            total_response_time / success_count as i64
+        } else {
+            0
+        };
+
+        // 计算总成本
+        let total_cost: f64 = tracings.iter()
+            .filter_map(|t| t.cost)
+            .sum();
+
+        // 计算总token数
+        let total_tokens: i32 = tracings.iter()
+            .filter_map(|t| t.tokens_total)
+            .sum();
 
         // 获取最后使用时间
         let last_used_at = match ProxyTracing::find()
@@ -380,8 +410,14 @@ pub async fn list_user_service_keys(
         };
 
         let usage = json!({
-            "success": success_count,
-            "failure": failure_count
+            "successful_requests": success_count,
+            "failed_requests": failure_count,
+            "total_requests": total_requests,
+            "success_rate": success_rate,
+            "avg_response_time": avg_response_time,
+            "total_cost": total_cost,
+            "total_tokens": total_tokens,
+            "last_used_at": last_used_at
         });
 
         let provider_name = provider_type

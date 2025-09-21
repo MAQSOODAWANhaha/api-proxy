@@ -8,6 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use chrono::Utc;
+use tracing::info;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
@@ -424,13 +425,38 @@ pub async fn get_provider_key_detail(
     // 计算限流剩余时间（秒）
     let rate_limit_remaining_seconds = if let Some(resets_at) = provider_key.0.rate_limit_resets_at {
         let now = Utc::now().naive_utc();
+        info!(
+            key_id = provider_key.0.id,
+            rate_limit_resets_at = ?resets_at,
+            current_time = ?now,
+            "计算限流剩余时间 - 数据库中有重置时间"
+        );
+
         if resets_at > now {
             let duration = resets_at.signed_duration_since(now);
-            Some(duration.num_seconds().max(0) as u64)
+            let remaining_seconds = duration.num_seconds().max(0) as u64;
+            info!(
+                key_id = provider_key.0.id,
+                remaining_seconds = remaining_seconds,
+                duration_seconds = duration.num_seconds(),
+                "限流尚未解除，计算剩余秒数"
+            );
+            Some(remaining_seconds)
         } else {
+            info!(
+                key_id = provider_key.0.id,
+                rate_limit_resets_at = ?resets_at,
+                current_time = ?now,
+                "限流已过期，返回None"
+            );
             None
         }
     } else {
+        info!(
+            key_id = provider_key.0.id,
+            health_status = %provider_key.0.health_status,
+            "数据库中无限流重置时间，返回None"
+        );
         None
     };
 
@@ -1257,7 +1283,7 @@ pub async fn get_provider_key_trends(
     headers: HeaderMap,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
-    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+    
 
     let db = state.database.as_ref();
 
@@ -1336,7 +1362,7 @@ pub async fn get_user_service_api_trends(
     headers: HeaderMap,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+    
 
     let db = state.database.as_ref();
 

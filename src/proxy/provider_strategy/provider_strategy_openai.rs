@@ -53,11 +53,22 @@ impl OpenAIStrategy {
 
     /// 解析429错误响应
     fn parse_429_error(&self, body: &[u8]) -> Option<OpenAI429Error> {
+        info!("开始解析OpenAI 429错误响应体");
+
         if let Ok(json_str) = std::str::from_utf8(body) {
+            info!("429响应体JSON字符串: {}", json_str);
+
             if let Ok(error) = serde_json::from_str::<OpenAI429Error>(json_str) {
+                info!("成功解析429错误: type={}, resets_in_seconds={:?}",
+                       error.error.r#type, error.error.resets_in_seconds);
                 return Some(error);
+            } else {
+                error!("429响应体JSON解析失败");
             }
+        } else {
+            error!("429响应体UTF-8解析失败");
         }
+
         None
     }
 
@@ -67,6 +78,8 @@ impl OpenAIStrategy {
         key_id: i32,
         error_detail: &OpenAIErrorDetail,
     ) -> Result<()> {
+        info!("开始更新API密钥健康状态: key_id={}, error_detail={:?}", key_id, error_detail);
+
         let db = self
             .db
             .as_ref()
@@ -75,7 +88,12 @@ impl OpenAIStrategy {
         let now = Utc::now().naive_utc();
         let rate_limit_resets_at = error_detail
             .resets_in_seconds
-            .map(|seconds| now + chrono::Duration::seconds(seconds));
+            .map(|seconds| {
+                info!("计算限流重置时间: resets_in_seconds={} seconds, now={}", seconds, now);
+                now + chrono::Duration::seconds(seconds)
+            });
+
+        info!("计算得到的限流重置时间: {:?}", rate_limit_resets_at);
 
         // 更新健康状态为 "rate_limited"
         let mut key: user_provider_keys::ActiveModel =
@@ -95,6 +113,8 @@ impl OpenAIStrategy {
         key.rate_limit_resets_at = Set(rate_limit_resets_at);
         key.last_error_time = Set(Some(now));
         key.updated_at = Set(now);
+
+        info!("准备更新数据库: health_status=rate_limited, rate_limit_resets_at={:?}", rate_limit_resets_at);
 
         key.update(db.as_ref())
             .await
