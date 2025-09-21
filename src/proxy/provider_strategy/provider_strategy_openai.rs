@@ -5,11 +5,11 @@
 use crate::error::{ErrorContext, Result};
 use crate::proxy::ProxyContext;
 use crate::proxy_err;
+use bytes::Bytes;
 use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use bytes::Bytes;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -54,10 +54,61 @@ impl OpenAIStrategy {
         self
     }
 
-    /// 统一解析429错误响应
-    fn parse_429_error(&self, body: &[u8]) -> Option<OpenAI429Error> {
-        info!("开始解析OpenAI 429错误响应体，响应体大小: {} 字节", body.len());
+    /// 立即处理429错误（在response_body_filter中调用）
+    fn handle_429_immediately(&self, body_data: &[u8], ctx: &ProxyContext) {
+        let request_id = ctx.request_id.clone();
+        let key_id = ctx.selected_backend.as_ref().map(|k| k.id);
+        let body_data = body_data.to_vec();
+        let db = self.db.clone();
 
+        info!(
+            request_id = %request_id,
+            body_size = body_data.len(),
+            "立即处理429错误"
+        );
+
+        // 1. 同步解析429错误响应体
+        if let Some(error_info) = self.parse_response(&body_data) {
+            info!(
+                request_id = %request_id,
+                error_type = %error_info.error.r#type,
+                resets_in_seconds = ?error_info.error.resets_in_seconds,
+                "成功解析429错误"
+            );
+
+            // 2. 直接异步更新数据库状态
+            if let (Some(key_id), Some(db)) = (key_id, db) {
+                // 注意：这里不能直接await，因为我们在同步方法中
+                // 需要使用tokio::spawn来执行异步操作
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        Self::update_key_health_status_async(db, key_id, &error_info.error).await
+                    {
+                        error!(
+                            request_id = %request_id,
+                            key_id = key_id,
+                            error = %e,
+                            "异步更新API密钥状态失败"
+                        );
+                    } else {
+                        info!(
+                            request_id = %request_id,
+                            key_id = key_id,
+                            "成功异步更新API密钥状态"
+                        );
+                    }
+                });
+            }
+        } else {
+            warn!(
+                request_id = %request_id,
+                "无法解析429错误响应体"
+            );
+        }
+    }
+
+    /// 同步解析429错误响应体
+    fn parse_response(&self, body: &[u8]) -> Option<OpenAI429Error> {
         let json_str = match std::str::from_utf8(body) {
             Ok(s) => s,
             Err(_) => {
@@ -70,8 +121,10 @@ impl OpenAIStrategy {
 
         // 首先尝试标准格式解析
         if let Ok(error) = serde_json::from_str::<OpenAI429Error>(json_str) {
-            info!("成功解析429错误: type={}, resets_in_seconds={:?}",
-                   error.error.r#type, error.error.resets_in_seconds);
+            info!(
+                "成功解析429错误: type={}, resets_in_seconds={:?}",
+                error.error.r#type, error.error.resets_in_seconds
+            );
             return Some(error);
         }
 
@@ -84,33 +137,37 @@ impl OpenAIStrategy {
             if let Some(error_obj) = value.get("error").and_then(|v| v.as_object()) {
                 info!("找到error对象: {:?}", error_obj);
 
-                let error_type = error_obj.get("type")
+                let error_type = error_obj
+                    .get("type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
 
-                let message = error_obj.get("message")
+                let message = error_obj
+                    .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Unknown error")
                     .to_string();
 
-                let plan_type = error_obj.get("plan_type")
+                let plan_type = error_obj
+                    .get("plan_type")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let resets_in_seconds = error_obj.get("resets_in_seconds")
+                let resets_in_seconds = error_obj
+                    .get("resets_in_seconds")
                     .and_then(|v| v.as_i64())
                     .or_else(|| {
-                        error_obj.get("reset_in_seconds")
+                        error_obj
+                            .get("reset_in_seconds")
                             .and_then(|v| v.as_i64())
-                            .or_else(|| {
-                                error_obj.get("retry_after")
-                                    .and_then(|v| v.as_i64())
-                            })
+                            .or_else(|| error_obj.get("retry_after").and_then(|v| v.as_i64()))
                     });
 
-                info!("提取到的字段: type={}, message={}, plan_type={:?}, resets_in_seconds={:?}",
-                       error_type, message, plan_type, resets_in_seconds);
+                info!(
+                    "提取到的字段: type={}, message={}, plan_type={:?}, resets_in_seconds={:?}",
+                    error_type, message, plan_type, resets_in_seconds
+                );
 
                 return Some(OpenAI429Error {
                     error: OpenAIErrorDetail {
@@ -127,26 +184,25 @@ impl OpenAIStrategy {
         None
     }
 
-    /// 更新API密钥健康状态
-    async fn update_key_health_status(
-        &self,
+    /// 异步更新API密钥健康状态（复用现有的异步方法）
+    async fn update_key_health_status_async(
+        db: Arc<DatabaseConnection>,
         key_id: i32,
         error_detail: &OpenAIErrorDetail,
     ) -> Result<()> {
-        info!("开始更新API密钥健康状态: key_id={}, error_detail={:?}", key_id, error_detail);
-
-        let db = self
-            .db
-            .as_ref()
-            .ok_or_else(|| proxy_err!(database, "数据库连接未配置"))?;
+        info!(
+            "开始异步更新API密钥健康状态: key_id={}, error_detail={:?}",
+            key_id, error_detail
+        );
 
         let now = Utc::now().naive_utc();
-        let rate_limit_resets_at = error_detail
-            .resets_in_seconds
-            .map(|seconds| {
-                info!("计算限流重置时间: resets_in_seconds={} seconds, now={}", seconds, now);
-                now + chrono::Duration::seconds(seconds)
-            });
+        let rate_limit_resets_at = error_detail.resets_in_seconds.map(|seconds| {
+            info!(
+                "计算限流重置时间: resets_in_seconds={} seconds, now={}",
+                seconds, now
+            );
+            now + chrono::Duration::seconds(seconds)
+        });
 
         info!("计算得到的限流重置时间: {:?}", rate_limit_resets_at);
 
@@ -177,104 +233,8 @@ impl OpenAIStrategy {
             plan_type = ?error_detail.plan_type,
             resets_in_seconds = ?error_detail.resets_in_seconds,
             rate_limit_resets_at = ?rate_limit_resets_at,
-            "OpenAI API密钥已标记为限流状态"
+            "OpenAI API密钥已更新为详细限流状态"
         );
-
-        Ok(())
-    }
-
-    /// 统一处理429错误
-    async fn process_429_error(&self, ctx: &ProxyContext, body: &[u8]) -> Result<()> {
-        info!(
-            request_id = %ctx.request_id,
-            body_size = body.len(),
-            "处理OpenAI 429错误响应"
-        );
-
-        // 记录原始响应体用于调试
-        if let Ok(body_str) = std::str::from_utf8(body) {
-            info!(
-                request_id = %ctx.request_id,
-                raw_body = %body_str,
-                "429响应体原始内容"
-            );
-        } else {
-            info!(
-                request_id = %ctx.request_id,
-                "429响应体不是有效的UTF-8字符串，大小: {} 字节",
-                body.len()
-            );
-        }
-
-        // 标记密钥为限流状态并尝试解析详细信息
-        if let Some(backend_key) = &ctx.selected_backend {
-            let db = self
-                .db
-                .as_ref()
-                .ok_or_else(|| proxy_err!(database, "数据库连接未配置"))?;
-
-            let now = Utc::now().naive_utc();
-
-            // 先标记为基本限流状态
-            let mut key: user_provider_keys::ActiveModel =
-                user_provider_keys::Entity::find_by_id(backend_key.id)
-                    .one(db.as_ref())
-                    .await
-                    .with_database_context(|| format!("查询API密钥失败，ID: {}", backend_key.id))?
-                    .ok_or_else(|| proxy_err!(database, "API密钥不存在: {}", backend_key.id))?
-                    .into();
-
-            key.health_status = Set("rate_limited".to_string());
-            key.health_status_detail = Set(Some(r#"{"type": "rate_limit", "message": "429 status code detected"}"#.to_string()));
-            key.rate_limit_resets_at = Set(None);
-            key.last_error_time = Set(Some(now));
-            key.updated_at = Set(now);
-
-            key.update(db.as_ref())
-                .await
-                .with_database_context(|| format!("更新API密钥健康状态失败，ID: {}", backend_key.id))?;
-
-            info!(
-                request_id = %ctx.request_id,
-                key_id = backend_key.id,
-                "OpenAI API密钥已标记为限流状态（基于429状态码）"
-            );
-
-            // 尝试解析响应体获取更详细的信息
-            if let Some(error_info) = self.parse_429_error(body) {
-                info!(
-                    request_id = %ctx.request_id,
-                    error_type = %error_info.error.r#type,
-                    error_message = %error_info.error.message,
-                    plan_type = ?error_info.error.plan_type,
-                    resets_in_seconds = ?error_info.error.resets_in_seconds,
-                    "成功解析OpenAI 429错误详情"
-                );
-
-                if let Err(e) = self
-                    .update_key_health_status(backend_key.id, &error_info.error)
-                    .await
-                {
-                    error!(
-                        request_id = %ctx.request_id,
-                        key_id = backend_key.id,
-                        error = %e,
-                        "更新API密钥详细限流信息失败"
-                    );
-                } else {
-                    info!(
-                        request_id = %ctx.request_id,
-                        key_id = backend_key.id,
-                        "成功更新API密钥详细限流信息"
-                    );
-                }
-            } else {
-                warn!(
-                    request_id = %ctx.request_id,
-                    "无法解析OpenAI 429错误响应体，使用基础限流状态"
-                );
-            }
-        }
 
         Ok(())
     }
@@ -314,50 +274,6 @@ impl ProviderStrategy for OpenAIStrategy {
         Ok(())
     }
 
-    /// 处理响应体，包括429错误
-    async fn handle_response_body(
-        &self,
-        _session: &Session,
-        ctx: &ProxyContext,
-        status_code: u16,
-        body: &[u8],
-    ) -> Result<()> {
-        // 处理429错误
-        if status_code == 429 {
-            // 优先使用 body_chunks 中收集的数据（通过 response_body_filter），否则使用传入的 body
-            let actual_body = if !ctx.response_details.body_chunks.is_empty() {
-                info!(
-                    request_id = %ctx.request_id,
-                    chunks_size = ctx.response_details.body_chunks.len(),
-                    provided_body_size = body.len(),
-                    "使用body_chunks中的429响应数据"
-                );
-                &ctx.response_details.body_chunks
-            } else {
-                info!(
-                    request_id = %ctx.request_id,
-                    provided_body_size = body.len(),
-                    "使用传入的429响应数据"
-                );
-                body
-            };
-
-            if let Err(e) = self.process_429_error(ctx, actual_body).await {
-                error!(
-                    request_id = %ctx.request_id,
-                    error = %e,
-                    "处理OpenAI 429错误失败"
-                );
-                // 返回错误但不中断处理流程，让原始429响应返回给客户端
-                return Err(e).with_network_context(|| {
-                    format!("处理OpenAI 429响应失败, request_id: {}", ctx.request_id)
-                });
-            }
-        }
-
-        Ok(())
-    }
-
     /// 检查密钥是否应该恢复使用
     async fn should_retry_key(&self, key: &user_provider_keys::Model) -> Result<bool> {
         // 如果密钥是限流状态，检查是否已经过了重置时间
@@ -384,32 +300,18 @@ impl ResponseBodyService for OpenAIStrategy {
         end_of_stream: bool,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<Duration>> {
-        // 只在流结束且有429状态码时处理
+        // 只在429状态码且流结束时处理
         if !end_of_stream || ctx.response_details.status_code != Some(429) {
             return Ok(None);
         }
 
-        // 在这里收集响应体数据，但不直接处理async逻辑
-        // 我们将响应体数据存储到ctx中，后续在handle_response_body中处理
+        // 收集响应体数据
         if let Some(body_bytes) = body {
-            // 将响应体数据存储到ctx的body_chunks中，供后续处理
             ctx.response_details.add_body_chunk(body_bytes);
 
-            info!(
-                request_id = %ctx.request_id,
-                body_size = body_bytes.len(),
-                total_chunks_size = ctx.response_details.body_chunks.len(),
-                "在response_body_filter中收集到OpenAI 429响应体"
-            );
-
-            // 立即尝试解析响应体用于日志记录（但不更新数据库）
-            if let Some(error_info) = self.parse_429_error(body_bytes.as_ref()) {
-                info!(
-                    request_id = %ctx.request_id,
-                    error_type = %error_info.error.r#type,
-                    resets_in_seconds = ?error_info.error.resets_in_seconds,
-                    "在response_body_filter中成功解析OpenAI 429错误详情"
-                );
+            // 流结束时立即处理429错误
+            if end_of_stream && !ctx.response_details.body_chunks.is_empty() {
+                self.handle_429_immediately(&ctx.response_details.body_chunks, ctx);
             }
         }
 
