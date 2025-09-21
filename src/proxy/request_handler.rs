@@ -1882,21 +1882,49 @@ impl RequestHandler {
         session: &Session,
         ctx: &mut ProxyContext,
     ) {
+        tracing::debug!(
+            request_id = ctx.request_id,
+            "Starting model extraction from request"
+        );
+
         // 尝试使用数据库驱动的 ModelExtractor
         if let Some(model_name) = self.try_extract_with_database_extractor(session, ctx) {
-            ctx.requested_model = Some(model_name);
+            ctx.requested_model = Some(model_name.clone());
+            tracing::info!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "database_extractor",
+                "Model extracted successfully using database configuration"
+            );
             return;
         }
 
         // 回退：直接从请求体提取
         if let Some(model_name) = self.try_extract_from_request_body(session, ctx) {
-            ctx.requested_model = Some(model_name);
+            ctx.requested_model = Some(model_name.clone());
+            tracing::info!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "request_body_fallback",
+                "Model extracted from request body (fallback method)"
+            );
             return;
         }
 
         // 最后回退：使用 provider 默认模型
         if let Some(model_name) = self.get_provider_default_model(ctx) {
-            ctx.requested_model = Some(model_name);
+            ctx.requested_model = Some(model_name.clone());
+            tracing::warn!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "provider_default",
+                "Using provider default model (all extraction methods failed)"
+            );
+        } else {
+            tracing::error!(
+                request_id = ctx.request_id,
+                "Failed to extract model information - no provider default available"
+            );
         }
     }
 
@@ -1907,7 +1935,21 @@ impl RequestHandler {
         ctx: &ProxyContext,
     ) -> Option<String> {
         let provider = ctx.provider_type.as_ref()?;
+        tracing::debug!(
+            request_id = ctx.request_id,
+            provider_id = provider.id,
+            provider_name = provider.name,
+            has_model_extraction_config = provider.model_extraction_json.is_some(),
+            "Checking provider model extraction configuration"
+        );
+
         let model_extraction_json = provider.model_extraction_json.as_ref()?;
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            provider_id = provider.id,
+            "Creating ModelExtractor from database configuration"
+        );
 
         let extractor = crate::providers::field_extractor::ModelExtractor::from_json_config(model_extraction_json)
             .map_err(|e| {
@@ -1925,9 +1967,17 @@ impl RequestHandler {
         let query_params = self.parse_query_params(session);
         let url_path = session.req_header().uri.path();
 
+        tracing::debug!(
+            request_id = ctx.request_id,
+            url_path = url_path,
+            has_body_json = body_json.is_some(),
+            query_params_count = query_params.len(),
+            "Extracting model with configured extractor"
+        );
+
         let model_name = extractor.extract_model_name(url_path, body_json.as_ref(), &query_params);
 
-        tracing::debug!(
+        tracing::info!(
             request_id = ctx.request_id,
             model = model_name,
             extraction_method = "database_driven",
@@ -1944,7 +1994,17 @@ impl RequestHandler {
         _session: &Session,
         ctx: &ProxyContext,
     ) -> Option<String> {
+        tracing::debug!(
+            request_id = ctx.request_id,
+            body_size = ctx.body.len(),
+            "Attempting to extract model from request body"
+        );
+
         if ctx.body.is_empty() {
+            tracing::debug!(
+                request_id = ctx.request_id,
+                "Request body is empty, skipping body extraction"
+            );
             return None;
         }
 
@@ -1959,6 +2019,12 @@ impl RequestHandler {
             })
             .ok()?;
 
+        tracing::debug!(
+            request_id = ctx.request_id,
+            body_length = body_str.len(),
+            "Request body parsed as UTF-8 successfully"
+        );
+
         let json_value = serde_json::from_str::<serde_json::Value>(body_str)
             .map_err(|e| {
                 tracing::debug!(
@@ -1972,16 +2038,26 @@ impl RequestHandler {
 
         let model_name = json_value.get("model")
             .and_then(|m| m.as_str())
-            .map(|s| s.to_string())?;
+            .map(|s| s.to_string());
 
-        tracing::debug!(
-            request_id = ctx.request_id,
-            model = model_name,
-            extraction_method = "fallback_direct",
-            "Extracted model from request body (fallback)"
-        );
+        match model_name {
+            Some(ref model) => {
+                tracing::info!(
+                    request_id = ctx.request_id,
+                    model = model,
+                    extraction_method = "fallback_direct",
+                    "Extracted model from request body (fallback)"
+                );
+            }
+            None => {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    "No model field found in request body JSON"
+                );
+            }
+        }
 
-        Some(model_name)
+        model_name
     }
 
     /// 获取 provider 的默认模型

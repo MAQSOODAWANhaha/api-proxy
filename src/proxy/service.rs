@@ -1436,7 +1436,7 @@ impl EarlyRequestService for EarlyTraceExtendService {
         {
             if let Err(err) = ai
                 .tracing_service()
-                .update_extended_trace_info(&ctx.request_id, Some(pt.id), None, Some(backend.id))
+                .update_extended_trace_info(&ctx.request_id, Some(pt.id), ctx.requested_model.clone(), Some(backend.id))
                 .await
             {
                 warn!(component = COMPONENT, request_id = %ctx.request_id, error = %err, "Failed to update extended trace info");
