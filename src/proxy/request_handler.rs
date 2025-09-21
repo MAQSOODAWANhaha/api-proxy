@@ -377,6 +377,11 @@ impl RequestHandler {
         &self.auth_service
     }
 
+    /// 获取数据库连接引用（用于外部管道步骤）
+    pub fn db_connection(&self) -> Arc<DatabaseConnection> {
+        self.db.clone()
+    }
+
     /// 从 OpenAI access_token 中解析 chatgpt-account-id
     fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
         let jwt_parser = JWTParser::new().ok()?;

@@ -294,6 +294,30 @@ impl ProxyService {
     fn is_management_request(&self, path: &str) -> bool {
         path.starts_with("/api/") || path.starts_with("/admin/") || path == "/"
     }
+
+    /// 创建provider特定的响应体处理服务
+    fn provider_response_body_services(&self, ctx: &ProxyContext) -> Vec<Arc<dyn ResponseBodyService>> {
+        let mut services = Vec::new();
+
+        // 根据provider类型注册相应的响应体处理服务
+        if let Some(provider) = ctx.provider_type.as_ref() {
+            if let Some(strategy_name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name) {
+                match strategy_name {
+                    "openai" => {
+                        // 创建OpenAI策略并设置数据库连接
+                        let db_connection = self.ai_handler.db_connection();
+                        let mut strategy = crate::proxy::provider_strategy::provider_strategy_openai::OpenAIStrategy::new();
+                        strategy = strategy.with_db(db_connection);
+                        services.push(Arc::new(strategy) as Arc<dyn ResponseBodyService>);
+                    },
+                    // 其他provider可以在这里扩展
+                    _ => {}
+                }
+            }
+        }
+
+        services
+    }
 }
 
 // =============== 阶段服务定义（仅用于 early_request_filter） ===============
@@ -1205,28 +1229,7 @@ fn provider_response_header_services(_ctx: &ProxyContext) -> Vec<Arc<dyn Respons
     Vec::new()
 }
 
-fn provider_response_body_services(ctx: &ProxyContext) -> Vec<Arc<dyn ResponseBodyService>> {
-    let mut services = Vec::new();
-
-    // 根据provider类型注册相应的响应体处理服务
-    if let Some(provider) = ctx.provider_type.as_ref() {
-        if let Some(strategy_name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name) {
-            match strategy_name {
-                "openai" => {
-                    // 创建OpenAI策略并作为ResponseBodyService返回
-                    // 数据库连接将在后续的handle_response_body中设置
-                    let strategy = crate::proxy::provider_strategy::provider_strategy_openai::OpenAIStrategy::new();
-                    services.push(Arc::new(strategy) as Arc<dyn ResponseBodyService>);
-                },
-                // 其他provider可以在这里扩展
-                _ => {}
-            }
-        }
-    }
-
-    services
-}
-
+  
 // 示例占位：如需对某 provider 进行更强定制，可实现如下结构体并在上面的注册函数中返回
 // struct GeminiUpstreamRequestService;
 // #[async_trait]
@@ -1670,7 +1673,7 @@ impl ProxyHttp for ProxyService {
         }
 
         // provider 特定的响应体服务
-        for svc in provider_response_body_services(ctx) {
+        for svc in self.provider_response_body_services(ctx) {
             let ret = svc.exec(body, end_of_stream, ctx)?;
             if next.is_none() {
                 next = ret;
