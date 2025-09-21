@@ -139,7 +139,7 @@ impl TryFrom<String> for SessionStatus {
             "completed" => Ok(SessionStatus::Completed),
             "failed" => Ok(SessionStatus::Failed),
             "expired" => Ok(SessionStatus::Expired),
-            _ => Err(format!("Invalid session status: {}", s)),
+            _ => Err(format!("Invalid session status: {s}")),
         }
     }
 }

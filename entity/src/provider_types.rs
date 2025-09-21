@@ -142,10 +142,10 @@ impl Model {
 
                 // 验证URL格式
                 if let Err(e) = url::Url::parse(&config.authorize_url) {
-                    return Err(format!("Invalid authorize_url: {}", e));
+                    return Err(format!("Invalid authorize_url: {e}"));
                 }
                 if let Err(e) = url::Url::parse(&config.token_url) {
-                    return Err(format!("Invalid token_url: {}", e));
+                    return Err(format!("Invalid token_url: {e}"));
                 }
 
                 // 验证redirect_uri（如果存在）
@@ -153,7 +153,7 @@ impl Model {
                     && !redirect_uri.is_empty()
                     && let Err(e) = url::Url::parse(redirect_uri)
                 {
-                    return Err(format!("Invalid redirect_uri: {}", e));
+                    return Err(format!("Invalid redirect_uri: {e}"));
                 }
 
                 // 验证scopes格式
@@ -170,8 +170,8 @@ impl Model {
 
                 Ok(true)
             }
-            Ok(None) => Err(format!("OAuth config for '{}' not found", oauth_type)),
-            Err(e) => Err(format!("Failed to parse OAuth config: {}", e)),
+            Ok(None) => Err(format!("OAuth config for '{oauth_type}' not found")),
+            Err(e) => Err(format!("Failed to parse OAuth config: {e}")),
         }
     }
 
@@ -186,7 +186,7 @@ impl Model {
                     results.push((oauth_type, is_valid));
                 }
                 Err(e) => {
-                    return Err(format!("Validation failed for {}: {}", oauth_type, e));
+                    return Err(format!("Validation failed for {oauth_type}: {e}"));
                 }
             }
         }

@@ -312,6 +312,8 @@ pub struct ProxyContext {
     pub resolved_credential: Option<ResolvedCredential>,
     /// ChatGPT Account ID（用于OpenAI ChatGPT API）
     pub account_id: Option<String>,
+    /// 用户请求的模型名称
+    pub requested_model: Option<String>,
     /// SSE 行缓冲（用于流式分块行合并）
     pub sse_line_buffer: String,
     /// SSE 阶段观测到的 usageMetadata（最新一次覆盖）
@@ -337,6 +339,7 @@ impl Default for ProxyContext {
             will_modify_body: false,
             resolved_credential: None,
             account_id: None,
+            requested_model: None,
             sse_line_buffer: String::new(),
             sse_usage_agg: None,
         }
@@ -1101,6 +1104,9 @@ impl RequestHandler {
             .statistics_service
             .collect_request_details(session, &request_stats_for_details);
         ctx.request_details = request_details;
+
+        // 提取请求中的模型信息
+        self.extract_requested_model_from_request(session, ctx);
 
         // Request size no longer stored in simplified trace schema
         if ctx.request_details.body_size.is_some() {
@@ -1868,6 +1874,169 @@ impl RequestHandler {
                 ))
             }
         }
+    }
+
+    /// 从请求中提取模型信息并保存到 ProxyContext
+    fn extract_requested_model_from_request(
+        &self,
+        session: &Session,
+        ctx: &mut ProxyContext,
+    ) {
+        // 尝试使用数据库驱动的 ModelExtractor
+        if let Some(model_name) = self.try_extract_with_database_extractor(session, ctx) {
+            ctx.requested_model = Some(model_name);
+            return;
+        }
+
+        // 回退：直接从请求体提取
+        if let Some(model_name) = self.try_extract_from_request_body(session, ctx) {
+            ctx.requested_model = Some(model_name);
+            return;
+        }
+
+        // 最后回退：使用 provider 默认模型
+        if let Some(model_name) = self.get_provider_default_model(ctx) {
+            ctx.requested_model = Some(model_name);
+        }
+    }
+
+    /// 尝试使用数据库驱动的 ModelExtractor 提取模型
+    fn try_extract_with_database_extractor(
+        &self,
+        session: &Session,
+        ctx: &ProxyContext,
+    ) -> Option<String> {
+        let provider = ctx.provider_type.as_ref()?;
+        let model_extraction_json = provider.model_extraction_json.as_ref()?;
+
+        let extractor = crate::providers::field_extractor::ModelExtractor::from_json_config(model_extraction_json)
+            .map_err(|e| {
+                tracing::warn!(
+                    request_id = ctx.request_id,
+                    provider_id = provider.id,
+                    error = %e,
+                    "Failed to create ModelExtractor from database config"
+                );
+                e
+            })
+            .ok()?;
+
+        let body_json = self.parse_request_body_json(ctx);
+        let query_params = self.parse_query_params(session);
+        let url_path = session.req_header().uri.path();
+
+        let model_name = extractor.extract_model_name(url_path, body_json.as_ref(), &query_params);
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            model = model_name,
+            extraction_method = "database_driven",
+            provider_id = provider.id,
+            "Extracted model using database-configured ModelExtractor"
+        );
+
+        Some(model_name)
+    }
+
+    /// 尝试从请求体直接提取模型
+    fn try_extract_from_request_body(
+        &self,
+        _session: &Session,
+        ctx: &ProxyContext,
+    ) -> Option<String> {
+        if ctx.body.is_empty() {
+            return None;
+        }
+
+        let body_str = std::str::from_utf8(&ctx.body)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Request body is not valid UTF-8"
+                );
+                e
+            })
+            .ok()?;
+
+        let json_value = serde_json::from_str::<serde_json::Value>(body_str)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Failed to parse request body as JSON"
+                );
+                e
+            })
+            .ok()?;
+
+        let model_name = json_value.get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())?;
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            model = model_name,
+            extraction_method = "fallback_direct",
+            "Extracted model from request body (fallback)"
+        );
+
+        Some(model_name)
+    }
+
+    /// 获取 provider 的默认模型
+    fn get_provider_default_model(&self, ctx: &ProxyContext) -> Option<String> {
+        let provider = ctx.provider_type.as_ref()?;
+        let default_model = provider.default_model.as_ref()?;
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            model = default_model,
+            extraction_method = "provider_default",
+            provider_id = provider.id,
+            "Using provider default model (final fallback)"
+        );
+
+        Some(default_model.clone())
+    }
+
+    /// 解析请求体为 JSON
+    fn parse_request_body_json(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
+        if ctx.body.is_empty() {
+            return None;
+        }
+
+        let body_str = std::str::from_utf8(&ctx.body)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Request body is not valid UTF-8 for JSON parsing"
+                );
+                e
+            })
+            .ok()?;
+
+        serde_json::from_str::<serde_json::Value>(body_str)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Failed to parse request body as JSON"
+                );
+                e
+            })
+            .ok()
+    }
+
+    /// 解析查询参数
+    fn parse_query_params(&self, session: &Session) -> std::collections::HashMap<String, String> {
+        session
+            .req_header()
+            .uri
+            .query()
+            .map(|q| url::form_urlencoded::parse(q.as_bytes()).into_owned().collect())
+            .unwrap_or_default()
     }
 }
 

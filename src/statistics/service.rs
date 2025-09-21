@@ -138,15 +138,29 @@ impl StatisticsService {
         &self,
         ctx: &mut ProxyContext,
     ) -> Result<TokenUsage, ProxyError> {
-        // 提取模型名称（使用数据驱动的ModelExtractor）
-        let model_used = self.extract_model_with_model_extractor(ctx).await;
+        // 直接使用请求时提取的模型信息
+        let model_used = ctx.requested_model.clone();
+
+        // 记录使用的模型信息用于调试
+        if let Some(model) = &model_used {
+            tracing::debug!(
+                request_id = ctx.request_id,
+                model = model,
+                "Using requested model for token usage initialization"
+            );
+        } else {
+            tracing::debug!(
+                request_id = ctx.request_id,
+                "No model information available for token usage initialization"
+            );
+        }
 
         // 创建token使用信息
         let token_usage = TokenUsage {
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: 0,
-            model_used: model_used.clone(),
+            model_used,
         };
 
         Ok(token_usage)
@@ -265,52 +279,7 @@ impl StatisticsService {
         }
     }
 
-    /// 使用数据库驱动的 ModelExtractor/回退策略提取模型名
-    async fn extract_model_with_model_extractor(&self, ctx: &ProxyContext) -> Option<String> {
-        // 先尝试使用 provider_type 中配置的 model_extraction_json
-        if let Some(provider) = ctx.provider_type.as_ref() {
-            if let Some(cfg) = provider.model_extraction_json.as_ref() {
-                if let Ok(extractor) =
-                    crate::providers::field_extractor::ModelExtractor::from_json_config(cfg)
-                {
-                    // 对于响应体内的模型名提取，使用 BodyJson 规则；URL/Query 由上层按需配置。
-                    let body_json = ctx
-                        .response_details
-                        .body
-                        .as_ref()
-                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
-                    let model = extractor.extract_model_name(
-                        "",                 // 无 URL 上下文
-                        body_json.as_ref(), // 传递响应体 JSON
-                        &std::collections::HashMap::new(),
-                    );
-                    if !model.is_empty() {
-                        return Some(model);
-                    }
-                }
-            }
-        }
-        // 回退：直接从响应JSON常见字段读取
-        if let Some(json) = ctx
-            .response_details
-            .body
-            .as_ref()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-        {
-            if let Some(m) = json.get("model").and_then(|v| v.as_str()) {
-                return Some(m.to_string());
-            }
-            if let Some(m) = json
-                .get("data")
-                .and_then(|d| d.get("model"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(m.to_string());
-            }
-        }
-        None
-    }
-
+  
     /// 从 JSON 响应中提取 token 统计（通用提取器）
     pub fn extract_usage_from_json(&self, json: &serde_json::Value) -> DetailedRequestStats {
         let mut stats = DetailedRequestStats::default();
@@ -402,9 +371,19 @@ impl StatisticsService {
             stats.model_name = fallback.model_name;
         }
 
-        // 同步模型名（优先使用上游模型提取，与上方回退保持一致）
+        // 同步模型名（优先使用请求时的模型信息）
         if stats.model_name.is_none() {
-            stats.model_name = self.extract_model_with_model_extractor(ctx).await;
+            stats.model_name = ctx.requested_model.clone();
+        }
+
+        // 记录模型提取结果用于调试
+        if let Some(requested) = &ctx.requested_model {
+            tracing::debug!(
+                request_id = ctx.request_id,
+                requested_model = requested,
+                response_model = stats.model_name.as_deref().unwrap_or("unknown"),
+                "Model extraction: requested vs response"
+            );
         }
 
         // 若存在模型与provider，计算费用
