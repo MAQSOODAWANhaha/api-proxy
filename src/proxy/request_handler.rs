@@ -1489,11 +1489,14 @@ impl RequestHandler {
                 if let Some(strategy) =
                     crate::proxy::provider_strategy::make_strategy(name, Some(self.db().clone()))
                 {
-                    // 获取响应体
+                    // 先完成响应体收集，确保有完整的数据供策略处理
+                    ctx.response_details.finalize_body();
+
+                    // 获取响应体 - 优先使用已解析的body，否则使用原始的body_chunks
                     let response_body = if let Some(body) = &ctx.response_details.body {
                         body.as_bytes()
                     } else {
-                        &[]
+                        &ctx.response_details.body_chunks
                     };
 
                     if let Err(e) = strategy
