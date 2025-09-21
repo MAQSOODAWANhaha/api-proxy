@@ -319,6 +319,29 @@ export interface DeleteProviderKeyResponse {
   deleted_at: string
 }
 
+// 趋势数据接口定义
+export interface TrendDataPoint {
+  date: string
+  requests: number
+  successful_requests: number
+  failed_requests: number
+  success_rate: number
+  avg_response_time: number
+  total_tokens: number
+  total_cost: number
+}
+
+export interface TrendDataResponse {
+  trend_data: TrendDataPoint[]
+  summary: {
+    total_requests: number
+    success_rate: number
+    avg_response_time: number
+    total_tokens: number
+    total_cost: number
+  }
+}
+
 export interface ProviderKeyStatsResponse {
   basic_info: {
     provider: string
@@ -1240,6 +1263,33 @@ export const api = {
           }
         }
       }
+    },
+
+    /**
+     * 获取API Key趋势数据
+     */
+    async getKeyTrends(id: number, params?: {
+      days?: number
+      start_date?: string
+      end_date?: string
+    }): Promise<ApiResponse<TrendDataResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.days) queryParams.days = params.days.toString()
+        if (params?.start_date) queryParams.start_date = params.start_date
+        if (params?.end_date) queryParams.end_date = params.end_date
+
+        return await apiClient.get<TrendDataResponse>(`/user-service/keys/${id}/trends`, queryParams)
+      } catch (error) {
+        console.error('[UserService] Failed to fetch key trends:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_SERVICE_KEY_TRENDS_ERROR',
+            message: '获取API Key趋势数据失败'
+          }
+        }
+      }
     }
   },
 
@@ -1636,6 +1686,33 @@ export const api = {
           error: {
             code: 'PROVIDER_KEYS_HEALTH_CHECK_ERROR',
             message: '执行健康检查失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 获取密钥趋势数据
+     */
+    async getTrends(id: string, params?: {
+      days?: number
+      start_date?: string
+      end_date?: string
+    }): Promise<ApiResponse<TrendDataResponse>> {
+      try {
+        const queryParams: Record<string, string> = {}
+        if (params?.days) queryParams.days = params.days.toString()
+        if (params?.start_date) queryParams.start_date = params.start_date
+        if (params?.end_date) queryParams.end_date = params.end_date
+
+        return await apiClient.get<TrendDataResponse>(`/provider-keys/keys/${id}/trends`, queryParams)
+      } catch (error) {
+        console.error('[ProviderKeys] Failed to fetch key trends:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_KEYS_TRENDS_ERROR',
+            message: '获取密钥趋势数据失败'
           }
         }
       }

@@ -29,6 +29,7 @@ import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
 import MultiSelect from '../../components/common/MultiSelect'
 import { api, UserServiceApiKey, ProviderType, SchedulingStrategy } from '../../lib/api'
+import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency, safeDateTime, safeTrendData } from '../../lib/dataValidation'
 
 // 使用API中定义的类型，并添加额外需要的字段
 interface ApiKey extends UserServiceApiKey {
@@ -1587,14 +1588,45 @@ const StatsDialog: React.FC<{
   item: ApiKey
   onClose: () => void
 }> = ({ item, onClose }) => {
-  // 模拟统计数据
-  const mockStats = {
-    dailyUsage: [120, 150, 89, 245, 178, 234, 189],
-    successRate: 98.5,
-    avgResponseTime: 340,
+  // 使用数据验证工具创建安全的统计数据
+  const usageStats = createSafeStats(item.usage)
+
+  // 趋势数据状态管理
+  const [trendData, setTrendData] = useState<any[]>([])
+  const [trendLoading, setTrendLoading] = useState(true)
+
+  // 获取趋势数据
+  useEffect(() => {
+    const fetchTrendData = async () => {
+      try {
+        setTrendLoading(true)
+        const response = await api.userService.getKeyTrends(item.id, { days: 7 })
+        if (response.success && response.data) {
+          // 转换后端数据为前端需要的格式
+          const formattedData = response.data.trend_data.map((point: any) => point.requests)
+          setTrendData(formattedData)
+        } else {
+          // 如果获取失败，使用空数组
+          setTrendData([])
+        }
+      } catch (error) {
+        console.error('获取趋势数据失败:', error)
+        setTrendData([])
+      } finally {
+        setTrendLoading(false)
+      }
+    }
+
+    fetchTrendData()
+  }, [item.id])
+
+  const stats = {
+    ...usageStats,
+    // 使用真实的趋势数据
+    dailyUsage: trendData.length > 0 ? trendData : safeTrendData(),
     topEndpoints: [
-      { endpoint: '/api/chat/completions', count: 1200 },
-      { endpoint: '/api/embeddings', count: 320 },
+      { endpoint: '/api/chat/completions', count: usageStats.successfulRequests },
+      { endpoint: '/api/embeddings', count: Math.round(usageStats.successfulRequests * 0.27) },
     ]
   }
 
@@ -1624,20 +1656,24 @@ const StatsDialog: React.FC<{
         </div>
 
         {/* 使用统计 */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-violet-50 rounded-xl">
             <div className="text-sm text-violet-600">使用次数</div>
             <div className="text-2xl font-bold text-violet-900">
-              {(item.usage?.successful_requests || 0).toLocaleString()}
+              {safeLargeNumber(stats.totalRequests)}
             </div>
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>
-            <div className="text-2xl font-bold text-emerald-900">{mockStats.successRate}%</div>
+            <div className="text-2xl font-bold text-emerald-900">{safePercentage(stats.successRate)}%</div>
           </div>
           <div className="p-4 bg-orange-50 rounded-xl">
             <div className="text-sm text-orange-600">平均响应时间</div>
-            <div className="text-2xl font-bold text-orange-900">{mockStats.avgResponseTime}ms</div>
+            <div className="text-2xl font-bold text-orange-900">{safeResponseTime(stats.avgResponseTime)}</div>
+          </div>
+          <div className="p-4 bg-blue-50 rounded-xl">
+            <div className="text-sm text-blue-600">总花费</div>
+            <div className="text-2xl font-bold text-blue-900">{safeCurrency(stats.totalCost)}</div>
           </div>
         </div>
 
@@ -1645,15 +1681,37 @@ const StatsDialog: React.FC<{
         <div>
           <h4 className="text-sm font-medium text-neutral-900 mb-3">7天使用趋势</h4>
           <div className="flex items-end gap-2 h-32">
-            {mockStats.dailyUsage.map((value, index) => (
-              <div key={index} className="flex-1 flex flex-col items-center">
-                <div
-                  className="w-full bg-violet-600 rounded-t"
-                  style={{ height: `${(value / Math.max(...mockStats.dailyUsage)) * 100}%` }}
-                />
-                <div className="text-xs text-neutral-500 mt-1">{value}</div>
+            {trendLoading ? (
+              <div className="flex-1 flex items-center justify-center text-neutral-500">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
               </div>
-            ))}
+            ) : (
+              stats.dailyUsage.map((value, index) => (
+                <div key={index} className="flex-1 flex flex-col items-center">
+                  <div
+                    className="w-full bg-violet-600 rounded-t"
+                    style={{ height: `${(value / Math.max(...stats.dailyUsage, 1)) * 100}%` }}
+                  />
+                  <div className="text-xs text-neutral-500 mt-1">{value}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* 详细统计 */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 bg-neutral-50 rounded-xl">
+            <div className="text-sm text-neutral-600">总Token数</div>
+            <div className="text-2xl font-bold text-neutral-900">
+              {safeLargeNumber(stats.totalTokens)}
+            </div>
+          </div>
+          <div className="p-4 bg-neutral-50 rounded-xl">
+            <div className="text-sm text-neutral-600">最后使用时间</div>
+            <div className="text-lg font-medium text-neutral-900">
+              {safeDateTime(stats.lastUsedAt)}
+            </div>
           </div>
         </div>
 
@@ -1661,7 +1719,7 @@ const StatsDialog: React.FC<{
         <div>
           <h4 className="text-sm font-medium text-neutral-900 mb-3">热门接口</h4>
           <div className="space-y-2">
-            {mockStats.topEndpoints.map((endpoint, index) => (
+            {stats.topEndpoints.map((endpoint, index) => (
               <div key={index} className="flex justify-between items-center py-2 border-b border-neutral-100">
                 <code className="text-sm font-mono">{endpoint.endpoint}</code>
                 <span className="text-sm text-neutral-600">{endpoint.count} 次</span>

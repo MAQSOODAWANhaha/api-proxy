@@ -772,7 +772,22 @@ pub async fn get_provider_key_stats(
         .map(|pt| pt.display_name)
         .unwrap_or_else(|| "Unknown".to_string());
 
-    // TODO: 实际统计数据应该从统计表获取，这里使用模拟数据
+    // 获取真实的统计数据
+    let end_date = Utc::now().naive_utc();
+    let start_date = end_date - chrono::Duration::days(7); // 默认查询7天数据
+
+    let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
+        Ok(trends) => trends,
+        Err(err) => {
+            tracing::error!("Failed to fetch provider key trends: {}", err);
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch trends data: {}",
+                err
+            ));
+        }
+    };
+
     let data = json!({
         "basic_info": {
             "provider": provider_name,
@@ -780,14 +795,15 @@ pub async fn get_provider_key_stats(
             "weight": provider_key.0.weight
         },
         "usage_stats": {
-            "total_usage": 8520,
-            "monthly_cost": 125.50,
-            "success_rate": 99.2,
-            "avg_response_time": 850
+            "total_usage": trends.total_requests,
+            "monthly_cost": trends.total_cost,
+            "success_rate": trends.success_rate,
+            "avg_response_time": trends.avg_response_time
         },
         "daily_trends": {
-            "usage": [320, 450, 289, 645, 378, 534, 489],
-            "cost": [12.5, 18.2, 11.3, 25.8, 15.1, 21.4, 19.6]
+            "usage": trends.daily_usage,
+            "cost": trends.daily_cost,
+            "response_time": trends.daily_response_time
         },
         "limits": {
             "max_requests_per_minute": provider_key.0.max_requests_per_minute,
@@ -871,11 +887,11 @@ pub async fn get_provider_keys_dashboard_stats(
     let (total_usage, total_cost) = if user_provider_key_ids.is_empty() {
         (0u64, 0.0f64)
     } else {
-        use entity::proxy_tracing::{self, Entity as ProxyTracing};
+        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
 
         match ProxyTracing::find()
-            .filter(proxy_tracing::Column::UserProviderKeyId.is_in(user_provider_key_ids))
-            .filter(proxy_tracing::Column::IsSuccess.eq(true))
+            .filter(Column::UserProviderKeyId.is_in(user_provider_key_ids))
+            .filter(Column::IsSuccess.eq(true))
             .all(db)
             .await
         {
@@ -1115,6 +1131,19 @@ pub struct UserProviderKeyQuery {
     pub is_active: Option<bool>,
 }
 
+/// 趋势数据查询参数
+#[derive(Debug, Deserialize)]
+pub struct TrendQuery {
+    /// 查询天数，默认7天
+    #[serde(default = "default_days")]
+    pub days: u32,
+}
+
+/// 默认查询天数
+fn default_days() -> u32 {
+    7
+}
+
 /// 密钥使用统计
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ProviderKeyUsageStats {
@@ -1133,7 +1162,7 @@ async fn fetch_provider_keys_usage_stats(
     db: &sea_orm::DatabaseConnection,
     provider_key_ids: &[i32],
 ) -> HashMap<i32, ProviderKeyUsageStats> {
-    use entity::proxy_tracing::{self, Entity as ProxyTracing};
+    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
 
     let mut stats_map = HashMap::new();
 
@@ -1143,7 +1172,7 @@ async fn fetch_provider_keys_usage_stats(
 
     // 批量查询所有密钥的使用记录
     let traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::UserProviderKeyId.is_in(provider_key_ids.to_vec()))
+        .filter(Column::UserProviderKeyId.is_in(provider_key_ids.to_vec()))
         .all(db)
         .await
     {
@@ -1155,7 +1184,7 @@ async fn fetch_provider_keys_usage_stats(
     };
 
     // 按密钥ID分组统计
-    for trace in traces {
+    for trace in &traces {
         let key_id = match trace.user_provider_key_id {
             Some(id) => id,
             None => continue,
@@ -1218,4 +1247,300 @@ async fn fetch_provider_keys_usage_stats(
     }
 
     stats_map
+}
+
+/// 获取提供商密钥趋势数据
+pub async fn get_provider_key_trends(
+    State(state): State<AppState>,
+    Path(key_id): Path<i32>,
+    Query(query): Query<TrendQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use entity::user_provider_keys::{self, Entity as UserProviderKey};
+    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+
+    let db = state.database.as_ref();
+
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
+
+    // 验证密钥存在且属于当前用户
+    match UserProviderKey::find()
+        .filter(user_provider_keys::Column::Id.eq(key_id))
+        .filter(user_provider_keys::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(_)) => {
+            // 密钥验证成功，继续查询趋势数据
+        }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "ProviderKey not found: {}",
+                key_id
+            ));
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch provider key: {}", err);
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch provider key: {}",
+                err
+            ));
+        }
+    }
+
+    // 计算时间范围
+    let days = query.days.min(30); // 最多查询30天
+    let end_date = Utc::now().naive_utc();
+    let start_date = end_date - chrono::Duration::days(days as i64);
+
+    // 查询趋势数据
+    let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
+        Ok(trends) => trends,
+        Err(err) => {
+            tracing::error!("Failed to fetch provider key trends: {}", err);
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch trends data: {}",
+                err
+            ));
+        }
+    };
+
+    let data = json!({
+        "daily_usage": trends.daily_usage,
+        "daily_cost": trends.daily_cost,
+        "daily_response_time": trends.daily_response_time,
+        "dates": trends.dates,
+        "summary": {
+            "total_requests": trends.total_requests,
+            "total_cost": trends.total_cost,
+            "avg_response_time": trends.avg_response_time,
+            "success_rate": trends.success_rate
+        }
+    });
+
+    response::success(data)
+}
+
+/// 获取用户服务API趋势数据
+pub async fn get_user_service_api_trends(
+    State(state): State<AppState>,
+    Path(api_id): Path<i32>,
+    Query(query): Query<TrendQuery>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use entity::user_service_apis::{self, Entity as UserServiceApi};
+    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+
+    let db = state.database.as_ref();
+
+    // 从JWT token中提取用户ID
+    let user_id = match extract_user_id_from_headers(&headers) {
+        Ok(id) => id,
+        Err(error_response) => return error_response,
+    };
+
+    // 验证API存在且属于当前用户
+    match UserServiceApi::find()
+        .filter(user_service_apis::Column::Id.eq(api_id))
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+    {
+        Ok(Some(_)) => {
+            // API验证成功，继续查询趋势数据
+        }
+        Ok(None) => {
+            return crate::manage_error!(crate::proxy_err!(
+                business,
+                "UserServiceApi not found: {}",
+                api_id
+            ));
+        }
+        Err(err) => {
+            tracing::error!("Failed to fetch user service api: {}", err);
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch user service api: {}",
+                err
+            ));
+        }
+    }
+
+    // 计算时间范围
+    let days = query.days.min(30); // 最多查询30天
+    let end_date = Utc::now().naive_utc();
+    let start_date = end_date - chrono::Duration::days(days as i64);
+
+    // 查询趋势数据
+    let trends = match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
+        Ok(trends) => trends,
+        Err(err) => {
+            tracing::error!("Failed to fetch user service api trends: {}", err);
+            return crate::manage_error!(crate::proxy_err!(
+                database,
+                "Failed to fetch trends data: {}",
+                err
+            ));
+        }
+    };
+
+    let data = json!({
+        "daily_usage": trends.daily_usage,
+        "daily_cost": trends.daily_cost,
+        "daily_response_time": trends.daily_response_time,
+        "dates": trends.dates,
+        "summary": {
+            "total_requests": trends.total_requests,
+            "total_cost": trends.total_cost,
+            "avg_response_time": trends.avg_response_time,
+            "success_rate": trends.success_rate
+        }
+    });
+
+    response::success(data)
+}
+
+/// 趋势数据结构
+#[derive(Debug, Default, Serialize)]
+struct TrendData {
+    daily_usage: Vec<i64>,
+    daily_cost: Vec<f64>,
+    daily_response_time: Vec<i64>,
+    dates: Vec<String>,
+    total_requests: i64,
+    total_cost: f64,
+    avg_response_time: i64,
+    success_rate: f64,
+}
+
+/// 获取趋势数据的通用函数
+async fn fetch_key_trends_data(
+    db: &sea_orm::DatabaseConnection,
+    key_id: i32,
+    start_date: &chrono::NaiveDateTime,
+    end_date: &chrono::NaiveDateTime,
+    key_type: &str, // "provider" 或 "user_service"
+) -> Result<TrendData, sea_orm::DbErr> {
+    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let mut trend_data = TrendData::default();
+
+    // 构建查询条件
+    let mut select = ProxyTracing::find()
+        .filter(Column::CreatedAt.gte(*start_date))
+        .filter(Column::CreatedAt.lte(*end_date));
+
+    // 根据密钥类型选择过滤字段
+    if key_type == "provider" {
+        select = select.filter(Column::UserProviderKeyId.eq(key_id));
+    } else {
+        select = select.filter(Column::UserServiceApiId.eq(key_id));
+    }
+
+    // 获取所有追踪记录
+    let traces = select.all(db).await?;
+
+    // 按日期分组统计
+    let mut daily_stats = std::collections::HashMap::new();
+
+    for trace in &traces {
+        let date_str = trace.created_at.format("%Y-%m-%d").to_string();
+        let entry = daily_stats.entry(date_str).or_insert_with(|| DailyStats::default());
+
+        entry.total_requests += 1;
+        if trace.is_success {
+            entry.successful_requests += 1;
+        }
+        entry.total_cost += trace.cost.unwrap_or(0.0);
+        entry.total_response_time += trace.duration_ms.unwrap_or(0);
+        entry.total_tokens += trace.tokens_total.unwrap_or(0) as i64;
+    }
+
+    // 生成日期序列和趋势数据
+    let mut current_date = start_date.date();
+    let end_date_only = end_date.date();
+
+    while current_date <= end_date_only {
+        let date_str = current_date.format("%Y-%m-%d").to_string();
+        trend_data.dates.push(date_str.clone());
+
+        if let Some(stats) = daily_stats.get(&date_str) {
+            trend_data.daily_usage.push(stats.total_requests);
+            trend_data.daily_cost.push(stats.total_cost);
+            trend_data.daily_response_time.push(
+                if stats.successful_requests > 0 {
+                    stats.total_response_time / stats.successful_requests
+                } else {
+                    0
+                }
+            );
+
+            // 累计汇总数据
+            trend_data.total_requests += stats.total_requests;
+            trend_data.total_cost += stats.total_cost;
+            trend_data.success_rate += if stats.total_requests > 0 {
+                (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0
+            } else {
+                0.0
+            };
+        } else {
+            // 没有数据的日期填充0
+            trend_data.daily_usage.push(0);
+            trend_data.daily_cost.push(0.0);
+            trend_data.daily_response_time.push(0);
+        }
+
+        current_date += chrono::Duration::days(1);
+    }
+
+    // 计算平均响应时间和成功率
+    if trend_data.total_requests > 0 {
+        let mut total_response_time = 0i64;
+        let mut successful_requests = 0i64;
+
+        for trace in &traces {
+            if let Some(duration) = trace.duration_ms {
+                total_response_time += duration;
+            }
+            if trace.is_success {
+                successful_requests += 1;
+            }
+        }
+
+        trend_data.avg_response_time = if successful_requests > 0 {
+            total_response_time / successful_requests
+        } else {
+            0
+        };
+
+        trend_data.success_rate = if !trend_data.dates.is_empty() {
+            trend_data.success_rate / trend_data.dates.len() as f64
+        } else {
+            0.0
+        };
+    }
+
+    // 四舍五入保留两位小数
+    trend_data.success_rate = (trend_data.success_rate * 100.0).round() / 100.0;
+    trend_data.total_cost = (trend_data.total_cost * 100.0).round() / 100.0;
+
+    Ok(trend_data)
+}
+
+/// 每日统计结构
+#[derive(Debug, Default)]
+struct DailyStats {
+    total_requests: i64,
+    successful_requests: i64,
+    total_cost: f64,
+    total_response_time: i64,
+    total_tokens: i64,
 }

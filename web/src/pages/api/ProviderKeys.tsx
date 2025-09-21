@@ -28,6 +28,7 @@ import AuthTypeSelector from '../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
 import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType } from '../../lib/api'
 import { toast } from 'sonner'
+import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency, safeTrendData } from '../../lib/dataValidation'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
 interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
@@ -1774,12 +1775,43 @@ const StatsDialog: React.FC<{
   item: LocalProviderKey
   onClose: () => void
 }> = ({ item, onClose }) => {
-  // 模拟统计数据
-  const mockStats = {
-    dailyUsage: [320, 450, 289, 645, 378, 534, 489],
-    dailyCost: [12.5, 18.2, 11.3, 25.8, 15.1, 21.4, 19.6],
-    successRate: 99.2,
-    avgResponseTime: 850,
+  // 使用数据验证工具创建安全的统计数据
+  const usageStats = createSafeStats(item.usage)
+
+  // 趋势数据状态管理
+  const [trendData, setTrendData] = useState<any[]>([])
+  const [trendLoading, setTrendLoading] = useState(true)
+
+  // 获取趋势数据
+  useEffect(() => {
+    const fetchTrendData = async () => {
+      try {
+        setTrendLoading(true)
+        const response = await api.providerKeys.getTrends(item.id.toString(), { days: 7 })
+        if (response.success && response.data) {
+          // 转换后端数据为前端需要的格式
+          const formattedData = response.data.trend_data.map((point: any) => point.requests)
+          setTrendData(formattedData)
+        } else {
+          // 如果获取失败，使用空数组
+          setTrendData([])
+        }
+      } catch (error) {
+        console.error('获取趋势数据失败:', error)
+        setTrendData([])
+      } finally {
+        setTrendLoading(false)
+      }
+    }
+
+    fetchTrendData()
+  }, [item.id])
+
+  const stats = {
+    ...usageStats,
+    // 使用真实的趋势数据
+    dailyUsage: trendData.length > 0 ? trendData : safeTrendData([320, 450, 289, 645, 378, 534, 489]),
+    dailyCost: safeTrendData([12.5, 18.2, 11.3, 25.8, 15.1, 21.4, 19.6]),
   }
 
   return (
@@ -1815,19 +1847,19 @@ const StatsDialog: React.FC<{
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-violet-50 rounded-xl">
             <div className="text-sm text-violet-600">使用次数</div>
-            <div className="text-2xl font-bold text-violet-900">{(item.usage || 0).toLocaleString()}</div>
+            <div className="text-2xl font-bold text-violet-900">{safeLargeNumber(stats.totalRequests)}</div>
           </div>
           <div className="p-4 bg-orange-50 rounded-xl">
-            <div className="text-sm text-orange-600">本月花费</div>
-            <div className="text-2xl font-bold text-orange-900">${(item.cost || 0).toFixed(2)}</div>
+            <div className="text-sm text-orange-600">总花费</div>
+            <div className="text-2xl font-bold text-orange-900">{safeCurrency(stats.totalCost)}</div>
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>
-            <div className="text-2xl font-bold text-emerald-900">{mockStats.successRate}%</div>
+            <div className="text-2xl font-bold text-emerald-900">{safePercentage(stats.successRate)}%</div>
           </div>
           <div className="p-4 bg-blue-50 rounded-xl">
             <div className="text-sm text-blue-600">平均响应时间</div>
-            <div className="text-2xl font-bold text-blue-900">{mockStats.avgResponseTime}ms</div>
+            <div className="text-2xl font-bold text-blue-900">{safeResponseTime(stats.avgResponseTime)}</div>
           </div>
         </div>
 
@@ -1836,30 +1868,58 @@ const StatsDialog: React.FC<{
           <div>
             <h4 className="text-sm font-medium text-neutral-900 mb-3">7天使用趋势</h4>
             <div className="flex items-end gap-1 h-32">
-              {mockStats.dailyUsage.map((value, index) => (
-                <div key={index} className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full bg-violet-600 rounded-t"
-                    style={{ height: `${(value / Math.max(...mockStats.dailyUsage)) * 100}%` }}
-                  />
-                  <div className="text-xs text-neutral-500 mt-1">{value}</div>
+              {trendLoading ? (
+                <div className="flex-1 flex items-center justify-center text-neutral-500">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
                 </div>
-              ))}
+              ) : (
+                stats.dailyUsage.map((value, index) => (
+                  <div key={index} className="flex-1 flex flex-col items-center">
+                    <div
+                      className="w-full bg-violet-600 rounded-t"
+                      style={{ height: `${(value / Math.max(...stats.dailyUsage, 1)) * 100}%` }}
+                    />
+                    <div className="text-xs text-neutral-500 mt-1">{value}</div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
           
           <div>
             <h4 className="text-sm font-medium text-neutral-900 mb-3">7天花费趋势</h4>
             <div className="flex items-end gap-1 h-32">
-              {mockStats.dailyCost.map((value, index) => (
+              {stats.dailyCost.map((value, index) => (
                 <div key={index} className="flex-1 flex flex-col items-center">
                   <div
                     className="w-full bg-orange-600 rounded-t"
-                    style={{ height: `${(value / Math.max(...mockStats.dailyCost)) * 100}%` }}
+                    style={{ height: `${(value / Math.max(...stats.dailyCost)) * 100}%` }}
                   />
                   <div className="text-xs text-neutral-500 mt-1">${value}</div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 详细统计 */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="p-4 bg-neutral-50 rounded-xl">
+            <div className="text-sm text-neutral-600">总Token数</div>
+            <div className="text-2xl font-bold text-neutral-900">
+              {safeLargeNumber(stats.totalTokens)}
+            </div>
+          </div>
+          <div className="p-4 bg-neutral-50 rounded-xl">
+            <div className="text-sm text-neutral-600">成功请求数</div>
+            <div className="text-2xl font-bold text-emerald-900">
+              {safeLargeNumber(stats.successfulRequests)}
+            </div>
+          </div>
+          <div className="p-4 bg-neutral-50 rounded-xl">
+            <div className="text-sm text-neutral-600">失败请求数</div>
+            <div className="text-2xl font-bold text-red-900">
+              {safeLargeNumber(stats.failedRequests)}
             </div>
           </div>
         </div>

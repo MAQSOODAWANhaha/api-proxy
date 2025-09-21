@@ -221,6 +221,11 @@ fn provider_api_keys_routes() -> Router<AppState> {
             "/keys/{id}/stats",
             get(crate::management::handlers::provider_keys::get_provider_key_stats),
         )
+        // 获取密钥趋势数据
+        .route(
+            "/keys/{id}/trends",
+            get(crate::management::handlers::provider_keys::get_provider_key_trends),
+        )
         // 执行健康检查
         .route(
             "/keys/{id}/health-check",
@@ -266,6 +271,11 @@ fn user_service_routes() -> Router<AppState> {
         .route(
             "/keys/{id}/usage",
             get(crate::management::handlers::service_apis::get_user_service_key_usage),
+        )
+        // API Key趋势数据
+        .route(
+            "/keys/{id}/trends",
+            get(crate::management::handlers::provider_keys::get_user_service_api_trends),
         )
         // 重新生成API Key
         .route(
