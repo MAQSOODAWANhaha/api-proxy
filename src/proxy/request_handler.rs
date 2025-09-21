@@ -435,6 +435,10 @@ impl RequestHandler {
     pub fn tracing_service(&self) -> &Arc<TracingService> {
         &self.tracing_service
     }
+    /// 获取数据库连接引用 - 用于外部访问
+    pub fn db(&self) -> &Arc<DatabaseConnection> {
+        &self.db
+    }
     pub fn provider_config_manager(&self) -> &Arc<ProviderConfigManager> {
         &self.provider_config_manager
     }
@@ -520,7 +524,7 @@ impl RequestHandler {
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&pt.name)
             {
                 if let Some(strategy) =
-                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db().clone()))
                 {
                     return strategy
                         .modify_request_body_json(session, ctx, json_value)
@@ -1057,7 +1061,7 @@ impl RequestHandler {
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
             {
                 if let Some(strategy) =
-                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db().clone()))
                 {
                     // 忽略策略内部的无害改写失败，避免影响主流程
                     if let Err(e) = strategy
@@ -1483,7 +1487,7 @@ impl RequestHandler {
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
             {
                 if let Some(strategy) =
-                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db().clone()))
                 {
                     // 获取响应体
                     let response_body = if let Some(body) = &ctx.response_details.body {

@@ -1788,12 +1788,12 @@ const StatsDialog: React.FC<{
       try {
         setTrendLoading(true)
         const response = await api.providerKeys.getTrends(item.id.toString(), { days: 7 })
-        if (response.success && response.data) {
+        if (response.success && response.data && Array.isArray(response.data.trend_data)) {
           // 转换后端数据为前端需要的格式
-          const formattedData = response.data.trend_data.map((point: any) => point.requests)
+          const formattedData = response.data.trend_data.map((point: any) => point.requests || 0)
           setTrendData(formattedData)
         } else {
-          // 如果获取失败，使用空数组
+          // 如果获取失败或数据格式不对，使用空数组
           setTrendData([])
         }
       } catch (error) {

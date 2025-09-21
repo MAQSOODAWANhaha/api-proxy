@@ -1650,6 +1650,7 @@ impl ProxyHttp for ProxyService {
                 next = ret;
             }
         }
+
         // provider 特定的响应体服务
         for svc in provider_response_body_services(ctx) {
             let ret = svc.exec(body, end_of_stream, ctx)?;
@@ -1657,6 +1658,8 @@ impl ProxyHttp for ProxyService {
                 next = ret;
             }
         }
+
+        
         Ok(next)
     }
 

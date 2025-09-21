@@ -4,7 +4,7 @@
 
 use crate::error::{ErrorContext, Result};
 use crate::proxy::ProxyContext;
-use crate::{proxy_bail, proxy_err};
+use crate::proxy_err;
 use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
@@ -12,7 +12,7 @@ use pingora_proxy::Session;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::ProviderStrategy;
 
@@ -112,6 +112,7 @@ impl OpenAIStrategy {
         Ok(())
     }
 
+    
     /// 处理429错误响应
     async fn handle_429_response(
         &self,
@@ -124,16 +125,50 @@ impl OpenAIStrategy {
             "处理OpenAI 429错误响应"
         );
 
-        // 解析429错误
+        // 首先将key标记为限流状态（即使无法解析响应体）
+        if let Some(backend_key) = &ctx.selected_backend {
+            let db = self
+                .db
+                .as_ref()
+                .ok_or_else(|| proxy_err!(database, "数据库连接未配置"))?;
+
+            let now = Utc::now().naive_utc();
+
+            // 先标记为基本限流状态
+            let mut key: user_provider_keys::ActiveModel =
+                user_provider_keys::Entity::find_by_id(backend_key.id)
+                    .one(db.as_ref())
+                    .await
+                    .with_database_context(|| format!("查询API密钥失败，ID: {}", backend_key.id))?
+                    .ok_or_else(|| proxy_err!(database, "API密钥不存在: {}", backend_key.id))?
+                    .into();
+
+            key.health_status = Set("rate_limited".to_string());
+            key.health_status_detail = Set(Some(r#"{"type": "rate_limit", "message": "429 status code detected"}"#.to_string()));
+            key.rate_limit_resets_at = Set(None); // 先设置为None，等待响应体解析
+            key.last_error_time = Set(Some(now));
+            key.updated_at = Set(now);
+
+            key.update(db.as_ref())
+                .await
+                .with_database_context(|| format!("更新API密钥健康状态失败，ID: {}", backend_key.id))?;
+
+            info!(
+                key_id = backend_key.id,
+                "OpenAI API密钥已标记为限流状态（基于429状态码）"
+            );
+        }
+
+        // 然后尝试解析响应体获取更详细的信息
         if let Some(error_info) = self.parse_429_error(body) {
             debug!(
                 request_id = %ctx.request_id,
                 error_type = %error_info.error.r#type,
                 resets_in_seconds = ?error_info.error.resets_in_seconds,
-                "检测到OpenAI 429错误"
+                "检测到OpenAI 429错误详情"
             );
 
-            // 更新API密钥健康状态
+            // 如果解析成功，更新详细的限流信息
             if let Some(backend_key) = &ctx.selected_backend {
                 if let Err(e) = self
                     .update_key_health_status(backend_key.id, &error_info.error)
@@ -143,25 +178,15 @@ impl OpenAIStrategy {
                         request_id = %ctx.request_id,
                         key_id = backend_key.id,
                         error = %e,
-                        "更新API密钥健康状态失败"
+                        "更新API密钥详细限流信息失败"
                     );
-                    // 返回速率限制错误，但不要中断处理流程
-                    proxy_bail!(
-                        rate_limit,
-                        "OpenAI API速率限制: {}",
-                        error_info.error.message
-                    );
+                    // 基础限流状态已经设置，这里不中断处理流程
                 }
-            } else {
-                warn!(
-                    request_id = %ctx.request_id,
-                    "未找到后端密钥信息，无法更新健康状态"
-                );
             }
         } else {
             debug!(
                 request_id = %ctx.request_id,
-                "无法解析OpenAI 429错误响应"
+                "无法解析OpenAI 429错误响应体，使用基础限流状态"
             );
         }
 
