@@ -4687,6 +4687,486 @@ test.describe('Complete User Flow', () => {
 
 ---
 
+## 12. 新增核心功能详细设计
+
+### 12.1 OAuth 2.0 授权系统设计
+
+#### 12.1.1 系统架构
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Client App    │    │  OAuth Client   │    │  OAuth Provider │
+│                 │    │                 │    │                 │
+│ • 用户界面       │    │ • 客户端ID       │    │ • 授权服务器     │
+│ • 重定向处理     │    │ • 客户端密钥     │    │ • 令牌端点       │
+│ • Token存储     │    │ • 重定向URI      │    │ • 用户信息       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+         └─────── 1. 授权请求 ────┼───────────────────────▶
+                 │              │                       │
+                 │              │    2. 用户登录/同意    │
+                 │              │◀───────────────────────┤
+                 │              │                       │
+                 │ 3. 授权码返回  │                       │
+                 │◀─────────────┼───────────────────────┤
+                 │              │                       │
+                 │ 4. Token交换  │                       │
+                 └───────────────┼───────────────────────▶
+                                │                       │
+                                │   5. Access Token     │
+                                │◀───────────────────────┤
+                                │                       │
+                                │ 6. 自动Token刷新      │
+                                │◀───────────────────────┘ (后台)
+```
+
+#### 12.1.2 数据库设计
+
+```sql
+-- OAuth客户端会话表
+CREATE TABLE oauth_client_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    provider_type_id INTEGER NOT NULL,
+    client_id VARCHAR(255) NOT NULL,        -- OAuth客户端ID
+    client_secret VARCHAR(255) NOT NULL,   -- OAuth客户端密钥
+    authorization_code TEXT,               -- 授权码
+    access_token TEXT NOT NULL,            -- 访问令牌
+    refresh_token TEXT,                   -- 刷新令牌
+    token_type VARCHAR(50) DEFAULT 'Bearer', -- 令牌类型
+    expires_at DATETIME,                   -- 过期时间
+    scope VARCHAR(500),                   -- 权限范围
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (provider_type_id) REFERENCES provider_types(id),
+    INDEX idx_user_provider (user_id, provider_type_id),
+    INDEX idx_access_token (access_token),
+    INDEX idx_refresh_token (refresh_token),
+    INDEX idx_expires_at (expires_at)
+);
+
+-- OAuth token刷新任务表
+CREATE TABLE oauth_token_refresh_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    oauth_session_id INTEGER NOT NULL,
+    next_refresh_at DATETIME NOT NULL,       -- 下次刷新时间
+    refresh_count INTEGER DEFAULT 0,       -- 刷新次数
+    last_refresh_status VARCHAR(20),       -- 最后刷新状态
+    last_refresh_error TEXT,               -- 最后刷新错误
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (oauth_session_id) REFERENCES oauth_client_sessions(id) ON DELETE CASCADE,
+    INDEX idx_next_refresh (next_refresh_at),
+    INDEX idx_active_tasks (is_active, next_refresh_at)
+);
+```
+
+#### 12.1.3 核心组件设计
+
+**OAuth客户端管理器**
+```rust
+pub struct OAuthClient {
+    db: Arc<DatabaseConnection>,
+    config: Arc<OAuthConfig>,
+    token_store: Arc<TokenCache>,
+}
+
+impl OAuthClient {
+    // 授权码流程
+    pub async fn authorize_with_code(&self, request: AuthCodeRequest) -> Result<AuthCodeResponse>
+
+    // Token交换
+    pub async fn exchange_code_for_token(&self, code: String) -> Result<TokenResponse>
+
+    // Token刷新
+    pub async fn refresh_access_token(&self, refresh_token: String) -> Result<TokenResponse>
+
+    // 获取有效的访问令牌
+    pub async fn get_valid_access_token(&self, session_id: i32) -> Result<String>
+}
+```
+
+**Token刷新服务**
+```rust
+pub struct OAuthTokenRefreshService {
+    db: Arc<DatabaseConnection>,
+    oauth_client: Arc<OAuthClient>,
+    config: Arc<RefreshServiceConfig>,
+}
+
+impl OAuthTokenRefreshService {
+    // 执行token刷新
+    pub async fn refresh_token(&self, session_id: i32) -> Result<()>
+
+    // 批量刷新过期token
+    pub async fn refresh_expired_tokens(&self) -> Result<Vec<i32>>
+
+    // 调度刷新任务
+    pub async fn schedule_refresh_tasks(&self) -> Result<()>
+}
+```
+
+**后台刷新任务**
+```rust
+pub struct OAuthTokenRefreshTask {
+    refresh_service: Arc<OAuthTokenRefreshService>,
+    config: Arc<RefreshTaskConfig>,
+}
+
+impl OAuthTokenRefreshTask {
+    // 启动后台刷新任务
+    pub async fn start(&self) -> Result<()>
+
+    // 停止后台刷新任务
+    pub async fn stop(&self) -> Result<()>
+
+    // 执行刷新循环
+    async fn refresh_loop(&self) -> !
+}
+```
+
+### 12.2 智能API密钥管理系统
+
+#### 12.2.1 系统架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SmartApiKeyProvider                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │   密钥选择器     │  │   健康检查器     │  │   故障恢复器     │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • 轮询策略       │  │ • 实时监控       │  │ • 自动切换       │ │
+│  │ • 权重策略       │  │ • 性能统计       │  │ • 降级处理       │ │
+│  │ • 健康度策略     │  │ • 故障检测       │  │ • 重试机制       │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │
+              ┌─────────────────────────────────────────────────────────────────┐
+              │                    API密钥池                                      │
+              │                                                                 │
+              │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │
+              │  │   OpenAI    │ │   Gemini    │ │   Claude    │ │   Custom    │ │
+              │  │             │ │             │ │             │ │             │ │
+              │  │ • API Key   │ │ • API Key   │ │ • API Key   │ │ • API Key   │ │
+              │  │ • 权重      │ │ • 权重      │ │ • 权重      │ │ • 权重      │ │
+              │  │ • 健康状态  │ │ • 健康状态  │ │ • 健康状态  │ │ • 健康状态  │ │
+              │  │ • 使用统计  │ │ • 使用统计  │ │ • 使用统计  │ │ • 使用统计  │ │
+              │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ │
+              └─────────────────────────────────────────────────────────────────┘
+```
+
+#### 12.2.2 核心算法设计
+
+**智能密钥选择算法**
+```rust
+pub enum SelectionStrategy {
+    RoundRobin,      // 轮询调度
+    Weighted,        // 权重调度
+    HealthBest,      // 健康度最佳
+    LeastUsed,       // 最少使用
+    FastestResponse, // 最快响应
+}
+
+impl SmartApiKeyProvider {
+    // 智能选择API密钥
+    pub async fn select_api_key(&self, context: &SelectionContext) -> Result<ApiKey> {
+        match self.strategy {
+            SelectionStrategy::RoundRobin => self.round_robin_select(context).await,
+            SelectionStrategy::Weighted => self.weighted_select(context).await,
+            SelectionStrategy::HealthBest => self.health_best_select(context).await,
+            SelectionStrategy::LeastUsed => self.least_used_select(context).await,
+            SelectionStrategy::FastestResponse => self.fastest_response_select(context).await,
+        }
+    }
+
+    // 健康度最佳选择算法
+    async fn health_best_select(&self, context: &SelectionContext) -> Result<ApiKey> {
+        let available_keys = self.get_available_keys(context).await?;
+
+        // 计算每个密钥的健康分数
+        let mut scored_keys: Vec<_> = available_keys.into_iter().map(|key| {
+            let health_score = self.calculate_health_score(&key).await;
+            (key, health_score)
+        }).collect();
+
+        // 按健康分数排序
+        scored_keys.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 选择健康分数最高的密钥
+        scored_keys.into_iter()
+            .find(|(_, score)| *score > 0.7) // 健康分数阈值
+            .map(|(key, _)| key)
+            .ok_or_else(|| ProxyError::NoHealthyKey)
+    }
+
+    // 计算健康分数
+    async fn calculate_health_score(&self, key: &ApiKey) -> f64 {
+        let health_status = self.health_checker.get_health_status(key.id).await;
+        let stats = self.statistics.get_key_statistics(key.id).await;
+
+        let mut score = 0.0;
+
+        // 基础健康状态 (40%)
+        score += if health_status.is_healthy { 0.4 } else { 0.0 };
+
+        // 响应时间 (30%)
+        let response_time_score = (1.0 / (1.0 + health_status.response_time_ms as f64 / 1000.0)) * 0.3;
+        score += response_time_score;
+
+        // 成功率 (20%)
+        score += health_status.success_rate * 0.2;
+
+        // 负载均衡 (10%)
+        let load_score = (1.0 / (1.0 + stats.concurrent_requests as f64 / 10.0)) * 0.1;
+        score += load_score;
+
+        score.min(1.0).max(0.0)
+    }
+}
+```
+
+### 12.3 API密钥健康监控系统
+
+#### 12.3.1 监控架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   HealthMonitor                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │   检查调度器     │  │   状态收集器     │  │   故障处理器     │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • 定时检查       │  │ • 性能指标       │  │ • 故障检测       │ │
+│  │ • 触发检查       │  │ • 错误统计       │  │ • 自动恢复       │ │
+│  │ • 优先级管理     │  │ • 趋势分析       │  │ • 告警通知       │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │
+              ┌─────────────────────────────────────────────────────────────────┐
+              │                   健康状态存储                                    │
+              │                                                                 │
+              │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │
+              │  │  健康状态    │ │  检查历史    │ │  性能指标    │ │  故障日志    │ │
+              │  │             │ │             │ │             │ │             │ │
+              │  │ • 当前状态    │ │ • 检查记录    │ │ • 响应时间    │ │ • 故障时间    │ │
+              │  │ • 健康分数    │ │ • 状态变化    │ │ • 成功率      │ │ • 恢复时间    │ │
+              │  │ • 最后检查    │ │ • 持续时间    │ │ • 错误率      │ │ • 处理结果    │ │
+              │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ │
+              └─────────────────────────────────────────────────────────────────┘
+```
+
+#### 12.3.2 健康检查算法
+
+```rust
+pub struct ApiKeyHealthChecker {
+    db: Arc<DatabaseConnection>,
+    cache: Arc<CacheManager>,
+    config: Arc<HealthConfig>,
+}
+
+impl ApiKeyHealthChecker {
+    // 执行健康检查
+    pub async fn check_health(&self, key_id: i32) -> Result<HealthStatus> {
+        let key = self.get_api_key(key_id).await?;
+        let start_time = Instant::now();
+
+        // 执行实际的API测试
+        let result = self.perform_api_test(&key).await;
+        let response_time = start_time.elapsed();
+
+        // 更新健康状态
+        let health_status = HealthStatus {
+            key_id,
+            is_healthy: result.is_ok(),
+            response_time_ms: response_time.as_millis() as u32,
+            success_rate: self.calculate_success_rate(key_id).await?,
+            last_success: if result.is_ok() { Some(Utc::now()) } else { None },
+            last_failure: if result.is_err() { Some(Utc::now()) } else { None },
+            consecutive_failures: self.get_consecutive_failures(key_id).await?,
+            error_message: result.err().map(|e| e.to_string()),
+            updated_at: Utc::now(),
+        };
+
+        // 保存健康状态
+        self.save_health_status(&health_status).await?;
+
+        Ok(health_status)
+    }
+
+    // 批量健康检查
+    pub async fn batch_check_health(&self, key_ids: &[i32]) -> Vec<(i32, Result<HealthStatus>)> {
+        let tasks: Vec<_> = key_ids.iter().map(|&key_id| {
+            let checker = self.clone();
+            async move {
+                let result = checker.check_health(key_id).await;
+                (key_id, result)
+            }
+        }).collect();
+
+        join_all(tasks).await
+    }
+
+    // 自动故障恢复
+    pub async fn auto_recovery(&self, key_id: i32) -> Result<bool> {
+        let health_status = self.get_health_status(key_id).await?;
+
+        // 如果连续失败次数过多，执行恢复流程
+        if health_status.consecutive_failures > self.config.max_consecutive_failures {
+            // 1. 检查网络连接
+            if self.check_network_connectivity(&health_status).await? {
+                // 2. 尝试重新认证
+                if self.reauthenticate_key(&health_status).await? {
+                    // 3. 验证API功能
+                    if self.validate_api_functionality(&health_status).await? {
+                        // 恢复成功
+                        self.mark_key_healthy(key_id).await?;
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+}
+```
+
+### 12.4 统一请求追踪系统
+
+#### 12.4.1 追踪架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   UnifiedTraceSystem                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │   TraceID生成   │  │   请求收集器     │  │   数据提取器     │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • 唯一标识       │  │ • 请求信息       │  │ • Token提取     │ │
+│  │ • 链路追踪       │  │ • 响应信息       │  │ • 模型提取     │ │
+│  │ • 上下文传递     │  │ • 错误信息       │  │ • 字段映射     │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                │
+              ┌─────────────────────────────────────────────────────────────────┐
+              │                   追踪数据存储                                    │
+              │                                                                 │
+              │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │
+              │  │  请求追踪    │ │  Token统计   │ │  模型统计    │ │  错误日志    │ │
+              │  │             │ │             │ │             │ │             │ │
+              │  │ • 基本信息    │ │ • 使用量      │ │ • 使用分布    │ │ • 错误类型    │ │
+              │  │ • 性能指标    │ │ • 成本统计    │ │ • 成本分析    │ │ • 错误频率    │ │
+              │  │ • 状态码      │ │ • 趋势分析    │ │ • 性能指标    │ │ • 恢复策略    │ │
+              │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ │
+              └─────────────────────────────────────────────────────────────────┘
+```
+
+#### 12.4.2 核心追踪实现
+
+```rust
+pub struct ImmediateProxyTracer {
+    db: Arc<DatabaseConnection>,
+    config: Arc<ImmediateTracerConfig>,
+    token_extractor: Arc<TokenFieldExtractor>,
+    model_extractor: Arc<ModelExtractor>,
+}
+
+impl ImmediateProxyTracer {
+    // 追踪请求
+    pub async fn trace_request(&self, trace_data: RequestTraceData) -> Result<()> {
+        // 生成唯一TraceID
+        let trace_id = self.generate_trace_id();
+
+        // 提取Token信息
+        let token_info = self.token_extractor.extract_tokens(&trace_data).await?;
+
+        // 提取模型信息
+        let model_info = self.model_extractor.extract_model(&trace_data).await?;
+
+        // 构建追踪记录
+        let trace_record = ProxyTracing {
+            id: generate_id(),
+            trace_id,
+            request_id: trace_data.request_id,
+            user_service_api_id: trace_data.user_service_api_id,
+            user_provider_key_id: trace_data.user_provider_key_id,
+            method: trace_data.method,
+            path: trace_data.path,
+            status_code: trace_data.status_code,
+            response_time_ms: trace_data.response_time_ms,
+            request_size: trace_data.request_size,
+            response_size: trace_data.response_size,
+
+            // Token信息
+            prompt_tokens: token_info.prompt_tokens,
+            completion_tokens: token_info.completion_tokens,
+            total_tokens: token_info.total_tokens,
+
+            // 模型信息
+            model_used: model_info.model_name,
+            provider_type: model_info.provider_type,
+
+            // 其他信息
+            client_ip: trace_data.client_ip,
+            user_agent: trace_data.user_agent,
+            error_type: trace_data.error_type,
+            error_message: trace_data.error_message,
+            created_at: Utc::now(),
+        };
+
+        // 立即写入数据库
+        self.save_trace_record(&trace_record).await?;
+
+        // 异步更新统计数据
+        self.update_statistics(&trace_record).await?;
+
+        Ok(())
+    }
+
+    // 数据驱动字段提取
+    async fn extract_tokens_dynamic(&self, response: &Response) -> Result<TokenInfo> {
+        // 从数据库配置中获取提取规则
+        let extraction_rules = self.get_token_extraction_rules().await?;
+
+        let mut token_info = TokenInfo::default();
+
+        for rule in extraction_rules {
+            if rule.provider_type == self.provider_type {
+                match rule.field_type {
+                    FieldType::PromptTokens => {
+                        token_info.prompt_tokens = self.extract_field(response, &rule.field_path).await?;
+                    }
+                    FieldType::CompletionTokens => {
+                        token_info.completion_tokens = self.extract_field(response, &rule.field_path).await?;
+                    }
+                    FieldType::TotalTokens => {
+                        token_info.total_tokens = self.extract_field(response, &rule.field_path).await?;
+                    }
+                }
+            }
+        }
+
+        Ok(token_info)
+    }
+}
+```
+
+---
+
 ## 总结
 
 本架构设计文档详细描述了AI代理系统的完整技术方案，涵盖了从系统架构到具体实现的各个层面。该系统采用Rust + Pingora作为统一入口，内嵌Axum提供管理功能，支持多AI服务商代理、负载均衡、监控统计等企业级功能。
@@ -4695,8 +5175,11 @@ test.describe('Complete User Flow', () => {
 1. **统一入口**：Pingora处理所有请求，简化部署
 2. **高性能**：Rust异步架构，支持高并发
 3. **源信息隐藏**：完全保护客户端隐私
-4. **智能负载均衡**：三种调度策略，自动故障转移
+4. **智能负载均衡**：多种调度策略，自动故障转移
 5. **完整监控**：实时统计，健康检查，告警通知
+6. **OAuth 2.0集成**：完整授权流程，自动token刷新
+7. **智能密钥管理**：动态密钥选择，健康监控
+8. **统一追踪系统**：数据驱动提取，完整请求记录
 6. **安全可靠**：TLS加密，证书自动续期，权限控制
 
 **技术栈选择合理**，实施计划详细可行，风险评估全面，为项目成功交付提供了坚实的技术保障。建议严格按照阶段规划推进，重点关注Pingora集成和性能优化，确保系统稳定可靠运行。

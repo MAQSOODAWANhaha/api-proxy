@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **数据库**: SQLite + Sea-ORM 1.1.13 + Sea-ORM-Migration
 - **缓存**: Redis with connection manager
 - **认证**: JWT + API Key + RBAC (17种权限类型)
-- **前端**: Vue 3 + TypeScript + Element Plus (规划中)
+- **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 
 ## 常用开发命令
 
@@ -87,37 +87,50 @@ cd entity && sea-orm-cli generate entity --database-url sqlite://./data/dev.db -
 
 ### 数据流架构
 ```
-管理API请求: Client → Pingora → Router → Axum → Business Logic → Database/Redis → Response
-AI代理请求: Client → Pingora → Auth → LoadBalancer → UpstreamSelect → ProxyForward → AI Provider → Response → Stats
+管理API请求: Client → Pingora(8080) → Router → Axum(9090) → Business Logic → Database/Redis → Response
+AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamSelect → ProxyForward → AI Provider → Response → Stats
 ```
 
 ### 认证体系架构
-- **三层认证**: JWT令牌 + API密钥 + RBAC权限控制
+- **四层认证**: JWT令牌 + API密钥 + OAuth 2.0 + RBAC权限控制(17种权限类型)
 - **用户对外API**: 每种服务商类型只能创建一个对外API密钥
 - **内部API密钥池**: 每种类型可创建多个内部密钥，组成负载均衡池
+- **OAuth 2.0集成**: 完整授权流程，支持自动token刷新
 
 ### 负载均衡策略
 - **轮询调度** (`round_robin`): 按顺序分配请求到不同的API密钥
 - **权重调度** (`weighted`): 根据权重比例分配请求
 - **健康度最佳** (`health_best`): 选择响应时间最短的健康节点
+- **智能调度** (`smart`): SmartApiKeyProvider动态选择，考虑健康度、响应时间、负载等因素
 
 ### 追踪系统架构
 - **UnifiedTraceSystem**: 统一追踪系统入口，管理所有请求追踪
 - **ImmediateProxyTracer**: 即时写入追踪器，确保所有请求都被记录到数据库
 - **数据驱动提取**: TokenFieldExtractor和ModelExtractor基于数据库配置提取token和模型信息
+- **健康监控**: ApiKeyHealthChecker实时监控API密钥状态，自动故障恢复
 
 ## 关键模块说明
 
 ### 双端口启动流程 (`src/dual_port_setup.rs`)
-1. 初始化共享服务（数据库、缓存、认证、追踪系统）
+1. 初始化共享服务（数据库、缓存、认证、追踪系统、OAuth服务）
 2. 并发启动Pingora代理服务 (8080) 和Axum管理服务 (9090)
 3. 两个服务共享数据层但职责完全分离
 
-### AI代理处理器 (`src/proxy/ai_handler.rs`)
-- **核心三步骤**: 身份验证 → 速率限制 → 转发策略
+### AI代理处理器 (`src/proxy/request_handler.rs`)
+- **核心步骤**: 请求验证 → 密钥选择 → 请求转发 → 响应处理 → 统计记录
 - **请求上下文**: ProxyContext包含完整的请求生命周期数据
 - **错误处理**: 自动转换Pingora错误为用户友好的响应
 - **数据驱动**: 使用数据库配置的TokenFieldExtractor和ModelExtractor
+
+### OAuth 2.0系统 (`src/auth/oauth_client/`)
+- **OAuth客户端管理**: 完整的授权码流程和token交换
+- **自动token刷新**: OAuthTokenRefreshService和后台刷新任务
+- **会话管理**: oauth_client_sessions表管理OAuth会话状态
+
+### 智能密钥管理 (`src/auth/smart_api_key_provider.rs`)
+- **动态密钥选择**: SmartApiKeyProvider多种选择策略
+- **健康监控**: 实时监控API密钥状态和性能指标
+- **故障恢复**: 自动故障检测和恢复机制
 
 ### 配置管理系统 (`src/config/`)
 - **动态配置**: ProviderConfigManager替代所有硬编码地址
@@ -128,6 +141,11 @@ AI代理请求: Client → Pingora → Auth → LoadBalancer → UpstreamSelect 
 - **统一缓存接口**: AbstractCache trait支持内存和Redis后端
 - **智能缓存策略**: 不同数据类型使用不同的TTL和缓存策略
 - **故障降级**: Redis不可用时自动降级到内存缓存
+
+### 健康监控系统 (`src/scheduler/api_key_health.rs`)
+- **实时健康检查**: ApiKeyHealthChecker定期检查API密钥状态
+- **性能统计**: 收集响应时间、成功率等关键指标
+- **自动恢复**: 故障自动检测和恢复机制
 
 ## 开发注意事项
 
@@ -142,7 +160,7 @@ api-proxy/
 ├── src/                    # 主应用代码
 ├── entity/                 # 数据库实体定义 (Sea-ORM)
 ├── migration/             # 数据库迁移脚本
-├── web/                   # 前端应用 (Vue 3 + TypeScript)
+├── web/                   # 前端应用 (React 18 + TypeScript)
 └── docs/                  # 完整架构文档
 ```
 

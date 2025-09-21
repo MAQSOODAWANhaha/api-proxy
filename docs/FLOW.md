@@ -1,6 +1,6 @@
 # AI 代理平台请求处理流程详细分析
 
-> 基于 Rust + Pingora 的企业级 AI 服务代理平台完整技术流程文档 (更新版)
+> 基于 Rust + Pingora 的企业级 AI 服务代理平台完整技术流程文档 (2025最新版)
 
 ## 🏗️ 系统架构总览
 
@@ -19,7 +19,7 @@
 - **缓存**: Redis with CacheManager (支持内存/Redis后端)
 - **认证**: AuthManager + JWT + API Key + RBAC
 - **追踪**: TraceSystem + ImmediateProxyTracer
-- **前端**: Vue 3 + TypeScript + Element Plus (规划中)
+- **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 
 ## 📊 完整请求处理流程图
 
@@ -48,6 +48,8 @@ flowchart TD
             InitComponents --> TraceSystem["TraceSystem::new_immediate()"]
             InitComponents --> HealthChecker["ApiKeyHealthChecker::new()"]
             InitComponents --> OAuthClient["OAuthClient::new()"]
+            InitComponents --> SmartApiKeyProvider["SmartApiKeyProvider::new()"]
+            InitComponents --> OAuthTokenRefreshTask["OAuthTokenRefreshTask::new()"]
         end
         
         InitShared --> ConcurrentStart["并发启动双端口服务"]
@@ -98,27 +100,56 @@ flowchart TD
             
             subgraph AuthFlow["🔐 认证流程详细"]
                 AuthPhase --> ParseKey["parse_inbound_api_key_from_client()<br/>解析客户端认证头"]
-                ParseKey --> ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
+                ParseKey --> CheckAuthType{"认证类型?"}
+                CheckAuthType -->|API Key| ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
+                CheckAuthType -->|OAuth 2.0| OAuthFlow["OAuth 2.0流程"]
                 ExtractHeaders --> Auth["AuthManager<br/>.authenticate_proxy_request()"]
-                UnifiedAuth --> VerifyMatch["验证provider类型匹配"]
+                OAuthFlow --> SmartKeyProvider["SmartApiKeyProvider<br/>.get_valid_api_key()"]
+                SmartKeyProvider --> CheckToken{"检查Token有效性"}
+                CheckToken -->|有效| UseToken["使用现有Token"]
+                CheckToken -->|过期/无效| RefreshToken["OAuthTokenRefreshService<br/>.refresh_access_token()"]
+                RefreshToken --> UpdateToken["更新数据库Token"]
+                UpdateToken --> UseToken
+                UseToken --> Auth["AuthManager<br/>.authenticate_proxy_request()"]
+                Auth --> VerifyMatch["验证provider类型匹配"]
                 VerifyMatch --> AuthResult["构造AuthenticationResult"]
             end
             
             Step2 --> Step3["步骤3: 获取Provider配置<br/>ProviderConfigStep"]
             Step3 --> Step4["步骤4: API密钥选择<br/>ApiKeySelectionStep"]
             
-            subgraph LoadBalance["⚖️ 负载均衡详细"]
+            subgraph LoadBalance["⚖️ 智能密钥管理详细"]
                 Step5 --> CreateSelectionCtx["创建SelectionContext"]
                 CreateSelectionCtx --> ApiKeyPool["ApiKeyPoolManager<br/>.select_api_key_from_service_api()"]
                 ApiKeyPool --> ParseUserKeys["解析user_provider_keys_ids JSON"]
                 ParseUserKeys --> HealthCheck["ApiKeyHealthChecker过滤"]
-                HealthCheck --> SelectAlgorithm{"调度策略选择"}
+
+                subgraph HealthCheckDetail["🏥 健康检查系统"]
+                    HealthCheck --> CheckKeyStatus{"密钥状态检查"}
+                    CheckKeyStatus -->|健康| HealthyKey["健康密钥池"]
+                    CheckKeyStatus -->|不健康| UnhealthyKey["隔离不健康密钥"]
+                    CheckKeyStatus -->|未知| CheckRealTime["实时健康探测"]
+                    CheckRealTime --> UpdateHealth["更新健康状态"]
+                    UpdateHealth --> HealthyKey
+                end
+
+                HealthyKey --> SelectAlgorithm{"智能调度策略选择"}
                 SelectAlgorithm -->|round_robin| RoundRobin["轮询算法"]
                 SelectAlgorithm -->|weighted| Weighted["权重算法"]
                 SelectAlgorithm -->|health_best| HealthBest["健康度最佳"]
-                RoundRobin --> SelectedKey["返回ApiKeySelectionResult"]
-                Weighted --> SelectedKey
-                HealthBest --> SelectedKey
+                SelectAlgorithm -->|adaptive| Adaptive["自适应算法"]
+
+                subgraph AlgorithmDetail["🧠 算法详细逻辑"]
+                    RoundRobin --> KeySelection["基于索引选择"]
+                    Weighted --> CalculateWeight["计算权重比例"]
+                    HealthBest --> MeasureResponse["测量响应时间"]
+                    Adaptive --> AnalyzePattern["分析请求模式"]
+                    CalculateWeight --> KeySelection
+                    MeasureResponse --> KeySelection
+                    AnalyzePattern --> KeySelection
+                end
+
+                KeySelection --> SelectedKey["返回ApiKeySelectionResult<br/>包含选择原因和健康状态"]
             end
             
             Step4 --> UpdateTrace["ProxyService 统一更新扩展追踪信息<br/>(provider_type_id / user_provider_key_id)"]
@@ -406,6 +437,62 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 - `src/trace/immediate.rs`: `ImmediateProxyTracer`
 - `src/providers/field_extractor.rs`: `TokenFieldExtractor`, `ModelExtractor`
 
+### 7. OAuth 2.0 授权系统 (`src/auth/oauth_v2/` + `src/auth/oauth_client.rs`)
+
+```rust
+OAuth 2.0 完整授权流程：
+├── OAuthClient::new() // OAuth客户端管理器
+│   ├── 管理OAuth会话状态
+│   ├── 处理授权码交换
+│   └── 集成第三方OAuth提供商
+├── SmartApiKeyProvider::new() // 智能API密钥提供者
+│   ├── get_valid_api_key() // 获取有效API密钥
+│   ├── 检查Token有效性
+│   └── 触发Token刷新（如需要）
+├── OAuthTokenRefreshService::new() // Token刷新服务
+│   ├── refresh_access_token() // 刷新访问令牌
+│   ├── 自动处理refresh_token流程
+│   └── 更新数据库存储的新Token
+└── OAuthTokenRefreshTask::new() // 后台刷新任务
+    ├── 定期检查即将过期的Token
+    ├── 批量刷新多个Token
+    └── 确保服务的持续可用性
+```
+
+**关键代码路径：**
+- `src/auth/oauth_client.rs:45`: `OAuthClient::new()`
+- `src/auth/smart_api_key_provider.rs:78`: `get_valid_api_key()`
+- `src/auth/oauth_token_refresh_service.rs:92`: `refresh_access_token()`
+- `src/auth/oauth_token_refresh_task.rs:56`: `start_background_refresh()`
+
+### 8. 智能API密钥健康管理系统 (`src/scheduler/api_key_health.rs`)
+
+```rust
+API密钥健康监控和恢复：
+├── ApiKeyHealthChecker::new() // 健康检查器
+│   ├── 实时健康状态监控
+│   ├── 自动故障检测
+│   └── 智能恢复机制
+├── 健康检查策略：
+│   ├── 主动探测：定期发送测试请求
+│   ├── 被动监控：基于实际请求响应时间
+│   └── 错误率统计：记录和分析错误模式
+├── 健康状态评估：
+│   ├── 响应时间阈值检查
+│   ├── 错误率统计分析
+│   └── 连接成功率监控
+└── 自动恢复机制：
+    ├── 不健康密钥自动隔离
+    ├── 健康恢复后自动重新加入池
+    └── 负载均衡算法动态调整
+```
+
+**关键代码路径：**
+- `src/scheduler/api_key_health.rs:87`: `ApiKeyHealthChecker::new()`
+- `src/scheduler/api_key_health.rs:134`: `check_key_health()`
+- `src/scheduler/api_key_health.rs:189`: `update_health_status()`
+- `src/scheduler/pool_manager.rs:156`: 健康检查集成逻辑
+
 ## ✅ 最近架构改进
 
 ### 认证模块重构 (已完成)
@@ -549,11 +636,31 @@ AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
   - 上游连接状态 (`upstream_connection_status`)
   - 数据库连接池状态
   - 缓存命中率 (CacheManager)
+- **OAuth 2.0监控**:
+  - Token刷新成功率和耗时
+  - OAuth会话状态和活跃度
+  - 第三方提供商连接状态
+- **健康监控指标**:
+  - API密钥健康状态分布
+  - 自动故障恢复次数
+  - 健康检查响应时间
+  - 密钥池可用性比例
 
 ### 架构扩展要点
 - **新增Provider**: 更新数据库配置，无需代码修改
 - **新增认证方式**: 扩展 `auth_header_format` JSON配置
 - **新增调度算法**: 实现 `ApiKeySelector` trait
 - **新增追踪器**: 实现 `ProxyTracer` trait 并集成到 TraceSystem
+- **新增OAuth提供商**: 实现OAuthProvider trait并注册到OAuthClient
+- **新增健康检查策略**: 实现HealthCheckStrategy trait
+- **扩展前端功能**: 基于React 18 + shadcn/ui的组件化开发
+
+### 🚀 2025年新增核心功能总结
+1. **OAuth 2.0集成**: 完整的授权流程，支持自动token刷新和多种第三方提供商
+2. **智能API密钥管理**: SmartApiKeyProvider提供动态密钥选择和故障恢复
+3. **健康监控系统**: 实时API密钥健康检查，自动故障检测和恢复机制
+4. **统一追踪系统**: ImmediateProxyTracer确保所有请求都被完整记录到数据库
+5. **React管理界面**: 完整的React 18前端应用，提供现代化的用户管理体验
+6. **后台任务调度**: OAuthTokenRefreshTask确保服务的持续可用性
 
 这个文档基于实际源码深度分析提供了完整的技术参考，确保团队成员能够准确理解系统架构并高效进行开发维护工作。

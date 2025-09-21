@@ -13,24 +13,56 @@ AI代理平台为企业提供统一、安全、高性能的AI服务访问网关�
 ### 🏗️ 双端口分离架构
 
 ```
-┌─────────────────┐    ┌─────────────────┐
-│  Pingora 代理    │    │  Axum 管理      │
-│   端口: 8080    │    │   端口: 9090    │
-│                │    │                │
-│ • AI请求代理     │    │ • 用户管理      │
-│ • 负载均衡      │    │ • API密钥管理    │
-│ • 认证验证      │    │ • 统计查询      │
-│ • 请求转发      │    │ • 系统配置      │
-└─────────────────┘    └─────────────────┘
-        │                      │
-        └──────────┬───────────┘
-                  │
-        ┌─────────────────┐
-        │   共享数据层     │
-        │ • SQLite/数据库  │
-        │ • Redis缓存     │
-        │ • 统一认证      │
-        └─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Applications                     │
+│                  (Web, Mobile, API Clients)                     │
+└────────────────────────────┬──────────────────────────────────┘
+                             │ HTTPS/HTTP
+                             │
+              ┌──────────────┴───────────────────┐
+              │                                 │
+       AI代理请求                          管理API请求
+   (动态路由处理)                    (/api/*, /admin/*, /)
+              │                                 │
+┏━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━┓  ┏━━━━━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━┓
+┃     Pingora 代理服务          ┃  ┃     Axum 管理服务              ┃
+┃        端口: 8080             ┃  ┃        端口: 9090             ┃
+┃                              ┃  ┃                                ┃
+┃ • AI请求代理                  ┃  ┃ • 用户管理                     ┃
+┃ • 动态上游选择                ┃  ┃ • OAuth 2.0认证               ┃
+┃ • 认证验证                    ┃  ┃ • API密钥管理                 ┃
+┃ • 智能负载均衡                ┃  ┃ • 统计查询                     ┃
+┃ • 智能密钥选择                ┃  ┃ • 系统配置                     ┃
+┃ • 健康检查                    ┃  ┃ • 实时监控                     ┃
+┃ • 请求追踪                    ┃  ┃ • 前端界面托管                 ┃
+┗━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┛  ┗━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┛
+              │                                 │
+              └──────────┬──────────────────────┘
+                         │
+     ┏━━━━━━━━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+     ┃                        共享数据层                                  ┃
+     ┃                                                                  ┃
+     ┃  ┏━━━━━━━━━━━━━━━━━━━┓  ┏━━━━━━━━━━━━━━━━━━━━━━┓  ┏━━━━━━━━━━━━━━━━┓  ┃
+     ┃  ┃   SQLite数据库   ┃  ┃      Redis缓存      ┃  ┃  统一认证系统  ┃  ┃
+     ┃  ┃                  ┃  ┃                      ┃  ┃               ┃  ┃
+     ┃  ┃ • 用户数据        ┃  ┃ • 认证缓存          ┃  ┃ • JWT管理      ┃  ┃
+     ┃  ┃ • 配置数据        ┃  ┃ • 健康状态缓存      ┃  ┃ • API密钥管理  ┃  ┃
+     ┃  ┃ • 统计数据        ┃  ┃ • 负载均衡状态      ┃  ┃ • RBAC权限     ┃  ┃
+     ┃  ┃ • 追踪数据        ┃  ┃ • OAuth会话        ┃  ┃ • OAuth客户端   ┃  ┃
+     ┃  ┗━━━━━━━━━━━━━━━━━━━┛  ┗━━━━━━━━━━━━━━━━━━━━━━┛  ┗━━━━━━━━━━━━━━━━┛  ┃
+     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                         │
+                         │  AI服务代理转发 (仅从Pingora)
+                         │
+     ┏━━━━━━━━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+     ┃                      外部AI服务商                                 ┃
+     ┃                                                                  ┃
+     ┃  ┏━━━━━━━━━━━━┓  ┏━━━━━━━━━━━━━━━━━┓  ┏━━━━━━━━━━━━━━━━━━━━━━┓    ┃
+     ┃  ┃   OpenAI   ┃  ┃    Google      ┃  ┃     Anthropic        ┃    ┃
+     ┃  ┃  ChatGPT   ┃  ┃    Gemini     ┃  ┃       Claude         ┃    ┃
+     ┃  ┃   API      ┃  ┃     API       ┃  ┃        API           ┃    ┃
+     ┃  ┗━━━━━━━━━━━━┛  ┗━━━━━━━━━━━━━━━━━┛  ┗━━━━━━━━━━━━━━━━━━━━━━┛    ┃
+     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
 
 ## ✨ 核心特性
@@ -39,9 +71,11 @@ AI代理平台为企业提供统一、安全、高性能的AI服务访问网关�
 
 - **🔌 双端口分离架构**: 代理服务(8080)专注性能，管理服务(9090)专注功能
 - **🔐 企业级认证系统**: JWT令牌 + API密钥 + RBAC权限控制(17种权限类型)
+- **🔐 OAuth 2.0集成**: 完整的OAuth 2.0授权流程，支持自动token刷新
+- **🧠 智能API密钥管理**: SmartApiKeyProvider动态密钥选择和故障恢复
 - **⚙️ 动态配置管理**: 数据库驱动配置，无硬编码地址，支持热重载
 - **🛡️ 源信息完全隐藏**: AI服务商无法看到真实客户端信息
-- **📊 实时健康检查**: 后台监控服务状态，自动故障检测
+- **📊 实时健康检查**: API密钥健康监控，自动故障检测和恢复
 - **💾 统一数据管理**: SQLite + Sea-ORM + Redis缓存优化
 
 ### 🚀 已实现功能(续)
@@ -50,6 +84,7 @@ AI代理平台为企业提供统一、安全、高性能的AI服务访问网关�
 - **🔌 AI服务商适配器**: OpenAI、Gemini、Claude完整API适配
 - **📈 监控统计系统**: 实时指标收集、使用量分析、成本控制
 - **🎨 Web管理界面**: React 18 + TypeScript + shadcn/ui 响应式管理面板
+- **🔄 统一追踪系统**: ImmediateProxyTracer确保所有请求都被完整记录
 
 ## 🚀 快速开始
 
@@ -118,12 +153,26 @@ curl http://127.0.0.1:9090/api/statistics/overview
 
 # 获取适配器信息
 curl http://127.0.0.1:9090/api/adapters
+
+# OAuth 2.0 授权码获取 (需要配置OAuth提供商)
+curl -X GET "http://127.0.0.1:9090/api/oauth/authorize?response_type=code&client_id=your_client_id&redirect_uri=your_redirect_uri&scope=read"
+
+# 获取今日统计卡片数据
+curl http://127.0.0.1:9090/api/statistics/today/cards
+
+# 获取模型使用统计
+curl http://127.0.0.1:9090/api/statistics/models/rate
+
+# 获取API密钥健康状态
+curl http://127.0.0.1:9090/api/health/api-keys
 ```
 
 ### AI代理示例 (端口8080)
 
+Pingora代理服务使用动态上游选择，支持多种AI服务商的API标准格式：
+
 ```bash
-# OpenAI ChatGPT API代理
+# OpenAI ChatGPT API代理 - 自动路由到OpenAI服务商
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
@@ -133,8 +182,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
     "max_tokens": 50
   }'
 
-# Google Gemini API代理 (支持多种认证格式)
-# 使用 Authorization: Bearer 格式
+# Google Gemini API代理 - 智能识别并路由到Gemini服务商
 curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
@@ -142,15 +190,7 @@ curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
     "contents": [{"parts": [{"text": "Hello!"}]}]
   }'
 
-# 或使用 X-goog-api-key 格式 (基于数据库配置)
-curl -X POST http://localhost:8080/v1/models/gemini-1.5-flash:generateContent \
-  -H "Content-Type: application/json" \
-  -H "X-goog-api-key: your-api-key" \
-  -d '{
-    "contents": [{"parts": [{"text": "Hello!"}]}]
-  }'
-
-# Anthropic Claude API代理
+# Anthropic Claude API代理 - 自动识别并路由到Claude服务商
 curl -X POST http://localhost:8080/v1/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
@@ -181,7 +221,10 @@ curl -X POST http://localhost:8080/v1/messages \
 - ✅ **动态配置**: ProviderConfigManager替代所有硬编码地址
 - ✅ **Phase 2**: 核心代理功能 (负载均衡器、AI适配器已完成)
 - ✅ **Phase 3**: 管理功能与监控 (统计分析、用户管理已完成)
-- 🔄 **Phase 4**: 安全与TLS (证书管理、安全防护开发中)
+- ✅ **OAuth 2.0集成**: 完整的授权流程和token刷新机制
+- ✅ **智能密钥管理**: SmartApiKeyProvider动态密钥选择系统
+- ✅ **健康监控系统**: API密钥健康检查和故障恢复机制
+- ✅ **统一追踪系统**: ImmediateProxyTracer确保请求完整记录
 - ✅ **Phase 5**: 前端界面 (React 18管理面板已完成)
 
 ### 🔧 技术债务和改进
@@ -194,6 +237,11 @@ curl -X POST http://localhost:8080/v1/messages \
 - [x] 增加性能监控和告警
 - [x] 数据驱动的模型名称记录
 - [x] 完全数据驱动的认证系统
+- [x] OAuth 2.0授权流程集成
+- [x] 智能API密钥管理系统
+- [x] API密钥健康检查机制
+- [x] 统一请求追踪系统
+- [x] 自动token刷新机制
 
 ## 🛠️ 开发环境
 
