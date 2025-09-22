@@ -25,7 +25,7 @@ impl Default for ImmediateTracerConfig {
 ///
 /// 与原有设计不同，此追踪器不在内存中保持状态，
 /// 而是在请求开始时立即写入数据库，响应结束时更新记录
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImmediateProxyTracer {
     /// 配置
     #[allow(dead_code)]
@@ -143,16 +143,16 @@ impl ImmediateProxyTracer {
         Ok(())
     }
 
-    /// 更新扩展的请求信息（包含更多字段）
-    pub async fn update_extended_trace_info(
+    /// 更新模型信息（第一层：立即更新核心模型信息）
+    ///
+    /// 在获取到模型和后端信息时立即更新，确保核心追踪数据实时性
+    pub async fn update_trace_model_info(
         &self,
         request_id: &str,
         provider_type_id: Option<i32>,
         model_used: Option<String>,
         user_provider_key_id: Option<i32>,
     ) -> Result<()> {
-        // 强制追踪所有请求，移除配置开关
-
         // 构建更新模型
         let mut update_model = proxy_tracing::ActiveModel {
             ..Default::default()
@@ -185,18 +185,19 @@ impl ImmediateProxyTracer {
                 request_id = %request_id,
                 rows_affected = update_result.rows_affected,
                 updated_fields = ?updated_fields,
-                "Updated extended trace information"
+                "Updated trace model information (Layer 1: Immediate)"
             );
         } else {
             tracing::warn!(
                 request_id = %request_id,
-                "No trace record found to update extended info"
+                "No trace record found to update model info"
             );
         }
 
         Ok(())
     }
 
+    
     /// 完成追踪 - 更新最终结果
     pub async fn complete_trace(
         &self,
@@ -319,7 +320,9 @@ impl ImmediateProxyTracer {
         Ok(())
     }
 
-    /// 使用TraceStats完成追踪
+    /// 使用TraceStats完成追踪（第二层：批量更新统计信息）
+    ///
+    /// 在请求完成时一次性更新所有统计字段，减少数据库压力
     pub async fn complete_trace_with_trace_stats(
         &self,
         request_id: &str,
@@ -327,7 +330,7 @@ impl ImmediateProxyTracer {
         is_success: bool,
         trace_stats: crate::providers::TraceStats,
     ) -> Result<()> {
-        self.complete_trace_with_stats(
+        let result = self.complete_trace_with_stats(
             request_id,
             status_code,
             is_success,
@@ -339,41 +342,33 @@ impl ImmediateProxyTracer {
             trace_stats.cache_read_tokens,
             trace_stats.cost,
             trace_stats.cost_currency,
-        )
-        .await
+        ).await;
+
+        match &result {
+            Ok(_) => {
+                info!(
+                    request_id = %request_id,
+                    status_code = status_code,
+                    is_success = is_success,
+                    input_tokens = ?trace_stats.input_tokens,
+                    output_tokens = ?trace_stats.output_tokens,
+                    cost = ?trace_stats.cost,
+                    "Completed trace with batch statistics update (Layer 2: Batch)"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    request_id = %request_id,
+                    error = %e,
+                    "Failed to complete trace with batch statistics"
+                );
+            }
+        }
+
+        result
     }
 
-    /// 完成追踪 - 简化版本（已废弃，推荐使用complete_trace_with_stats）
-    #[deprecated(note = "Use complete_trace_with_stats instead")]
-    pub async fn complete_trace_with_details(
-        &self,
-        request_id: &str,
-        status_code: u16,
-        is_success: bool,
-        tokens_prompt: Option<u32>,
-        tokens_completion: Option<u32>,
-        error_type: Option<String>,
-        error_message: Option<String>,
-        _request_details: Option<serde_json::Value>,
-        _response_details: Option<serde_json::Value>,
-    ) -> Result<()> {
-        // 重定向到简化版本
-        self.complete_trace_with_stats(
-            request_id,
-            status_code,
-            is_success,
-            tokens_prompt,
-            tokens_completion,
-            error_type,
-            error_message,
-            None, // cache_create_tokens
-            None, // cache_read_tokens
-            None, // cost
-            None, // cost_currency
-        )
-        .await
-    }
-
+    
     /// 查询进行中的请求（未完成的追踪记录）
     pub async fn get_active_requests(&self, limit: u64) -> Result<Vec<proxy_tracing::Model>> {
         let records = proxy_tracing::Entity::find()

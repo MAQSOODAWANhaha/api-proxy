@@ -1436,10 +1436,10 @@ impl EarlyRequestService for EarlyTraceExtendService {
         {
             if let Err(err) = ai
                 .tracing_service()
-                .update_extended_trace_info(&ctx.request_id, Some(pt.id), ctx.requested_model.clone(), Some(backend.id))
+                .update_trace_model_info(&ctx.request_id, Some(pt.id), ctx.requested_model.clone(), Some(backend.id))
                 .await
             {
-                warn!(component = COMPONENT, request_id = %ctx.request_id, error = %err, "Failed to update extended trace info");
+                warn!(component = COMPONENT, request_id = %ctx.request_id, error = %err, "Failed to update model info");
             }
         }
         Ok(())
@@ -1881,7 +1881,7 @@ impl ProxyHttp for ProxyService {
                             let _ = self
                                 .ai_handler
                                 .tracing_service()
-                                .update_extended_trace_info(
+                                .update_trace_model_info(
                                     &ctx.request_id,
                                     None,
                                     Some(model),

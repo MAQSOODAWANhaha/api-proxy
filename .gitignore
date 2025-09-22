@@ -64,3 +64,5 @@ appendonly.aof
 # PromptX 工具文件
 .promptx/pouch.json
 .promptx/resource/project.registry.json
+.specify/
+.claude/

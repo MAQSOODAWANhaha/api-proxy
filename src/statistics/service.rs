@@ -310,25 +310,102 @@ impl StatisticsService {
         stats
     }
 
+    /// 从响应体中提取模型信息
+    ///
+    /// 只支持最基本的"model"字段，用于在响应处理阶段更新模型信息
+    pub fn extract_model_from_response(&self, json: &serde_json::Value) -> Option<String> {
+        // 只检查最常见的基本model字段
+        if let Some(model) = json.get("model").and_then(|v| v.as_str()) {
+            if !model.is_empty() {
+                tracing::debug!(
+                    model = %model,
+                    "Model extracted from response"
+                );
+                return Some(model.to_string());
+            }
+        }
+
+        None
+    }
+
     /// 从上下文响应体中提取统计信息（统一实现）
     pub async fn extract_stats_from_response_body(
         &self,
         ctx: &mut ProxyContext,
     ) -> Result<DetailedRequestStats, ProxyError> {
+        let mut stats = DetailedRequestStats::default();
+
+        // 如果没有响应体或JSON解析失败，直接使用请求时的模型信息
         let body = match ctx.response_details.body.as_ref() {
             Some(b) => b,
-            None => return Ok(DetailedRequestStats::default()),
+            None => {
+                // 没有响应体，直接使用请求时的模型信息
+                if let Some(requested_model) = &ctx.requested_model {
+                    stats.model_name = Some(requested_model.clone());
+                    tracing::debug!(
+                        request_id = %ctx.request_id,
+                        requested_model = %requested_model,
+                        "No response body, using requested model info"
+                    );
+                }
+                return Ok(stats);
+            }
         };
 
         // 尝试解析 JSON
         let parsed: serde_json::Value = match serde_json::from_str(body) {
             Ok(v) => v,
-            Err(_) => return Ok(DetailedRequestStats::default()),
+            Err(_) => {
+                // JSON解析失败，直接使用请求时的模型信息
+                if let Some(requested_model) = &ctx.requested_model {
+                    stats.model_name = Some(requested_model.clone());
+                    tracing::debug!(
+                        request_id = %ctx.request_id,
+                        requested_model = %requested_model,
+                        "Invalid JSON response, using requested model info"
+                    );
+                }
+                return Ok(stats);
+            }
         };
 
         // 归一化 usageMetadata（若在深层）
         let normalized = self.normalize_usage_metadata(parsed);
-        let mut stats = DetailedRequestStats::default();
+
+        // === 响应时模型信息提取逻辑 ===
+        // 在响应处理阶段，尝试从响应体中提取更准确的模型信息
+        let response_model = self.extract_model_from_response(&normalized);
+
+        // 如果从响应中提取到模型信息，并且与请求时的模型信息不同，则更新追踪记录
+        if let Some(ref response_model_name) = response_model {
+            // 检查是否与请求时的模型信息不同或请求时没有模型信息
+            let should_update = ctx.requested_model.as_ref().map_or(true, |requested| {
+                requested != response_model_name || requested.is_empty()
+            });
+
+            if should_update {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    requested_model = ?ctx.requested_model,
+                    response_model = %response_model_name,
+                    "响应时检测到模型信息变化，准备更新追踪记录"
+                );
+
+                // 注意：这里我们不能直接调用 tracing_service.update_trace_model_info，
+                // 因为 statistics service 不应该直接依赖 tracing service。
+                // 我们将模型信息存储在 stats 中，由调用者决定是否更新追踪记录。
+                stats.model_name = Some(response_model_name.clone());
+
+                // 同时更新上下文中的请求模型信息，确保后续处理使用最新的模型信息
+                ctx.requested_model = Some(response_model_name.clone());
+
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    updated_model = %response_model_name,
+                    "模型信息已更新到上下文和统计信息中"
+                );
+            }
+        }
 
         // 若 provider 配置了 token_mappings_json，则用数据库映射优先提取
         if let Some(provider) = ctx.provider_type.as_ref() {
@@ -371,9 +448,31 @@ impl StatisticsService {
             stats.model_name = fallback.model_name;
         }
 
-        // 同步模型名（优先使用请求时的模型信息）
-        if stats.model_name.is_none() {
-            stats.model_name = ctx.requested_model.clone();
+        // 同步模型名（优先使用请求时已提取的模型信息）
+        // 请求时的模型信息通常是最准确的，但如果响应中提取到了更准确的模型信息，则保持响应提取的结果
+        if let Some(requested_model) = &ctx.requested_model {
+            // 只有在stats中没有模型信息或者模型信息为空时，才使用请求时的模型信息
+            if stats.model_name.is_none() || stats.model_name.as_ref().map(|m| m.is_empty()).unwrap_or(false) {
+                stats.model_name = Some(requested_model.clone());
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    requested_model = %requested_model,
+                    previous_model = ?stats.model_name,
+                    "模型信息同步：使用请求时提取的模型信息（覆盖响应提取）"
+                );
+            } else {
+                // 如果stats中已经有模型信息（来自响应提取），验证是否与请求时一致
+                if let Some(ref response_model) = stats.model_name {
+                    if requested_model != response_model {
+                        tracing::info!(
+                            request_id = %ctx.request_id,
+                            requested_model = %requested_model,
+                            response_model = %response_model,
+                            "模型信息不一致：请求时的模型与响应中的模型不同，保持响应提取的结果"
+                        );
+                    }
+                }
+            }
         }
 
         // 记录模型提取结果用于调试
@@ -387,9 +486,25 @@ impl StatisticsService {
         }
 
         // 若存在模型与provider，计算费用
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            model_name = ?stats.model_name,
+            provider_id = ?ctx.provider_type.as_ref().map(|p| p.id),
+            input_tokens = ?stats.input_tokens,
+            output_tokens = ?stats.output_tokens,
+            "费用计算条件检查"
+        );
+
         if let (Some(model), Some(provider)) =
             (stats.model_name.clone(), ctx.provider_type.as_ref())
         {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                model = %model,
+                provider_id = provider.id,
+                "开始计算费用"
+            );
+
             let pricing_usage = crate::pricing::TokenUsage {
                 prompt_tokens: stats.input_tokens,
                 completion_tokens: stats.output_tokens,
@@ -402,13 +517,28 @@ impl StatisticsService {
                 .await
             {
                 Ok(cost) => {
-                    stats.cost = Some(cost.total_cost);
-                    stats.cost_currency = Some(cost.currency);
+                    let total_cost = cost.total_cost;
+                    let currency = cost.currency.clone();
+                    stats.cost = Some(total_cost);
+                    stats.cost_currency = Some(currency.clone());
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        total_cost = total_cost,
+                        currency = %currency,
+                        "费用计算成功"
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(request_id = %ctx.request_id, error = %e, "Failed to calc cost");
                 }
             }
+        } else {
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                model_name = ?stats.model_name,
+                provider_available = ?ctx.provider_type.as_ref().is_some(),
+                "费用计算条件不满足：缺少模型信息或提供商信息"
+            );
         }
 
         Ok(stats)

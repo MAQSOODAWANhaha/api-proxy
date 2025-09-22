@@ -80,10 +80,10 @@ impl TracingService {
         Ok(())
     }
 
-    /// 更新扩展追踪信息
+    /// 更新模型信息（第一层：立即更新核心模型信息）
     ///
-    /// 在选择后端API密钥后或响应处理时更新额外的追踪信息
-    pub async fn update_extended_trace_info(
+    /// 在获取到模型和后端信息时立即更新，确保核心追踪数据实时性
+    pub async fn update_trace_model_info(
         &self,
         request_id: &str,
         provider_type_id: Option<i32>,
@@ -92,7 +92,7 @@ impl TracingService {
     ) -> Result<(), ProxyError> {
         if let Some(tracer) = &self.tracer {
             if let Err(e) = tracer
-                .update_extended_trace_info(
+                .update_trace_model_info(
                     request_id,
                     provider_type_id,
                     model_used.clone(),
@@ -104,22 +104,22 @@ impl TracingService {
                     request_id,
                     LogStage::Error,
                     LogComponent::TracingService,
-                    "trace_update_failed",
-                    "扩展追踪信息更新失败",
+                    "model_info_update_failed",
+                    "模型信息更新失败（第一层）",
                     error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!(
-                    "Failed to update trace: {}",
+                    "Failed to update model info: {}",
                     e
                 )));
             }
 
-            proxy_debug!(
+            proxy_info!(
                 request_id,
                 LogStage::RequestModify,
                 LogComponent::TracingService,
-                "trace_info_updated",
-                "扩展追踪信息更新成功",
+                "model_info_updated",
+                "模型信息更新成功（第一层：立即更新）",
                 provider_type_id = provider_type_id,
                 model_used = model_used,
                 user_provider_key_id = user_provider_key_id
@@ -129,9 +129,10 @@ impl TracingService {
         Ok(())
     }
 
-    /// 完成请求追踪（成功情况）
+    
+    /// 完成请求追踪（成功情况）（第二层：批量更新统计信息）
     ///
-    /// 在请求成功处理完成时调用
+    /// 在请求成功处理完成时调用，一次性更新所有统计字段
     pub async fn complete_trace_success(
         &self,
         request_id: &str,
@@ -159,7 +160,7 @@ impl TracingService {
                     LogStage::Error,
                     LogComponent::TracingService,
                     "success_trace_complete_failed",
-                    "成功请求追踪完成失败",
+                    "成功请求追踪完成失败（第二层）",
                     error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!(
@@ -173,7 +174,7 @@ impl TracingService {
                 LogStage::Response,
                 LogComponent::TracingService,
                 "success_trace_completed",
-                "成功请求追踪完成",
+                "成功请求追踪完成（第二层：批量更新）",
                 status_code = status_code,
                 tokens_prompt = tokens_prompt,
                 tokens_completion = tokens_completion,
@@ -185,9 +186,9 @@ impl TracingService {
         Ok(())
     }
 
-    /// 完成请求追踪（失败情况）
+    /// 完成请求追踪（失败情况）（第二层：批量更新统计信息）
     ///
-    /// 在请求处理失败时调用
+    /// 在请求处理失败时调用，一次性更新错误信息
     pub async fn complete_trace_failure(
         &self,
         request_id: &str,
@@ -213,7 +214,7 @@ impl TracingService {
                     LogStage::Error,
                     LogComponent::TracingService,
                     "failure_trace_complete_failed",
-                    "失败请求追踪完成失败",
+                    "失败请求追踪完成失败（第二层）",
                     error = format!("{:?}", e)
                 );
                 return Err(ProxyError::internal(format!(
@@ -227,7 +228,7 @@ impl TracingService {
                 LogStage::ResponseFailure,
                 LogComponent::TracingService,
                 "failure_trace_completed",
-                "失败请求追踪完成",
+                "失败请求追踪完成（第二层：批量更新）",
                 status_code = status_code,
                 error_type = error_type,
                 error_message = error_message
@@ -457,7 +458,7 @@ mod tests {
         );
         assert!(
             service
-                .update_extended_trace_info("test", Some(1), Some("model".to_string()), Some(1))
+                .update_trace_model_info("test", Some(1), Some("model".to_string()), Some(1))
                 .await
                 .is_ok()
         );
