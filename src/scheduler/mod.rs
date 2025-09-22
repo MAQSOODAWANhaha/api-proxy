@@ -8,7 +8,7 @@ pub mod pool_manager;
 pub mod types;
 
 pub use algorithms::{
-    ApiKeySelectionResult, ApiKeySelector, HealthBasedApiKeySelector, RoundRobinApiKeySelector,
+    ApiKeySelectionResult, ApiKeySelector, HealthBestApiKeySelector, RoundRobinApiKeySelector,
     SelectionContext, create_api_key_selector,
 };
 pub use api_key_health::{

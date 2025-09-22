@@ -585,7 +585,7 @@ impl ApiKeyPoolManager {
             available_strategies: vec![
                 SchedulingStrategy::RoundRobin,
                 SchedulingStrategy::Weighted,
-                SchedulingStrategy::HealthBased,
+                SchedulingStrategy::HealthBest,
             ],
             healthy_keys: healthy_key_ids.len(),
             total_tracked_keys: all_health_status.len(),

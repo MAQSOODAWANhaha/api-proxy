@@ -174,22 +174,60 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
 }
 
 /// 基于健康度的API密钥选择器
-pub struct HealthBasedApiKeySelector;
+pub struct HealthBestApiKeySelector;
 
-impl HealthBasedApiKeySelector {
+impl HealthBestApiKeySelector {
     pub fn new() -> Self {
         Self
     }
+
+    /// 计算API密钥的健康评分
+    /// 评分规则：
+    /// - healthy: 100分
+    /// - unknown: 80分
+    /// - rate_limited: 根据剩余时间计算，最多60分
+    /// - unhealthy/error: 0分
+    fn calculate_health_score(&self, key: &user_provider_keys::Model, now: chrono::NaiveDateTime) -> i32 {
+        match key.health_status.as_str() {
+            "healthy" => 100,
+            "unknown" => 80,
+            "rate_limited" => {
+                if let Some(resets_at) = key.rate_limit_resets_at {
+                    if now > resets_at {
+                        // 限流已解除，给予较高分数
+                        90
+                    } else {
+                        // 根据剩余限流时间计算分数
+                        let duration = resets_at.signed_duration_since(now);
+                        let minutes_left = duration.num_minutes();
+                        if minutes_left <= 1 {
+                            70 // 1分钟内解除
+                        } else if minutes_left <= 5 {
+                            50 // 5分钟内解除
+                        } else if minutes_left <= 15 {
+                            30 // 15分钟内解除
+                        } else {
+                            10 // 更长时间
+                        }
+                    }
+                } else {
+                    20 // 没有重置时间，给予较低分数
+                }
+            }
+            "unhealthy" | "error" => 0,
+            _ => 50 // 未知状态，中等分数
+        }
+    }
 }
 
-impl Default for HealthBasedApiKeySelector {
+impl Default for HealthBestApiKeySelector {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait::async_trait]
-impl ApiKeySelector for HealthBasedApiKeySelector {
+impl ApiKeySelector for HealthBestApiKeySelector {
     async fn select_key(
         &self,
         keys: &[user_provider_keys::Model],
@@ -201,7 +239,7 @@ impl ApiKeySelector for HealthBasedApiKeySelector {
             ));
         }
 
-        // 过滤活跃的密钥，优先选择最近创建的（假设更健康）
+        // 过滤活跃的密钥
         let mut active_keys: Vec<(usize, &user_provider_keys::Model)> = keys
             .iter()
             .enumerate()
@@ -214,19 +252,27 @@ impl ApiKeySelector for HealthBasedApiKeySelector {
             ));
         }
 
-        // 按创建时间排序，最新的排在前面（简单的健康度判断）
-        active_keys.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+        // 按健康状态排序，优先选择健康状态最好的密钥
+        let now = chrono::Utc::now().naive_utc();
+        active_keys.sort_by(|a, b| {
+            let health_score_a = self.calculate_health_score(a.1, now);
+            let health_score_b = self.calculate_health_score(b.1, now);
+            health_score_b.cmp(&health_score_a) // 降序排列，分数高的优先
+        });
 
         let (selected_index, selected_key) = active_keys[0];
+        let health_score = self.calculate_health_score(selected_key, now);
 
         let reason = format!(
-            "Health-based selection: newest key created at {}, key_id={}",
-            selected_key.created_at, selected_key.id
+            "Health-based selection: health_score={}, health_status={}, key_id={}",
+            health_score, selected_key.health_status, selected_key.id
         );
 
         tracing::debug!(
             request_id = %context.request_id,
             selected_key_id = selected_key.id,
+            health_score = %health_score,
+            health_status = %selected_key.health_status,
             reason = %reason,
             "Selected API key using health-based strategy"
         );
@@ -235,12 +281,134 @@ impl ApiKeySelector for HealthBasedApiKeySelector {
             selected_index,
             selected_key.clone(),
             reason,
-            SchedulingStrategy::HealthBased,
+            SchedulingStrategy::HealthBest,
         ))
     }
 
     fn name(&self) -> &'static str {
-        "HealthBasedApiKeySelector"
+        "HealthBestApiKeySelector"
+    }
+
+    async fn reset(&self) {
+        // 无状态，无需重置
+    }
+}
+
+/// 基于权重的API密钥选择器
+pub struct WeightedApiKeySelector;
+
+impl WeightedApiKeySelector {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for WeightedApiKeySelector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl ApiKeySelector for WeightedApiKeySelector {
+    async fn select_key(
+        &self,
+        keys: &[user_provider_keys::Model],
+        context: &SelectionContext,
+    ) -> Result<ApiKeySelectionResult> {
+        if keys.is_empty() {
+            return Err(ProxyError::upstream_not_available(
+                "No API keys available for selection".to_string(),
+            ));
+        }
+
+        // 过滤活跃的密钥并计算总权重
+        let active_keys: Vec<(usize, &user_provider_keys::Model)> = keys
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| key.is_active)
+            .collect();
+
+        if active_keys.is_empty() {
+            return Err(ProxyError::upstream_not_available(
+                "No active API keys available for selection".to_string(),
+            ));
+        }
+
+        // 计算总权重，如果没有设置权重则默认为1
+        let total_weight: i32 = active_keys
+            .iter()
+            .map(|(_, key)| key.weight.unwrap_or(1))
+            .sum();
+
+        if total_weight <= 0 {
+            // 如果所有权重都是0，则回退到轮询
+            let selected_index = 0;
+            let (_, selected_key) = active_keys[selected_index];
+
+            let reason = format!(
+                "Weighted selection fallback to round robin: total_weight=0, key_id={}",
+                selected_key.id
+            );
+
+            tracing::debug!(
+                request_id = %context.request_id,
+                selected_key_id = selected_key.id,
+                reason = %reason,
+                "Selected API key using weighted strategy (fallback)"
+            );
+
+            return Ok(ApiKeySelectionResult::new(
+                selected_index,
+                selected_key.clone(),
+                reason,
+                SchedulingStrategy::Weighted,
+            ));
+        }
+
+        // 生成随机数进行权重选择
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let random_value: i32 = rng.gen_range(0..total_weight);
+
+        // 根据权重选择密钥
+        let mut accumulated_weight = 0;
+        let mut selected_index = 0;
+        let mut selected_key = active_keys[0].1.clone();
+
+        for &(index, key) in &active_keys {
+            let key_weight = key.weight.unwrap_or(1);
+            accumulated_weight += key_weight;
+
+            if random_value <= accumulated_weight {
+                selected_index = index;
+                selected_key = key.clone();
+                break;
+            }
+        }
+
+        let reason = format!(
+            "Weighted selection: random_value={}, total_weight={}, key_weight={}, key_id={}",
+            random_value, total_weight, selected_key.weight.unwrap_or(1), selected_key.id
+        );
+
+        tracing::debug!(
+            request_id = %context.request_id,
+            selected_key_id = selected_key.id,
+            reason = %reason,
+            "Selected API key using weighted strategy"
+        );
+
+        Ok(ApiKeySelectionResult::new(
+            selected_index,
+            selected_key.clone(),
+            reason,
+            SchedulingStrategy::Weighted,
+        ))
+    }
+
+    fn name(&self) -> &'static str {
+        "WeightedApiKeySelector"
     }
 
     async fn reset(&self) {
@@ -252,10 +420,7 @@ impl ApiKeySelector for HealthBasedApiKeySelector {
 pub fn create_api_key_selector(strategy: SchedulingStrategy) -> Arc<dyn ApiKeySelector> {
     match strategy {
         SchedulingStrategy::RoundRobin => Arc::new(RoundRobinApiKeySelector::new()),
-        SchedulingStrategy::HealthBased => Arc::new(HealthBasedApiKeySelector::new()),
-        SchedulingStrategy::Weighted => {
-            // 权重选择暂时回退到轮询，可以以后实现
-            Arc::new(RoundRobinApiKeySelector::new())
-        }
+        SchedulingStrategy::Weighted => Arc::new(WeightedApiKeySelector::new()),
+        SchedulingStrategy::HealthBest => Arc::new(HealthBestApiKeySelector::new()),
     }
 }

@@ -136,8 +136,7 @@ flowchart TD
                 HealthyKey --> SelectAlgorithm{"智能调度策略选择"}
                 SelectAlgorithm -->|round_robin| RoundRobin["轮询算法"]
                 SelectAlgorithm -->|weighted| Weighted["权重算法"]
-                SelectAlgorithm -->|health_best| HealthBest["健康度最佳"]
-                SelectAlgorithm -->|adaptive| Adaptive["自适应算法"]
+                SelectAlgorithm -->|health_best| HealthBest["健康优选算法"]
 
                 subgraph AlgorithmDetail["🧠 算法详细逻辑"]
                     RoundRobin --> KeySelection["基于索引选择"]
@@ -392,9 +391,9 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 │   └── 根据响应时间和错误率评估健康度
 ├── 创建SelectionContext选择上下文
 └── 调度算法选择 (algorithms.rs)：
-    ├── round_robin: 轮询调度 - 按顺序分配
-    ├── weighted: 权重调度 - 根据权重比例分配
-    └── health_best: 健康度最佳 - 选择响应时间最短的节点
+    ├── round_robin: 轮询调度 - 按顺序轮流分配请求到各个上游服务器
+    ├── weighted: 权重调度 - 根据权重比例分配请求到上游服务器
+    └── health_best: 健康优选 - 优先选择健康状态最佳的上游服务器
 └── 返回ApiKeySelectionResult
     ├── selected_key: 选中的API密钥
     ├── selection_reason: 选择原因 (算法+原因)

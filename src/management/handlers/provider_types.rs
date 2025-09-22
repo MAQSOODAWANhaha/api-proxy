@@ -1,5 +1,6 @@
 use crate::auth::extract_user_id_from_headers;
 use crate::management::{response, server::AppState};
+use crate::scheduler::types::SchedulingStrategy;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
@@ -74,33 +75,22 @@ pub async fn get_scheduling_strategies(headers: HeaderMap) -> axum::response::Re
         Err(error_response) => return error_response,
     };
 
-    // 返回系统支持的调度策略列表（静态数据）
-    let scheduling_strategies = vec![
+    // 使用枚举动态生成调度策略列表
+    let scheduling_strategies: Vec<serde_json::Value> = [
+        (SchedulingStrategy::RoundRobin, "轮询调度", "按顺序轮流分配请求到各个上游服务器", true),
+        (SchedulingStrategy::Weighted, "权重调度", "根据权重比例分配请求到上游服务器", false),
+        (SchedulingStrategy::HealthBest, "健康优选", "优先选择健康状态最佳的上游服务器", false),
+    ]
+    .iter()
+    .map(|(strategy, label, description, is_default)| {
         json!({
-            "value": "round_robin",
-            "label": "轮询调度",
-            "description": "按顺序轮流分配请求到各个上游服务器",
-            "is_default": true
-        }),
-        json!({
-            "value": "weighted",
-            "label": "权重调度",
-            "description": "根据权重比例分配请求到上游服务器",
-            "is_default": false
-        }),
-        json!({
-            "value": "priority",
-            "label": "优先级调度",
-            "description": "优先使用高优先级的上游服务器",
-            "is_default": false
-        }),
-        json!({
-            "value": "health_best",
-            "label": "健康优选",
-            "description": "优先选择健康状态最佳的上游服务器",
-            "is_default": false
-        }),
-    ];
+            "value": strategy.as_str(),
+            "label": label,
+            "description": description,
+            "is_default": is_default
+        })
+    })
+    .collect();
 
     let data = json!({
         "scheduling_strategies": scheduling_strategies

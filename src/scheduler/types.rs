@@ -10,7 +10,7 @@ pub enum SchedulingStrategy {
     /// 权重调度
     Weighted,
     /// 健康度最佳调度
-    HealthBased,
+    HealthBest,
 }
 
 impl Default for SchedulingStrategy {
@@ -25,7 +25,7 @@ impl SchedulingStrategy {
         match s.to_lowercase().as_str() {
             "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
             "weighted" | "weight" | "w" => Some(Self::Weighted),
-            "health_based" | "healthbased" | "health" | "hb" => Some(Self::HealthBased),
+            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => Some(Self::HealthBest),
             _ => None,
         }
     }
@@ -35,7 +35,7 @@ impl SchedulingStrategy {
         match self {
             Self::RoundRobin => "round_robin",
             Self::Weighted => "weighted",
-            Self::HealthBased => "health_based",
+            Self::HealthBest => "health_best",
         }
     }
 }
@@ -55,8 +55,8 @@ mod tests {
             Some(SchedulingStrategy::Weighted)
         );
         assert_eq!(
-            SchedulingStrategy::from_str("health_based"),
-            Some(SchedulingStrategy::HealthBased)
+            SchedulingStrategy::from_str("health_best"),
+            Some(SchedulingStrategy::HealthBest)
         );
         assert_eq!(SchedulingStrategy::from_str("unknown"), None);
     }
@@ -65,6 +65,6 @@ mod tests {
     fn test_scheduling_strategy_as_str() {
         assert_eq!(SchedulingStrategy::RoundRobin.as_str(), "round_robin");
         assert_eq!(SchedulingStrategy::Weighted.as_str(), "weighted");
-        assert_eq!(SchedulingStrategy::HealthBased.as_str(), "health_based");
+        assert_eq!(SchedulingStrategy::HealthBest.as_str(), "health_best");
     }
 }
