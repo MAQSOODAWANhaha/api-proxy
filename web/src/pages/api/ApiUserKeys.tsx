@@ -30,6 +30,17 @@ import ModernSelect from '../../components/common/ModernSelect'
 import MultiSelect from '../../components/common/MultiSelect'
 import { api, UserServiceApiKey, ProviderType, SchedulingStrategy } from '../../lib/api'
 import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency, safeDateTime, safeTrendData } from '../../lib/dataValidation'
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as ReTooltip,
+  Legend,
+} from 'recharts'
 
 // 使用API中定义的类型，并添加额外需要的字段
 interface ApiKey extends UserServiceApiKey {
@@ -1594,6 +1605,8 @@ const StatsDialog: React.FC<{
   // 趋势数据状态管理
   const [trendData, setTrendData] = useState<any[]>([])
   const [trendLoading, setTrendLoading] = useState(true)
+  const [detailedTrendData, setDetailedTrendData] = useState<any[]>([])
+  const [detailedTrendLoading, setDetailedTrendLoading] = useState(true)
 
   // 获取趋势数据
   useEffect(() => {
@@ -1618,6 +1631,36 @@ const StatsDialog: React.FC<{
     }
 
     fetchTrendData()
+  }, [item.id])
+
+  // 获取详细的趋势数据（用于混合图表）
+  useEffect(() => {
+    const fetchDetailedTrendData = async () => {
+      try {
+        setDetailedTrendLoading(true)
+        const response = await api.userService.getKeyTrends(item.id, { days: 30 })
+        if (response.success && response.data && Array.isArray(response.data.trend_data)) {
+          // 转换为混合图表需要的格式
+          const formattedData = response.data.trend_data.map((point: any) => ({
+            date: point.date,
+            requests: point.requests || 0,
+            tokens: point.tokens || 0,
+            successful_requests: point.successful_requests || 0,
+            failed_requests: point.failed_requests || 0,
+          }))
+          setDetailedTrendData(formattedData)
+        } else {
+          setDetailedTrendData([])
+        }
+      } catch (error) {
+        console.error('获取详细趋势数据失败:', error)
+        setDetailedTrendData([])
+      } finally {
+        setDetailedTrendLoading(false)
+      }
+    }
+
+    fetchDetailedTrendData()
   }, [item.id])
 
   const stats = {
@@ -1691,6 +1734,116 @@ const StatsDialog: React.FC<{
                   <div className="text-xs text-neutral-500 mt-1">{value}</div>
                 </div>
               ))
+            )}
+          </div>
+        </div>
+
+        {/* 30天综合趋势图（柱状图+折线图） */}
+        <div>
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">30天综合趋势分析</h4>
+          <div className="h-64 w-full">
+            {detailedTrendLoading ? (
+              <div className="flex items-center justify-center h-full text-neutral-500">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+              </div>
+            ) : detailedTrendData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={detailedTrendData}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(value) => {
+                      const date = new Date(value)
+                      return `${date.getMonth() + 1}/${date.getDate()}`
+                    }}
+                    tick={{ fontSize: 11, fill: '#6B7280' }}
+                    axisLine={{ stroke: '#D1D5DB' }}
+                    tickLine={{ stroke: '#D1D5DB' }}
+                    height={40}
+                    angle={-45}
+                    dx={-8}
+                    dy={8}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 11, fill: '#6B7280' }}
+                    axisLine={{ stroke: '#D1D5DB' }}
+                    tickLine={{ stroke: '#D1D5DB' }}
+                    width={40}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 11, fill: '#10B981' }}
+                    axisLine={{ stroke: '#D1D5DB' }}
+                    tickLine={{ stroke: '#D1D5DB' }}
+                    width={50}
+                  />
+                  <ReTooltip
+                    formatter={(value: any, name: any) => {
+                      const labels: Record<string, string> = {
+                        'requests': '请求数',
+                        'tokens': 'Tokens',
+                        'successful_requests': '成功请求',
+                        'failed_requests': '失败请求',
+                      }
+                      return [`${value}`, labels[name] || name]
+                    }}
+                    labelFormatter={(label: any) => {
+                      return `日期: ${label}`
+                    }}
+                    contentStyle={{ fontSize: 12 }}
+                  />
+                  <Legend
+                    verticalAlign="top"
+                    height={36}
+                    iconType="circle"
+                    iconSize={8}
+                    wrapperStyle={{ fontSize: '11px' }}
+                  />
+                  {/* 柱状图：请求次数 */}
+                  <Bar
+                    yAxisId="left"
+                    dataKey="requests"
+                    fill="#6366F1"
+                    name="请求数"
+                    radius={[2, 2, 0, 0]}
+                    barSize={12}
+                  />
+                  {/* 折线图：Token消耗 */}
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="tokens"
+                    stroke="#10B981"
+                    strokeWidth={2}
+                    name="Token消耗"
+                    dot={{ fill: '#10B981', strokeWidth: 2, r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  {/* 成功请求率 */}
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="successful_requests"
+                    stroke="#059669"
+                    strokeWidth={1.5}
+                    name="成功请求"
+                    dot={false}
+                    strokeDasharray="3 3"
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-neutral-500">
+                <div className="text-center">
+                  <BarChart3 className="mx-auto h-12 w-12 text-neutral-400" />
+                  <div className="mt-2 text-sm">暂无趋势数据</div>
+                </div>
+              </div>
             )}
           </div>
         </div>

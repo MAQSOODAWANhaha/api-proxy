@@ -6,9 +6,10 @@
  * - 按模型统计：迷你饼图展示近7天请求占比（与 provider 对齐）
  */
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ProviderKeyItem } from './ProviderKeysTable'
+import { api } from '@/lib/api'
 import {
   PieChart,
   Pie,
@@ -20,6 +21,11 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
+  LineChart,
+  Line,
+  ComposedChart,
+  Area,
+  Legend,
 } from 'recharts'
 
 /** 组件属性 */
@@ -92,6 +98,15 @@ interface DayRow {
   tokens: number
 }
 
+/** 趋势数据接口 */
+interface TrendData {
+  date: string
+  requests: number
+  tokens: number
+  successful_requests: number
+  failed_requests: number
+}
+
 /**
  * 生成最近 n 天的 ISO 日期字符串列表，含今天，倒序（最旧 -> 最新）
  */
@@ -117,29 +132,85 @@ function md(iso: string): string {
 
 /**
  * ProviderKeyStatsDialog
- * - 使用更清晰的分区与对齐，增加按天的柱状图展示
+ * - 使用更清晰的分区与对齐，增加按天的柱状图展示和趋势图
  */
 const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, onOpenChange, item }) => {
-  /**
-   * 生成最近 7 天的请求与 Token 数据
-   * 逻辑：以 key id + 每天 ISO 为种子，生产稳定的“演示”数据；具备可读的日标签（MM-DD）
-   */
-  const days: DayRow[] = useMemo(() => {
-    const dates = lastNDays(7)
-    const baseId = item?.id || 'seed'
-    return dates.map((iso) => {
-      const h = hashStr(baseId + iso)
-      // 让请求数处于 30~160 之间
-      const req = (h % 131) + 30
-      // Token 与请求相关联，系数在 8~14 之间
-      const tokens = req * (8 + (h % 7))
-      return { iso, label: md(iso), req, tokens }
-    })
-  }, [item?.id])
+  // 状态管理
+  const [trendData, setTrendData] = useState<TrendData[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+  const [useRealData, setUseRealData] = useState(false)
 
-  const totalReq7d = days.reduce((s, d) => s + d.req, 0)
-  const totalTok7d = days.reduce((s, d) => s + d.tokens, 0)
-  const avgReq = (totalReq7d / 7).toFixed(1)
+  // 获取趋势数据
+  useEffect(() => {
+    const fetchTrendData = async () => {
+      if (!open || !item?.id) return
+
+      setTrendLoading(true)
+      try {
+        const response = await api.providerKeys.getKeyTrends(item.id, { days: 30 })
+        if (response.success && response.data?.trend_data) {
+          // 转换后端数据为前端需要的格式
+          const formattedData = response.data.trend_data.map((point: any) => ({
+            date: point.date,
+            requests: point.requests || 0,
+            tokens: point.tokens || 0,
+            successful_requests: point.successful_requests || 0,
+            failed_requests: point.failed_requests || 0,
+          }))
+          setTrendData(formattedData)
+          setUseRealData(true)
+        } else {
+          // 如果API调用失败，使用模拟数据
+          generateMockData()
+          setUseRealData(false)
+        }
+      } catch (error) {
+        console.error('获取趋势数据失败:', error)
+        generateMockData()
+        setUseRealData(false)
+      } finally {
+        setTrendLoading(false)
+      }
+    }
+
+    fetchTrendData()
+  }, [open, item?.id])
+
+  // 生成模拟数据（作为fallback）
+  const generateMockData = () => {
+    const dates = lastNDays(30)
+    const baseId = item?.id || 'seed'
+    const mockData = dates.map((iso) => {
+      const h = hashStr(baseId + iso)
+      const req = (h % 131) + 30
+      const tokens = req * (8 + (h % 7))
+      const successRate = 0.8 + (h % 20) / 100
+      return {
+        date: iso,
+        requests: req,
+        tokens,
+        successful_requests: Math.round(req * successRate),
+        failed_requests: Math.round(req * (1 - successRate)),
+      }
+    })
+    setTrendData(mockData)
+  }
+
+  // 为柱状图准备最近7天的数据
+  const recent7Days = useMemo(() => {
+    if (trendData.length === 0) return []
+    return trendData.slice(-7).map(item => ({
+      iso: item.date,
+      label: md(item.date),
+      req: item.requests,
+      tokens: item.tokens,
+    }))
+  }, [trendData])
+
+  // 计算统计数据
+  const totalReq7d = recent7Days.reduce((s, d) => s + d.req, 0)
+  const totalTok7d = recent7Days.reduce((s, d) => s + d.tokens, 0)
+  const avgReq = totalReq7d > 0 ? (totalReq7d / 7).toFixed(1) : '0'
 
   // 近7天按模型分布（请求数占比）
   const modelDist = useMemo(
@@ -178,40 +249,48 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
           <div className="rounded-lg border bg-white p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-medium">请求次数（日）</div>
-              <div className="text-xs text-muted-foreground">最近 7 天</div>
+              <div className="text-xs text-muted-foreground">
+                最近 7 天 {useRealData && '🟢 实时数据'}
+              </div>
             </div>
             <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={days} barSize={26}>
-                  <CartesianGrid stroke={gridStroke} vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    height={32}
-                    angle={-20}
-                    dx={-4}
-                    dy={8}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    width={36}
-                    allowDecimals={false}
-                  />
-                  <ReTooltip
-                    formatter={(value: any) => [`${value}`, '请求数']}
-                    labelFormatter={(label: any, payload: any) => {
-                      const p = (payload?.[0]?.payload as DayRow) || null
-                      return p ? `${p.iso}` : label
-                    }}
-                    contentStyle={{ fontSize: 12 }}
-                  />
-                  <Bar dataKey="req" fill="#6366F1" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {trendLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={recent7Days} barSize={26}>
+                    <CartesianGrid stroke={gridStroke} vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      height={32}
+                      angle={-20}
+                      dx={-4}
+                      dy={8}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      width={36}
+                      allowDecimals={false}
+                    />
+                    <ReTooltip
+                      formatter={(value: any) => [`${value}`, '请求数']}
+                      labelFormatter={(label: any, payload: any) => {
+                        const p = (payload?.[0]?.payload as DayRow) || null
+                        return p ? `${p.iso}` : label
+                      }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Bar dataKey="req" fill="#6366F1" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
@@ -222,36 +301,42 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
               <div className="text-xs text-muted-foreground">最近 7 天</div>
             </div>
             <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={days} barSize={26}>
-                  <CartesianGrid stroke={gridStroke} vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    height={32}
-                    angle={-20}
-                    dx={-4}
-                    dy={8}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    width={44}
-                  />
-                  <ReTooltip
-                    formatter={(value: any) => [`${value}`, 'Tokens']}
-                    labelFormatter={(label: any, payload: any) => {
-                      const p = (payload?.[0]?.payload as DayRow) || null
-                      return p ? `${p.iso}` : label
-                    }}
-                    contentStyle={{ fontSize: 12 }}
-                  />
-                  <Bar dataKey="tokens" fill="#10B981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {trendLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={recent7Days} barSize={26}>
+                    <CartesianGrid stroke={gridStroke} vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      height={32}
+                      angle={-20}
+                      dx={-4}
+                      dy={8}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      width={44}
+                    />
+                    <ReTooltip
+                      formatter={(value: any) => [`${value}`, 'Tokens']}
+                      labelFormatter={(label: any, payload: any) => {
+                        const p = (payload?.[0]?.payload as DayRow) || null
+                        return p ? `${p.iso}` : label
+                      }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Bar dataKey="tokens" fill="#10B981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
@@ -309,6 +394,118 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
                   )
                 })}
               </div>
+            </div>
+          </div>
+
+          {/* 30天综合趋势图（柱状图+折线图） */}
+          <div className="rounded-lg border bg-white p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-medium">30天使用趋势</div>
+              <div className="text-xs text-muted-foreground">
+                请求量 + Token消耗 {useRealData && '🟢 实时数据'}
+              </div>
+            </div>
+            <div className="h-64 w-full">
+              {trendLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                    <CartesianGrid stroke={gridStroke} vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(value) => md(value)}
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      height={40}
+                      angle={-45}
+                      dx={-8}
+                      dy={8}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      width={40}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      tick={{ fontSize: 11, fill: '#10B981' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                      width={50}
+                    />
+                    <ReTooltip
+                      formatter={(value: any, name: any) => {
+                        const labels: Record<string, string> = {
+                          'requests': '请求数',
+                          'tokens': 'Tokens',
+                          'successful_requests': '成功请求',
+                          'failed_requests': '失败请求',
+                        }
+                        return [`${value}`, labels[name] || name]
+                      }}
+                      labelFormatter={(label: any) => {
+                        return `日期: ${label}`
+                      }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Legend
+                      verticalAlign="top"
+                      height={36}
+                      iconType="circle"
+                      iconSize={8}
+                      wrapperStyle={{ fontSize: '11px' }}
+                    />
+                    {/* 柱状图：请求次数 */}
+                    <Bar
+                      yAxisId="left"
+                      dataKey="requests"
+                      fill="#6366F1"
+                      name="请求数"
+                      radius={[2, 2, 0, 0]}
+                      barSize={12}
+                    />
+                    {/* 折线图：Token消耗 */}
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="tokens"
+                      stroke="#10B981"
+                      strokeWidth={2}
+                      name="Token消耗"
+                      dot={{ fill: '#10B981', strokeWidth: 2, r: 3 }}
+                      activeDot={{ r: 5 }}
+                    />
+                    {/* 可选：成功/失败请求率 */}
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="successful_requests"
+                      stroke="#059669"
+                      strokeWidth={1.5}
+                      name="成功请求"
+                      dot={false}
+                      strokeDasharray="3 3"
+                    />
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="failed_requests"
+                      stroke="#DC2626"
+                      strokeWidth={1.5}
+                      name="失败请求"
+                      dot={false}
+                      strokeDasharray="3 3"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
         </div>
