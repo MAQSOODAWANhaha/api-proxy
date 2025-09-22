@@ -63,7 +63,7 @@ export const safeLargeNumber = (value: any, defaultValue: number = 0): string =>
 export const calculateSuccessRate = (success: number, failure: number): number => {
   const total = success + failure
   if (total === 0) return 0
-  return Math.round((success / total) * 100 * 10) / 10 // 保留一位小数
+  return Math.round((success / total) * 100 * 100) / 100 // 保留两位小数
 }
 
 /**

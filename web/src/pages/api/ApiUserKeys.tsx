@@ -1624,10 +1624,6 @@ const StatsDialog: React.FC<{
     ...usageStats,
     // 使用真实的趋势数据
     dailyUsage: trendData.length > 0 ? trendData : safeTrendData(),
-    topEndpoints: [
-      { endpoint: '/api/chat/completions', count: usageStats.successfulRequests },
-      { endpoint: '/api/embeddings', count: Math.round(usageStats.successfulRequests * 0.27) },
-    ]
   }
 
   return (
@@ -1715,19 +1711,7 @@ const StatsDialog: React.FC<{
           </div>
         </div>
 
-        {/* 热门接口 */}
-        <div>
-          <h4 className="text-sm font-medium text-neutral-900 mb-3">热门接口</h4>
-          <div className="space-y-2">
-            {stats.topEndpoints.map((endpoint, index) => (
-              <div key={index} className="flex justify-between items-center py-2 border-b border-neutral-100">
-                <code className="text-sm font-mono">{endpoint.endpoint}</code>
-                <span className="text-sm text-neutral-600">{endpoint.count} 次</span>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

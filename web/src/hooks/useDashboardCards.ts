@@ -17,7 +17,7 @@ const formatValue = (value: number, type: 'number' | 'percentage' | 'duration'):
     case 'number':
       return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value.toLocaleString()
     case 'percentage':
-      return `${value.toFixed(1)}%`
+      return `${value.toFixed(2)}%`
     case 'duration':
       return `${Math.round(value)} ms`
     default:
