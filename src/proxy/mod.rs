@@ -4,13 +4,12 @@
 //! - `service`: 实现 Pingora `ProxyHttp` 全流程（请求阶段编排、上游处理、响应收集）
 //! - `server`/`pingora_proxy` + `builder`: 服务装配与启动
 //! - `request_handler`: 纯业务能力（选择上游、请求/响应改写、统计提取等）
-//! - `authentication_service`/`tracing_service`/`statistics`：关注点分离的协作服务（统计服务已迁移至 `src/statistics/`）
+//! - `authentication_service`/`tracing_service`：关注点分离的协作服务（统计服务已迁移至 `src/statistics/`）
 //! - `provider_strategy`: 提供商特定的最小策略扩展（如 Gemini 注入）
 //! - `types`: 轻量通用类型
 //! - `logging`: 统一日志工具和格式标准
 
 pub mod service;
-pub mod statistics;
 pub mod types;
 // 统一通过 `ProxyService` 调度；`RequestHandler` 提供纯业务方法
 pub mod request_handler;
@@ -30,7 +29,6 @@ pub use request_handler::{
 };
 pub use request_handler::{ProxyContext, RequestHandler};
 pub use service::ProxyService;
-pub use statistics::{StatisticsCollector, StatisticsConfig, StatsSummary};
 pub use tracing_service::{TracingContextHelper, TracingService};
 pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 

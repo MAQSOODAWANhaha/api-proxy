@@ -796,114 +796,76 @@ impl ResponseBodyService for DefaultResponseBodyService {
                 .map(|ct| ct.contains("text/event-stream") || ct.contains("application/stream"))
                 .unwrap_or(false);
 
+            // 简化的SSE处理：保持代理透明性，仅提取必要的统计信息
             if is_sse {
                 if let Ok(chunk_str) = std::str::from_utf8(data) {
-                    ctx.sse_line_buffer.push_str(chunk_str);
-                    let buf = std::mem::take(&mut ctx.sse_line_buffer);
-                    let mut lines: Vec<&str> = buf.split('\n').collect();
-                    let incomplete = lines.pop().unwrap_or("");
-                    ctx.sse_line_buffer = incomplete.to_string();
+                    // 直接处理数据，寻找token统计信息
+                    if let Some(data_start) = chunk_str.find("data: ") {
+                        let after_data = &chunk_str[data_start + 6..];
+                        if let Some(json_start) = after_data.find('{') {
+                            if let Some(json_end) = after_data[json_start..].find('}') {
+                                let json_str = &after_data[json_start..=json_start + json_end];
 
-                    fn find_usage<'a>(v: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
-                        if let Some(u) = v.get("usageMetadata") {
-                            return Some(u);
-                        }
-                        match v {
-                            serde_json::Value::Object(map) => {
-                                for (_k, val) in map {
-                                    if let Some(u) = find_usage(val) {
-                                        return Some(u);
+                                // 尝试解析JSON并提取token统计
+                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                    // 支持多种token统计格式
+                                    let usage = json_val.get("usageMetadata")
+                                        .or_else(|| json_val.get("usage"))
+                                        .or_else(|| json_val.get("usage_stats"));
+
+                                    if let Some(usage) = usage {
+                                        let p = usage.get("promptTokenCount")
+                                            .or_else(|| usage.get("prompt_tokens"))
+                                            .or_else(|| usage.get("prompt"))
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as u32);
+
+                                        let c = usage.get("candidatesTokenCount")
+                                            .or_else(|| usage.get("completion_tokens"))
+                                            .or_else(|| usage.get("completion"))
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as u32);
+
+                                        let t = usage.get("totalTokenCount")
+                                            .or_else(|| usage.get("total_tokens"))
+                                            .or_else(|| usage.get("total"))
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as u32);
+
+                                        if p.is_some() || c.is_some() || t.is_some() {
+                                            ctx.sse_usage_agg = Some(crate::proxy::request_handler::SseUsageAgg {
+                                                prompt_tokens: p,
+                                                completion_tokens: c,
+                                                total_tokens: t,
+                                            });
+
+                                            debug!(
+                                                event = "sse_usage_extracted",
+                                                component = COMPONENT,
+                                                request_id = %ctx.request_id,
+                                                tokens_prompt = ?p,
+                                                tokens_completion = ?c,
+                                                tokens_total = ?t,
+                                                "SSE Token统计提取"
+                                            );
+                                        }
                                     }
                                 }
-                                None
                             }
-                            serde_json::Value::Array(arr) => {
-                                for val in arr {
-                                    if let Some(u) = find_usage(val) {
-                                        return Some(u);
-                                    }
-                                }
-                                None
-                            }
-                            _ => None,
                         }
                     }
 
-                    for line in lines {
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if !line.starts_with("data: ") {
-                            continue;
-                        }
-                        let payload = line[6..].trim();
-                        if payload == "[DONE]" {
-                            continue;
-                        }
-
-                        info!(
-                            event = "sse_chunk",
+                    // 基本内存保护：防止异常情况下内存无限增长
+                    const MAX_BUFFER_SIZE: usize = 100 * 1024 * 1024; // 100MB
+                    if ctx.sse_line_buffer.len() > MAX_BUFFER_SIZE {
+                        warn!(
                             component = COMPONENT,
                             request_id = %ctx.request_id,
-                            preview = %ProxyService::pretty_truncated(payload, 512),
-                            "SSE 行预览"
+                            buffer_size = ctx.sse_line_buffer.len(),
+                            max_size = MAX_BUFFER_SIZE,
+                            "SSE缓冲区异常，清理以防止内存问题"
                         );
-
-                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(payload) {
-                            let finish = json_val
-                                .get("candidates")
-                                .and_then(|c| c.get(0))
-                                .and_then(|c0| c0.get("finishReason"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let has_usage = json_val.get("usageMetadata").is_some();
-                            debug!(
-                                event = "sse_chunk_parsed",
-                                component = COMPONENT,
-                                request_id = %ctx.request_id,
-                                has_usage = has_usage,
-                                finish_reason = finish,
-                                "SSE JSON 解析结果"
-                            );
-                            if let Some(usage) = find_usage(&json_val) {
-                                let p = usage
-                                    .get("promptTokenCount")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|n| n as u32);
-                                let c = usage
-                                    .get("candidatesTokenCount")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|n| n as u32);
-                                let t = usage
-                                    .get("totalTokenCount")
-                                    .and_then(|v| v.as_u64())
-                                    .map(|n| n as u32);
-                                ctx.sse_usage_agg =
-                                    Some(crate::proxy::request_handler::SseUsageAgg {
-                                        prompt_tokens: p,
-                                        completion_tokens: c,
-                                        total_tokens: t,
-                                    });
-                                info!(
-                                    event = "sse_usage_update",
-                                    component = COMPONENT,
-                                    request_id = %ctx.request_id,
-                                    tokens_prompt = ?p,
-                                    tokens_completion = ?c,
-                                    tokens_total = ?t,
-                                    "SSE 使用量更新（取最新）"
-                                );
-                            }
-                            // provider 特定的 SSE 解析扩展点（预留）
-                            if let Some(pt) = ctx.provider_type.as_ref() {
-                                if let Some(_name) =
-                                    provider_strategy::ProviderRegistry::match_name(&pt.name)
-                                {
-                                    // 在这里可根据 provider 的自定义事件格式做额外解析/统计
-                                }
-                            }
-                        }
+                        ctx.sse_line_buffer.clear();
                     }
                 }
             }
@@ -1797,7 +1759,7 @@ impl ProxyHttp for ProxyService {
 
                 ctx.response_details.finalize_body();
 
-                // 如果响应非2xx/3xx，打印响应体用于排查
+                // 如果响应非2xx/3xx，记录响应体用于排查
                 if status_code >= 400 {
                     let content_type = ctx
                         .response_details
@@ -1809,12 +1771,22 @@ impl ProxyHttp for ProxyService {
                         .body
                         .clone()
                         .unwrap_or_else(|| "<empty>".to_string());
+
+                    // 记录基本错误信息（error级别）
                     error!(
                         request_id = %ctx.request_id,
                         status = status_code,
                         content_type = %content_type,
-                        body = %ProxyService::pretty_truncated(&body_preview, 64 * 1024),
-                        "=== 上游响应体（失败） ==="
+                        body_length = body_preview.len(),
+                        "上游响应失败"
+                    );
+
+                    // 详细响应体内容仅在debug模式下记录（限制大小）
+                    debug!(
+                        request_id = %ctx.request_id,
+                        status = status_code,
+                        body = %ProxyService::pretty_truncated(&body_preview, 2048), // 限制为2KB
+                        "=== 上游响应体详情（失败） ==="
                     );
                 }
 

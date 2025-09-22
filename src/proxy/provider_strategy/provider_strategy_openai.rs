@@ -290,6 +290,25 @@ impl ProviderStrategy for OpenAIStrategy {
         // 其他情况使用默认逻辑
         Ok(key.is_active && key.health_status == "healthy")
     }
+
+    fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)> {
+        // OpenAI/ChatGPT API 使用标准认证
+        let auth_headers = vec![("Authorization".to_string(), format!("Bearer {}", api_key))];
+
+        tracing::debug!(
+            provider_name = "openai",
+            generated_headers = format!(
+                "{:?}",
+                auth_headers
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
+            ),
+            "Generated OpenAI-specific authentication headers"
+        );
+
+        auth_headers
+    }
 }
 
 /// 为 OpenAIStrategy 实现 ResponseBodyService 以便在 response_body_filter 中处理429错误

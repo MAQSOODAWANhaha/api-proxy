@@ -202,6 +202,28 @@ impl ProviderStrategy for GeminiStrategy {
 
         Ok(modified)
     }
+
+    fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)> {
+        // Gemini支持两种认证方式
+        let auth_headers = vec![
+            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("X-goog-api-key".to_string(), api_key.to_string()),
+        ];
+
+        tracing::debug!(
+            provider_name = "gemini",
+            generated_headers = format!(
+                "{:?}",
+                auth_headers
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
+            ),
+            "Generated Gemini-specific authentication headers"
+        );
+
+        auth_headers
+    }
 }
 
 // ---------------- 注入帮助函数（取自原 RequestHandler 逻辑，简化后无副作用） ----------------

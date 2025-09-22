@@ -69,6 +69,9 @@ pub trait ProviderStrategy: Send + Sync {
     async fn should_retry_key(&self, _key: &user_provider_keys::Model) -> Result<bool, ProxyError> {
         Ok(true)
     }
+
+    /// 构建上游认证头（提供商特定的认证逻辑）
+    fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)>;
 }
 
 /// 简单注册表（进程内静态）

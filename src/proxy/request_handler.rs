@@ -1162,9 +1162,22 @@ impl RequestHandler {
         // 使用 CredentialResolutionStep 解析出的凭证构建上游认证头
         match ctx.resolved_credential.clone() {
             Some(ResolvedCredential::ApiKey(api_key)) => {
-                let auth_headers = self
-                    .auth_service
-                    .build_outbound_auth_headers_for_upstream(provider_type, &api_key)?;
+                // 使用 ProviderStrategy 构建认证头
+                let auth_headers = if let Some(name) =
+                    crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_type.name)
+                {
+                    if let Some(strategy) =
+                        crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
+                    {
+                        strategy.build_auth_headers(&api_key)
+                    } else {
+                        // 回退到默认逻辑
+                        vec![("Authorization".to_string(), format!("Bearer {}", api_key))]
+                    }
+                } else {
+                    // 回退到默认逻辑
+                    vec![("Authorization".to_string(), format!("Bearer {}", api_key))]
+                };
                 self.clear_auth_headers(upstream_request);
                 let mut applied = Vec::new();
                 for (header_name, header_value) in &auth_headers {

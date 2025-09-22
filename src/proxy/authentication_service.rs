@@ -7,7 +7,9 @@ use anyhow::Result;
 use axum::http::Uri;
 use pingora_proxy::Session;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use crate::auth::{AuthManager, AuthUtils};
 use crate::error::ProxyError;
@@ -71,12 +73,18 @@ pub struct AuthenticationService {
     auth_manager: Arc<AuthManager>,
     /// 数据库连接（用于获取真实凭据）
     db: Arc<DatabaseConnection>,
+    /// 轮询调度状态跟踪：user_service_api_id -> (current_index, last_used_timestamp)
+    round_robin_state: Arc<RwLock<HashMap<i32, (usize, i64)>>>,
 }
 
 impl AuthenticationService {
     /// 创建新的认证适配器
     pub fn new(auth_manager: Arc<AuthManager>, db: Arc<DatabaseConnection>) -> Self {
-        Self { auth_manager, db }
+        Self {
+            auth_manager,
+            db,
+            round_robin_state: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     /// 智能检测并替换客户端认证信息
@@ -246,38 +254,6 @@ impl AuthenticationService {
         Err(ProxyError::authentication(
             "No authentication information found in query parameters or headers",
         ))
-    }
-
-    /// 智能认证验证和凭据替换（简化版：直接调用集成方法）
-    ///
-    /// 简化的认证流程：
-    /// 1. 调用 detect_and_replace_client_authorization 完成所有认证和替换工作
-    /// 2. 返回认证结果
-    pub async fn authenticate_and_replace_credentials(
-        &self,
-        session: &mut Session,
-        request_id: &str,
-    ) -> Result<AuthenticationResult, ProxyError> {
-        tracing::debug!(
-            request_id = request_id,
-            "Starting simplified authentication and credential replacement"
-        );
-
-        // 一步完成：检测 + 验证 + 获取真实凭据 + 立即替换
-        let auth_result = self
-            .detect_and_replace_client_authorization(session, request_id)
-            .await?;
-
-        tracing::info!(
-            request_id = request_id,
-            user_id = auth_result.user_id,
-            provider_type_id = auth_result.provider_type_id,
-            provider_name = auth_result.provider_type.name,
-            user_service_api_id = auth_result.user_service_api.id,
-            "Simplified authentication and credential replacement completed successfully"
-        );
-
-        Ok(auth_result)
     }
 
     /// 仅进行入口 API Key 认证（不做上游密钥选择、不替换凭证）
@@ -482,9 +458,8 @@ impl AuthenticationService {
 
         match strategy {
             "round_robin" => {
-                // 轮询调度：选择第一个可用的（简化实现）
-                // TODO: 实现真正的轮询调度算法
-                Ok(provider_keys[0].clone())
+                // 真正的轮询调度算法实现
+                self.select_by_round_robin(user_api.id, provider_keys).await
             }
             "weighted" => {
                 // 权重调度：根据weight字段选择
@@ -543,6 +518,71 @@ impl AuthenticationService {
 
         // 默认选择第一个
         Ok(provider_keys[0].clone())
+    }
+
+    /// 根据轮询调度策略选择凭据
+    ///
+    /// 真正的轮询算法实现：
+    /// 1. 跟踪每个user_service_api的当前选择索引
+    /// 2. 每次选择后递增索引，实现公平轮询
+    /// 3. 支持动态添加/删除密钥，自动调整索引范围
+    pub async fn select_by_round_robin(
+        &self,
+        user_service_api_id: i32,
+        provider_keys: &[entity::user_provider_keys::Model],
+    ) -> Result<entity::user_provider_keys::Model, ProxyError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // 如果没有可用的密钥，返回错误
+        if provider_keys.is_empty() {
+            return Err(ProxyError::authentication("No provider keys available for round-robin selection"));
+        }
+
+        // 如果只有一个密钥，直接返回
+        if provider_keys.len() == 1 {
+            return Ok(provider_keys[0].clone());
+        }
+
+        // 获取当前时间戳（秒）
+        let current_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let mut state = self.round_robin_state.write().await;
+
+        // 获取或创建该用户API的轮询状态
+        let (current_index, last_used) = state
+            .entry(user_service_api_id)
+            .or_insert((0, current_timestamp));
+
+        // 确保索引在有效范围内（处理密钥列表动态变化的情况）
+        if *current_index >= provider_keys.len() {
+            tracing::warn!(
+                user_service_api_id = user_service_api_id,
+                current_index = *current_index,
+                available_keys = provider_keys.len(),
+                "Round-robin index out of bounds, resetting to 0"
+            );
+            *current_index = 0;
+        }
+
+        // 选择当前索引的密钥
+        let selected_key = provider_keys[*current_index].clone();
+
+        // 更新轮询状态：递增索引，更新时间戳
+        *current_index = (*current_index + 1) % provider_keys.len();
+        *last_used = current_timestamp;
+
+        tracing::debug!(
+            user_service_api_id = user_service_api_id,
+            selected_key_id = selected_key.id,
+            next_index = *current_index,
+            total_keys = provider_keys.len(),
+            "Round-robin selection completed"
+        );
+
+        Ok(selected_key)
     }
 
     /// 获取OAuth访问令牌
@@ -858,47 +898,4 @@ impl AuthenticationService {
         self.auth_manager.validate_proxy_api_key_format(api_key)
     }
 
-    /// 为上游AI服务商构建出站认证头（出站认证 - 代理→AI服务商）
-    ///
-    /// 根据服务商类型自动选择适合的认证头格式
-    /// 用途：构建发送给AI服务商的HTTP认证头，确保上游服务商收到正确格式的认证信息
-    pub fn build_outbound_auth_headers_for_upstream(
-        &self,
-        provider: &entity::provider_types::Model,
-        api_key: &str,
-    ) -> Result<Vec<(String, String)>, ProxyError> {
-        let mut auth_headers = Vec::new();
-
-        // 根据服务商类型选择适合的认证头格式
-        match provider.name.as_str() {
-            "gemini" => {
-                // Gemini支持两种认证方式
-                auth_headers.push(("Authorization".to_string(), format!("Bearer {}", api_key)));
-                auth_headers.push(("X-goog-api-key".to_string(), api_key.to_string()));
-            }
-            "openai" => {
-                // OpenAI/ChatGPT API 使用标准认证
-                // ChatGPT 特有的头在 OAuth 处理时动态添加
-                auth_headers.push(("Authorization".to_string(), format!("Bearer {}", api_key)));
-            }
-            _ => {
-                // 其他服务商使用标准Bearer认证
-                auth_headers.push(("Authorization".to_string(), format!("Bearer {}", api_key)));
-            }
-        }
-
-        tracing::debug!(
-            provider_name = provider.name,
-            generated_headers = format!(
-                "{:?}",
-                auth_headers
-                    .iter()
-                    .map(|(name, _)| name)
-                    .collect::<Vec<_>>()
-            ),
-            "Generated authentication headers using provider-specific logic"
-        );
-
-        Ok(auth_headers)
-    }
-}
+  }
