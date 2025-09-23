@@ -133,7 +133,8 @@ pub async fn get_provider_keys_list(
             let now = Utc::now().naive_utc();
             if resets_at > now {
                 let duration = resets_at.signed_duration_since(now);
-                Some(duration.num_seconds().max(0) as u64)
+                let seconds = duration.num_seconds();
+                Some(seconds.max(0) as u64)
             } else {
                 None
             }
@@ -512,7 +513,8 @@ pub async fn get_provider_key_detail(
 
         if resets_at > now {
             let duration = resets_at.signed_duration_since(now);
-            let remaining_seconds = duration.num_seconds().max(0) as u64;
+            let seconds = duration.num_seconds();
+            let remaining_seconds = seconds.max(0) as u64;
             info!(
                 key_id = provider_key.0.id,
                 remaining_seconds = remaining_seconds,

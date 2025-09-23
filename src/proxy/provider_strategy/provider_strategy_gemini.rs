@@ -3,17 +3,16 @@
 //! 说明：当前仅做最小无害改写示例（如补充少量兼容性 Header），
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
-use pingora_http::RequestHeader;
-use pingora_proxy::Session;
-
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::proxy::ProxyContext;
 use crate::{proxy_debug, proxy_info};
+use pingora_http::RequestHeader;
+use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-
 use super::ProviderStrategy;
+
 
 #[derive(Debug, Clone, PartialEq)]
 enum GeminiProxyMode {
@@ -156,13 +155,12 @@ impl ProviderStrategy for GeminiStrategy {
         }
 
         let request_path = session.req_header().uri.path();
-        let mut modified = false;
 
         // 根据是否有 project_id 决定处理逻辑
-        if let Some(project_id) = backend.project_id.as_ref() {
+        let modified = if let Some(project_id) = backend.project_id.as_ref() {
             if !project_id.is_empty() {
                 // 有 project_id，注入项目相关字段
-                modified = if request_path.contains("loadCodeAssist") {
+                let result = if request_path.contains("loadCodeAssist") {
                     inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
                 } else if request_path.contains("onboardUser") {
                     inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
@@ -178,7 +176,7 @@ impl ProviderStrategy for GeminiStrategy {
                     false
                 };
 
-                if modified {
+                if result {
                     if let Ok(json_str) = serde_json::to_string_pretty(json_value) {
                         proxy_info!(
                             &ctx.request_id,
@@ -202,14 +200,15 @@ impl ProviderStrategy for GeminiStrategy {
                         );
                     }
                 }
+                result
             } else {
                 // project_id 为空字符串，移除项目相关字段
-                modified = remove_project_fields(json_value, &ctx.request_id, request_path);
+                remove_project_fields(json_value, &ctx.request_id, request_path)
             }
         } else {
             // 没有 project_id，移除项目相关字段
-            modified = remove_project_fields(json_value, &ctx.request_id, request_path);
-        }
+            remove_project_fields(json_value, &ctx.request_id, request_path)
+        };
 
         Ok(modified)
     }
