@@ -146,58 +146,69 @@ impl ProviderStrategy for GeminiStrategy {
         ctx: &ProxyContext,
         json_value: &mut serde_json::Value,
     ) -> Result<bool, ProxyError> {
-        // 仅当 OAuth 且有 project_id 时注入
         let Some(backend) = ctx.selected_backend.as_ref() else {
             return Ok(false);
         };
-        let Some(project_id) = backend.project_id.as_ref() else {
-            return Ok(false);
-        };
-        if backend.auth_type.as_str() != "oauth" || project_id.is_empty() {
+
+        // 仅处理 OAuth 认证
+        if backend.auth_type.as_str() != "oauth" {
             return Ok(false);
         }
 
         let request_path = session.req_header().uri.path();
+        let mut modified = false;
 
-        let modified = if request_path.contains("loadCodeAssist") {
-            inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
-        } else if request_path.contains("onboardUser") {
-            inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
-        } else if request_path.contains("countTokens") {
-            inject_counttokens_fields(json_value, &ctx.request_id)
-        } else if request_path.contains("generateContent")
-            && !request_path.contains("streamGenerateContent")
-        {
-            inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
-        } else if request_path.contains("streamGenerateContent") {
-            inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
-        } else {
-            false
-        };
+        // 根据是否有 project_id 决定处理逻辑
+        if let Some(project_id) = backend.project_id.as_ref() {
+            if !project_id.is_empty() {
+                // 有 project_id，注入项目相关字段
+                modified = if request_path.contains("loadCodeAssist") {
+                    inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
+                } else if request_path.contains("onboardUser") {
+                    inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
+                } else if request_path.contains("countTokens") {
+                    inject_counttokens_fields(json_value, &ctx.request_id)
+                } else if request_path.contains("generateContent")
+                    && !request_path.contains("streamGenerateContent")
+                {
+                    inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
+                } else if request_path.contains("streamGenerateContent") {
+                    inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
+                } else {
+                    false
+                };
 
-        if modified {
-            if let Ok(json_str) = serde_json::to_string_pretty(json_value) {
-                proxy_info!(
-                    &ctx.request_id,
-                    LogStage::RequestModify,
-                    LogComponent::GeminiStrategy,
-                    "project_fields_injected",
-                    "Gemini策略将项目字段注入到请求JSON中",
-                    project_id = project_id,
-                    route_path = request_path,
-                    modified_json = json_str
-                );
+                if modified {
+                    if let Ok(json_str) = serde_json::to_string_pretty(json_value) {
+                        proxy_info!(
+                            &ctx.request_id,
+                            LogStage::RequestModify,
+                            LogComponent::GeminiStrategy,
+                            "project_fields_injected",
+                            "Gemini策略将项目字段注入到请求JSON中",
+                            project_id = project_id,
+                            route_path = request_path,
+                            modified_json = json_str
+                        );
+                    } else {
+                        proxy_info!(
+                            &ctx.request_id,
+                            LogStage::RequestModify,
+                            LogComponent::GeminiStrategy,
+                            "project_fields_injected",
+                            "Gemini策略将项目字段注入到请求JSON中",
+                            project_id = project_id,
+                            route_path = request_path
+                        );
+                    }
+                }
             } else {
-                proxy_info!(
-                    &ctx.request_id,
-                    LogStage::RequestModify,
-                    LogComponent::GeminiStrategy,
-                    "project_fields_injected",
-                    "Gemini策略将项目字段注入到请求JSON中",
-                    project_id = project_id,
-                    route_path = request_path
-                );
+                // project_id 为空字符串，移除项目相关字段
+                modified = remove_project_fields(json_value, &ctx.request_id, request_path);
             }
+        } else {
+            // 没有 project_id，移除项目相关字段
+            modified = remove_project_fields(json_value, &ctx.request_id, request_path);
         }
 
         Ok(modified)
@@ -226,9 +237,95 @@ impl ProviderStrategy for GeminiStrategy {
     }
 }
 
+// ---------------- 项目字段处理函数 ----------------
+
+/// 移除项目相关字段
+/// 当backend没有project_id时调用此函数
+pub fn remove_project_fields(
+    json_value: &mut serde_json::Value,
+    request_id: &str,
+    route_path: &str,
+) -> bool {
+    let mut modified = false;
+
+    if let Some(obj) = json_value.as_object_mut() {
+        // 移除顶层的project字段
+        if obj.remove("project").is_some() {
+            modified = true;
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "project_field_removed",
+                "移除顶层project字段",
+                route_path = route_path
+            );
+        }
+
+        // 移除cloudaicompanionProject字段
+        if obj.remove("cloudaicompanionProject").is_some() {
+            modified = true;
+            proxy_debug!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "cloudaicompanion_project_field_removed",
+                "移除cloudaicompanionProject字段",
+                route_path = route_path
+            );
+        }
+
+        // 移除metadata中的duetProject字段
+        if let Some(metadata) = obj.get_mut("metadata").and_then(|v| v.as_object_mut()) {
+            if metadata.remove("duetProject").is_some() {
+                modified = true;
+                proxy_debug!(
+                    request_id,
+                    LogStage::RequestModify,
+                    LogComponent::GeminiStrategy,
+                    "duet_project_field_removed",
+                    "移除metadata.duetProject字段",
+                    route_path = route_path
+                );
+            }
+        }
+
+        // 对于countTokens，保持标准格式但移除project相关字段
+        if route_path.contains("countTokens") {
+            if let Some(request) = obj.get_mut("request").and_then(|v| v.as_object_mut()) {
+                // 确保request对象存在但移除project字段（如果有）
+                if request.remove("project").is_some() {
+                    modified = true;
+                    proxy_debug!(
+                        request_id,
+                        LogStage::RequestModify,
+                        LogComponent::GeminiStrategy,
+                        "request_project_field_removed",
+                        "移除request.project字段",
+                        route_path = route_path
+                    );
+                }
+            }
+        }
+    }
+
+    if modified {
+        proxy_info!(
+            request_id,
+            LogStage::RequestModify,
+            LogComponent::GeminiStrategy,
+            "project_fields_removed",
+            "Gemini策略移除了所有项目相关字段",
+            route_path = route_path
+        );
+    }
+
+    modified
+}
+
 // ---------------- 注入帮助函数（取自原 RequestHandler 逻辑，简化后无副作用） ----------------
 
-fn inject_loadcodeassist_fields(
+pub fn inject_loadcodeassist_fields(
     json_value: &mut serde_json::Value,
     project_id: &str,
     request_id: &str,

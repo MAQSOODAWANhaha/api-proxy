@@ -3,9 +3,9 @@
 //! 实现Google Gemini Code Assist API的调用逻辑
 //! 支持loadCodeAssist和onboardUser接口，用于自动获取project_id
 
+use crate::error::ProxyError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::error::ProxyError;
 use std::time::{Duration, Instant};
 
 /// Gemini Code Assist API基础URL
@@ -84,8 +84,8 @@ impl RetryConfig {
 
     /// 计算指数退避延迟
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
-        let delay_ms = (self.base_delay_ms * 2u64.pow(attempt.saturating_sub(1)))
-            .min(self.max_delay_ms);
+        let delay_ms =
+            (self.base_delay_ms * 2u64.pow(attempt.saturating_sub(1))).min(self.max_delay_ms);
         Duration::from_millis(delay_ms)
     }
 }
@@ -95,40 +95,24 @@ impl RetryConfig {
 #[allow(non_snake_case)]
 pub struct LoadCodeAssistResponse {
     #[serde(default)]
-    pub cloudaicompanionProject: Option<CloudAiCompanionProject>,
-    pub allowedTiers: Option<Vec<AllowedTier>>,
-    pub ineligibleTiers: Option<Vec<IneligibleTier>>,
-    pub currentTier: Option<AllowedTier>,
+    pub cloudaicompanionProject: Option<String>,
+    pub currentTier: Option<CurrentTier>,
 }
 
-/// Cloud AI Companion项目信息
+/// 当前层级信息（简化版）
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct CurrentTier {
+    pub id: String,
+}
+
+/// Cloud AI Companion项目信息（onboardUser响应使用）
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 pub struct CloudAiCompanionProject {
     pub id: String,
     pub name: String,
     pub display_name: String,
-}
-
-/// 允许的层级信息
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-pub struct AllowedTier {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub userDefinedCloudaicompanionProject: bool,
-    pub isDefault: Option<bool>,
-}
-
-/// 不符合条件的层级信息
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-pub struct IneligibleTier {
-    pub reasonCode: String,
-    pub reasonMessage: String,
-    pub tierId: String,
-    pub tierName: String,
 }
 
 /// onboardUser响应结构
@@ -218,12 +202,14 @@ impl GeminiCodeAssistClient {
                     let should_retry = match &e {
                         ProxyError::GeminiCodeAssistError { message } => {
                             // 检查错误消息中是否包含可重试的状态码
-                            [408, 429, 500, 502, 503, 504].iter().any(|&code| {
-                                message.contains(&code.to_string())
-                            })
+                            [408, 429, 500, 502, 503, 504]
+                                .iter()
+                                .any(|&code| message.contains(&code.to_string()))
                         }
                         ProxyError::Network { .. } => true,
-                        ProxyError::ConnectionTimeout { .. } | ProxyError::ReadTimeout { .. } | ProxyError::WriteTimeout { .. } => true,
+                        ProxyError::ConnectionTimeout { .. }
+                        | ProxyError::ReadTimeout { .. }
+                        | ProxyError::WriteTimeout { .. } => true,
                         _ => false,
                     };
 
@@ -234,12 +220,7 @@ impl GeminiCodeAssistClient {
 
                     // 计算延迟时间
                     let delay = self.retry_config.calculate_delay(attempt);
-                    tracing::info!(
-                        "{}将在{:?}后进行第{}次重试",
-                        operation,
-                        delay,
-                        attempt + 1
-                    );
+                    tracing::info!("{}将在{:?}后进行第{}次重试", operation, delay, attempt + 1);
 
                     tokio::time::sleep(delay).await;
                 }
@@ -250,9 +231,10 @@ impl GeminiCodeAssistClient {
         if let Some(error) = last_error {
             Err(error)
         } else {
-            Err(ProxyError::gemini_code_assist(
-                format!("{}所有重试尝试都失败了", operation)
-            ))
+            Err(ProxyError::gemini_code_assist(format!(
+                "{}所有重试尝试都失败了",
+                operation
+            )))
         }
     }
 
@@ -282,7 +264,10 @@ impl GeminiCodeAssistClient {
             request_body.insert(
                 "metadata".to_string(),
                 serde_json::to_value(metadata).map_err(|e| {
-                    ProxyError::gemini_code_assist(format!("Failed to serialize client metadata: {}", e))
+                    ProxyError::gemini_code_assist(format!(
+                        "Failed to serialize client metadata: {}",
+                        e
+                    ))
                 })?,
             );
 
@@ -306,7 +291,8 @@ impl GeminiCodeAssistClient {
             })?;
             tracing::info!("loadCodeAssist请求参数: {}", request_json);
 
-            let response = self.http_client
+            let response = self
+                .http_client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", access_token))
                 .header("Content-Type", "application/json")
@@ -324,28 +310,33 @@ impl GeminiCodeAssistClient {
                     status,
                     error_text
                 );
-                return Err(ProxyError::gemini_code_assist(
-                    format!("loadCodeAssist API failed: {} - {}", status, error_text)
-                ));
+                return Err(ProxyError::gemini_code_assist(format!(
+                    "loadCodeAssist API failed: {} - {}",
+                    status, error_text
+                )));
             }
 
             let response_body = response.text().await?;
             tracing::info!("loadCodeAssist响应体: {}", response_body);
 
-            let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body).map_err(|e| {
-                ProxyError::gemini_code_assist(format!("Failed to parse loadCodeAssist response: {}", e))
-            })?;
+            let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body)
+                .map_err(|e| {
+                    ProxyError::gemini_code_assist(format!(
+                        "Failed to parse loadCodeAssist response: {}",
+                        e
+                    ))
+                })?;
 
             let tier_id = self.get_tier_id_from_load_response(&response_data);
             tracing::info!(
-                "loadCodeAssist调用成功: has_project={}, tier_id={}, allowed_tiers_count={}",
+                "loadCodeAssist调用成功: has_project={}, tier_id={}",
                 response_data.cloudaicompanionProject.is_some(),
-                tier_id,
-                response_data.allowedTiers.as_ref().map_or(0, |t| t.len())
+                tier_id
             );
 
             Ok(response_data)
-        }).await
+        })
+        .await
     }
 
     /// 调用onboardUser API
@@ -390,11 +381,18 @@ impl GeminiCodeAssistClient {
             request_body.insert(
                 "metadata".to_string(),
                 serde_json::to_value(metadata).map_err(|e| {
-                    ProxyError::gemini_code_assist(format!("Failed to serialize client metadata: {}", e))
+                    ProxyError::gemini_code_assist(format!(
+                        "Failed to serialize client metadata: {}",
+                        e
+                    ))
                 })?,
             );
 
-            tracing::debug!("调用onboardUser with tier_id: {:?}, project_id: {:?}", tier_id, project_id);
+            tracing::debug!(
+                "调用onboardUser with tier_id: {:?}, project_id: {:?}",
+                tier_id,
+                project_id
+            );
 
             let url = format!("{}/v1internal:onboardUser", self.base_url);
             tracing::info!("发送onboardUser请求到: {}", url);
@@ -405,7 +403,8 @@ impl GeminiCodeAssistClient {
             })?;
             tracing::info!("onboardUser请求参数: {}", request_json);
 
-            let response = self.http_client
+            let response = self
+                .http_client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", access_token))
                 .header("Content-Type", "application/json")
@@ -423,17 +422,22 @@ impl GeminiCodeAssistClient {
                     status,
                     error_text
                 );
-                return Err(ProxyError::gemini_code_assist(
-                    format!("onboardUser API failed: {} - {}", status, error_text)
-                ));
+                return Err(ProxyError::gemini_code_assist(format!(
+                    "onboardUser API failed: {} - {}",
+                    status, error_text
+                )));
             }
 
             let response_body = response.text().await?;
             tracing::info!("onboardUser响应体: {}", response_body);
 
-            let response_data: OnboardUserResponse = serde_json::from_str(&response_body).map_err(|e| {
-                ProxyError::gemini_code_assist(format!("Failed to parse onboardUser response: {}", e))
-            })?;
+            let response_data: OnboardUserResponse =
+                serde_json::from_str(&response_body).map_err(|e| {
+                    ProxyError::gemini_code_assist(format!(
+                        "Failed to parse onboardUser response: {}",
+                        e
+                    ))
+                })?;
 
             tracing::info!(
                 "onboardUser调用成功: status={}, project_id={}, display_name={}",
@@ -443,25 +447,20 @@ impl GeminiCodeAssistClient {
             );
 
             Ok(response_data)
-        }).await
+        })
+        .await
     }
 
     /// 从loadCodeAssist响应中获取tierId
     ///
     /// 参考JavaScript实现中的getOnboardTier逻辑
-    fn get_tier_id_from_load_response<'a>(&self, load_response: &'a LoadCodeAssistResponse) -> &'a str {
-        // 优先使用currentTier
+    fn get_tier_id_from_load_response<'a>(
+        &self,
+        load_response: &'a LoadCodeAssistResponse,
+    ) -> &'a str {
+        // 使用currentTier的id
         if let Some(current_tier) = &load_response.currentTier {
             return &current_tier.id;
-        }
-
-        // 从allowedTiers中查找默认层级
-        if let Some(allowed_tiers) = &load_response.allowedTiers {
-            for tier in allowed_tiers {
-                if tier.isDefault.unwrap_or(false) {
-                    return &tier.id;
-                }
-            }
         }
 
         // 默认返回FREE层级
@@ -472,8 +471,9 @@ impl GeminiCodeAssistClient {
     ///
     /// 这个方法会依次尝试：
     /// 1. 调用loadCodeAssist（不携带project_id）检查是否有现有项目
-    /// 2. 如果没有项目，调用onboardUser初始化新项目
-    /// 3. 返回获取到的project_id
+    /// 2. 如果有cloudaicompanionProject，直接使用该值作为project_id
+    /// 3. 如果没有cloudaicompanionProject，调用onboardUser初始化新项目
+    /// 4. 返回获取到的project_id
     pub async fn auto_get_project_id(
         &self,
         access_token: &str,
@@ -491,23 +491,24 @@ impl GeminiCodeAssistClient {
         };
 
         // 检查是否已有project
-        if let Some(project) = load_response.cloudaicompanionProject {
-            tracing::info!(
-                "通过loadCodeAssist获取到project_id: {} (display_name: {})",
-                project.id,
-                project.display_name
-            );
-            return Ok(Some(project.id));
+        if let Some(project_id) = load_response.cloudaicompanionProject {
+            tracing::info!("通过loadCodeAssist获取到project_id: {}", project_id);
+            return Ok(Some(project_id));
         }
 
-        // Step 2: 调用onboardUser初始化项目
-        tracing::debug!("Step 2: loadCodeAssist未返回project，调用onboardUser初始化");
+        // Step 2: 如果没有cloudaicompanionProject，调用onboardUser初始化项目
+        tracing::debug!(
+            "Step 2: loadCodeAssist未返回cloudaicompanionProject，调用onboardUser初始化"
+        );
 
         // 从loadCodeAssist响应中获取tierId
         let tier_id = self.get_tier_id_from_load_response(&load_response);
         tracing::debug!("从loadCodeAssist获取到tierId: {}", tier_id);
 
-        let onboard_response = match self.onboard_user(access_token, None, Some(tier_id), None).await {
+        let onboard_response = match self
+            .onboard_user(access_token, None, Some(tier_id), None)
+            .await
+        {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("onboardUser调用失败: {}", e);
