@@ -96,8 +96,9 @@ impl RetryConfig {
 pub struct LoadCodeAssistResponse {
     #[serde(default)]
     pub cloudaicompanionProject: Option<CloudAiCompanionProject>,
-    pub status: String,
-    pub tierId: Option<String>,
+    pub allowedTiers: Option<Vec<AllowedTier>>,
+    pub ineligibleTiers: Option<Vec<IneligibleTier>>,
+    pub currentTier: Option<AllowedTier>,
 }
 
 /// Cloud AI Companion项目信息
@@ -107,6 +108,27 @@ pub struct CloudAiCompanionProject {
     pub id: String,
     pub name: String,
     pub display_name: String,
+}
+
+/// 允许的层级信息
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct AllowedTier {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub userDefinedCloudaicompanionProject: bool,
+    pub isDefault: Option<bool>,
+}
+
+/// 不符合条件的层级信息
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+pub struct IneligibleTier {
+    pub reasonCode: String,
+    pub reasonMessage: String,
+    pub tierId: String,
+    pub tierName: String,
 }
 
 /// onboardUser响应结构
@@ -314,11 +336,12 @@ impl GeminiCodeAssistClient {
                 ProxyError::gemini_code_assist(format!("Failed to parse loadCodeAssist response: {}", e))
             })?;
 
+            let tier_id = self.get_tier_id_from_load_response(&response_data);
             tracing::info!(
-                "loadCodeAssist调用成功: status={}, has_project={}, tier_id={:?}",
-                response_data.status,
+                "loadCodeAssist调用成功: has_project={}, tier_id={}, allowed_tiers_count={}",
                 response_data.cloudaicompanionProject.is_some(),
-                response_data.tierId
+                tier_id,
+                response_data.allowedTiers.as_ref().map_or(0, |t| t.len())
             );
 
             Ok(response_data)
@@ -427,9 +450,18 @@ impl GeminiCodeAssistClient {
     ///
     /// 参考JavaScript实现中的getOnboardTier逻辑
     fn get_tier_id_from_load_response<'a>(&self, load_response: &'a LoadCodeAssistResponse) -> &'a str {
-        // 优先使用tierId
-        if let Some(tier_id) = &load_response.tierId {
-            return tier_id;
+        // 优先使用currentTier
+        if let Some(current_tier) = &load_response.currentTier {
+            return &current_tier.id;
+        }
+
+        // 从allowedTiers中查找默认层级
+        if let Some(allowed_tiers) = &load_response.allowedTiers {
+            for tier in allowed_tiers {
+                if tier.isDefault.unwrap_or(false) {
+                    return &tier.id;
+                }
+            }
         }
 
         // 默认返回FREE层级
