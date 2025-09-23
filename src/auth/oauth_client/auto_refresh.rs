@@ -12,7 +12,7 @@ use entity::{oauth_client_sessions, user_provider_keys};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// Token自动刷新管理器
 #[derive(Debug)]
@@ -325,19 +325,19 @@ impl AutoRefreshManager {
     }
 
     /// 验证会话是否有对应的user_provider_keys关联
-    /// 如果没有关联且创建超过10分钟，说明这是一个孤立的会话，应该被删除
+    /// 如果没有关联且创建超过5分钟，说明这是一个孤立的会话，会被自动删除
     async fn validate_session_association(
         &self,
         session: &oauth_client_sessions::Model,
     ) -> OAuthResult<bool> {
-        // 🔒 安全检查：只处理创建超过10分钟的会话，避免误删正在处理的新会话
+        // 🔒 安全检查：只处理创建超过5分钟的会话，避免误删正在处理的新会话
         let now = Utc::now().naive_utc();
         let session_age = now.signed_duration_since(session.created_at);
-        let min_age_threshold = Duration::try_minutes(10).unwrap_or_default();
+        let min_age_threshold = Duration::try_minutes(5).unwrap_or_default();
 
         if session_age < min_age_threshold {
             debug!(
-                "Session {} 创建时间不足10分钟 ({}分钟)，跳过孤立检查",
+                "Session {} 创建时间不足5分钟 ({}分钟)，跳过孤立检查",
                 session.session_id,
                 session_age.num_minutes()
             );
@@ -356,11 +356,22 @@ impl AutoRefreshManager {
         let has_association = associated_key.is_some();
 
         if !has_association {
-            warn!(
-                "Session {} 创建 {} 分钟后仍无user_provider_keys关联，判定为孤立会话",
+            info!(
+                "Session {} 创建 {} 分钟后仍无user_provider_keys关联，判定为孤立会话，开始清理",
                 session.session_id,
                 session_age.num_minutes()
             );
+
+            // 删除孤立会话
+            if let Err(e) = self
+                .session_manager
+                .delete_session(&session.session_id, session.user_id)
+                .await
+            {
+                error!("删除孤立会话失败 {}: {}", session.session_id, e);
+            } else {
+                info!("成功删除孤立会话 {}", session.session_id);
+            }
         } else {
             debug!(
                 "Session {} 有有效的user_provider_keys关联",
