@@ -1,3 +1,7 @@
+//! # OAuth 清理集成测试
+//!
+//! 测试 OAuth 相关功能的清理逻辑，包括会话清理、token 刷新等。
+
 use chrono::{Duration, Utc};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection, Set, entity::*, QueryFilter, PaginatorTrait};

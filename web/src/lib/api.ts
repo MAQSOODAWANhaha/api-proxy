@@ -174,6 +174,7 @@ export interface SchedulingStrategiesResponse {
 export interface ModelUsage {
   model: string
   usage: number
+  cost: number
 }
 
 export interface ModelsRateResponse {
@@ -184,7 +185,7 @@ export interface ModelStatistics {
   model: string
   usage: number
   percentage: number
-  cost: string
+  cost: number
 }
 
 export interface ModelsStatisticsResponse {
@@ -197,7 +198,7 @@ export interface TokenTrendPoint {
   cache_read_tokens: number
   tokens_prompt: number
   tokens_completion: number
-  cost: string
+  cost: number
 }
 
 export interface TokensTrendResponse {
@@ -1419,9 +1420,9 @@ export const api = {
     /**
      * 查询OAuth状态 (旧版本，保持兼容性)
      */
-    async getOAuthStatus(sessionId: string): Promise<ApiResponse<OAuthStatusResponse>> {
+    async getOAuthStatus(sessionId: string): Promise<ApiResponse<OAuthPollingStatusResponse>> {
       try {
-        return await apiClient.get<OAuthStatusResponse>(`/oauth/poll?session_id=${sessionId}`)
+        return await apiClient.get<OAuthPollingStatusResponse>(`/oauth/poll?session_id=${sessionId}`)
       } catch (error) {
         console.error('[OAuth] Failed to get OAuth status:', error)
         return {

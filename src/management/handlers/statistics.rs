@@ -62,6 +62,7 @@ pub struct TodayDashboardCards {
 pub struct ModelUsage {
     pub model: String,
     pub usage: i64,
+    pub cost: f64,
 }
 
 /// 模型使用占比响应
@@ -76,7 +77,7 @@ pub struct ModelStatistics {
     pub model: String,
     pub usage: i64,
     pub percentage: f64,
-    pub cost: String,
+    pub cost: f64,
 }
 
 /// 模型详细统计响应
@@ -93,7 +94,7 @@ pub struct TokenTrendPoint {
     pub cache_read_tokens: i64,
     pub tokens_prompt: i64,
     pub tokens_completion: i64,
-    pub cost: String,
+    pub cost: f64,
 }
 
 /// Token使用趋势响应
@@ -285,6 +286,7 @@ pub async fn get_models_usage_rate(
     let traces = match ProxyTracing::find()
         .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
         .await
     {
@@ -299,36 +301,42 @@ pub async fn get_models_usage_rate(
         }
     };
 
-    // 按模型统计使用次数
-    let mut model_stats: HashMap<String, i64> = HashMap::new();
+    // 按模型统计使用次数和成本
+    let mut model_stats: HashMap<String, (i64, f64)> = HashMap::new();
     for trace in traces {
         let model_name = trace.model_used.unwrap_or_else(|| "Unknown".to_string());
-        *model_stats.entry(model_name).or_insert(0) += 1;
+        let cost = trace.cost.unwrap_or(0.0);
+        let entry = model_stats.entry(model_name).or_insert((0, 0.0));
+        entry.0 += 1; // usage count
+        entry.1 += cost; // total cost
     }
 
     // 按使用次数排序
-    let mut model_vec: Vec<(String, i64)> = model_stats.into_iter().collect();
+    let mut model_vec: Vec<(String, i64, f64)> = model_stats.into_iter().map(|(model, (usage, cost))| (model, usage, cost)).collect();
     model_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
     // 限制最多6个模型，其余合并为"其他"
     let mut model_usage = Vec::new();
     if model_vec.len() <= 6 {
-        for (model, usage) in model_vec {
-            model_usage.push(ModelUsage { model, usage });
+        for (model, usage, cost) in model_vec {
+            model_usage.push(ModelUsage { model, usage, cost });
         }
     } else {
         // 前5个模型
-        for (model, usage) in model_vec.iter().take(5) {
+        for (model, usage, cost) in model_vec.iter().take(5) {
             model_usage.push(ModelUsage {
                 model: model.clone(),
                 usage: *usage,
+                cost: *cost,
             });
         }
         // 其余模型合并为"其他"
-        let other_usage: i64 = model_vec.iter().skip(5).map(|(_, usage)| usage).sum();
+        let other_usage: i64 = model_vec.iter().skip(5).map(|(_, usage, _)| usage).sum();
+        let other_cost: f64 = model_vec.iter().skip(5).map(|(_, _, cost)| cost).sum();
         model_usage.push(ModelUsage {
             model: "其他".to_string(),
             usage: other_usage,
+            cost: other_cost,
         });
     }
 
@@ -355,6 +363,7 @@ pub async fn get_models_statistics(
     let traces = match ProxyTracing::find()
         .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
         .await
     {
@@ -394,7 +403,7 @@ pub async fn get_models_statistics(
                 model,
                 usage,
                 percentage,
-                cost: format!("${:.2}", cost),
+                cost,
             }
         })
         .collect();
@@ -471,7 +480,7 @@ pub async fn get_tokens_trend(
                 cache_read_tokens: *cache_read,
                 tokens_prompt: *prompt,
                 tokens_completion: *completion,
-                cost: format!("${:.2}", cost),
+                cost: *cost,
             });
         } else {
             daily_totals.push(0);
@@ -481,7 +490,7 @@ pub async fn get_tokens_trend(
                 cache_read_tokens: 0,
                 tokens_prompt: 0,
                 tokens_completion: 0,
-                cost: "$0.00".to_string(),
+                cost: 0.0,
             });
         }
     }

@@ -190,8 +190,9 @@ const TrendChart: React.FC<{
                 r="4"
                 fill={color}
                 className="hover:r-6 transition-all cursor-pointer"
-                title={`${validData[index].date}: ${value.toLocaleString()}`}
-              />
+              >
+                <title>{`${validData[index].date}: ${value.toLocaleString()}`}</title>
+              </circle>
             )
           })}
         </svg>
@@ -822,7 +823,7 @@ const PieChartWithTimeFilter: React.FC = () => {
       name: item.model,
       count: item.usage,
       percentage: (item.usage / modelsRate.model_usage.reduce((sum, m) => sum + m.usage, 0)) * 100,
-      cost: 0, // 后端暂不提供成本数据
+      cost: item.cost || 0,
       color: colors[index % colors.length]
     }))
   }, [modelsRate])
@@ -906,7 +907,7 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
       name: item.model,
       count: item.usage,
       percentage: item.percentage,
-      cost: parseFloat(item.cost) || 0,
+      cost: item.cost || 0,
       color: colors[index % colors.length]
     }))
   }, [modelsStatistics])
