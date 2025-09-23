@@ -6,6 +6,7 @@ pub mod api_key;
 pub mod background_task_manager; // 后台任务管理器
 pub mod cache_strategy; // 统一缓存策略
 pub mod dual_auth_boundary; // 双认证机制边界控制
+pub mod gemini_code_assist_client; // Gemini Code Assist API客户端
 pub mod header_parser;
 pub mod jwt;
 pub mod management;

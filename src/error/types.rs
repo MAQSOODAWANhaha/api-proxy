@@ -53,6 +53,14 @@ pub enum ProxyError {
     #[error("业务错误: {message}")]
     Business { message: String },
 
+    /// Gemini Code Assist API错误
+    #[error("Gemini Code Assist API错误: {message}")]
+    GeminiCodeAssistError { message: String },
+
+    /// Gemini项目ID获取错误
+    #[error("Gemini项目ID获取错误: {message}")]
+    GeminiProjectIdError { message: String },
+
     /// 系统内部错误
     #[error("内部错误: {message}")]
     Internal {
@@ -380,6 +388,12 @@ impl ProxyError {
             ProxyError::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
             ProxyError::ManagementRateLimit { .. } => {
                 (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
+            }
+            ProxyError::GeminiCodeAssistError { .. } => {
+                (StatusCode::BAD_GATEWAY, "GEMINI_CODE_ASSIST_ERROR")
+            }
+            ProxyError::GeminiProjectIdError { .. } => {
+                (StatusCode::BAD_GATEWAY, "GEMINI_PROJECT_ID_ERROR")
             }
         }
     }
@@ -923,6 +937,20 @@ impl ProxyError {
         Self::ManagementRateLimit {
             message: message.into(),
             source: Some(source.into()),
+        }
+    }
+
+    /// 创建Gemini Code Assist API错误
+    pub fn gemini_code_assist<T: Into<String>>(message: T) -> Self {
+        Self::GeminiCodeAssistError {
+            message: message.into(),
+        }
+    }
+
+    /// 创建Gemini项目ID获取错误
+    pub fn gemini_project_id<T: Into<String>>(message: T) -> Self {
+        Self::GeminiProjectIdError {
+            message: message.into(),
         }
     }
 }

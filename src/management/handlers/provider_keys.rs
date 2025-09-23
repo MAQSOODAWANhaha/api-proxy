@@ -2,7 +2,16 @@
 //!
 //! 处理上游AI服务商的API密钥管理相关请求
 
-use crate::auth::extract_user_id_from_headers;
+use crate::auth::{extract_user_id_from_headers, gemini_code_assist_client::GeminiCodeAssistClient};
+
+/// Gemini提供商名称常量
+const GEMINI_PROVIDER_NAME: &str = "gemini";
+
+/// OAuth认证类型常量
+const OAUTH_AUTH_TYPE: &str = "oauth";
+
+/// OAuth会话完成状态常量
+const OAUTH_SESSION_STATUS_COMPLETED: &str = "completed";
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -303,6 +312,75 @@ pub async fn create_provider_key(
         }
     }
 
+    // 自动获取Gemini OAuth场景的project_id
+    let mut final_project_id = payload.project_id.clone();
+
+    // 检查是否是Gemini OAuth场景且需要自动获取project_id
+    if payload.auth_type == OAUTH_AUTH_TYPE && final_project_id.is_none() {
+        // 查询provider类型信息，判断是否是Gemini
+        if let Ok(Some(provider_type)) = entity::provider_types::Entity::find_by_id(payload.provider_type_id)
+            .one(db)
+            .await
+        {
+            if provider_type.name == GEMINI_PROVIDER_NAME {
+                tracing::info!(
+                    user_id = user_id,
+                    provider_type_id = payload.provider_type_id,
+                    "检测到Gemini OAuth且无project_id，开始自动获取"
+                );
+
+                // 获取OAuth会话的access_token
+                if let Some(session_id) = &payload.api_key {
+                    use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+
+                    if let Ok(Some(oauth_session)) = OAuthSession::find()
+                        .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+                        .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+                        .filter(oauth_client_sessions::Column::Status.eq(OAUTH_SESSION_STATUS_COMPLETED))
+                        .one(db)
+                        .await
+                    {
+                        // 使用Gemini Code Assist API客户端自动获取project_id
+                        let gemini_client = GeminiCodeAssistClient::new();
+                        match gemini_client.auto_get_project_id(&oauth_session.access_token.as_deref().unwrap_or("")).await {
+                            Ok(Some(auto_project_id)) => {
+                                final_project_id = Some(auto_project_id.clone());
+                                tracing::info!(
+                                    user_id = user_id,
+                                    session_id = session_id,
+                                    auto_project_id = auto_project_id,
+                                    "成功自动获取Gemini project_id"
+                                );
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    user_id = user_id,
+                                    session_id = session_id,
+                                    "Gemini auto_get_project_id返回None，将使用空project_id创建"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    user_id = user_id,
+                                    session_id = session_id,
+                                    error = %e,
+                                    "自动获取Gemini project_id失败，将使用空project_id创建"
+                                );
+                                // 不阻断创建流程，继续使用空project_id
+                            }
+                        }
+                    } else {
+                        tracing::warn!(
+                            user_id = user_id,
+                            session_id = session_id,
+                            "无法找到OAuth会话，跳过自动获取project_id"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // 创建新密钥
     let new_provider_key = user_provider_keys::ActiveModel {
         user_id: Set(user_id),
@@ -316,8 +394,8 @@ pub async fn create_provider_key(
         max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
         max_requests_per_day: Set(payload.max_requests_per_day),
         is_active: Set(payload.is_active.unwrap_or(true)),
-        // 简单保存project_id到数据库
-        project_id: Set(payload.project_id),
+        // 保存最终确定的project_id到数据库（可能是传入的，也可能是自动获取的）
+        project_id: Set(final_project_id),
         health_status: Set("healthy".to_string()),
         created_at: Set(Utc::now().naive_utc()),
         updated_at: Set(Utc::now().naive_utc()),
