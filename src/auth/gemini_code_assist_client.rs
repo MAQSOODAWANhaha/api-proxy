@@ -258,7 +258,7 @@ impl GeminiCodeAssistClient {
                 ClientMetadata::new()
             };
             request_body.insert(
-                "clientMetadata".to_string(),
+                "metadata".to_string(),
                 serde_json::to_value(metadata).map_err(|e| {
                     ProxyError::gemini_code_assist(format!("Failed to serialize client metadata: {}", e))
                 })?,
