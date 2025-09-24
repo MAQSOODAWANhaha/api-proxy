@@ -397,17 +397,17 @@ impl TracingContextHelper {
 
     /// 从ProxyContext提取模型信息
     pub fn extract_model_info(ctx: &ProxyContext) -> Option<String> {
-        ctx.token_usage.model_used.clone()
+        // 使用最新请求模型（统计阶段会同步更新）
+        ctx.requested_model.clone()
     }
 
     /// 从ProxyContext提取token信息
     pub fn extract_token_info(ctx: &ProxyContext) -> (Option<u32>, Option<u32>, Option<u32>) {
-        let tokens = &ctx.token_usage;
-        (
-            tokens.prompt_tokens,
-            tokens.completion_tokens,
-            Some(tokens.total_tokens),
-        )
+        let usage = ctx.usage_final.as_ref();
+        let prompt = usage.and_then(|u| u.prompt_tokens);
+        let completion = usage.and_then(|u| u.completion_tokens);
+        let total = usage.and_then(|u| u.total_tokens).or(Some(0));
+        (prompt, completion, total)
     }
 }
 

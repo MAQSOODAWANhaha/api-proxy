@@ -692,8 +692,22 @@ impl ResponseBodyService for DefaultResponseBodyService {
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
-            // 仅收集分块，统一由 StatisticsService 在收口阶段完成规范化与统计
-            ctx.response_details.add_body_chunk(data);
+            // 判定是否为流式
+            let is_streaming = ctx
+                .response_details
+                .content_type
+                .as_deref()
+                .map(|ct| ct.contains("text/event-stream") || ct.contains("application/stream+json"))
+                .unwrap_or(false);
+
+            if is_streaming {
+                // 仅保留末端窗口 + 增量统计，不累计全量
+                ctx.response_details.push_tail_window(data);
+                crate::statistics::service::ingest_streaming_chunk(ctx, data);
+            } else {
+                // 非流式：按块累计，供后续收口统计与（限量）解压
+                ctx.response_details.add_body_chunk(data);
+            }
             debug!(
                 component = COMPONENT,
                 request_id = %ctx.request_id,
@@ -1635,12 +1649,12 @@ impl ProxyHttp for ProxyService {
                 // 使用 StatisticsService 统一完成 finalize + 提取 + 合并（含 SSE 覆盖与重算成本）
                 match self.ai_handler.statistics_service().finalize_and_extract_stats(ctx).await {
                     Ok(new_stats) => {
-                        // 更新上下文中的token使用信息（使用合并后的 new_stats）
-                        ctx.token_usage.prompt_tokens = new_stats.input_tokens;
-                        ctx.token_usage.completion_tokens = new_stats.output_tokens;
-                        ctx.token_usage.total_tokens = new_stats.total_tokens.unwrap_or(0);
-                        ctx.token_usage.model_used = new_stats.model_name.clone();
-                        ctx.tokens_used = ctx.token_usage.total_tokens;
+                        // 统一使用 usage_final（由统计服务设置）与模型名
+                        let final_usage = ctx
+                            .usage_final
+                            .clone()
+                            .unwrap_or(crate::statistics::types::TokenUsageMetrics::default());
+                        ctx.tokens_used = final_usage.total_tokens.unwrap_or(0);
 
                         // 统一更新扩展追踪中的模型信息（成功路径）
                         if let Some(model) = new_stats.model_name.clone() {
@@ -1658,12 +1672,12 @@ impl ProxyHttp for ProxyService {
                                 &ctx.request_id,
                                 status_code,
                                 true, // is_success
-                                new_stats.input_tokens,
-                                new_stats.output_tokens,
+                                final_usage.prompt_tokens,
+                                final_usage.completion_tokens,
                                 None, // error_type
                                 None, // error_message
-                                new_stats.cache_create_tokens,
-                                new_stats.cache_read_tokens,
+                                final_usage.cache_create_tokens,
+                                final_usage.cache_read_tokens,
                                 new_stats.cost,
                                 cc.clone(),
                             )
@@ -1681,9 +1695,9 @@ impl ProxyHttp for ProxyService {
                             event = "stats_ok",
                             component = COMPONENT,
                             request_id = %ctx.request_id,
-                            tokens_prompt = ?new_stats.input_tokens,
-                            tokens_completion = ?new_stats.output_tokens,
-                            tokens_total = ?new_stats.total_tokens,
+                            tokens_prompt = ?final_usage.prompt_tokens,
+                            tokens_completion = ?final_usage.completion_tokens,
+                            tokens_total = ?final_usage.total_tokens,
                             model_used = ?new_stats.model_name,
                             cost = ?cost_val,
                             cost_currency = ?currency_val,
@@ -1696,22 +1710,7 @@ impl ProxyHttp for ProxyService {
                             error = %e,
                             "Failed to extract stats from response body, using header-based data"
                         );
-                        // Fallback to header-based data
-                        let _ = tracer
-                            .complete_trace_with_stats(
-                                &ctx.request_id,
-                                status_code,
-                                true,
-                                ctx.token_usage.prompt_tokens,
-                                ctx.token_usage.completion_tokens,
-                                None,
-                                None,
-                                None,
-                                None,
-                                None,
-                                None,
-                            )
-                            .await;
+                        // Fallback：不更新统计
                     }
                 }
             }

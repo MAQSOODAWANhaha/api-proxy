@@ -25,6 +25,7 @@ use crate::pricing::PricingCalculatorService;
 use crate::proxy::{AuthenticationService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::statistics::service::StatisticsService;
+use crate::statistics::types::{PartialUsage, TokenUsageMetrics};
 use crate::trace::immediate::ImmediateProxyTracer;
 use crate::{proxy_debug, proxy_info, proxy_warn};
 use entity::{
@@ -62,14 +63,6 @@ pub struct RequestHandler {
     tracing_service: Arc<TracingService>,
 }
 
-/// Token使用详情
-#[derive(Clone, Debug, Default)]
-pub struct TokenUsage {
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
-    pub total_tokens: u32,
-    pub model_used: Option<String>,
-}
 
 /// 请求详情
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -92,42 +85,53 @@ pub struct RequestDetails {
 }
 
 /// 响应详情
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct ResponseDetails {
     pub headers: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub body_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_encoding: Option<String>,
     /// HTTP状态码
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
     /// 响应体数据块累积(用于收集响应体数据)
+    #[serde(skip_serializing)]
     pub body_chunks: Vec<u8>,
+    /// 流式响应尾部窗口（仅保留末端用于模型/usage兜底解析）
+    #[serde(skip_serializing)]
+    pub tail_window: Vec<u8>,
 }
 
-/// 响应详情的序列化版本(不包含body_chunks)
-#[derive(serde::Serialize)]
-pub struct SerializableResponseDetails {
-    pub headers: std::collections::HashMap<String, String>,
-    pub body: Option<String>,
-    pub body_size: Option<u64>,
-    pub content_type: Option<String>,
-    pub content_encoding: Option<String>,
-}
-
-impl From<&ResponseDetails> for SerializableResponseDetails {
-    fn from(details: &ResponseDetails) -> Self {
-        Self {
-            headers: details.headers.clone(),
-            body: details.body.clone(),
-            body_size: details.body_size,
-            content_type: details.content_type.clone(),
-            content_encoding: details.content_encoding.clone(),
-        }
-    }
-}
+// SerializableResponseDetails 已合并到 ResponseDetails 的 serde 序列化中
 
 impl ResponseDetails {
+    /// 将数据块写入流式尾窗（环形缓存，仅保留末端窗口）
+    pub fn push_tail_window(&mut self, chunk: &[u8]) {
+        const STREAM_TAIL_WINDOW_BYTES: usize = 64 * 1024; // 64KB
+        if chunk.is_empty() {
+            return;
+        }
+        // 若总长超过窗口大小，只保留末端
+        if self.tail_window.len() + chunk.len() <= STREAM_TAIL_WINDOW_BYTES {
+            self.tail_window.extend_from_slice(chunk);
+        } else {
+            // 需要裁剪已有数据，确保追加后不超过窗口
+            let needed = STREAM_TAIL_WINDOW_BYTES.saturating_sub(chunk.len());
+            if needed == 0 {
+                self.tail_window.clear();
+            } else if self.tail_window.len() > needed {
+                let drop_len = self.tail_window.len() - needed;
+                self.tail_window.drain(0..drop_len);
+            }
+            self.tail_window.extend_from_slice(chunk);
+        }
+    }
+
     /// 添加响应体数据块
     pub fn add_body_chunk(&mut self, chunk: &[u8]) {
         let prev_size = self.body_chunks.len();
@@ -260,20 +264,47 @@ impl ResponseDetails {
             tracing::debug!("No response body chunks to finalize (empty response)");
         }
     }
+
+    /// 清理已收集的原始分块，避免与字符串副本双份占用
+    pub fn clear_body_chunks(&mut self) {
+        if !self.body_chunks.is_empty() {
+            tracing::debug!(
+                cleared_bytes = self.body_chunks.len(),
+                "Clearing collected body chunks to reduce memory"
+            );
+            self.body_chunks.clear();
+        }
+    }
+
+    /// 生成有限大小的预览字符串（优先使用 body，其次使用 tail_window）
+    pub fn make_preview(&self, limit: usize) -> String {
+        if let Some(b) = &self.body {
+            if b.len() > limit {
+                format!("{}...[truncated {} bytes]", &b[..limit], b.len() - limit)
+            } else {
+                b.clone()
+            }
+        } else if !self.tail_window.is_empty() {
+            match String::from_utf8(self.tail_window.clone()) {
+                Ok(s) => {
+                    if s.len() > limit {
+                        format!("{}...[truncated {} bytes]", &s[..limit], s.len() - limit)
+                    } else {
+                        s
+                    }
+                }
+                Err(_) => format!(
+                    "<binary:{} bytes> {}",
+                    self.tail_window.len(),
+                    hex::encode(&self.tail_window[..self.tail_window.len().min(1024)])
+                ),
+            }
+        } else {
+            "<empty>".to_string()
+        }
+    }
 }
 
-/// 详细的请求统计信息
-#[derive(Debug, Clone, Default)]
-pub struct DetailedRequestStats {
-    pub input_tokens: Option<u32>,
-    pub output_tokens: Option<u32>,
-    pub total_tokens: Option<u32>,
-    pub model_name: Option<String>,
-    pub cache_create_tokens: Option<u32>,
-    pub cache_read_tokens: Option<u32>,
-    pub cost: Option<f64>,
-    pub cost_currency: Option<String>,
-}
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
 
@@ -294,8 +325,6 @@ pub struct ProxyContext {
     pub retry_count: u32,
     /// 使用的tokens（向后兼容）
     pub tokens_used: u32,
-    /// 详细的Token使用信息
-    pub token_usage: TokenUsage,
     /// 请求详情
     pub request_details: RequestDetails,
     /// 响应详情
@@ -316,8 +345,10 @@ pub struct ProxyContext {
     pub requested_model: Option<String>,
     /// SSE 行缓冲（用于流式分块行合并）
     pub sse_line_buffer: String,
-    /// SSE 阶段观测到的 usageMetadata（最新一次覆盖）
-    pub sse_usage_agg: Option<SseUsageAgg>,
+    /// 流式增量使用量（最新一次覆盖）
+    pub usage_partial: PartialUsage,
+    /// 最终使用量（统一出口）
+    pub usage_final: Option<TokenUsageMetrics>,
 }
 
 impl Default for ProxyContext {
@@ -330,7 +361,6 @@ impl Default for ProxyContext {
             start_time: std::time::Instant::now(),
             retry_count: 0,
             tokens_used: 0,
-            token_usage: TokenUsage::default(),
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
             selected_provider: None,
@@ -341,7 +371,8 @@ impl Default for ProxyContext {
             account_id: None,
             requested_model: None,
             sse_line_buffer: String::new(),
-            sse_usage_agg: None,
+            usage_partial: PartialUsage::default(),
+            usage_final: None,
         }
     }
 }
@@ -355,13 +386,7 @@ pub enum ResolvedCredential {
     OAuthAccessToken(String),
 }
 
-/// SSE usage 统计聚合（latest-wins）
-#[derive(Debug, Clone, Default)]
-pub struct SseUsageAgg {
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
-    pub total_tokens: Option<u32>,
-}
+// 已统一为 statistics::types::PartialUsage / TokenUsageMetrics
 
 /// 认证结果
 #[derive(Debug, Clone)]
@@ -1486,9 +1511,7 @@ impl RequestHandler {
         self.statistics_service
             .collect_response_details(upstream_response, ctx);
 
-        // 初始化token使用信息 - 委托给StatisticsService
-        let token_usage = self.statistics_service.initialize_token_usage(ctx).await?;
-        ctx.token_usage = token_usage;
+        // 旧的初始化token使用信息逻辑已移除，统计由收口阶段统一完成
 
         // 调用提供商策略处理响应
         if let Some(provider_name) = ctx.provider_type.as_ref().map(|p| p.name.clone()) {

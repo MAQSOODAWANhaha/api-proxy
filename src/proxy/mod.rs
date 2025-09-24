@@ -24,9 +24,8 @@ pub use crate::statistics::service::{RequestStats, ResponseStats, StatisticsServ
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use pingora_proxy::PingoraProxyServer;
-pub use request_handler::{
-    DetailedRequestStats, RequestDetails, ResponseDetails, SerializableResponseDetails, TokenUsage,
-};
+pub use request_handler::{RequestDetails, ResponseDetails};
+pub use crate::statistics::types::{ComputedStats, TokenUsageMetrics, PartialUsage};
 pub use request_handler::{ProxyContext, RequestHandler};
 pub use service::ProxyService;
 pub use tracing_service::{TracingContextHelper, TracingService};
@@ -36,10 +35,7 @@ pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
     pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
-    pub use super::request_handler::{
-        DetailedRequestStats, RequestDetails, ResponseDetails, SerializableResponseDetails,
-        TokenUsage,
-    };
+    pub use super::request_handler::{RequestDetails, ResponseDetails};
     pub use super::request_handler::{ProxyContext, RequestHandler};
     pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};

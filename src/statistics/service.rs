@@ -7,6 +7,7 @@ use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::borrow::Cow;
 use url::form_urlencoded;
 
 use crate::auth::AuthUtils;
@@ -16,9 +17,8 @@ use crate::proxy::ProxyContext;
 // 提取器在此处不直接依赖，避免强耦合；如需高级解析可在 providers 层使用。
 
 // 重用request_handler中的类型，避免重复定义
-pub use crate::proxy::request_handler::{
-    DetailedRequestStats, RequestDetails, ResponseDetails, SerializableResponseDetails, TokenUsage,
-};
+pub use crate::proxy::request_handler::{RequestDetails, ResponseDetails};
+use crate::statistics::types::ComputedStats;
 
 /// 请求统计信息
 #[derive(Debug, Clone)]
@@ -58,18 +58,12 @@ impl StatisticsService {
         &self,
         model: &str,
         provider_type_id: i32,
-        usage: &TokenUsage,
+        usage: &crate::pricing::TokenUsage,
         request_id: &str,
     ) -> Result<(Option<f64>, Option<String>), ProxyError> {
-        let pricing_usage = crate::pricing::TokenUsage {
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            cache_create_tokens: None,
-            cache_read_tokens: None,
-        };
         match self
             .pricing_calculator
-            .calculate_cost(model, provider_type_id, &pricing_usage, request_id)
+            .calculate_cost(model, provider_type_id, usage, request_id)
             .await
         {
             Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
@@ -78,39 +72,6 @@ impl StatisticsService {
                 Ok((None, None))
             }
         }
-    }
-
-    /// 提取模型名称并初始化token使用信息
-    pub async fn initialize_token_usage(
-        &self,
-        ctx: &mut ProxyContext,
-    ) -> Result<TokenUsage, ProxyError> {
-        // 直接使用请求时提取的模型信息
-        let model_used = ctx.requested_model.clone();
-
-        // 记录使用的模型信息用于调试
-        if let Some(model) = &model_used {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                model = model,
-                "Using requested model for token usage initialization"
-            );
-        } else {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                "No model information available for token usage initialization"
-            );
-        }
-
-        // 创建token使用信息
-        let token_usage = TokenUsage {
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: 0,
-            model_used,
-        };
-
-        Ok(token_usage)
     }
 
     /// 收集请求统计信息
@@ -399,11 +360,12 @@ impl StatisticsService {
     }
 
     /// 从上下文响应体中提取统计信息（统一实现）
+    #[allow(dead_code)]
     pub async fn extract_detailed_stats_from_response(
         &self,
         ctx: &mut ProxyContext,
-    ) -> Result<DetailedRequestStats, ProxyError> {
-        let mut stats = DetailedRequestStats::default();
+    ) -> Result<ComputedStats, ProxyError> {
+        let mut stats = ComputedStats::default();
 
         // 如果没有响应体或JSON解析失败，直接使用请求时的模型信息
         let body = match ctx.response_details.body.as_ref() {
@@ -485,36 +447,36 @@ impl StatisticsService {
                 {
                     let extractor =
                         crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
-                    stats.input_tokens = extractor.extract_token_u32(&normalized, "tokens_prompt");
-                    stats.output_tokens =
+                    stats.usage.prompt_tokens = extractor.extract_token_u32(&normalized, "tokens_prompt");
+                    stats.usage.completion_tokens =
                         extractor.extract_token_u32(&normalized, "tokens_completion");
                     // total: 优先映射，如果没有，则根据 prompt+completion 回退
-                    stats.total_tokens = extractor
+                    stats.usage.total_tokens = extractor
                         .extract_token_u32(&normalized, "tokens_total")
-                        .or_else(|| match (stats.input_tokens, stats.output_tokens) {
+                        .or_else(|| match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
                             (Some(p), Some(c)) => Some(p + c),
                             (Some(p), None) => Some(p),
                             (None, Some(c)) => Some(c),
                             _ => None,
                         });
                     // 可选缓存字段
-                    stats.cache_create_tokens =
+                    stats.usage.cache_create_tokens =
                         extractor.extract_token_u32(&normalized, "cache_create_tokens");
-                    stats.cache_read_tokens =
+                    stats.usage.cache_read_tokens =
                         extractor.extract_token_u32(&normalized, "cache_read_tokens");
                 }
             }
         }
 
         // 若数据库未配置或未提取到token字段，则设为0值
-        if stats.input_tokens.is_none() {
-            stats.input_tokens = Some(0);
+        if stats.usage.prompt_tokens.is_none() {
+            stats.usage.prompt_tokens = Some(0);
         }
-        if stats.output_tokens.is_none() {
-            stats.output_tokens = Some(0);
+        if stats.usage.completion_tokens.is_none() {
+            stats.usage.completion_tokens = Some(0);
         }
-        if stats.total_tokens.is_none() {
-            stats.total_tokens = Some(0);
+        if stats.usage.total_tokens.is_none() {
+            stats.usage.total_tokens = Some(0);
         }
 
         // 同步模型名（优先使用请求时已提取的模型信息）
@@ -565,8 +527,8 @@ impl StatisticsService {
             request_id = %ctx.request_id,
             model_name = ?stats.model_name,
             provider_id = ?ctx.provider_type.as_ref().map(|p| p.id),
-            input_tokens = ?stats.input_tokens,
-            output_tokens = ?stats.output_tokens,
+            input_tokens = ?stats.usage.prompt_tokens,
+            output_tokens = ?stats.usage.completion_tokens,
             "费用计算条件检查"
         );
 
@@ -581,10 +543,10 @@ impl StatisticsService {
             );
 
             let pricing_usage = crate::pricing::TokenUsage {
-                prompt_tokens: stats.input_tokens,
-                completion_tokens: stats.output_tokens,
-                cache_create_tokens: None,
-                cache_read_tokens: None,
+                prompt_tokens: stats.usage.prompt_tokens,
+                completion_tokens: stats.usage.completion_tokens,
+                cache_create_tokens: stats.usage.cache_create_tokens,
+                cache_read_tokens: stats.usage.cache_read_tokens,
             };
             match self
                 .pricing_calculator
@@ -844,83 +806,137 @@ impl StatisticsService {
             .collect()
     }
 
-    /// 最终统计入口（统一流式与非流式）：
-    /// 1) 若未完成收集，先执行 finalize_body
-    /// 2) 流式：先标准化为等价的非流式 JSON，再提取
-    /// 3) 非流式：直接从 body JSON 提取
-    /// 4) 若存在 sse_usage_agg，作为兜底覆盖（latest-wins）并在具备模型/Provider时重算费用
+    /// 最终统计入口（统一流式与非流式）
+    /// 1) 非流式：从原始分块获取字节，如存在 content-encoding 则限量解压，仅用于统计；解析JSON提取统计；完成后清理分块以节省内存
+    /// 2) 流式：不还原整段，仅使用 sse_usage_agg（latest-wins）作为主来源；必要时从 tail_window 解析末端事件获取模型兜底
     pub async fn finalize_and_extract_stats(
         &self,
         ctx: &mut ProxyContext,
-    ) -> Result<DetailedRequestStats, ProxyError> {
-        if ctx.response_details.body.is_none() {
-            ctx.response_details.finalize_body();
+    ) -> Result<ComputedStats, ProxyError> {
+        // 流式路径：不解压，不还原整段
+        if ctx.response_details.is_sse_format() {
+            let mut stats = ComputedStats::default();
+            // 使用增量聚合的 usage（latest-wins）
+            if ctx.usage_partial.prompt_tokens.is_some()
+                || ctx.usage_partial.completion_tokens.is_some()
+                || ctx.usage_partial.total_tokens.is_some()
+                || ctx.usage_partial.cache_create_tokens.is_some()
+                || ctx.usage_partial.cache_read_tokens.is_some()
+            {
+                stats.usage.prompt_tokens = ctx.usage_partial.prompt_tokens;
+                stats.usage.completion_tokens = ctx.usage_partial.completion_tokens;
+                stats.usage.total_tokens = ctx
+                    .usage_partial
+                    .total_tokens
+                    .or_else(|| match (
+                        ctx.usage_partial.prompt_tokens,
+                        ctx.usage_partial.completion_tokens,
+                    ) {
+                        (Some(p), Some(c)) => Some(p + c),
+                        (Some(p), None) => Some(p),
+                        (None, Some(c)) => Some(c),
+                        _ => Some(0),
+                    })
+                    .or(Some(0));
+                stats.usage.cache_create_tokens = ctx.usage_partial.cache_create_tokens;
+                stats.usage.cache_read_tokens = ctx.usage_partial.cache_read_tokens;
+            } else {
+                stats.usage.prompt_tokens = Some(0);
+                stats.usage.completion_tokens = Some(0);
+                stats.usage.total_tokens = Some(0);
+            }
+
+            // 从尾窗尝试提取模型兜底
+            if stats.model_name.is_none() {
+                if !ctx.response_details.tail_window.is_empty() {
+                    if let Ok(s) = String::from_utf8(ctx.response_details.tail_window.clone()) {
+                        if let Some(last_json) = extract_last_json_from_str(&s) {
+                            stats.model_name = self.extract_model_from_response_body(&last_json);
+                        }
+                    }
+                }
+            }
+
+            // 费用计算（有模型与 provider）
+            if let (Some(model), Some(provider)) = (stats.model_name.clone(), ctx.provider_type.as_ref()) {
+                let usage_now = crate::pricing::TokenUsage {
+                    prompt_tokens: stats.usage.prompt_tokens,
+                    completion_tokens: stats.usage.completion_tokens,
+                    cache_create_tokens: stats.usage.cache_create_tokens,
+                    cache_read_tokens: stats.usage.cache_read_tokens,
+                };
+                if let Ok((cost, currency)) = self
+                    .calculate_cost_direct(&model, provider.id, &usage_now, &ctx.request_id)
+                    .await
+                {
+                    stats.cost = cost;
+                    stats.cost_currency = currency;
+                }
+            }
+
+            // 同步新统一字段
+            ctx.usage_final = Some(stats.usage.clone());
+
+            return Ok(stats);
         }
 
-        // 尝试将流式响应规范化为等价非流式 JSON
-        if ctx.response_details.is_sse_format() {
-            if let Some(json) = self.normalize_streaming_json(ctx) {
-                let mut stats = self.extract_stats_from_json(ctx, &json).await?;
-                // 兜底覆盖：如先前增量聚合到 ctx.sse_usage_agg，则以 latest-wins 更新
-                if let Some(agg) = ctx.sse_usage_agg.clone() {
-                    stats.input_tokens = agg.prompt_tokens.or(stats.input_tokens);
-                    stats.output_tokens = agg.completion_tokens.or(stats.output_tokens);
-                    stats.total_tokens = Some(
-                        agg.total_tokens
-                            .or_else(|| match (agg.prompt_tokens, agg.completion_tokens) {
-                                (Some(p), Some(c)) => Some(p + c),
-                                (Some(p), None) => Some(p),
-                                (None, Some(c)) => Some(c),
-                                (None, None) => stats.total_tokens,
-                            })
-                            .unwrap_or(0),
-                    );
-                }
-                return Ok(stats);
+        // 非流式：从原始分块获取字节，按需限量解压，仅用于统计
+        let encoding = ctx
+            .response_details
+            .content_encoding
+            .as_ref()
+            .map(|s| s.as_str());
+        let raw = &ctx.response_details.body_chunks;
+
+        let decoded: Cow<[u8]> = decompress_for_stats(encoding, raw, 512 * 1024); // 512KB 上限
+
+        let body_str = match std::str::from_utf8(&decoded) {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    compressed = ?encoding,
+                    "Failed to parse response body as UTF-8 for stats"
+                );
+                // 清理原始分块，避免双份占用
+                ctx.response_details.clear_body_chunks();
+                return Ok(ComputedStats::default());
+            }
+        };
+
+        match serde_json::from_str::<serde_json::Value>(body_str) {
+            Ok(json) => {
+                let stats = self.extract_stats_from_json(ctx, &json).await?;
+                // 清理原始分块，避免双份占用
+                ctx.response_details.clear_body_chunks();
+                // 同步新统一字段
+                ctx.usage_final = Some(stats.usage.clone());
+                Ok(stats)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    compressed = ?encoding,
+                    "Failed to parse JSON from response for stats"
+                );
+                ctx.response_details.clear_body_chunks();
+                Ok(ComputedStats::default())
             }
         }
-
-        // 非流式或无法标准化：直接从响应体解析
-        self.extract_detailed_stats_from_response(ctx).await
     }
 }
 
 /// 流式场景：从 SSE/stream 分块中尝试提取 usage 统计并合并到上下文聚合
 /// 注意：此函数不依赖实例，可直接在流式响应阶段调用
 impl StatisticsService {
-    /// 将流式响应标准化为一个等价的非流式 JSON（取最后一个有效 JSON 对象）
-    pub fn normalize_streaming_json(&self, ctx: &mut ProxyContext) -> Option<serde_json::Value> {
-        // 确保已经完成收集
-        if ctx.response_details.body.is_none() {
-            ctx.response_details.finalize_body();
-        }
-        let body = ctx.response_details.body.as_ref()?;
-        // 尝试从按行的 SSE 中提取最后一个 data: {json}
-        let mut last_json: Option<serde_json::Value> = None;
-        for line in body.lines() {
-            let s = line.trim_start_matches("data: ").trim();
-            if let Some(start) = s.find('{') {
-                // 贪婪到行末（容错：简单匹配）
-                let candidate = &s[start..];
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
-                    last_json = Some(v);
-                }
-            } else if s.starts_with('{') {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
-                    last_json = Some(v);
-                }
-            }
-        }
-        last_json
-    }
-
     /// 使用 provider 的 token_mappings_json（经 TokenFieldExtractor）从 JSON 提取统计
     pub async fn extract_stats_from_json(
         &self,
         ctx: &mut ProxyContext,
         json: &serde_json::Value,
-    ) -> Result<DetailedRequestStats, ProxyError> {
-        let mut stats = DetailedRequestStats::default();
+    ) -> Result<ComputedStats, ProxyError> {
+        let mut stats = ComputedStats::default();
 
         // 模型信息（复用现有响应模型提取）
         stats.model_name = self.extract_model_from_response_body(json);
@@ -930,32 +946,32 @@ impl StatisticsService {
             if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
                 if let Ok(cfg) = crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
                     let extractor = crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
-                    stats.input_tokens = extractor.extract_token_u32(json, "tokens_prompt");
-                    stats.output_tokens = extractor.extract_token_u32(json, "tokens_completion");
-                    stats.total_tokens = extractor.extract_token_u32(json, "tokens_total").or_else(|| match (stats.input_tokens, stats.output_tokens) {
+                    stats.usage.prompt_tokens = extractor.extract_token_u32(json, "tokens_prompt");
+                    stats.usage.completion_tokens = extractor.extract_token_u32(json, "tokens_completion");
+                    stats.usage.total_tokens = extractor.extract_token_u32(json, "tokens_total").or_else(|| match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
                         (Some(p), Some(c)) => Some(p + c),
                         (Some(p), None) => Some(p),
                         (None, Some(c)) => Some(c),
                         _ => None,
                     });
-                    stats.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
-                    stats.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
+                    stats.usage.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
+                    stats.usage.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
                 }
             }
         }
 
         // 默认值兜底
-        if stats.input_tokens.is_none() { stats.input_tokens = Some(0); }
-        if stats.output_tokens.is_none() { stats.output_tokens = Some(0); }
-        if stats.total_tokens.is_none() { stats.total_tokens = Some(0); }
+        if stats.usage.prompt_tokens.is_none() { stats.usage.prompt_tokens = Some(0); }
+        if stats.usage.completion_tokens.is_none() { stats.usage.completion_tokens = Some(0); }
+        if stats.usage.total_tokens.is_none() { stats.usage.total_tokens = Some(0); }
 
         // 费用计算（有模型与 provider 才计算）
         if let (Some(model), Some(provider)) = (stats.model_name.clone(), ctx.provider_type.as_ref()) {
-            let usage_now = TokenUsage {
-                prompt_tokens: stats.input_tokens,
-                completion_tokens: stats.output_tokens,
-                total_tokens: stats.total_tokens.unwrap_or(0),
-                model_used: Some(model.clone()),
+            let usage_now = crate::pricing::TokenUsage {
+                prompt_tokens: stats.usage.prompt_tokens,
+                completion_tokens: stats.usage.completion_tokens,
+                cache_create_tokens: stats.usage.cache_create_tokens,
+                cache_read_tokens: stats.usage.cache_read_tokens,
             };
             if let Ok((cost, currency)) = self
                 .calculate_cost_direct(&model, provider.id, &usage_now, &ctx.request_id)
@@ -967,6 +983,143 @@ impl StatisticsService {
         }
 
         Ok(stats)
+    }
+}
+
+/// 仅用于统计侧的限量解压（不影响下游透传）
+fn decompress_for_stats<'a>(encoding: Option<&'a str>, input: &'a [u8], max_out: usize) -> Cow<'a, [u8]> {
+    use flate2::read::{GzDecoder, ZlibDecoder};
+    use std::io::Read;
+
+    match encoding.map(|e| e.to_ascii_lowercase()) {
+        Some(enc) if enc.contains("gzip") => {
+            let mut dec = GzDecoder::new(input);
+            let mut out = Vec::with_capacity(input.len().min(max_out));
+            let mut buf = [0u8; 8192];
+            while out.len() < max_out {
+                match dec.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let take = n.min(max_out - out.len());
+                        out.extend_from_slice(&buf[..take]);
+                        if take < n { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+            Cow::Owned(out)
+        }
+        Some(enc) if enc.contains("deflate") => {
+            let mut dec = ZlibDecoder::new(input);
+            let mut out = Vec::with_capacity(input.len().min(max_out));
+            let mut buf = [0u8; 8192];
+            use std::io::Read as _;
+            while out.len() < max_out {
+                match dec.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let take = n.min(max_out - out.len());
+                        out.extend_from_slice(&buf[..take]);
+                        if take < n { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+            Cow::Owned(out)
+        }
+        Some(enc) if enc.contains("br") || enc.contains("brotli") => {
+            let mut out = Vec::with_capacity(input.len().min(max_out));
+            let mut reader = brotli_decompressor::Decompressor::new(input, 4096);
+            let mut buf = [0u8; 8192];
+            while out.len() < max_out {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let take = n.min(max_out - out.len());
+                        out.extend_from_slice(&buf[..take]);
+                        if take < n { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+            Cow::Owned(out)
+        }
+        _ => Cow::Borrowed(input),
+    }
+}
+
+/// 从字符串中提取最后一个JSON对象（简单容错）
+fn extract_last_json_from_str(s: &str) -> Option<serde_json::Value> {
+    // 先尝试逐行 data: {...}
+    for line in s.lines().rev() {
+        let t = line.trim_start_matches("data: ").trim();
+        if let Some(pos) = t.find('{') {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+                return Some(v);
+            }
+        }
+    }
+    // 退而求其次：从整体文本中寻找最后一个 '{'
+    if let Some(idx) = s.rfind('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[idx..]) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// 流式分块增量统计（数据驱动，基于 provider 的 token_mappings_json）
+pub fn ingest_streaming_chunk(ctx: &mut ProxyContext, data: &[u8]) {
+    if data.is_empty() { return; }
+    let Ok(text) = std::str::from_utf8(data) else { return; };
+
+    let mut last_json: Option<serde_json::Value> = None;
+    for line in text.lines() {
+        let t = line.trim_start_matches("data: ").trim();
+        if let Some(pos) = t.find('{') {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+                last_json = Some(v);
+            }
+        }
+    }
+    let Some(json) = last_json else { return; };
+
+    // Token 提取（数据驱动）
+    if let Some(provider) = ctx.provider_type.as_ref() {
+        if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
+            if let Ok(cfg) = crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
+                let extractor = crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
+                let p = extractor.extract_token_u32(&json, "tokens_prompt");
+                let c = extractor.extract_token_u32(&json, "tokens_completion");
+                let t = extractor
+                    .extract_token_u32(&json, "tokens_total")
+                    .or_else(|| match (p, c) { (Some(pp), Some(cc)) => Some(pp + cc), (Some(pp), None) => Some(pp), (None, Some(cc)) => Some(cc), _ => None });
+                let cache_create = extractor.extract_token_u32(&json, "cache_create_tokens");
+                let cache_read = extractor.extract_token_u32(&json, "cache_read_tokens");
+
+                if p.is_some() || c.is_some() || t.is_some() || cache_create.is_some() || cache_read.is_some() {
+                    let partial = crate::statistics::types::PartialUsage {
+                        prompt_tokens: p,
+                        completion_tokens: c,
+                        total_tokens: t,
+                        cache_create_tokens: cache_create,
+                        cache_read_tokens: cache_read,
+                    };
+                    ctx.usage_partial.merge_latest(&partial);
+                }
+            }
+        }
+    }
+
+    // 模型兜底更新
+    // 可选：从尾事件中提取模型名（简单路径）
+    if ctx.requested_model.is_none() {
+        let model = json.get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string());
+        if model.is_some() {
+            ctx.requested_model = model;
+        }
     }
 }
 
