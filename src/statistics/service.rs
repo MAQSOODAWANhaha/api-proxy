@@ -879,34 +879,139 @@ impl StatisticsService {
         }
 
         // 非流式：从原始分块获取字节，按需限量解压，仅用于统计
-        let encoding = ctx
+        // 提前获取encoding以避免借用冲突
+        let encoding_owned = ctx
             .response_details
             .content_encoding
-            .as_ref()
-            .map(|s| s.as_str());
+            .clone();
+        let encoding = encoding_owned.as_deref();
         let raw = &ctx.response_details.body_chunks;
+
+        // ===== 增强的响应体数据验证 =====
+        tracing::debug!(
+            request_id = %ctx.request_id,
+            body_chunks_len = raw.len(),
+            total_bytes = raw.len(),
+            content_encoding = ?encoding,
+            response_content_type = ?ctx.response_details.content_type,
+            "Response body data validation for stats"
+        );
+
+        // 验证响应体数据完整性
+        if raw.is_empty() {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                "Empty response body chunks for stats; using default values"
+            );
+            ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            });
+            return Ok(ComputedStats::default());
+        }
+
+        // 计算总数据大小并验证合理性
+        let total_bytes: usize = raw.len();
+        if total_bytes == 0 {
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                chunks_count = raw.len(),
+                "Response body chunks exist but contain no data; using default values"
+            );
+            ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            });
+            return Ok(ComputedStats::default());
+        }
+
+        // 检查数据大小是否在合理范围内
+        if total_bytes > 10 * 1024 * 1024 { // 10MB 上限
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                total_bytes = total_bytes,
+                "Response body too large for stats processing; using default values"
+            );
+            ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            });
+            return Ok(ComputedStats::default());
+        }
 
         let decoded: Cow<[u8]> = decompress_for_stats(encoding, raw, 512 * 1024); // 512KB 上限
 
+        // 验证解压后的数据
+        if decoded.is_empty() {
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                original_bytes = total_bytes,
+                compression = ?encoding,
+                "Decompressed data is empty for stats; using default values"
+            );
+            ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            });
+            return Ok(ComputedStats::default());
+        }
+
         let body_str = match std::str::from_utf8(&decoded) {
-            Ok(s) => s,
-            Err(_) => {
+            Ok(s) => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    decoded_bytes = decoded.len(),
+                    utf8_string_len = s.len(),
+                    "Successfully decoded response body for stats"
+                );
+                s
+            }
+            Err(e) => {
                 tracing::warn!(
                     request_id = %ctx.request_id,
+                    error = %e,
                     compressed = ?encoding,
+                    decoded_bytes = decoded.len(),
                     "Failed to parse response body as UTF-8 for stats"
                 );
                 // 清理原始分块，避免双份占用
                 ctx.response_details.clear_body_chunks();
+                // 同步默认统计到上下文
+                ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                    prompt_tokens: Some(0),
+                    completion_tokens: Some(0),
+                    total_tokens: Some(0),
+                    cache_create_tokens: None,
+                    cache_read_tokens: None,
+                });
                 return Ok(ComputedStats::default());
             }
         };
 
+        // ===== 增强的JSON解析流程 =====
+
+        // 进一步清理和验证响应体
+        let cleaned_body_str = preprocess_json_string(body_str);
+
         // 若响应体为空或仅包含空白，跳过JSON解析，按默认统计处理（不视为错误）
-        if body_str.trim().is_empty() {
+        if cleaned_body_str.trim().is_empty() {
             tracing::info!(
                 request_id = %ctx.request_id,
                 compressed = ?encoding,
+                original_len = body_str.len(),
+                cleaned_len = cleaned_body_str.len(),
                 "Empty response body for stats; skipping JSON parsing"
             );
             ctx.response_details.clear_body_chunks();
@@ -921,8 +1026,45 @@ impl StatisticsService {
             return Ok(ComputedStats::default());
         }
 
-        match serde_json::from_str::<serde_json::Value>(body_str) {
+        // ===== JSON格式预检查 =====
+        if !is_valid_json_format(&cleaned_body_str) {
+            tracing::warn!(
+                request_id = %ctx.request_id,
+                body_preview = %truncate_string(&cleaned_body_str, 200),
+                first_char = %cleaned_body_str.chars().next().map_or('?', |c| c),
+                last_char = %cleaned_body_str.chars().last().map_or('?', |c| c),
+                body_len = cleaned_body_str.len(),
+                "Response body doesn't appear to be valid JSON format"
+            );
+
+            // 尝试提取可能的JSON部分
+            if let Some(extracted_json) = try_extract_json_from_mixed_content(&cleaned_body_str) {
+                tracing::info!(
+                    request_id = %ctx.request_id,
+                    "Successfully extracted JSON from mixed content"
+                );
+                return self.process_extracted_json(ctx, extracted_json, encoding).await;
+            } else {
+                ctx.response_details.clear_body_chunks();
+                ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                    prompt_tokens: Some(0),
+                    completion_tokens: Some(0),
+                    total_tokens: Some(0),
+                    cache_create_tokens: None,
+                    cache_read_tokens: None,
+                });
+                return Ok(ComputedStats::default());
+            }
+        }
+
+        // 主要JSON解析
+        match serde_json::from_str::<serde_json::Value>(&cleaned_body_str) {
             Ok(json) => {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    json_type = %get_json_type(&json),
+                    "Successfully parsed JSON for stats"
+                );
                 let stats = self.extract_stats_from_json(ctx, &json).await?;
                 // 清理原始分块，避免双份占用
                 ctx.response_details.clear_body_chunks();
@@ -934,10 +1076,43 @@ impl StatisticsService {
                 tracing::warn!(
                     request_id = %ctx.request_id,
                     error = %e,
+                    error_kind = ?e.classify(),
                     compressed = ?encoding,
+                    body_len = cleaned_body_str.len(),
+                    body_preview = %truncate_string(&cleaned_body_str, 300),
                     "Failed to parse JSON from response for stats"
                 );
+
+                // 尝试容错解析
+                if let Some(fallback_json) = attempt_fallback_json_parsing(&cleaned_body_str) {
+                    tracing::info!(
+                        request_id = %ctx.request_id,
+                        "Successfully parsed JSON using fallback method"
+                    );
+                    match self.extract_stats_from_json(ctx, &fallback_json).await {
+                        Ok(stats) => {
+                            ctx.response_details.clear_body_chunks();
+                            ctx.usage_final = Some(stats.usage.clone());
+                            return Ok(stats);
+                        }
+                        Err(fallback_error) => {
+                            tracing::warn!(
+                                request_id = %ctx.request_id,
+                                fallback_error = %fallback_error,
+                                "Fallback JSON parsing succeeded but stats extraction failed"
+                            );
+                        }
+                    }
+                }
+
                 ctx.response_details.clear_body_chunks();
+                ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                    prompt_tokens: Some(0),
+                    completion_tokens: Some(0),
+                    total_tokens: Some(0),
+                    cache_create_tokens: None,
+                    cache_read_tokens: None,
+                });
                 Ok(ComputedStats::default())
             }
         }
@@ -1022,6 +1197,8 @@ impl StatisticsService {
 }
 
 /// 仅用于统计侧的限量解压（不影响下游透传）
+///
+/// 增强版：包含更好的错误处理、空数据检测和透明压缩检测
 fn decompress_for_stats<'a>(
     encoding: Option<&'a str>,
     input: &'a [u8],
@@ -1030,67 +1207,196 @@ fn decompress_for_stats<'a>(
     use flate2::read::{GzDecoder, ZlibDecoder};
     use std::io::Read;
 
-    match encoding.map(|e| e.to_ascii_lowercase()) {
+    // 输入验证：空数据处理
+    if input.is_empty() {
+        tracing::debug!("Empty input for decompression");
+        return Cow::Borrowed(input);
+    }
+
+    // 输入大小验证
+    if input.len() > 50 * 1024 * 1024 { // 50MB 硬编码上限
+        tracing::warn!(
+            input_size = input.len(),
+            "Input too large for decompression, returning as-is"
+        );
+        return Cow::Borrowed(input);
+    }
+
+    // ===== 增强的压缩检测逻辑 =====
+    // 不仅依赖 Content-Encoding 头，还尝试自动检测压缩格式
+    let effective_encoding = if let Some(enc) = encoding {
+        Some(enc.to_ascii_lowercase())
+    } else {
+        // 尝试通过魔术字自动检测压缩格式
+        detect_compression_format(input)
+    };
+
+    tracing::debug!(
+        provided_encoding = ?encoding,
+        detected_encoding = ?effective_encoding,
+        input_size = input.len(),
+        "Processing decompression for stats"
+    );
+
+    match effective_encoding {
         Some(enc) if enc.contains("gzip") => {
-            let mut dec = GzDecoder::new(input);
-            let mut out = Vec::with_capacity(input.len().min(max_out));
+            tracing::debug!("Using gzip decompression");
+            let mut dec = match GzDecoder::new(input) {
+                decoder => decoder,
+            };
+            let mut out = Vec::with_capacity(std::cmp::min(input.len() * 3, max_out)); // 预估解压后大小
             let mut buf = [0u8; 8192];
+
+            let mut total_read = 0;
             while out.len() < max_out {
                 match dec.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        tracing::debug!(total_decompressed = out.len(), "Gzip decompression complete");
+                        break;
+                    }
                     Ok(n) => {
+                        total_read += n;
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
                         if take < n {
+                            tracing::debug!(reason = "max_out_reached", "Gzip decompression truncated");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            bytes_read = total_read,
+                            "Gzip decompression failed, using original data"
+                        );
+                        return Cow::Borrowed(input); // 解压失败，返回原始数据
+                    }
                 }
             }
-            Cow::Owned(out)
+            if out.is_empty() {
+                tracing::warn!("Gzip decompression produced empty output, using original data");
+                Cow::Borrowed(input)
+            } else {
+                Cow::Owned(out)
+            }
         }
         Some(enc) if enc.contains("deflate") => {
-            let mut dec = ZlibDecoder::new(input);
-            let mut out = Vec::with_capacity(input.len().min(max_out));
+            tracing::debug!("Using deflate decompression");
+            let mut dec = match ZlibDecoder::new(input) {
+                decoder => decoder,
+            };
+            let mut out = Vec::with_capacity(std::cmp::min(input.len() * 3, max_out));
             let mut buf = [0u8; 8192];
-            use std::io::Read as _;
+
+            let mut total_read = 0;
             while out.len() < max_out {
                 match dec.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        tracing::debug!(total_decompressed = out.len(), "Deflate decompression complete");
+                        break;
+                    }
                     Ok(n) => {
+                        total_read += n;
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
                         if take < n {
+                            tracing::debug!(reason = "max_out_reached", "Deflate decompression truncated");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            bytes_read = total_read,
+                            "Deflate decompression failed, using original data"
+                        );
+                        return Cow::Borrowed(input);
+                    }
                 }
             }
-            Cow::Owned(out)
+            if out.is_empty() {
+                tracing::warn!("Deflate decompression produced empty output, using original data");
+                Cow::Borrowed(input)
+            } else {
+                Cow::Owned(out)
+            }
         }
         Some(enc) if enc.contains("br") || enc.contains("brotli") => {
-            let mut out = Vec::with_capacity(input.len().min(max_out));
-            let mut reader = brotli_decompressor::Decompressor::new(input, 4096);
+            tracing::debug!("Using brotli decompression");
+            let mut out = Vec::with_capacity(std::cmp::min(input.len() * 5, max_out)); // Brotli 压缩比更高
+            let mut reader = match brotli_decompressor::Decompressor::new(input, 4096) {
+                reader => reader,
+            };
             let mut buf = [0u8; 8192];
+
+            let mut total_read = 0;
             while out.len() < max_out {
                 match reader.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        tracing::debug!(total_decompressed = out.len(), "Brotli decompression complete");
+                        break;
+                    }
                     Ok(n) => {
+                        total_read += n;
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
                         if take < n {
+                            tracing::debug!(reason = "max_out_reached", "Brotli decompression truncated");
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            bytes_read = total_read,
+                            "Brotli decompression failed, using original data"
+                        );
+                        return Cow::Borrowed(input);
+                    }
                 }
             }
-            Cow::Owned(out)
+            if out.is_empty() {
+                tracing::warn!("Brotli decompression produced empty output, using original data");
+                Cow::Borrowed(input)
+            } else {
+                Cow::Owned(out)
+            }
         }
-        _ => Cow::Borrowed(input),
+        None => {
+            tracing::debug!("No compression detected, using original data");
+            Cow::Borrowed(input)
+        }
+        Some(other) => {
+            tracing::warn!(encoding = %other, "Unsupported encoding, using original data");
+            Cow::Borrowed(input)
+        }
     }
+}
+
+/// 通过魔术字检测压缩格式
+pub fn detect_compression_format(data: &[u8]) -> Option<String> {
+    if data.len() < 2 {
+        return None;
+    }
+
+    // Gzip 魔术字: 0x1f 0x8b
+    if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+        tracing::debug!("Detected gzip format by magic bytes");
+        return Some("gzip".to_string());
+    }
+
+    // Zlib 魔术字: 0x78 0x9c, 0x78 0xda, 0x78 0x5e
+    if data.len() >= 2 && data[0] == 0x78 {
+        if data[1] == 0x9c || data[1] == 0xda || data[1] == 0x5e {
+            tracing::debug!("Detected zlib/deflate format by magic bytes");
+            return Some("deflate".to_string());
+        }
+    }
+
+    // Brotli 魔术字检测较复杂，这里简单处理
+    // Brotli 通常以特定位模式开始，但准确检测需要更复杂的逻辑
+
+    None
 }
 
 /// 从字符串中提取最后一个JSON对象（简单容错）
@@ -1183,6 +1489,307 @@ pub fn ingest_streaming_chunk(ctx: &mut ProxyContext, data: &[u8]) {
             .map(|s| s.to_string());
         if model.is_some() {
             ctx.requested_model = model;
+        }
+    }
+}
+
+// ========== JSON解析辅助函数 ==========
+
+/// 预处理JSON字符串，清理常见问题
+pub fn preprocess_json_string(input: &str) -> String {
+    let mut cleaned = input.trim().to_string();
+
+    // 移除BOM（如果存在）
+    if cleaned.starts_with('\u{FEFF}') {
+        cleaned.remove(0);
+    }
+
+    // 移除可能的UTF-8 BOM序列
+    if cleaned.starts_with("\u{EF}\u{BB}\u{BF}") {
+        cleaned.drain(..3);
+    }
+
+    // 移除开头和结尾的垃圾字符
+    cleaned = cleaned.trim_matches(|c: char| {
+        c.is_control() || c == '\u{200B}' || c == '\u{FEFF}'
+    }).to_string();
+
+    // 尝试修复常见JSON格式问题
+    if !cleaned.is_empty() {
+        // 确保以合适的开头和结尾
+        if !cleaned.starts_with('{') && !cleaned.starts_with('[') {
+            // 尝试查找第一个JSON开始标记
+            if let Some(start) = cleaned.find('{') {
+                cleaned = cleaned[start..].to_string();
+            } else if let Some(start) = cleaned.find('[') {
+                cleaned = cleaned[start..].to_string();
+            }
+        }
+
+        // 确保以合适的结尾
+        if !cleaned.is_empty() && !cleaned.ends_with('}') && !cleaned.ends_with(']') {
+            // 尝试查找最后一个JSON结束标记
+            if let Some(end) = cleaned.rfind('}') {
+                cleaned = cleaned[..=end].to_string();
+            } else if let Some(end) = cleaned.rfind(']') {
+                cleaned = cleaned[..=end].to_string();
+            }
+        }
+    }
+
+    cleaned
+}
+
+/// 检查字符串是否可能是有效的JSON格式
+pub fn is_valid_json_format(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // 检查基本结构
+    (trimmed.starts_with('{') && trimmed.ends_with('}')) ||
+    (trimmed.starts_with('[') && trimmed.ends_with(']')) ||
+    // 某些简单的JSON值
+    (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 1) ||
+    trimmed == "true" || trimmed == "false" || trimmed == "null"
+}
+
+/// 尝试从混合内容中提取JSON
+pub fn try_extract_json_from_mixed_content(s: &str) -> Option<serde_json::Value> {
+    // 尝试找到最外层的JSON结构
+    let json_start = s.find('{').or_else(|| s.find('['))?;
+    let json_str = &s[json_start..];
+
+    // 尝试找到匹配的结束括号
+    let mut brace_count = 0;
+    let mut bracket_count = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in json_str.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        match c {
+            '\\' => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => brace_count += 1,
+            '}' if !in_string => {
+                brace_count -= 1;
+                if brace_count == 0 && bracket_count == 0 {
+                    let json_candidate = &json_str[..=i];
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_candidate) {
+                        return Some(json);
+                    }
+                }
+            }
+            '[' if !in_string => bracket_count += 1,
+            ']' if !in_string => {
+                bracket_count -= 1;
+                if brace_count == 0 && bracket_count == 0 {
+                    let json_candidate = &json_str[..=i];
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_candidate) {
+                        return Some(json);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// 尝试容错JSON解析
+fn attempt_fallback_json_parsing(s: &str) -> Option<serde_json::Value> {
+    // 尝试1: 移除可能的JavaScript注释
+    let without_comments = remove_json_comments(s);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&without_comments) {
+        return Some(json);
+    }
+
+    // 尝试2: 尝试修复常见的JSON格式问题
+    let fixed = try_fix_common_json_issues(s);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&fixed) {
+        return Some(json);
+    }
+
+    // 尝试3: 提取并解析JSON-like对象
+    if let Some(extracted) = extract_json_like_object(s) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&extracted) {
+            return Some(json);
+        }
+    }
+
+    None
+}
+
+/// 移除JavaScript风格的注释
+fn remove_json_comments(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_single_line_comment = false;
+    let mut in_multi_line_comment = false;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for c in s.chars() {
+        if escape_next {
+            result.push(c);
+            escape_next = false;
+            continue;
+        }
+
+        match c {
+            '\\' => {
+                result.push(c);
+                escape_next = true;
+            }
+            '"' => {
+                result.push(c);
+                if !in_single_line_comment && !in_multi_line_comment {
+                    in_string = !in_string;
+                }
+            }
+            '/' if !in_string => {
+                let next_chars: String = s.chars().skip(result.len()).take(2).collect();
+                if next_chars == "//" && !in_multi_line_comment {
+                    in_single_line_comment = true;
+                    result.push(c);
+                } else if next_chars == "/*" && !in_single_line_comment {
+                    in_multi_line_comment = true;
+                    result.push(c);
+                } else if !in_single_line_comment && !in_multi_line_comment {
+                    result.push(c);
+                }
+            }
+            '\n' => {
+                result.push(c);
+                in_single_line_comment = false;
+            }
+            '*' if in_multi_line_comment && !in_string => {
+                let next_char = s.chars().skip(result.len()).next();
+                if let Some('/') = next_char {
+                    in_multi_line_comment = false;
+                    result.push(c);
+                    // 添加 closing '/' but don't break out of the loop
+                    continue;
+                }
+            }
+            _ if !in_single_line_comment && !in_multi_line_comment => {
+                result.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    result
+}
+
+/// 尝试修复常见的JSON格式问题
+fn try_fix_common_json_issues(s: &str) -> String {
+    let mut fixed = s.to_string();
+
+    // 移除尾随逗号
+    fixed = regex::Regex::new(r#",\s*([}\]])"#)
+        .unwrap_or_else(|_| regex::Regex::new(r"#").unwrap())
+        .replace_all(&fixed, |caps: &regex::Captures| {
+            caps.get(1).unwrap().as_str().to_string()
+        }).to_string();
+
+    // 确保属性名有引号
+    fixed = regex::Regex::new(r#"([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:"#)
+        .unwrap_or_else(|_| regex::Regex::new(r"#").unwrap())
+        .replace_all(&fixed, r#""$1":"#)
+        .to_string();
+
+    fixed
+}
+
+/// 提取JSON-like对象
+fn extract_json_like_object(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    let start = trimmed.find('{')?;
+    let mut brace_count = 1;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in trimmed[start + 1..].char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        match c {
+            '\\' => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => brace_count += 1,
+            '}' if !in_string => {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    return Some(trimmed[start..=start + 1 + i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// 获取JSON值的类型描述
+fn get_json_type(json: &serde_json::Value) -> &'static str {
+    match json {
+        serde_json::Value::Object(_) => "object",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Null => "null",
+    }
+}
+
+/// 截断字符串用于日志
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len])
+    }
+}
+
+/// StatisticsService的辅助方法：处理提取的JSON
+impl StatisticsService {
+    async fn process_extracted_json(
+        &self,
+        ctx: &mut ProxyContext,
+        json: serde_json::Value,
+        _encoding: Option<&str>,
+    ) -> Result<ComputedStats, ProxyError> {
+        match self.extract_stats_from_json(ctx, &json).await {
+            Ok(stats) => {
+                ctx.response_details.clear_body_chunks();
+                ctx.usage_final = Some(stats.usage.clone());
+                Ok(stats)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    "Failed to extract stats from extracted JSON"
+                );
+                ctx.response_details.clear_body_chunks();
+                ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                    prompt_tokens: Some(0),
+                    completion_tokens: Some(0),
+                    total_tokens: Some(0),
+                    cache_create_tokens: None,
+                    cache_read_tokens: None,
+                });
+                Ok(ComputedStats::default())
+            }
         }
     }
 }
