@@ -471,41 +471,118 @@ impl TokenFieldExtractor {
         false
     }
 
-    /// 根据路径提取值，支持JSONPath语法
+    /// 根据路径提取值，支持JSONPath语法和数组索引
     fn extract_by_path(&self, data: &Value, path: &str) -> Option<Value> {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = data;
 
-        for part in parts {
-            // 处理数组索引 如 choices[0]
-            if part.contains('[') && part.ends_with(']') {
-                let bracket_pos = part.find('[').unwrap();
-                let field_name = &part[..bracket_pos];
-                let index_str = &part[bracket_pos + 1..part.len() - 1];
-
-                // 先获取数组字段
+        for (i, part) in parts.iter().enumerate() {
+            // 检查是否是数组索引访问，如 choices[0] 或 0
+            if let Some((field_name, index_str)) = self.parse_array_access(part) {
+                // 处理 field_name[index] 格式
                 if let Some(array_field) = current.get(field_name) {
                     if let Some(array) = array_field.as_array() {
                         if let Ok(index) = index_str.parse::<usize>() {
                             if let Some(element) = array.get(index) {
                                 current = element;
                                 continue;
+                            } else {
+                                warn!(
+                                    path = %path,
+                                    field_name = %field_name,
+                                    index = %index_str,
+                                    array_len = array.len(),
+                                    "Array index out of bounds"
+                                );
+                                return None;
                             }
+                        } else {
+                            warn!(
+                                path = %path,
+                                index_str = %index_str,
+                                "Invalid array index format"
+                            );
+                            return None;
                         }
+                    } else {
+                        warn!(
+                            path = %path,
+                            field_name = %field_name,
+                            actual_type = ?array_field,
+                            "Field is not an array"
+                        );
+                        return None;
                     }
+                } else {
+                    warn!(
+                        path = %path,
+                        field_name = %field_name,
+                        available_fields = ?current.as_object().map(|obj| obj.keys().collect::<Vec<_>>()),
+                        "Array field not found"
+                    );
+                    return None;
                 }
-                return None;
+            } else if let Ok(index) = part.parse::<usize>() {
+                // 处理纯数字索引，如 usage.0.usageMetadata 中的 "0"
+                if let Some(array) = current.as_array() {
+                    if let Some(element) = array.get(index) {
+                        current = element;
+                        continue;
+                    } else {
+                        warn!(
+                            path = %path,
+                            index = %part,
+                            array_len = array.len(),
+                            part_index = i,
+                            "Array index out of bounds for numeric index"
+                        );
+                        return None;
+                    }
+                } else {
+                    warn!(
+                        path = %path,
+                        index = %part,
+                        actual_type = ?current,
+                        part_index = i,
+                        "Field is not an array for numeric index"
+                    );
+                    return None;
+                }
             } else {
                 // 普通字段访问
                 if let Some(next_value) = current.get(part) {
                     current = next_value;
                 } else {
+                    warn!(
+                        path = %path,
+                        missing_field = %part,
+                        available_fields = ?current.as_object().map(|obj| obj.keys().collect::<Vec<_>>()),
+                        part_index = i,
+                        "Field not found in path"
+                    );
                     return None;
                 }
             }
         }
 
+        debug!(
+            path = %path,
+            extracted_value = ?current,
+            "Successfully extracted value from path"
+        );
         Some(current.clone())
+    }
+
+    /// 解析数组访问语法，返回 (field_name, index_str) 或 None
+    fn parse_array_access<'a>(&self, part: &'a str) -> Option<(&'a str, &'a str)> {
+        if part.contains('[') && part.ends_with(']') {
+            let bracket_pos = part.find('[')?;
+            let field_name = &part[..bracket_pos];
+            let index_str = &part[bracket_pos + 1..part.len() - 1];
+            Some((field_name, index_str))
+        } else {
+            None
+        }
     }
 
     /// 提取u32类型Token字段
@@ -588,41 +665,118 @@ impl FieldExtractor {
         None
     }
 
-    /// 根据路径提取值，支持JSONPath语法
+    /// 根据路径提取值，支持JSONPath语法和数组索引
     fn extract_by_path(&self, data: &Value, path: &str) -> Option<Value> {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = data;
 
-        for part in parts {
-            // 处理数组索引 如 choices[0]
-            if part.contains('[') && part.ends_with(']') {
-                let bracket_pos = part.find('[').unwrap();
-                let field_name = &part[..bracket_pos];
-                let index_str = &part[bracket_pos + 1..part.len() - 1];
-
-                // 先获取数组字段
+        for (i, part) in parts.iter().enumerate() {
+            // 检查是否是数组索引访问，如 choices[0] 或 0
+            if let Some((field_name, index_str)) = self.parse_array_access(part) {
+                // 处理 field_name[index] 格式
                 if let Some(array_field) = current.get(field_name) {
                     if let Some(array) = array_field.as_array() {
                         if let Ok(index) = index_str.parse::<usize>() {
                             if let Some(element) = array.get(index) {
                                 current = element;
                                 continue;
+                            } else {
+                                warn!(
+                                    path = %path,
+                                    field_name = %field_name,
+                                    index = %index_str,
+                                    array_len = array.len(),
+                                    "Array index out of bounds"
+                                );
+                                return None;
                             }
+                        } else {
+                            warn!(
+                                path = %path,
+                                index_str = %index_str,
+                                "Invalid array index format"
+                            );
+                            return None;
                         }
+                    } else {
+                        warn!(
+                            path = %path,
+                            field_name = %field_name,
+                            actual_type = ?array_field,
+                            "Field is not an array"
+                        );
+                        return None;
                     }
+                } else {
+                    warn!(
+                        path = %path,
+                        field_name = %field_name,
+                        available_fields = ?current.as_object().map(|obj| obj.keys().collect::<Vec<_>>()),
+                        "Array field not found"
+                    );
+                    return None;
                 }
-                return None;
+            } else if let Ok(index) = part.parse::<usize>() {
+                // 处理纯数字索引，如 usage.0.usageMetadata 中的 "0"
+                if let Some(array) = current.as_array() {
+                    if let Some(element) = array.get(index) {
+                        current = element;
+                        continue;
+                    } else {
+                        warn!(
+                            path = %path,
+                            index = %part,
+                            array_len = array.len(),
+                            part_index = i,
+                            "Array index out of bounds for numeric index"
+                        );
+                        return None;
+                    }
+                } else {
+                    warn!(
+                        path = %path,
+                        index = %part,
+                        actual_type = ?current,
+                        part_index = i,
+                        "Field is not an array for numeric index"
+                    );
+                    return None;
+                }
             } else {
                 // 普通字段访问
                 if let Some(next_value) = current.get(part) {
                     current = next_value;
                 } else {
+                    warn!(
+                        path = %path,
+                        missing_field = %part,
+                        available_fields = ?current.as_object().map(|obj| obj.keys().collect::<Vec<_>>()),
+                        part_index = i,
+                        "Field not found in path"
+                    );
                     return None;
                 }
             }
         }
 
+        debug!(
+            path = %path,
+            extracted_value = ?current,
+            "Successfully extracted value from path"
+        );
         Some(current.clone())
+    }
+
+    /// 解析数组访问语法，返回 (field_name, index_str) 或 None
+    fn parse_array_access<'a>(&self, part: &'a str) -> Option<(&'a str, &'a str)> {
+        if part.contains('[') && part.ends_with(']') {
+            let bracket_pos = part.find('[')?;
+            let field_name = &part[..bracket_pos];
+            let index_str = &part[bracket_pos + 1..part.len() - 1];
+            Some((field_name, index_str))
+        } else {
+            None
+        }
     }
 
     /// 提取u32类型字段

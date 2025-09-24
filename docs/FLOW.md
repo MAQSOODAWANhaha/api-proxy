@@ -190,9 +190,9 @@ flowchart TD
         subgraph FinalProcessing["✅ 最终处理"]
             Logging --> CheckError{"有错误?<br/>检查fail_to_proxy"}
             CheckError -->|是| HandleError["处理错误<br/>TracingService::complete_trace_failure()"]
-            CheckError -->|否| ExtractStats["StatisticsService<br/>.extract_stats_from_response_body()"]
+            CheckError -->|否| ExtractStats["StatisticsService<br/>.finalize_and_extract_stats()"]
             HandleError --> CompleteTraceError["完成错误追踪"]
-            ExtractStats --> UpdateTokens["更新token使用信息<br/>计算成本"]
+            ExtractStats["StatisticsService<br/>.finalize_and_extract_stats()"] --> UpdateTokens["更新token使用信息<br/>计算成本"]
             UpdateTokens --> CompleteTraceSuccess["TracingService::complete_trace_success()"]
             CompleteTraceError --> ClientResponse["返回客户端响应"]
             CompleteTraceSuccess --> ClientResponse
@@ -337,10 +337,10 @@ ProxyService (实现 ProxyHttp trait):
 ├── response_filter() // 响应处理
 │   └── StatisticsService::collect_response_details()
 ├── response_body_filter() // 响应体收集
-│   └── ctx.response_details.add_body_chunk()
+│   └── ctx.response_details.add_body_chunk() // 流式与非流式统一收集
 └── logging() // 最终处理
-    ├── StatisticsService::extract_stats_from_response_body()
-    ├── 更新token使用信息和成本计算
+    ├── StatisticsService::finalize_and_extract_stats() // 统一流/非流：必要时先 normalize_streaming_json
+    ├── 更新token使用信息和成本计算（使用 token_mappings_json + TokenFieldExtractor）
     └── TracingService::complete_trace_success/failure()
 ```
 
@@ -436,7 +436,18 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 - `src/trace/immediate.rs`: `ImmediateProxyTracer`
 - `src/providers/field_extractor.rs`: `TokenFieldExtractor`, `ModelExtractor`
 
-### 7. OAuth 2.0 授权系统 (`src/auth/oauth_v2/` + `src/auth/oauth_client.rs`)
+### 7. 统一日志与统计（关键约定）
+
+- 日志头部统一：
+  - 下游请求头：`event=downstream_request_headers`，字段：`client_headers_json`
+  - 上游请求头：`event=upstream_request_ready`，字段：`upstream_headers_json`
+  - 上游响应头：`event=upstream_response_headers`，字段：`response_headers_json`
+- 错误日志合并：
+  - `event=request_failed`，统一记录：`method,url,error_type,error_source,error_message,duration_ms,request_headers_json,selected_backend_id,provider_type,timeout_seconds`
+- 统计统一入口：
+  - `StatisticsService::finalize_and_extract_stats(ctx)` 统一流/非流：必要时先 `normalize_streaming_json()`，再使用 `token_mappings_json + TokenFieldExtractor` 提取 `tokens_*` 与模型，随后计算费用
+
+### 8. OAuth 2.0 授权系统 (`src/auth/oauth_v2/` + `src/auth/oauth_client.rs`)
 
 ```rust
 OAuth 2.0 完整授权流程：
@@ -464,7 +475,7 @@ OAuth 2.0 完整授权流程：
 - `src/auth/oauth_token_refresh_service.rs:92`: `refresh_access_token()`
 - `src/auth/oauth_token_refresh_task.rs:56`: `start_background_refresh()`
 
-### 8. 智能API密钥健康管理系统 (`src/scheduler/api_key_health.rs`)
+### 9. 智能API密钥健康管理系统 (`src/scheduler/api_key_health.rs`)
 
 ```rust
 API密钥健康监控和恢复：
@@ -491,39 +502,6 @@ API密钥健康监控和恢复：
 - `src/scheduler/api_key_health.rs:134`: `check_key_health()`
 - `src/scheduler/api_key_health.rs:189`: `update_health_status()`
 - `src/scheduler/pool_manager.rs:156`: 健康检查集成逻辑
-
-## ✅ 最近架构改进
-
-### 认证模块重构 (已完成)
-**改进目标**: 消除AuthHeaderParser和AuthenticationService之间的代码重复和职责重叠
-
-**重构前问题**:
-- `AuthenticationService.parse_key_from_inbound_headers()` 仅仅是 `AuthHeaderParser.parse_api_key_from_inbound_headers_smart()` 的简单包装
-- 违反了单一职责原则和DRY原则
-- 不必要的抽象层增加了代码复杂度
-
-**重构方案**:
-```rust
-// 重构前 (冗余包装)
-AuthenticationService::parse_key_from_inbound_headers() 
-  └── AuthHeaderParser::parse_api_key_from_inbound_headers_smart()
-
-// 重构后 (直接调用)
-AuthHeaderParser::parse_api_key_from_inbound_headers_smart() 
-  └── 使用 ? 操作符自动错误转换
-```
-
-**改进收益**:
-- ✅ **简化架构**: 删除了约25行冗余代码，减少一层方法调用
-- ✅ **统一错误处理**: 实现了 `From<AuthParseError> for ProxyError` 自动转换
-- ✅ **明确职责分工**: AuthHeaderParser专注技术解析，AuthenticationService专注业务编排
-- ✅ **保持兼容性**: 公共API接口未发生变化
-- ✅ **提升性能**: 减少方法调用开销，改善认证响应时间
-
-**验证测试**: 
-- 编译检查通过，包含完整的单元测试覆盖
-- 认证功能完全保持原有行为
-- 错误处理机制正常工作
 
 ## 🎯 核心设计特点
 

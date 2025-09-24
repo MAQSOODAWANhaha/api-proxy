@@ -16,7 +16,7 @@ use url::form_urlencoded;
 
 use crate::auth::oauth_client::JWTParser;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
-use crate::auth::{AuthManager, AuthUtils, types::AuthStatus};
+use crate::auth::{AuthManager, types::AuthStatus};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
@@ -435,6 +435,9 @@ impl RequestHandler {
 
         false
     }
+
+    // JSON 头部工具已迁移到 crate::logging：
+    // headers_json_string_request / headers_json_string_response
     /// 获取统计服务的引用 - 用于外部访问
     pub fn statistics_service(&self) -> &Arc<StatisticsService> {
         &self.statistics_service
@@ -488,10 +491,6 @@ impl RequestHandler {
         }
     }
 
-    // 旧式入口 prepare_proxy_request 已删除，统一走 ProxyService
-
-    // 旧式入口 prepare_proxy_request/prepare_after_auth 已删除，统一走 ProxyService
-
     /// 动态识别Gemini代理模式
     ///
     /// 根据用户密钥配置动态判断应该使用的代理模式：
@@ -542,14 +541,6 @@ impl RequestHandler {
         }
         Ok(false)
     }
-
-    // Gemini JSON 注入辅助逻辑已迁移
-
-    // Gemini JSON 注入辅助逻辑已迁移
-
-    // Gemini JSON 注入辅助逻辑已迁移
-
-    // Gemini JSON 注入辅助逻辑已迁移
 
     /// 检查所有限制 - 包括速率限制、每日限制、过期时间等
     pub(crate) async fn check_rate_limit(
@@ -883,7 +874,7 @@ impl RequestHandler {
             session_id = session_id,
             provider_name = session.provider_name,
             expires_at = session.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            access_token_preview = AuthUtils::sanitize_api_key(&token)
+            access_token = token
         );
 
         Ok(token)
@@ -1106,7 +1097,18 @@ impl RequestHandler {
         ctx.request_details = request_details;
 
         // 提取请求中的模型信息
-        self.extract_requested_model_from_request(session, ctx);
+        if let Some(model_name) = self
+            .statistics_service
+            .extract_model_from_request(session, ctx)
+        {
+            ctx.requested_model = Some(model_name.clone());
+            tracing::info!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "unified_service",
+                "Model extracted successfully using StatisticsService"
+            );
+        }
 
         // Request size no longer stored in simplified trace schema
         if ctx.request_details.body_size.is_some() {
@@ -1131,31 +1133,21 @@ impl RequestHandler {
             }
         };
 
-        // 记录未认证之前的请求头信息（关键头 + 全量头）
+        // 记录未认证之前的请求头信息（关键头 + JSON 全量头）
         let client_headers_before_auth =
             self.extract_key_headers_from_request(session.req_header());
         let upstream_headers_before_auth = self.extract_key_headers_from_request(upstream_request);
-        let client_all_headers = self.format_all_request_headers(session.req_header());
-        let upstream_all_headers_before = self.format_all_request_headers(upstream_request);
 
-        let client_all_headers_str = if client_all_headers.is_empty() {
-            "<none>".to_string()
-        } else {
-            format!("\n  - {}", client_all_headers.join("\n  - "))
-        };
-        let upstream_all_headers_before_str = if upstream_all_headers_before.is_empty() {
-            "<none>".to_string()
-        } else {
-            format!("\n  - {}", upstream_all_headers_before.join("\n  - "))
-        };
+        let client_headers_json = crate::logging::headers_json_string_request(session.req_header());
+        let upstream_headers_json = crate::logging::headers_json_string_request(upstream_request);
 
         tracing::debug!(
             request_id = ctx.request_id,
             stage = "before_auth",
             client_headers_key = client_headers_before_auth,
             upstream_headers_key = upstream_headers_before_auth,
-            client_headers_all = client_all_headers_str,
-            upstream_headers_all = upstream_all_headers_before_str,
+            client_headers_json = client_headers_json,
+            upstream_headers_json = upstream_headers_json,
             "Client and upstream headers (before auth)"
         );
 
@@ -1164,8 +1156,9 @@ impl RequestHandler {
             Some(ResolvedCredential::ApiKey(api_key)) => {
                 // 使用 ProviderStrategy 构建认证头
                 let auth_headers = if let Some(name) =
-                    crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_type.name)
-                {
+                    crate::proxy::provider_strategy::ProviderRegistry::match_name(
+                        &provider_type.name,
+                    ) {
                     if let Some(strategy) =
                         crate::proxy::provider_strategy::make_strategy(name, Some(self.db.clone()))
                     {
@@ -1197,7 +1190,7 @@ impl RequestHandler {
                     provider = provider_type.name,
                     auth_type = "api_key",
                     auth_headers = ?applied,
-                    api_key_preview = AuthUtils::sanitize_api_key(&api_key),
+                    api_key = api_key,
                     "Applied API key authentication"
                 );
             }
@@ -1244,7 +1237,7 @@ impl RequestHandler {
                     request_id = ctx.request_id,
                     provider = provider_type.name,
                     auth_type = "oauth",
-                    access_token_preview = AuthUtils::sanitize_api_key(&access_token),
+                    access_token = access_token,
                     "Applied OAuth access token"
                 );
             }
@@ -1420,13 +1413,9 @@ impl RequestHandler {
         // upstream_request.insert_header("x-request-id", &ctx.request_id)
         //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
 
-        // 添加详细的上游请求日志（更友好的多行格式）
-        let upstream_all_headers_after = self.format_all_request_headers(upstream_request);
-        let upstream_all_headers_after_str = if upstream_all_headers_after.is_empty() {
-            "<none>".to_string()
-        } else {
-            format!("\n  - {}", upstream_all_headers_after.join("\n  - "))
-        };
+        // 添加详细的上游请求日志（JSON化的头部数据，已脱敏）
+        let upstream_headers_after_json =
+            crate::logging::headers_json_string_request(upstream_request);
 
         // 计算上游可读 URL（用于排查：host + path），仅用于日志
         let upstream_host_for_log = upstream_request
@@ -1448,8 +1437,8 @@ impl RequestHandler {
             provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
-            auth_preview = AuthUtils::sanitize_api_key(&selected_backend.api_key),
-            upstream_headers = upstream_all_headers_after_str,
+            auth = selected_backend.api_key,
+            upstream_headers_json = upstream_headers_after_json,
             "上游请求已构建"
         );
 
@@ -1463,14 +1452,10 @@ impl RequestHandler {
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 记录响应头信息（关键头 + 全量头）
+        // 记录响应头信息（关键头 + JSON 全量头）
         let response_headers = self.extract_key_headers_from_response(upstream_response);
-        let response_all_headers = self.format_all_response_headers(upstream_response);
-        let response_all_headers_str = if response_all_headers.is_empty() {
-            "<none>".to_string()
-        } else {
-            format!("\n  - {}", response_all_headers.join("\n  - "))
-        };
+        let response_headers_json =
+            crate::logging::headers_json_string_response(upstream_response);
 
         tracing::info!(
             event = "upstream_response_headers",
@@ -1478,19 +1463,19 @@ impl RequestHandler {
             request_id = ctx.request_id,
             status_code = upstream_response.status.as_u16(),
             response_headers_key = response_headers,
-            response_headers = response_all_headers_str,
+            response_headers_json = response_headers_json,
             "收到上游响应头"
         );
 
         // 如果状态码为 4xx/5xx，标记失败阶段（响应体会在后续阶段打印）
         let status_code = upstream_response.status.as_u16();
         if status_code >= 400 {
-            tracing::error!(
+            tracing::info!(
                 event = "fail",
                 component = "request_handler",
                 request_id = ctx.request_id,
                 status_code = status_code,
-                "响应失败，稍后打印响应体"
+                "上游响应失败"
             );
         }
 
@@ -1602,13 +1587,7 @@ impl RequestHandler {
 
         // ========== 安全头部处理 ==========
         // 只移除可能暴露服务器信息的头部，保留传输相关的核心头部
-        let headers_to_remove = [
-            "x-powered-by",
-            "x-ratelimit-limit-requests",
-            "x-ratelimit-limit-tokens",
-            "x-ratelimit-remaining-requests",
-            "x-ratelimit-remaining-tokens",
-        ];
+        let headers_to_remove = ["x-powered-by"];
 
         for header in &headers_to_remove {
             upstream_response.remove_header(*header);
@@ -1644,16 +1623,6 @@ impl RequestHandler {
         Ok(())
     }
 
-    // 统一认证逻辑已迁移至 CredentialResolutionStep + 本方法内的头部构建
-
-    // （删除）apply_api_key_authentication：由 filter_upstream_request 统一设置
-
-    // （删除）apply_oauth_authentication：由 filter_upstream_request 统一设置
-
-    // （删除）apply_service_account_authentication：后续按需在策略中实现
-
-    // （删除）apply_adc_authentication：后续按需在策略中实现
-
     /// 清除所有可能的认证头
     fn clear_auth_headers(&self, upstream_request: &mut RequestHeader) {
         upstream_request.remove_header("authorization");
@@ -1672,28 +1641,10 @@ impl RequestHandler {
                 let name_str = name.as_str().to_lowercase();
 
                 match name_str.as_str() {
-                    "authorization" => {
-                        let sanitized = if value_str.len() > 20 {
-                            format!(
-                                "{}***{}",
-                                &value_str[..10],
-                                &value_str[value_str.len() - 4..]
-                            )
-                        } else {
-                            "***".to_string()
-                        };
-                        key_headers.push(format!("auth: {}", sanitized));
-                    }
+                    "authorization" => key_headers.push(format!("authorization: {}", value_str)),
                     "content-type" => key_headers.push(format!("content-type: {}", value_str)),
                     "host" => key_headers.push(format!("host: {}", value_str)),
-                    "user-agent" => {
-                        let truncated = if value_str.len() > 50 {
-                            format!("{}...", &value_str[..47])
-                        } else {
-                            value_str.to_string()
-                        };
-                        key_headers.push(format!("user-agent: {}", truncated));
-                    }
+                    "user-agent" => key_headers.push(format!("user-agent: {}", value_str)),
                     _ => {}
                 }
             }
@@ -1706,36 +1657,13 @@ impl RequestHandler {
         }
     }
 
-    /// 将所有请求头格式化为人类可读的列表（会对敏感字段做脱敏）
+    /// 将所有请求头格式化为人类可读的列表
     fn format_all_request_headers(&self, req_header: &RequestHeader) -> Vec<String> {
         let mut all = Vec::new();
         for (name, value) in req_header.headers.iter() {
             let name_str = name.as_str();
             let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-
-            let masked = match name_str.to_ascii_lowercase().as_str() {
-                "authorization"
-                | "proxy-authorization"
-                | "x-api-key"
-                | "api-key"
-                | "x-goog-api-key"
-                | "set-cookie"
-                | "cookie" => {
-                    // 只保留前后少量字符，避免日志泄露敏感信息
-                    if value_str.len() > 16 {
-                        format!(
-                            "{}: {}...{}",
-                            name_str,
-                            &value_str[..8],
-                            &value_str[value_str.len().saturating_sub(4)..]
-                        )
-                    } else {
-                        format!("{}: ****", name_str)
-                    }
-                }
-                _ => format!("{}: {}", name_str, value_str),
-            };
-            all.push(masked);
+            all.push(format!("{}: {}", name_str, value_str));
         }
         all
     }
@@ -1889,190 +1817,6 @@ impl RequestHandler {
         }
     }
 
-    /// 从请求中提取模型信息并保存到 ProxyContext
-    fn extract_requested_model_from_request(
-        &self,
-        session: &Session,
-        ctx: &mut ProxyContext,
-    ) {
-        tracing::debug!(
-            request_id = ctx.request_id,
-            "Starting model extraction from request"
-        );
-
-        // 尝试使用数据库驱动的 ModelExtractor
-        if let Some(model_name) = self.try_extract_with_database_extractor(session, ctx) {
-            ctx.requested_model = Some(model_name.clone());
-            tracing::info!(
-                request_id = ctx.request_id,
-                model = model_name,
-                extraction_method = "database_extractor",
-                "Model extracted successfully using database configuration"
-            );
-            return;
-        }
-
-        // 回退：直接从请求体提取
-        if let Some(model_name) = self.try_extract_from_request_body(session, ctx) {
-            ctx.requested_model = Some(model_name.clone());
-            tracing::info!(
-                request_id = ctx.request_id,
-                model = model_name,
-                extraction_method = "request_body_fallback",
-                "Model extracted from request body (fallback method)"
-            );
-            return;
-        }
-
-        // 最后回退：使用 provider 默认模型
-        if let Some(model_name) = self.get_provider_default_model(ctx) {
-            ctx.requested_model = Some(model_name.clone());
-            tracing::warn!(
-                request_id = ctx.request_id,
-                model = model_name,
-                extraction_method = "provider_default",
-                "Using provider default model (all extraction methods failed)"
-            );
-        } else {
-            tracing::error!(
-                request_id = ctx.request_id,
-                "Failed to extract model information - no provider default available"
-            );
-        }
-    }
-
-    /// 尝试使用数据库驱动的 ModelExtractor 提取模型
-    fn try_extract_with_database_extractor(
-        &self,
-        session: &Session,
-        ctx: &ProxyContext,
-    ) -> Option<String> {
-        let provider = ctx.provider_type.as_ref()?;
-        tracing::debug!(
-            request_id = ctx.request_id,
-            provider_id = provider.id,
-            provider_name = provider.name,
-            has_model_extraction_config = provider.model_extraction_json.is_some(),
-            "Checking provider model extraction configuration"
-        );
-
-        let model_extraction_json = provider.model_extraction_json.as_ref()?;
-
-        tracing::debug!(
-            request_id = ctx.request_id,
-            provider_id = provider.id,
-            "Creating ModelExtractor from database configuration"
-        );
-
-        let extractor = crate::providers::field_extractor::ModelExtractor::from_json_config(model_extraction_json)
-            .map_err(|e| {
-                tracing::warn!(
-                    request_id = ctx.request_id,
-                    provider_id = provider.id,
-                    error = %e,
-                    "Failed to create ModelExtractor from database config"
-                );
-                e
-            })
-            .ok()?;
-
-        let body_json = self.parse_request_body_json(ctx);
-        let query_params = self.parse_query_params(session);
-        let url_path = session.req_header().uri.path();
-
-        tracing::debug!(
-            request_id = ctx.request_id,
-            url_path = url_path,
-            has_body_json = body_json.is_some(),
-            query_params_count = query_params.len(),
-            "Extracting model with configured extractor"
-        );
-
-        let model_name = extractor.extract_model_name(url_path, body_json.as_ref(), &query_params);
-
-        tracing::info!(
-            request_id = ctx.request_id,
-            model = model_name,
-            extraction_method = "database_driven",
-            provider_id = provider.id,
-            "Extracted model using database-configured ModelExtractor"
-        );
-
-        Some(model_name)
-    }
-
-    /// 尝试从请求体直接提取模型
-    fn try_extract_from_request_body(
-        &self,
-        _session: &Session,
-        ctx: &ProxyContext,
-    ) -> Option<String> {
-        tracing::debug!(
-            request_id = ctx.request_id,
-            body_size = ctx.body.len(),
-            "Attempting to extract model from request body"
-        );
-
-        if ctx.body.is_empty() {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                "Request body is empty, skipping body extraction"
-            );
-            return None;
-        }
-
-        let body_str = std::str::from_utf8(&ctx.body)
-            .map_err(|e| {
-                tracing::debug!(
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Request body is not valid UTF-8"
-                );
-                e
-            })
-            .ok()?;
-
-        tracing::debug!(
-            request_id = ctx.request_id,
-            body_length = body_str.len(),
-            "Request body parsed as UTF-8 successfully"
-        );
-
-        let json_value = serde_json::from_str::<serde_json::Value>(body_str)
-            .map_err(|e| {
-                tracing::debug!(
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Failed to parse request body as JSON"
-                );
-                e
-            })
-            .ok()?;
-
-        let model_name = json_value.get("model")
-            .and_then(|m| m.as_str())
-            .map(|s| s.to_string());
-
-        match model_name {
-            Some(ref model) => {
-                tracing::info!(
-                    request_id = ctx.request_id,
-                    model = model,
-                    extraction_method = "fallback_direct",
-                    "Extracted model from request body (fallback)"
-                );
-            }
-            None => {
-                tracing::debug!(
-                    request_id = ctx.request_id,
-                    "No model field found in request body JSON"
-                );
-            }
-        }
-
-        model_name
-    }
-
     /// 获取 provider 的默认模型
     fn get_provider_default_model(&self, ctx: &ProxyContext) -> Option<String> {
         let provider = ctx.provider_type.as_ref()?;
@@ -2087,45 +1831,6 @@ impl RequestHandler {
         );
 
         Some(default_model.clone())
-    }
-
-    /// 解析请求体为 JSON
-    fn parse_request_body_json(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
-        if ctx.body.is_empty() {
-            return None;
-        }
-
-        let body_str = std::str::from_utf8(&ctx.body)
-            .map_err(|e| {
-                tracing::debug!(
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Request body is not valid UTF-8 for JSON parsing"
-                );
-                e
-            })
-            .ok()?;
-
-        serde_json::from_str::<serde_json::Value>(body_str)
-            .map_err(|e| {
-                tracing::debug!(
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Failed to parse request body as JSON"
-                );
-                e
-            })
-            .ok()
-    }
-
-    /// 解析查询参数
-    fn parse_query_params(&self, session: &Session) -> std::collections::HashMap<String, String> {
-        session
-            .req_header()
-            .uri
-            .query()
-            .map(|q| url::form_urlencoded::parse(q.as_bytes()).into_owned().collect())
-            .unwrap_or_default()
     }
 }
 

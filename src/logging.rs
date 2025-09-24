@@ -6,6 +6,8 @@
 //! - 日志系统初始化和配置
 
 use std::env;
+use std::collections::BTreeMap;
+use serde_json;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 // ================ Proxy 模块业务日志工具 ================
@@ -253,6 +255,40 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
         formatted.push(masked);
     }
     formatted.join("\n  ")
+}
+
+/// 将请求头转为 JSON 映射（键小写，按字母序）
+/// 注意：按当前仓库约定，此函数不做脱敏。
+pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for (name, value) in headers.headers.iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+        map.insert(key, value_str.to_string());
+    }
+    map
+}
+
+/// 将响应头转为 JSON 映射（键小写，按字母序）
+/// 注意：按当前仓库约定，此函数不做脱敏。
+pub fn headers_json_map_response(headers: &pingora_http::ResponseHeader) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for (name, value) in headers.headers.iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
+        map.insert(key, value_str.to_string());
+    }
+    map
+}
+
+/// 将请求头直接序列化为 JSON 字符串（稳定字段顺序）
+pub fn headers_json_string_request(headers: &pingora_http::RequestHeader) -> String {
+    serde_json::to_string(&headers_json_map_request(headers)).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// 将响应头直接序列化为 JSON 字符串（稳定字段顺序）
+pub fn headers_json_string_response(headers: &pingora_http::ResponseHeader) -> String {
+    serde_json::to_string(&headers_json_map_response(headers)).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// 脱敏API密钥

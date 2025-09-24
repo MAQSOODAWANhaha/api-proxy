@@ -31,7 +31,7 @@ async fn test_extract_model_from_response_basic() {
         }
     });
 
-    let model = service.extract_model_from_response(&response);
+    let model = service.extract_model_from_response_body(&response);
     assert_eq!(model, Some("gpt-4-turbo".to_string()));
 }
 
@@ -49,7 +49,7 @@ async fn test_extract_model_from_response_no_model() {
         }
     });
 
-    let model = service.extract_model_from_response(&response);
+    let model = service.extract_model_from_response_body(&response);
     assert_eq!(model, None);
 }
 
@@ -68,7 +68,7 @@ async fn test_extract_model_from_response_empty_model() {
         }
     });
 
-    let model = service.extract_model_from_response(&response);
+    let model = service.extract_model_from_response_body(&response);
     assert_eq!(model, None);
 }
 
@@ -87,7 +87,7 @@ async fn test_extract_model_from_response_non_string_model() {
         }
     });
 
-    let model = service.extract_model_from_response(&response);
+    let model = service.extract_model_from_response_body(&response);
     assert_eq!(model, None);
 }
 
@@ -117,7 +117,7 @@ async fn test_response_model_update_with_better_info() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证模型信息已更新为响应中的更准确信息
@@ -152,7 +152,7 @@ async fn test_response_model_update_no_response_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证仍然使用请求时的模型信息
@@ -187,7 +187,7 @@ async fn test_response_model_update_same_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证模型信息保持一致
@@ -221,7 +221,7 @@ async fn test_response_model_update_no_requested_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了响应中的模型信息
@@ -245,7 +245,7 @@ async fn test_response_model_update_invalid_json() {
     ctx.response_details.body = Some("invalid json response".to_string());
 
     // 调用统计信息提取，应该返回默认统计信息
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了请求时的模型信息
@@ -269,7 +269,7 @@ async fn test_response_model_update_no_response_body() {
     ctx.response_details.body = None;
 
     // 调用统计信息提取，应该返回默认统计信息
-    let stats = service.extract_stats_from_response_body(&mut ctx).await
+    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了请求时的模型信息

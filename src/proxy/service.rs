@@ -108,98 +108,6 @@ impl ProxyService {
         }
     }
 
-    /// 格式化请求头为人类可读的字符串（带脱敏处理）
-    pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
-        let mut formatted = Vec::new();
-        for (name, value) in headers.headers.iter() {
-            let name_str = name.as_str();
-            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-
-            let masked = match name_str.to_ascii_lowercase().as_str() {
-                "authorization"
-                | "proxy-authorization"
-                | "x-api-key"
-                | "api-key"
-                | "x-goog-api-key"
-                | "set-cookie"
-                | "cookie" => {
-                    // 只保留前后少量字符，避免日志泄露敏感信息
-                    if value_str.len() > 16 {
-                        format!(
-                            "{}: {}...{}",
-                            name_str,
-                            &value_str[..8],
-                            &value_str[value_str.len().saturating_sub(4)..]
-                        )
-                    } else {
-                        format!("{}: ****", name_str)
-                    }
-                }
-                _ => format!("{}: {}", name_str, value_str),
-            };
-            formatted.push(masked);
-        }
-        formatted.join("\n  ")
-    }
-
-    /// 格式化响应头为人类可读的字符串
-    pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String {
-        let mut formatted = Vec::new();
-        for (name, value) in headers.headers.iter() {
-            let name_str = name.as_str();
-            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-
-            // 对敏感的响应头也进行脱敏处理
-            let masked = match name_str.to_ascii_lowercase().as_str() {
-                "set-cookie" => {
-                    // 对set-cookie进行部分脱敏
-                    if value_str.len() > 20 {
-                        let parts: Vec<&str> = value_str.split(';').collect();
-                        if let Some(first_part) = parts.first() {
-                            if first_part.contains('=') {
-                                let cookie_parts: Vec<&str> = first_part.split('=').collect();
-                                if let Some(name) = cookie_parts.first() {
-                                    let name_str = name;
-                                    let value = &cookie_parts[1..].join("=");
-                                    if value.len() > 8 {
-                                        let masked_value = format!(
-                                            "{}...{}",
-                                            &value[..4],
-                                            &value[value.len().saturating_sub(4)..]
-                                        );
-                                        format!(
-                                            "{}: {}={}",
-                                            name_str,
-                                            masked_value,
-                                            cookie_parts[1..].join("=")
-                                        )
-                                    } else {
-                                        format!(
-                                            "{}: ****; {}",
-                                            name_str,
-                                            cookie_parts[1..].join("=")
-                                        )
-                                    }
-                                } else {
-                                    format!("{}: ****", name_str)
-                                }
-                            } else {
-                                format!("{}: ****", name_str)
-                            }
-                        } else {
-                            format!("{}: ****", name_str)
-                        }
-                    } else {
-                        format!("{}: ****", name_str)
-                    }
-                }
-                _ => format!("{}: {}", name_str, value_str),
-            };
-            formatted.push(masked);
-        }
-        formatted.join("\n  ")
-    }
-
     // 运行 early_request_filter 阶段所有服务
     async fn run_early_services(
         &self,
@@ -296,12 +204,17 @@ impl ProxyService {
     }
 
     /// 创建provider特定的响应体处理服务
-    fn provider_response_body_services(&self, ctx: &ProxyContext) -> Vec<Arc<dyn ResponseBodyService>> {
+    fn provider_response_body_services(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Vec<Arc<dyn ResponseBodyService>> {
         let mut services = Vec::new();
 
         // 根据provider类型注册相应的响应体处理服务
         if let Some(provider) = ctx.provider_type.as_ref() {
-            if let Some(strategy_name) = crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name) {
+            if let Some(strategy_name) =
+                crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name)
+            {
                 match strategy_name {
                     "openai" => {
                         // 创建OpenAI策略并设置数据库连接
@@ -309,7 +222,7 @@ impl ProxyService {
                         let mut strategy = crate::proxy::provider_strategy::provider_strategy_openai::OpenAIStrategy::new();
                         strategy = strategy.with_db(db_connection);
                         services.push(Arc::new(strategy) as Arc<dyn ResponseBodyService>);
-                    },
+                    }
                     // 其他provider可以在这里扩展
                     _ => {}
                 }
@@ -779,6 +692,7 @@ impl ResponseBodyService for DefaultResponseBodyService {
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
+            // 仅收集分块，统一由 StatisticsService 在收口阶段完成规范化与统计
             ctx.response_details.add_body_chunk(data);
             debug!(
                 component = COMPONENT,
@@ -788,87 +702,6 @@ impl ResponseBodyService for DefaultResponseBodyService {
                 event = "response_chunk",
                 "Collected response body chunk"
             );
-
-            let is_sse = ctx
-                .response_details
-                .content_type
-                .as_deref()
-                .map(|ct| ct.contains("text/event-stream") || ct.contains("application/stream"))
-                .unwrap_or(false);
-
-            // 简化的SSE处理：保持代理透明性，仅提取必要的统计信息
-            if is_sse {
-                if let Ok(chunk_str) = std::str::from_utf8(data) {
-                    // 直接处理数据，寻找token统计信息
-                    if let Some(data_start) = chunk_str.find("data: ") {
-                        let after_data = &chunk_str[data_start + 6..];
-                        if let Some(json_start) = after_data.find('{') {
-                            if let Some(json_end) = after_data[json_start..].find('}') {
-                                let json_str = &after_data[json_start..=json_start + json_end];
-
-                                // 尝试解析JSON并提取token统计
-                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                    // 支持多种token统计格式
-                                    let usage = json_val.get("usageMetadata")
-                                        .or_else(|| json_val.get("usage"))
-                                        .or_else(|| json_val.get("usage_stats"));
-
-                                    if let Some(usage) = usage {
-                                        let p = usage.get("promptTokenCount")
-                                            .or_else(|| usage.get("prompt_tokens"))
-                                            .or_else(|| usage.get("prompt"))
-                                            .and_then(|v| v.as_u64())
-                                            .map(|n| n as u32);
-
-                                        let c = usage.get("candidatesTokenCount")
-                                            .or_else(|| usage.get("completion_tokens"))
-                                            .or_else(|| usage.get("completion"))
-                                            .and_then(|v| v.as_u64())
-                                            .map(|n| n as u32);
-
-                                        let t = usage.get("totalTokenCount")
-                                            .or_else(|| usage.get("total_tokens"))
-                                            .or_else(|| usage.get("total"))
-                                            .and_then(|v| v.as_u64())
-                                            .map(|n| n as u32);
-
-                                        if p.is_some() || c.is_some() || t.is_some() {
-                                            ctx.sse_usage_agg = Some(crate::proxy::request_handler::SseUsageAgg {
-                                                prompt_tokens: p,
-                                                completion_tokens: c,
-                                                total_tokens: t,
-                                            });
-
-                                            debug!(
-                                                event = "sse_usage_extracted",
-                                                component = COMPONENT,
-                                                request_id = %ctx.request_id,
-                                                tokens_prompt = ?p,
-                                                tokens_completion = ?c,
-                                                tokens_total = ?t,
-                                                "SSE Token统计提取"
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 基本内存保护：防止异常情况下内存无限增长
-                    const MAX_BUFFER_SIZE: usize = 100 * 1024 * 1024; // 100MB
-                    if ctx.sse_line_buffer.len() > MAX_BUFFER_SIZE {
-                        warn!(
-                            component = COMPONENT,
-                            request_id = %ctx.request_id,
-                            buffer_size = ctx.sse_line_buffer.len(),
-                            max_size = MAX_BUFFER_SIZE,
-                            "SSE缓冲区异常，清理以防止内存问题"
-                        );
-                        ctx.sse_line_buffer.clear();
-                    }
-                }
-            }
         }
         Ok(None)
     }
@@ -1191,7 +1024,6 @@ fn provider_response_header_services(_ctx: &ProxyContext) -> Vec<Arc<dyn Respons
     Vec::new()
 }
 
-  
 // 示例占位：如需对某 provider 进行更强定制，可实现如下结构体并在上面的注册函数中返回
 // struct GeminiUpstreamRequestService;
 // #[async_trait]
@@ -1398,7 +1230,12 @@ impl EarlyRequestService for EarlyTraceExtendService {
         {
             if let Err(err) = ai
                 .tracing_service()
-                .update_trace_model_info(&ctx.request_id, Some(pt.id), ctx.requested_model.clone(), Some(backend.id))
+                .update_trace_model_info(
+                    &ctx.request_id,
+                    Some(pt.id),
+                    ctx.requested_model.clone(),
+                    Some(backend.id),
+                )
                 .await
             {
                 warn!(component = COMPONENT, request_id = %ctx.request_id, error = %err, "Failed to update model info");
@@ -1444,10 +1281,7 @@ impl ProxyHttp for ProxyService {
             .statistics_service()
             .collect_request_stats(session);
 
-        // 记录原始请求信息
-        let request_url = session.req_header().uri.to_string();
-        let request_headers = ProxyService::format_request_headers(&session.req_header());
-
+        // 下游请求开始
         info!(
             event = "downstream_request_start",
             component = COMPONENT,
@@ -1459,15 +1293,19 @@ impl ProxyHttp for ProxyService {
             "收到下游请求"
         );
 
-        // === 原始请求信息日志 ===
+        // 记录原始请求信息（统一JSON头部）
+        let request_url = session.req_header().uri.to_string();
+        let client_headers_json = crate::logging::headers_json_string_request(session.req_header());
+
+        // 下游请求头（JSON）
         info!(
+            event = "downstream_request_headers",
+            component = COMPONENT,
             request_id = %ctx.request_id,
-            stage = "原始请求",
             method = %method,
             url = %request_url,
-            headers = %request_headers,
-            "=== 原始请求信息 ===\n  方法: {}\n  URL: {}\n  请求头:\n  {}",
-            method, request_url, request_headers
+            client_headers_json = client_headers_json,
+            "下游请求头"
         );
 
         // 透明代理设计：仅处理代理请求，其他全部拒绝
@@ -1591,17 +1429,17 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        // === 响应头信息日志 ===
-        let response_headers = ProxyService::format_response_headers(&upstream_response);
-
+        // === 响应头信息日志（JSON） ===
+        let response_headers_json =
+            crate::logging::headers_json_string_response(&upstream_response);
         info!(
+            event = "upstream_response_headers",
+            component = COMPONENT,
             request_id = %ctx.request_id,
-            stage = "响应头信息",
             status = %upstream_response.status,
             status_code = upstream_response.status.as_u16(),
-            headers = %response_headers,
-            "=== 响应头信息 ===\n  状态码: {}\n  响应头:\n  {}",
-            upstream_response.status.as_u16(), response_headers
+            response_headers_json = response_headers_json,
+            "响应头信息"
         );
 
         for svc in &self.response_header_services {
@@ -1642,7 +1480,6 @@ impl ProxyHttp for ProxyService {
             }
         }
 
-        
         Ok(next)
     }
 
@@ -1704,39 +1541,43 @@ impl ProxyHttp for ProxyService {
 
             // 获取更多详细的上下文信息
             let request_url = session.req_header().uri.to_string();
-            let request_headers = ProxyService::format_request_headers(&session.req_header());
+            let request_headers_json =
+                crate::logging::headers_json_string_request(session.req_header());
             let request_method = session.req_header().method.as_str();
 
-            // === 响应失败详细信息 ===
+            // 统一合并失败日志（结构化 JSON 字段）
+            let selected_backend_id = ctx.selected_backend.as_ref().map(|b| b.id);
+            let selected_backend_key_preview = ctx.selected_backend.as_ref().map(|b| {
+                if b.api_key.len() > 8 {
+                    format!(
+                        "{}***{}",
+                        &b.api_key[..4],
+                        &b.api_key[b.api_key.len() - 4..]
+                    )
+                } else {
+                    "***".to_string()
+                }
+            });
+
             error!(
+                event = "request_failed",
+                component = COMPONENT,
                 request_id = %ctx.request_id,
-                stage = "响应失败",
+                method = %request_method,
+                url = %request_url,
                 error_type = ?error.etype,
                 error_source = ?error.esource,
+                error_context = ?error.context,
                 error_message = %error,
                 duration_ms = duration.as_millis(),
-                "=== 请求失败详细信息 ===\n  失败原因: {}\n  请求方法: {}\n  请求URL: {}\n  错误类型: {:?}\n  错误来源: {:?}\n  错误上下文: {:?}\n  持续时间: {}ms",
-                error, request_method, request_url, error.etype, error.esource, error.context, duration.as_millis()
-            );
-
-            // 提供更多上下文信息
-            error!(
-                request_id = %ctx.request_id,
-                stage = "失败上下文",
-                request_headers = %request_headers,
-                selected_backend = ?ctx.selected_backend.as_ref().map(|b| format!("id={} key_preview={}", b.id,
-                    if b.api_key.len() > 8 { format!("{}***{}", &b.api_key[..4], &b.api_key[b.api_key.len()-4..]) } else { "***".to_string() })),
-                provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
-                timeout_seconds = ?ctx.timeout_seconds,
                 is_timeout_error = is_timeout_error,
                 is_network_error = is_network_error,
-                "=== 失败上下文详情 ===\n  请求头:\n  {}\n  选中的后端: {:?}\n  服务商类型: {:?}\n  超时设置: {:?}秒\n  是否超时错误: {}\n  是否网络错误: {}",
-                request_headers,
-                ctx.selected_backend.as_ref().map(|b| b.id),
-                ctx.provider_type.as_ref().map(|p| &p.name),
-                ctx.timeout_seconds,
-                is_timeout_error,
-                is_network_error
+                request_headers_json = request_headers_json,
+                selected_backend_id = selected_backend_id,
+                selected_backend_key_preview = ?selected_backend_key_preview,
+                provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
+                timeout_seconds = ?ctx.timeout_seconds,
+                "请求失败"
             );
 
             // 如果是超时或网络错误，使用AI处理器进行错误转换
@@ -1757,10 +1598,11 @@ impl ProxyHttp for ProxyService {
                     .map(|resp| resp.status.as_u16())
                     .unwrap_or(200);
 
-                ctx.response_details.finalize_body();
-
                 // 如果响应非2xx/3xx，记录响应体用于排查
                 if status_code >= 400 {
+                    if ctx.response_details.body.is_none() {
+                        ctx.response_details.finalize_body();
+                    }
                     let content_type = ctx
                         .response_details
                         .content_type
@@ -1790,57 +1632,9 @@ impl ProxyHttp for ProxyService {
                     );
                 }
 
-                // 从响应体JSON中提取所有统计信息 - 使用StatisticsService
-                match self
-                    .ai_handler
-                    .statistics_service()
-                    .extract_stats_from_response_body(ctx)
-                    .await
-                {
-                    Ok(mut new_stats) => {
-                        // 若有 SSE 聚合，优先使用（latest-wins）
-                        if let Some(agg) = ctx.sse_usage_agg.clone() {
-                            new_stats.input_tokens = agg.prompt_tokens.or(new_stats.input_tokens);
-                            new_stats.output_tokens =
-                                agg.completion_tokens.or(new_stats.output_tokens);
-                            new_stats.total_tokens = Some(
-                                agg.total_tokens
-                                    .or_else(|| match (agg.prompt_tokens, agg.completion_tokens) {
-                                        (Some(p), Some(c)) => Some(p + c),
-                                        (Some(p), None) => Some(p),
-                                        (None, Some(c)) => Some(c),
-                                        (None, None) => new_stats.total_tokens,
-                                    })
-                                    .unwrap_or(0),
-                            );
-
-                            // 覆盖成本：基于聚合后的 token 重算（若有模型与provider_type）
-                            if let (Some(model), Some(provider)) =
-                                (new_stats.model_name.clone(), ctx.provider_type.as_ref())
-                            {
-                                let usage_now = crate::proxy::request_handler::TokenUsage {
-                                    prompt_tokens: new_stats.input_tokens,
-                                    completion_tokens: new_stats.output_tokens,
-                                    total_tokens: new_stats.total_tokens.unwrap_or(0),
-                                    model_used: Some(model.clone()),
-                                };
-                                if let Ok((cost, currency)) = self
-                                    .ai_handler
-                                    .statistics_service()
-                                    .calculate_cost_direct(
-                                        &model,
-                                        provider.id,
-                                        &usage_now,
-                                        &ctx.request_id,
-                                    )
-                                    .await
-                                {
-                                    new_stats.cost = cost;
-                                    new_stats.cost_currency = currency;
-                                }
-                            }
-                        }
-
+                // 使用 StatisticsService 统一完成 finalize + 提取 + 合并（含 SSE 覆盖与重算成本）
+                match self.ai_handler.statistics_service().finalize_and_extract_stats(ctx).await {
+                    Ok(new_stats) => {
                         // 更新上下文中的token使用信息（使用合并后的 new_stats）
                         ctx.token_usage.prompt_tokens = new_stats.input_tokens;
                         ctx.token_usage.completion_tokens = new_stats.output_tokens;
@@ -1853,12 +1647,7 @@ impl ProxyHttp for ProxyService {
                             let _ = self
                                 .ai_handler
                                 .tracing_service()
-                                .update_trace_model_info(
-                                    &ctx.request_id,
-                                    None,
-                                    Some(model),
-                                    None,
-                                )
+                                .update_trace_model_info(&ctx.request_id, None, Some(model), None)
                                 .await;
                         }
 

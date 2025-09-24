@@ -5,7 +5,9 @@
 use anyhow::Result;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
+use std::collections::HashMap;
 use std::sync::Arc;
+use url::form_urlencoded;
 
 use crate::auth::AuthUtils;
 use crate::error::ProxyError;
@@ -45,61 +47,6 @@ pub struct StatisticsService {
 
 impl StatisticsService {
     /// 在任意层级查找并归一化 usageMetadata 到顶层，便于通用提取器工作
-    pub fn normalize_usage_metadata(&self, mut root: serde_json::Value) -> serde_json::Value {
-        // 如果顶层已存在，直接返回
-        if root.get("usageMetadata").is_some() {
-            return root;
-        }
-
-        // 深度优先在任意层级查找包含 token 计数字段的对象
-        fn dfs_find(obj: &serde_json::Value) -> Option<serde_json::Map<String, serde_json::Value>> {
-            match obj {
-                serde_json::Value::Object(map) => {
-                    let mut acc: serde_json::Map<String, serde_json::Value> =
-                        serde_json::Map::new();
-
-                    for key in [
-                        "promptTokenCount",
-                        "candidatesTokenCount",
-                        "totalTokenCount",
-                    ] {
-                        if let Some(v) = map.get(key) {
-                            acc.insert(key.to_string(), v.clone());
-                        }
-                    }
-
-                    if !acc.is_empty() {
-                        return Some(acc);
-                    }
-
-                    // 递归遍历子对象/数组
-                    for (_k, v) in map.iter() {
-                        if let Some(found) = dfs_find(v) {
-                            return Some(found);
-                        }
-                    }
-                    None
-                }
-                serde_json::Value::Array(arr) => {
-                    for v in arr {
-                        if let Some(found) = dfs_find(v) {
-                            return Some(found);
-                        }
-                    }
-                    None
-                }
-                _ => None,
-            }
-        }
-
-        if let Some(meta) = dfs_find(&root) {
-            if let Some(root_map) = root.as_object_mut() {
-                root_map.insert("usageMetadata".to_string(), serde_json::Value::Object(meta));
-            }
-        }
-
-        root
-    }
 
     /// 创建新的统计服务
     pub fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
@@ -279,57 +226,180 @@ impl StatisticsService {
         }
     }
 
-  
     /// 从 JSON 响应中提取 token 统计（通用提取器）
-    pub fn extract_usage_from_json(&self, json: &serde_json::Value) -> DetailedRequestStats {
-        let mut stats = DetailedRequestStats::default();
-        // 默认直接读取 usageMetadata 常见字段，以便无配置也能工作
-        if let Some(usage) = json.get("usageMetadata") {
-            if let Some(p) = usage.get("promptTokenCount").and_then(|v| v.as_u64()) {
-                stats.input_tokens = Some(p as u32);
-            }
-            if let Some(c) = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()) {
-                stats.output_tokens = Some(c as u32);
-            }
-            if let Some(t) = usage.get("totalTokenCount").and_then(|v| v.as_u64()) {
-                stats.total_tokens = Some(t as u32);
-            }
-        }
-        // 模型名（回退）
-        stats.model_name = json
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                json.get("data")
-                    .and_then(|d| d.get("model"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
-
-        stats
-    }
 
     /// 从响应体中提取模型信息
     ///
-    /// 只支持最基本的"model"字段，用于在响应处理阶段更新模型信息
-    pub fn extract_model_from_response(&self, json: &serde_json::Value) -> Option<String> {
-        // 只检查最常见的基本model字段
-        if let Some(model) = json.get("model").and_then(|v| v.as_str()) {
-            if !model.is_empty() {
+    /// 支持多种AI API响应格式的模型提取，包括数组索引访问
+    pub fn extract_model_from_response_body(&self, json: &serde_json::Value) -> Option<String> {
+        // 定义支持的模型字段路径，按优先级排序
+        let model_paths = [
+            "model",           // OpenAI格式
+            "modelName",       // 通用格式
+            "model_id",        // 通用格式
+            "data.0.model",    // 数组访问格式
+            "choices.0.model", // 数组访问格式
+            "candidates.0.model", // 数组访问格式
+            "response.model",  // 嵌套格式
+            "result.model",    // 嵌套格式
+        ];
+
+        // 按优先级尝试提取模型信息
+        for path in &model_paths {
+            if let Some(model) = self.extract_model_by_path(json, path) {
                 tracing::debug!(
                     model = %model,
+                    path = %path,
                     "Model extracted from response"
                 );
+                return Some(model);
+            }
+        }
+
+        tracing::debug!("No model found in response using any supported path");
+        None
+    }
+
+    /// 根据路径提取模型信息
+    fn extract_model_by_path(&self, json: &serde_json::Value, path: &str) -> Option<String> {
+        if path.is_empty() {
+            return None;
+        }
+
+        // 分割路径并遍历JSON结构
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = json;
+
+        for part in parts {
+            // 检查是否是数组索引访问，如 choices[0]
+            if let Some((field_name, index_str)) = self.parse_array_access(part) {
+                // 处理 field_name[index] 格式
+                if let Some(array_field) = current.get(field_name) {
+                    if let Some(array) = array_field.as_array() {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            if let Some(element) = array.get(index) {
+                                current = element;
+                                continue;
+                            } else {
+                                tracing::debug!(
+                                    path = %path,
+                                    field_name = %field_name,
+                                    index = %index_str,
+                                    array_len = array.len(),
+                                    "Array index out of bounds"
+                                );
+                                return None;
+                            }
+                        } else {
+                            tracing::debug!(
+                                path = %path,
+                                field_name = %field_name,
+                                index = %index_str,
+                                "Invalid array index format"
+                            );
+                            return None;
+                        }
+                    } else {
+                        tracing::debug!(
+                            path = %path,
+                            field_name = %field_name,
+                            "Field is not an array"
+                        );
+                        return None;
+                    }
+                } else {
+                    tracing::debug!(
+                        path = %path,
+                        field_name = %field_name,
+                        "Field not found"
+                    );
+                    return None;
+                }
+            } else if part.chars().all(|c| c.is_ascii_digit()) {
+                // 处理直接的数字索引，如 data.0.model 中的 "0"
+                if let Some(array) = current.as_array() {
+                    if let Ok(index) = part.parse::<usize>() {
+                        if let Some(element) = array.get(index) {
+                            current = element;
+                            continue;
+                        } else {
+                            tracing::debug!(
+                                path = %path,
+                                index = %part,
+                                array_len = array.len(),
+                                "Direct array index out of bounds"
+                            );
+                            return None;
+                        }
+                    } else {
+                        tracing::debug!(
+                            path = %path,
+                            index = %part,
+                            "Invalid direct array index format"
+                        );
+                        return None;
+                    }
+                } else {
+                    tracing::debug!(
+                        path = %path,
+                        index = %part,
+                        "Current value is not an array for direct indexing"
+                    );
+                    return None;
+                }
+            } else {
+                // 处理普通字段
+                if let Some(next) = current.get(part) {
+                    current = next;
+                } else {
+                    tracing::debug!(
+                        path = %path,
+                        part = %part,
+                        "Path segment not found"
+                    );
+                    return None;
+                }
+            }
+        }
+
+        // 提取字符串值
+        if let Some(model_str) = current.as_str() {
+            let model = model_str.trim();
+            if !model.is_empty() {
                 return Some(model.to_string());
             }
         }
 
+        tracing::debug!(
+            path = %path,
+            final_value = %current,
+            "Model value is not a valid string"
+        );
+        None
+    }
+
+    /// 解析数组索引访问，如 choices[0] -> (choices, 0) 或 0 -> None
+    fn parse_array_access<'a>(&self, part: &'a str) -> Option<(&'a str, &'a str)> {
+        // 首先检查是否是直接的数字索引，如 "0"
+        if part.chars().all(|c| c.is_ascii_digit()) {
+            return None; // 直接数字索引，由调用者处理
+        }
+
+        // 检查是否是 field[index] 格式
+        if let Some(bracket_pos) = part.find('[') {
+            if let Some(close_bracket_pos) = part.find(']') {
+                if bracket_pos < close_bracket_pos {
+                    let field_name = &part[..bracket_pos];
+                    let index_str = &part[bracket_pos + 1..close_bracket_pos];
+                    return Some((field_name, index_str));
+                }
+            }
+        }
         None
     }
 
     /// 从上下文响应体中提取统计信息（统一实现）
-    pub async fn extract_stats_from_response_body(
+    pub async fn extract_detailed_stats_from_response(
         &self,
         ctx: &mut ProxyContext,
     ) -> Result<DetailedRequestStats, ProxyError> {
@@ -369,12 +439,12 @@ impl StatisticsService {
             }
         };
 
-        // 归一化 usageMetadata（若在深层）
-        let normalized = self.normalize_usage_metadata(parsed);
+        // 直接使用原始解析的JSON，不再进行格式转换
+        let normalized = parsed;
 
         // === 响应时模型信息提取逻辑 ===
         // 在响应处理阶段，尝试从响应体中提取更准确的模型信息
-        let response_model = self.extract_model_from_response(&normalized);
+        let response_model = self.extract_model_from_response_body(&normalized);
 
         // 如果从响应中提取到模型信息，并且与请求时的模型信息不同，则更新追踪记录
         if let Some(ref response_model_name) = response_model {
@@ -436,23 +506,28 @@ impl StatisticsService {
             }
         }
 
-        // 若数据库未配置或未提取到，则使用通用回退提取
-        if stats.input_tokens.is_none()
-            && stats.output_tokens.is_none()
-            && stats.total_tokens.is_none()
-        {
-            let fallback = self.extract_usage_from_json(&normalized);
-            stats.input_tokens = fallback.input_tokens;
-            stats.output_tokens = fallback.output_tokens;
-            stats.total_tokens = fallback.total_tokens;
-            stats.model_name = fallback.model_name;
+        // 若数据库未配置或未提取到token字段，则设为0值
+        if stats.input_tokens.is_none() {
+            stats.input_tokens = Some(0);
+        }
+        if stats.output_tokens.is_none() {
+            stats.output_tokens = Some(0);
+        }
+        if stats.total_tokens.is_none() {
+            stats.total_tokens = Some(0);
         }
 
         // 同步模型名（优先使用请求时已提取的模型信息）
         // 请求时的模型信息通常是最准确的，但如果响应中提取到了更准确的模型信息，则保持响应提取的结果
         if let Some(requested_model) = &ctx.requested_model {
             // 只有在stats中没有模型信息或者模型信息为空时，才使用请求时的模型信息
-            if stats.model_name.is_none() || stats.model_name.as_ref().map(|m| m.is_empty()).unwrap_or(false) {
+            if stats.model_name.is_none()
+                || stats
+                    .model_name
+                    .as_ref()
+                    .map(|m| m.is_empty())
+                    .unwrap_or(false)
+            {
                 stats.model_name = Some(requested_model.clone());
                 tracing::debug!(
                     request_id = %ctx.request_id,
@@ -543,44 +618,356 @@ impl StatisticsService {
 
         Ok(stats)
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    // ========== 请求阶段模型提取方法 ==========
 
-    #[tokio::test]
-    async fn normalize_usage_metadata_lifts_nested() {
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
-        let svc = StatisticsService::new(Arc::new(PricingCalculatorService::new(Arc::new(db))));
-        let nested = serde_json::json!({
-            "data": {"totalTokenCount": 123, "foo": 1},
-            "other": [{"promptTokenCount": 11}]
-        });
-        let out = svc.normalize_usage_metadata(nested);
-        let meta = out
-            .get("usageMetadata")
-            .and_then(|v| v.as_object())
-            .unwrap();
-        // 任意一个计数字段被提取到顶层即可
-        assert!(meta.contains_key("totalTokenCount") || meta.contains_key("promptTokenCount"));
+    /// 统一的请求阶段模型提取入口点
+    pub fn extract_model_from_request(
+        &self,
+        session: &Session,
+        ctx: &ProxyContext,
+    ) -> Option<String> {
+        tracing::debug!(
+            request_id = ctx.request_id,
+            "Starting model extraction from request"
+        );
+
+        // 尝试使用数据库驱动的 ModelExtractor
+        if let Some(model_name) = self.extract_model_from_request_with_db_config(session, ctx) {
+            tracing::info!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "database_extractor",
+                "Model extracted successfully using database configuration"
+            );
+            return Some(model_name);
+        }
+
+        // 回退：直接从请求体提取
+        if let Some(model_name) = self.extract_model_from_request_body_fallback(ctx) {
+            tracing::info!(
+                request_id = ctx.request_id,
+                model = model_name,
+                extraction_method = "request_body_fallback",
+                "Model extracted from request body (fallback method)"
+            );
+            return Some(model_name);
+        }
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            "No model found in request using any method"
+        );
+        None
     }
 
-    #[tokio::test]
-    async fn extract_usage_from_json_reads_common_fields() {
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
-        let svc = StatisticsService::new(Arc::new(PricingCalculatorService::new(Arc::new(db))));
-        let json = serde_json::json!({
-            "usageMetadata": {
-                "promptTokenCount": 10,
-                "candidatesTokenCount": 20,
-                "totalTokenCount": 30
-            },
-            "model": "gpt-4o"
-        });
-        let stats = svc.extract_usage_from_json(&json);
-        assert_eq!(stats.input_tokens, Some(10));
-        assert_eq!(stats.output_tokens, Some(20));
-        assert_eq!(stats.total_tokens, Some(30));
+    /// 尝试使用数据库驱动的 ModelExtractor 提取模型
+    pub fn extract_model_from_request_with_db_config(
+        &self,
+        session: &Session,
+        ctx: &ProxyContext,
+    ) -> Option<String> {
+        let provider = ctx.provider_type.as_ref()?;
+        tracing::debug!(
+            request_id = ctx.request_id,
+            provider_id = provider.id,
+            provider_name = provider.name,
+            has_model_extraction_config = provider.model_extraction_json.is_some(),
+            "Checking provider model extraction configuration"
+        );
+
+        let model_extraction_json = provider.model_extraction_json.as_ref()?;
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            provider_id = provider.id,
+            "Creating ModelExtractor from database configuration"
+        );
+
+        let extractor = crate::providers::field_extractor::ModelExtractor::from_json_config(
+            model_extraction_json,
+        )
+        .map_err(|e| {
+            tracing::warn!(
+                request_id = ctx.request_id,
+                provider_id = provider.id,
+                error = %e,
+                "Failed to create ModelExtractor from database config"
+            );
+            e
+        })
+        .ok()?;
+
+        let body_json = self.parse_request_body_for_model(ctx);
+        let query_params = self.extract_query_params_for_model(session);
+        let url_path = session.req_header().uri.path();
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            url_path = url_path,
+            has_body_json = body_json.is_some(),
+            query_params_count = query_params.len(),
+            "Extracting model with configured extractor"
+        );
+
+        let model_name = extractor.extract_model_name(url_path, body_json.as_ref(), &query_params);
+
+        tracing::info!(
+            request_id = ctx.request_id,
+            model = model_name,
+            extraction_method = "database_driven",
+            provider_id = provider.id,
+            "Extracted model using database-configured ModelExtractor"
+        );
+
+        Some(model_name)
+    }
+
+    /// 尝试从请求体直接提取模型（fallback方法）
+    pub fn extract_model_from_request_body_fallback(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Option<String> {
+        tracing::debug!(
+            request_id = ctx.request_id,
+            body_size = ctx.body.len(),
+            "Attempting to extract model from request body"
+        );
+
+        if ctx.body.is_empty() {
+            tracing::debug!(
+                request_id = ctx.request_id,
+                "Request body is empty, skipping body extraction"
+            );
+            return None;
+        }
+
+        let body_str = std::str::from_utf8(&ctx.body)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Request body is not valid UTF-8"
+                );
+                e
+            })
+            .ok()?;
+
+        tracing::debug!(
+            request_id = ctx.request_id,
+            body_length = body_str.len(),
+            "Request body parsed as UTF-8 successfully"
+        );
+
+        let json_value = serde_json::from_str::<serde_json::Value>(body_str)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Failed to parse request body as JSON"
+                );
+                e
+            })
+            .ok()?;
+
+        let model_name = json_value
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string());
+
+        match model_name {
+            Some(ref model) => {
+                tracing::info!(
+                    request_id = ctx.request_id,
+                    model = model,
+                    extraction_method = "fallback_direct",
+                    "Extracted model from request body (fallback)"
+                );
+            }
+            None => {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    "No model field found in request body JSON"
+                );
+            }
+        }
+
+        model_name
+    }
+
+    /// 解析请求体用于模型提取
+    pub fn parse_request_body_for_model(
+        &self,
+        ctx: &ProxyContext,
+    ) -> Option<serde_json::Value> {
+        if ctx.body.is_empty() {
+            return None;
+        }
+
+        let body_str = std::str::from_utf8(&ctx.body)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Request body is not valid UTF-8"
+                );
+                e
+            })
+            .ok()?;
+
+        serde_json::from_str::<serde_json::Value>(body_str)
+            .map_err(|e| {
+                tracing::debug!(
+                    request_id = ctx.request_id,
+                    error = %e,
+                    "Failed to parse request body as JSON"
+                );
+                e
+            })
+            .ok()
+    }
+
+    /// 提取查询参数用于模型提取
+    pub fn extract_query_params_for_model(
+        &self,
+        session: &Session,
+    ) -> HashMap<String, String> {
+        let uri = &session.req_header().uri;
+        let query_string = uri.query().unwrap_or("");
+
+        if query_string.is_empty() {
+            return HashMap::new();
+        }
+
+        form_urlencoded::parse(query_string.as_bytes())
+            .into_owned()
+            .collect()
+    }
+
+    /// 最终统计入口（统一流式与非流式）：
+    /// 1) 若未完成收集，先执行 finalize_body
+    /// 2) 流式：先标准化为等价的非流式 JSON，再提取
+    /// 3) 非流式：直接从 body JSON 提取
+    /// 4) 若存在 sse_usage_agg，作为兜底覆盖（latest-wins）并在具备模型/Provider时重算费用
+    pub async fn finalize_and_extract_stats(
+        &self,
+        ctx: &mut ProxyContext,
+    ) -> Result<DetailedRequestStats, ProxyError> {
+        if ctx.response_details.body.is_none() {
+            ctx.response_details.finalize_body();
+        }
+
+        // 尝试将流式响应规范化为等价非流式 JSON
+        if ctx.response_details.is_sse_format() {
+            if let Some(json) = self.normalize_streaming_json(ctx) {
+                let mut stats = self.extract_stats_from_json(ctx, &json).await?;
+                // 兜底覆盖：如先前增量聚合到 ctx.sse_usage_agg，则以 latest-wins 更新
+                if let Some(agg) = ctx.sse_usage_agg.clone() {
+                    stats.input_tokens = agg.prompt_tokens.or(stats.input_tokens);
+                    stats.output_tokens = agg.completion_tokens.or(stats.output_tokens);
+                    stats.total_tokens = Some(
+                        agg.total_tokens
+                            .or_else(|| match (agg.prompt_tokens, agg.completion_tokens) {
+                                (Some(p), Some(c)) => Some(p + c),
+                                (Some(p), None) => Some(p),
+                                (None, Some(c)) => Some(c),
+                                (None, None) => stats.total_tokens,
+                            })
+                            .unwrap_or(0),
+                    );
+                }
+                return Ok(stats);
+            }
+        }
+
+        // 非流式或无法标准化：直接从响应体解析
+        self.extract_detailed_stats_from_response(ctx).await
     }
 }
+
+/// 流式场景：从 SSE/stream 分块中尝试提取 usage 统计并合并到上下文聚合
+/// 注意：此函数不依赖实例，可直接在流式响应阶段调用
+impl StatisticsService {
+    /// 将流式响应标准化为一个等价的非流式 JSON（取最后一个有效 JSON 对象）
+    pub fn normalize_streaming_json(&self, ctx: &mut ProxyContext) -> Option<serde_json::Value> {
+        // 确保已经完成收集
+        if ctx.response_details.body.is_none() {
+            ctx.response_details.finalize_body();
+        }
+        let body = ctx.response_details.body.as_ref()?;
+        // 尝试从按行的 SSE 中提取最后一个 data: {json}
+        let mut last_json: Option<serde_json::Value> = None;
+        for line in body.lines() {
+            let s = line.trim_start_matches("data: ").trim();
+            if let Some(start) = s.find('{') {
+                // 贪婪到行末（容错：简单匹配）
+                let candidate = &s[start..];
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
+                    last_json = Some(v);
+                }
+            } else if s.starts_with('{') {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+                    last_json = Some(v);
+                }
+            }
+        }
+        last_json
+    }
+
+    /// 使用 provider 的 token_mappings_json（经 TokenFieldExtractor）从 JSON 提取统计
+    pub async fn extract_stats_from_json(
+        &self,
+        ctx: &mut ProxyContext,
+        json: &serde_json::Value,
+    ) -> Result<DetailedRequestStats, ProxyError> {
+        let mut stats = DetailedRequestStats::default();
+
+        // 模型信息（复用现有响应模型提取）
+        stats.model_name = self.extract_model_from_response_body(json);
+
+        // 基于 provider token_mappings_json 的数据驱动提取
+        if let Some(provider) = ctx.provider_type.as_ref() {
+            if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
+                if let Ok(cfg) = crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
+                    let extractor = crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
+                    stats.input_tokens = extractor.extract_token_u32(json, "tokens_prompt");
+                    stats.output_tokens = extractor.extract_token_u32(json, "tokens_completion");
+                    stats.total_tokens = extractor.extract_token_u32(json, "tokens_total").or_else(|| match (stats.input_tokens, stats.output_tokens) {
+                        (Some(p), Some(c)) => Some(p + c),
+                        (Some(p), None) => Some(p),
+                        (None, Some(c)) => Some(c),
+                        _ => None,
+                    });
+                    stats.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
+                    stats.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
+                }
+            }
+        }
+
+        // 默认值兜底
+        if stats.input_tokens.is_none() { stats.input_tokens = Some(0); }
+        if stats.output_tokens.is_none() { stats.output_tokens = Some(0); }
+        if stats.total_tokens.is_none() { stats.total_tokens = Some(0); }
+
+        // 费用计算（有模型与 provider 才计算）
+        if let (Some(model), Some(provider)) = (stats.model_name.clone(), ctx.provider_type.as_ref()) {
+            let usage_now = TokenUsage {
+                prompt_tokens: stats.input_tokens,
+                completion_tokens: stats.output_tokens,
+                total_tokens: stats.total_tokens.unwrap_or(0),
+                model_used: Some(model.clone()),
+            };
+            if let Ok((cost, currency)) = self
+                .calculate_cost_direct(&model, provider.id, &usage_now, &ctx.request_id)
+                .await
+            {
+                stats.cost = cost;
+                stats.cost_currency = currency;
+            }
+        }
+
+        Ok(stats)
+    }
+}
+
+// 移除了已删除功能的测试函数
