@@ -15,8 +15,7 @@ pub enum SchedulingStrategy {
 }
 
 /// API密钥健康状态枚举
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ApiKeyHealthStatus {
     /// 健康可用
     Healthy,
@@ -24,6 +23,51 @@ pub enum ApiKeyHealthStatus {
     RateLimited,
     /// 不健康 (包含原来的 unknown 和 error)
     Unhealthy,
+}
+
+impl<'de> serde::Deserialize<'de> for ApiKeyHealthStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ApiKeyHealthStatusVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ApiKeyHealthStatusVisitor {
+            type Value = ApiKeyHealthStatus;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string representing API key health status")
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match s {
+                    "healthy" => Ok(ApiKeyHealthStatus::Healthy),
+                    "rate_limited" => Ok(ApiKeyHealthStatus::RateLimited),
+                    "unhealthy" => Ok(ApiKeyHealthStatus::Unhealthy),
+                    _ => Err(E::custom(format!("unknown health status: {}", s))),
+                }
+            }
+        }
+
+        deserializer.deserialize_str(ApiKeyHealthStatusVisitor)
+    }
+}
+
+impl serde::Serialize for ApiKeyHealthStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = match self {
+            ApiKeyHealthStatus::Healthy => "healthy",
+            ApiKeyHealthStatus::RateLimited => "rate_limited",
+            ApiKeyHealthStatus::Unhealthy => "unhealthy",
+        };
+        serializer.serialize_str(s)
+    }
 }
 
 impl ToString for ApiKeyHealthStatus {
@@ -127,5 +171,42 @@ mod tests {
         assert_eq!(ApiKeyHealthStatus::Healthy.to_string(), "healthy");
         assert_eq!(ApiKeyHealthStatus::RateLimited.to_string(), "rate_limited");
         assert_eq!(ApiKeyHealthStatus::Unhealthy.to_string(), "unhealthy");
+    }
+
+    #[test]
+    fn test_api_key_health_status_serde_deserialization() {
+        // 测试反序列化：只支持 rate_limited
+        let json1 = r#""rate_limited""#;
+        let status1: ApiKeyHealthStatus = serde_json::from_str(json1).unwrap();
+        assert_eq!(status1, ApiKeyHealthStatus::RateLimited);
+
+        let json2 = r#""healthy""#;
+        let status2: ApiKeyHealthStatus = serde_json::from_str(json2).unwrap();
+        assert_eq!(status2, ApiKeyHealthStatus::Healthy);
+
+        let json3 = r#""unhealthy""#;
+        let status3: ApiKeyHealthStatus = serde_json::from_str(json3).unwrap();
+        assert_eq!(status3, ApiKeyHealthStatus::Unhealthy);
+
+        // 测试不支持 ratelimited
+        let json4 = r#""ratelimited""#;
+        let result4: Result<ApiKeyHealthStatus, _> = serde_json::from_str(json4);
+        assert!(result4.is_err());
+    }
+
+    #[test]
+    fn test_api_key_health_status_serde_serialization() {
+        // 测试序列化：总是输出 rate_limited
+        let status = ApiKeyHealthStatus::RateLimited;
+        let serialized = serde_json::to_string(&status).unwrap();
+        assert_eq!(serialized, "\"rate_limited\"");
+
+        let status = ApiKeyHealthStatus::Healthy;
+        let serialized = serde_json::to_string(&status).unwrap();
+        assert_eq!(serialized, "\"healthy\"");
+
+        let status = ApiKeyHealthStatus::Unhealthy;
+        let serialized = serde_json::to_string(&status).unwrap();
+        assert_eq!(serialized, "\"unhealthy\"");
     }
 }
