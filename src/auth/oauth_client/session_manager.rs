@@ -5,16 +5,15 @@
 
 use super::pkce::PkceParams;
 use super::{OAuthError, OAuthProviderConfig, OAuthResult, OAuthSessionInfo, OAuthTokenResponse};
+use crate::auth::types::AuthStatus;
 use chrono::{Duration, Utc};
 use entity::{OAuthClientSessions, oauth_client_sessions};
-use crate::auth::types::AuthStatus;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
     TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
 
 /// 会话创建参数
 #[derive(Debug, Clone)]

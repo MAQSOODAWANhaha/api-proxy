@@ -4,7 +4,7 @@
 
 use chrono::{Duration, Utc};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{Database, DatabaseConnection, Set, entity::*, QueryFilter, PaginatorTrait};
+use sea_orm::{Database, DatabaseConnection, PaginatorTrait, QueryFilter, Set, entity::*};
 use serial_test::serial;
 
 use api_proxy::auth::OAuthCleanupTask;

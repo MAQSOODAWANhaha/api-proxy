@@ -377,9 +377,7 @@ pub async fn list_user_service_keys(
         };
 
         // 计算平均响应时间
-        let total_response_time: i64 = tracings.iter()
-            .filter_map(|t| t.duration_ms)
-            .sum();
+        let total_response_time: i64 = tracings.iter().filter_map(|t| t.duration_ms).sum();
         let avg_response_time = if success_count > 0 {
             total_response_time / success_count as i64
         } else {
@@ -387,14 +385,10 @@ pub async fn list_user_service_keys(
         };
 
         // 计算总成本
-        let total_cost: f64 = tracings.iter()
-            .filter_map(|t| t.cost)
-            .sum();
+        let total_cost: f64 = tracings.iter().filter_map(|t| t.cost).sum();
 
         // 计算总token数
-        let total_tokens: i32 = tracings.iter()
-            .filter_map(|t| t.tokens_total)
-            .sum();
+        let total_tokens: i32 = tracings.iter().filter_map(|t| t.tokens_total).sum();
 
         // 获取最后使用时间
         let last_used_at = match ProxyTracing::find()

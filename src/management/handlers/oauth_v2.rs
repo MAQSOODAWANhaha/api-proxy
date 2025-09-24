@@ -6,7 +6,8 @@
 use crate::auth::extract_user_id_from_headers;
 use crate::auth::oauth_client::session_manager::SessionStatistics;
 use crate::auth::oauth_client::{
-    AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo, OAuthTokenResponse,
+    AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo,
+    OAuthTokenResponse,
 };
 use crate::management::{response, server::AppState};
 use axum::Json;

@@ -187,7 +187,11 @@ impl HealthBestApiKeySelector {
     /// - unknown: 80分
     /// - rate_limited: 根据剩余时间计算，最多60分
     /// - unhealthy/error: 0分
-    fn calculate_health_score(&self, key: &user_provider_keys::Model, now: chrono::NaiveDateTime) -> i32 {
+    fn calculate_health_score(
+        &self,
+        key: &user_provider_keys::Model,
+        now: chrono::NaiveDateTime,
+    ) -> i32 {
         match key.health_status.as_str() {
             "healthy" => 100,
             "unknown" => 80,
@@ -215,7 +219,7 @@ impl HealthBestApiKeySelector {
                 }
             }
             "unhealthy" | "error" => 0,
-            _ => 50 // 未知状态，中等分数
+            _ => 50, // 未知状态，中等分数
         }
     }
 }
@@ -389,7 +393,10 @@ impl ApiKeySelector for WeightedApiKeySelector {
 
         let reason = format!(
             "Weighted selection: random_value={}, total_weight={}, key_weight={}, key_id={}",
-            random_value, total_weight, selected_key.weight.unwrap_or(1), selected_key.id
+            random_value,
+            total_weight,
+            selected_key.weight.unwrap_or(1),
+            selected_key.id
         );
 
         tracing::debug!(

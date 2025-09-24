@@ -76,7 +76,8 @@ impl ToString for ApiKeyHealthStatus {
             ApiKeyHealthStatus::Healthy => "healthy",
             ApiKeyHealthStatus::RateLimited => "rate_limited",
             ApiKeyHealthStatus::Unhealthy => "unhealthy",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -105,7 +106,9 @@ impl SchedulingStrategy {
         match s.to_lowercase().as_str() {
             "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
             "weighted" | "weight" | "w" => Some(Self::Weighted),
-            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => Some(Self::HealthBest),
+            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => {
+                Some(Self::HealthBest)
+            }
             _ => None,
         }
     }

@@ -5,9 +5,9 @@
 use anyhow::Result;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::borrow::Cow;
 use url::form_urlencoded;
 
 use crate::auth::AuthUtils;
@@ -195,14 +195,14 @@ impl StatisticsService {
     pub fn extract_model_from_response_body(&self, json: &serde_json::Value) -> Option<String> {
         // 定义支持的模型字段路径，按优先级排序
         let model_paths = [
-            "model",           // OpenAI格式
-            "modelName",       // 通用格式
-            "model_id",        // 通用格式
-            "data.0.model",    // 数组访问格式
-            "choices.0.model", // 数组访问格式
+            "model",              // OpenAI格式
+            "modelName",          // 通用格式
+            "model_id",           // 通用格式
+            "data.0.model",       // 数组访问格式
+            "choices.0.model",    // 数组访问格式
             "candidates.0.model", // 数组访问格式
-            "response.model",  // 嵌套格式
-            "result.model",    // 嵌套格式
+            "response.model",     // 嵌套格式
+            "result.model",       // 嵌套格式
         ];
 
         // 按优先级尝试提取模型信息
@@ -447,17 +447,20 @@ impl StatisticsService {
                 {
                     let extractor =
                         crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
-                    stats.usage.prompt_tokens = extractor.extract_token_u32(&normalized, "tokens_prompt");
+                    stats.usage.prompt_tokens =
+                        extractor.extract_token_u32(&normalized, "tokens_prompt");
                     stats.usage.completion_tokens =
                         extractor.extract_token_u32(&normalized, "tokens_completion");
                     // total: 优先映射，如果没有，则根据 prompt+completion 回退
                     stats.usage.total_tokens = extractor
                         .extract_token_u32(&normalized, "tokens_total")
-                        .or_else(|| match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
-                            (Some(p), Some(c)) => Some(p + c),
-                            (Some(p), None) => Some(p),
-                            (None, Some(c)) => Some(c),
-                            _ => None,
+                        .or_else(|| {
+                            match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
+                                (Some(p), Some(c)) => Some(p + c),
+                                (Some(p), None) => Some(p),
+                                (None, Some(c)) => Some(c),
+                                _ => None,
+                            }
                         });
                     // 可选缓存字段
                     stats.usage.cache_create_tokens =
@@ -686,10 +689,7 @@ impl StatisticsService {
     }
 
     /// 尝试从请求体直接提取模型（fallback方法）
-    pub fn extract_model_from_request_body_fallback(
-        &self,
-        ctx: &ProxyContext,
-    ) -> Option<String> {
+    pub fn extract_model_from_request_body_fallback(&self, ctx: &ProxyContext) -> Option<String> {
         tracing::debug!(
             request_id = ctx.request_id,
             body_size = ctx.body.len(),
@@ -758,10 +758,7 @@ impl StatisticsService {
     }
 
     /// 解析请求体用于模型提取
-    pub fn parse_request_body_for_model(
-        &self,
-        ctx: &ProxyContext,
-    ) -> Option<serde_json::Value> {
+    pub fn parse_request_body_for_model(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
         if ctx.body.is_empty() {
             return None;
         }
@@ -790,10 +787,7 @@ impl StatisticsService {
     }
 
     /// 提取查询参数用于模型提取
-    pub fn extract_query_params_for_model(
-        &self,
-        session: &Session,
-    ) -> HashMap<String, String> {
+    pub fn extract_query_params_for_model(&self, session: &Session) -> HashMap<String, String> {
         let uri = &session.req_header().uri;
         let query_string = uri.query().unwrap_or("");
 
@@ -828,14 +822,16 @@ impl StatisticsService {
                 stats.usage.total_tokens = ctx
                     .usage_partial
                     .total_tokens
-                    .or_else(|| match (
-                        ctx.usage_partial.prompt_tokens,
-                        ctx.usage_partial.completion_tokens,
-                    ) {
-                        (Some(p), Some(c)) => Some(p + c),
-                        (Some(p), None) => Some(p),
-                        (None, Some(c)) => Some(c),
-                        _ => Some(0),
+                    .or_else(|| {
+                        match (
+                            ctx.usage_partial.prompt_tokens,
+                            ctx.usage_partial.completion_tokens,
+                        ) {
+                            (Some(p), Some(c)) => Some(p + c),
+                            (Some(p), None) => Some(p),
+                            (None, Some(c)) => Some(c),
+                            _ => Some(0),
+                        }
                     })
                     .or(Some(0));
                 stats.usage.cache_create_tokens = ctx.usage_partial.cache_create_tokens;
@@ -858,7 +854,9 @@ impl StatisticsService {
             }
 
             // 费用计算（有模型与 provider）
-            if let (Some(model), Some(provider)) = (stats.model_name.clone(), ctx.provider_type.as_ref()) {
+            if let (Some(model), Some(provider)) =
+                (stats.model_name.clone(), ctx.provider_type.as_ref())
+            {
                 let usage_now = crate::pricing::TokenUsage {
                     prompt_tokens: stats.usage.prompt_tokens,
                     completion_tokens: stats.usage.completion_tokens,
@@ -904,6 +902,25 @@ impl StatisticsService {
             }
         };
 
+        // 若响应体为空或仅包含空白，跳过JSON解析，按默认统计处理（不视为错误）
+        if body_str.trim().is_empty() {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                compressed = ?encoding,
+                "Empty response body for stats; skipping JSON parsing"
+            );
+            ctx.response_details.clear_body_chunks();
+            // 同步空使用统计到上下文，避免后续为None
+            ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                prompt_tokens: Some(0),
+                completion_tokens: Some(0),
+                total_tokens: Some(0),
+                cache_create_tokens: None,
+                cache_read_tokens: None,
+            });
+            return Ok(ComputedStats::default());
+        }
+
         match serde_json::from_str::<serde_json::Value>(body_str) {
             Ok(json) => {
                 let stats = self.extract_stats_from_json(ctx, &json).await?;
@@ -944,29 +961,47 @@ impl StatisticsService {
         // 基于 provider token_mappings_json 的数据驱动提取
         if let Some(provider) = ctx.provider_type.as_ref() {
             if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
-                if let Ok(cfg) = crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
-                    let extractor = crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
+                if let Ok(cfg) =
+                    crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json)
+                {
+                    let extractor =
+                        crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
                     stats.usage.prompt_tokens = extractor.extract_token_u32(json, "tokens_prompt");
-                    stats.usage.completion_tokens = extractor.extract_token_u32(json, "tokens_completion");
-                    stats.usage.total_tokens = extractor.extract_token_u32(json, "tokens_total").or_else(|| match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
-                        (Some(p), Some(c)) => Some(p + c),
-                        (Some(p), None) => Some(p),
-                        (None, Some(c)) => Some(c),
-                        _ => None,
-                    });
-                    stats.usage.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
-                    stats.usage.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
+                    stats.usage.completion_tokens =
+                        extractor.extract_token_u32(json, "tokens_completion");
+                    stats.usage.total_tokens = extractor
+                        .extract_token_u32(json, "tokens_total")
+                        .or_else(|| {
+                            match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
+                                (Some(p), Some(c)) => Some(p + c),
+                                (Some(p), None) => Some(p),
+                                (None, Some(c)) => Some(c),
+                                _ => None,
+                            }
+                        });
+                    stats.usage.cache_create_tokens =
+                        extractor.extract_token_u32(json, "cache_create_tokens");
+                    stats.usage.cache_read_tokens =
+                        extractor.extract_token_u32(json, "cache_read_tokens");
                 }
             }
         }
 
         // 默认值兜底
-        if stats.usage.prompt_tokens.is_none() { stats.usage.prompt_tokens = Some(0); }
-        if stats.usage.completion_tokens.is_none() { stats.usage.completion_tokens = Some(0); }
-        if stats.usage.total_tokens.is_none() { stats.usage.total_tokens = Some(0); }
+        if stats.usage.prompt_tokens.is_none() {
+            stats.usage.prompt_tokens = Some(0);
+        }
+        if stats.usage.completion_tokens.is_none() {
+            stats.usage.completion_tokens = Some(0);
+        }
+        if stats.usage.total_tokens.is_none() {
+            stats.usage.total_tokens = Some(0);
+        }
 
         // 费用计算（有模型与 provider 才计算）
-        if let (Some(model), Some(provider)) = (stats.model_name.clone(), ctx.provider_type.as_ref()) {
+        if let (Some(model), Some(provider)) =
+            (stats.model_name.clone(), ctx.provider_type.as_ref())
+        {
             let usage_now = crate::pricing::TokenUsage {
                 prompt_tokens: stats.usage.prompt_tokens,
                 completion_tokens: stats.usage.completion_tokens,
@@ -987,7 +1022,11 @@ impl StatisticsService {
 }
 
 /// 仅用于统计侧的限量解压（不影响下游透传）
-fn decompress_for_stats<'a>(encoding: Option<&'a str>, input: &'a [u8], max_out: usize) -> Cow<'a, [u8]> {
+fn decompress_for_stats<'a>(
+    encoding: Option<&'a str>,
+    input: &'a [u8],
+    max_out: usize,
+) -> Cow<'a, [u8]> {
     use flate2::read::{GzDecoder, ZlibDecoder};
     use std::io::Read;
 
@@ -1002,7 +1041,9 @@ fn decompress_for_stats<'a>(encoding: Option<&'a str>, input: &'a [u8], max_out:
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
-                        if take < n { break; }
+                        if take < n {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -1020,7 +1061,9 @@ fn decompress_for_stats<'a>(encoding: Option<&'a str>, input: &'a [u8], max_out:
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
-                        if take < n { break; }
+                        if take < n {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -1037,7 +1080,9 @@ fn decompress_for_stats<'a>(encoding: Option<&'a str>, input: &'a [u8], max_out:
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
-                        if take < n { break; }
+                        if take < n {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -1070,8 +1115,12 @@ fn extract_last_json_from_str(s: &str) -> Option<serde_json::Value> {
 
 /// 流式分块增量统计（数据驱动，基于 provider 的 token_mappings_json）
 pub fn ingest_streaming_chunk(ctx: &mut ProxyContext, data: &[u8]) {
-    if data.is_empty() { return; }
-    let Ok(text) = std::str::from_utf8(data) else { return; };
+    if data.is_empty() {
+        return;
+    }
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
 
     let mut last_json: Option<serde_json::Value> = None;
     for line in text.lines() {
@@ -1082,22 +1131,36 @@ pub fn ingest_streaming_chunk(ctx: &mut ProxyContext, data: &[u8]) {
             }
         }
     }
-    let Some(json) = last_json else { return; };
+    let Some(json) = last_json else {
+        return;
+    };
 
     // Token 提取（数据驱动）
     if let Some(provider) = ctx.provider_type.as_ref() {
         if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
-            if let Ok(cfg) = crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
+            if let Ok(cfg) =
+                crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json)
+            {
                 let extractor = crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
                 let p = extractor.extract_token_u32(&json, "tokens_prompt");
                 let c = extractor.extract_token_u32(&json, "tokens_completion");
                 let t = extractor
                     .extract_token_u32(&json, "tokens_total")
-                    .or_else(|| match (p, c) { (Some(pp), Some(cc)) => Some(pp + cc), (Some(pp), None) => Some(pp), (None, Some(cc)) => Some(cc), _ => None });
+                    .or_else(|| match (p, c) {
+                        (Some(pp), Some(cc)) => Some(pp + cc),
+                        (Some(pp), None) => Some(pp),
+                        (None, Some(cc)) => Some(cc),
+                        _ => None,
+                    });
                 let cache_create = extractor.extract_token_u32(&json, "cache_create_tokens");
                 let cache_read = extractor.extract_token_u32(&json, "cache_read_tokens");
 
-                if p.is_some() || c.is_some() || t.is_some() || cache_create.is_some() || cache_read.is_some() {
+                if p.is_some()
+                    || c.is_some()
+                    || t.is_some()
+                    || cache_create.is_some()
+                    || cache_read.is_some()
+                {
                     let partial = crate::statistics::types::PartialUsage {
                         prompt_tokens: p,
                         completion_tokens: c,
@@ -1114,7 +1177,8 @@ pub fn ingest_streaming_chunk(ctx: &mut ProxyContext, data: &[u8]) {
     // 模型兜底更新
     // 可选：从尾事件中提取模型名（简单路径）
     if ctx.requested_model.is_none() {
-        let model = json.get("model")
+        let model = json
+            .get("model")
             .and_then(|m| m.as_str())
             .map(|s| s.to_string());
         if model.is_some() {

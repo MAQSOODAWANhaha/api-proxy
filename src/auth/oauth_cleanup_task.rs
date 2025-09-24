@@ -1,7 +1,7 @@
+use crate::auth::types::AuthStatus;
 use crate::config::OAuthCleanupConfig;
 use chrono::Utc;
 use entity::oauth_client_sessions;
-use crate::auth::types::AuthStatus;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QuerySelect, Set,

@@ -63,7 +63,6 @@ pub struct RequestHandler {
     tracing_service: Arc<TracingService>,
 }
 
-
 /// 请求详情
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RequestDetails {
@@ -304,7 +303,6 @@ impl ResponseDetails {
         }
     }
 }
-
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
 
@@ -1479,8 +1477,7 @@ impl RequestHandler {
     ) -> Result<(), ProxyError> {
         // 记录响应头信息（关键头 + JSON 全量头）
         let response_headers = self.extract_key_headers_from_response(upstream_response);
-        let response_headers_json =
-            crate::logging::headers_json_string_response(upstream_response);
+        let response_headers_json = crate::logging::headers_json_string_response(upstream_response);
 
         tracing::info!(
             event = "upstream_response_headers",
@@ -1567,6 +1564,15 @@ impl RequestHandler {
             .get("content-type")
             .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
             .unwrap_or("application/json");
+
+        // 同步响应头中的关键字段到上下文，便于后续阶段判断
+        // 若上游未提供 content-type，使用默认 application/json
+        ctx.response_details.content_type = Some(content_type.to_string());
+        if let Some(enc) = &content_encoding {
+            ctx.response_details.content_encoding = Some(enc.clone());
+        } else {
+            ctx.response_details.content_encoding = None;
+        }
 
         // 检测是否为流式响应
         // 默认支持流式，主要通过Content-Type自动检测

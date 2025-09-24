@@ -77,9 +77,24 @@ pub async fn get_scheduling_strategies(headers: HeaderMap) -> axum::response::Re
 
     // 使用枚举动态生成调度策略列表
     let scheduling_strategies: Vec<serde_json::Value> = [
-        (SchedulingStrategy::RoundRobin, "轮询调度", "按顺序轮流分配请求到各个上游服务器", true),
-        (SchedulingStrategy::Weighted, "权重调度", "根据权重比例分配请求到上游服务器", false),
-        (SchedulingStrategy::HealthBest, "健康优选", "优先选择健康状态最佳的上游服务器", false),
+        (
+            SchedulingStrategy::RoundRobin,
+            "轮询调度",
+            "按顺序轮流分配请求到各个上游服务器",
+            true,
+        ),
+        (
+            SchedulingStrategy::Weighted,
+            "权重调度",
+            "根据权重比例分配请求到上游服务器",
+            false,
+        ),
+        (
+            SchedulingStrategy::HealthBest,
+            "健康优选",
+            "优先选择健康状态最佳的上游服务器",
+            false,
+        ),
     ]
     .iter()
     .map(|(strategy, label, description, is_default)| {

@@ -312,7 +312,10 @@ pub async fn get_models_usage_rate(
     }
 
     // 按使用次数排序
-    let mut model_vec: Vec<(String, i64, f64)> = model_stats.into_iter().map(|(model, (usage, cost))| (model, usage, cost)).collect();
+    let mut model_vec: Vec<(String, i64, f64)> = model_stats
+        .into_iter()
+        .map(|(model, (usage, cost))| (model, usage, cost))
+        .collect();
     model_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
     // 限制最多6个模型，其余合并为"其他"

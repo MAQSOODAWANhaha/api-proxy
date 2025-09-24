@@ -697,7 +697,9 @@ impl ResponseBodyService for DefaultResponseBodyService {
                 .response_details
                 .content_type
                 .as_deref()
-                .map(|ct| ct.contains("text/event-stream") || ct.contains("application/stream+json"))
+                .map(|ct| {
+                    ct.contains("text/event-stream") || ct.contains("application/stream+json")
+                })
                 .unwrap_or(false);
 
             if is_streaming {
@@ -1443,18 +1445,7 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        // === 响应头信息日志（JSON） ===
-        let response_headers_json =
-            crate::logging::headers_json_string_response(&upstream_response);
-        info!(
-            event = "upstream_response_headers",
-            component = COMPONENT,
-            request_id = %ctx.request_id,
-            status = %upstream_response.status,
-            status_code = upstream_response.status.as_u16(),
-            response_headers_json = response_headers_json,
-            "响应头信息"
-        );
+        // 统一由 request_handler 打印 upstream_response_headers 日志，避免重复与格式不一致
 
         for svc in &self.response_header_services {
             svc.exec(&self.ai_handler, _session, upstream_response, ctx)
@@ -1647,7 +1638,12 @@ impl ProxyHttp for ProxyService {
                 }
 
                 // 使用 StatisticsService 统一完成 finalize + 提取 + 合并（含 SSE 覆盖与重算成本）
-                match self.ai_handler.statistics_service().finalize_and_extract_stats(ctx).await {
+                match self
+                    .ai_handler
+                    .statistics_service()
+                    .finalize_and_extract_stats(ctx)
+                    .await
+                {
                     Ok(new_stats) => {
                         // 统一使用 usage_final（由统计服务设置）与模型名
                         let final_usage = ctx

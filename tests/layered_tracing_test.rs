@@ -2,14 +2,14 @@
 //!
 //! 测试智能分层更新策略的正确性和有效性
 
-use api_proxy::trace::immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
 use api_proxy::proxy::tracing_service::TracingService;
-use entity::{proxy_tracing, users, provider_types, user_service_apis, user_provider_keys};
+use api_proxy::trace::immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
+use chrono::Utc;
+use entity::{provider_types, proxy_tracing, user_provider_keys, user_service_apis, users};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{Database, EntityTrait, QueryFilter, ColumnTrait, PaginatorTrait, Set};
+use sea_orm::{ColumnTrait, Database, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serial_test::serial;
 use std::sync::Arc;
-use chrono::Utc;
 
 async fn setup_test_db() -> Arc<sea_orm::DatabaseConnection> {
     let db = Database::connect("sqlite::memory:")
@@ -129,12 +129,7 @@ async fn test_layer1_immediate_model_info_update() {
 
     // 阶段1：立即更新模型信息
     tracing_service
-        .update_trace_model_info(
-            request_id,
-            Some(100),
-            Some("gpt-4".to_string()),
-            Some(1000),
-        )
+        .update_trace_model_info(request_id, Some(100), Some("gpt-4".to_string()), Some(1000))
         .await
         .expect("Failed to update model info");
 
@@ -280,7 +275,10 @@ async fn test_layered_update_with_error() {
     assert_eq!(record.status_code, Some(500));
     assert_eq!(record.is_success, false);
     assert_eq!(record.error_type, Some("upstream_error".to_string()));
-    assert_eq!(record.error_message, Some("Upstream service unavailable".to_string()));
+    assert_eq!(
+        record.error_message,
+        Some("Upstream service unavailable".to_string())
+    );
     // 关键：即使出错，模型信息也应该已经保存
     assert_eq!(record.provider_type_id, Some(100));
     assert_eq!(record.model_used, Some("gemini-pro".to_string()));
@@ -360,7 +358,10 @@ async fn test_layered_update_performance() {
 
     // 性能测试：总时间应该合理（主要用于回归测试）
     println!("分层更新总耗时: {:?}", total_time);
-    assert!(total_time < std::time::Duration::from_secs(1), "分层更新应该在合理时间内完成");
+    assert!(
+        total_time < std::time::Duration::from_secs(1),
+        "分层更新应该在合理时间内完成"
+    );
 }
 
 /// 测试向后兼容性
@@ -389,15 +390,7 @@ async fn test_backward_compatibility() {
 
     // 直接使用旧的complete_trace方法
     tracer
-        .complete_trace(
-            request_id,
-            200,
-            true,
-            Some(200),
-            Some(100),
-            None,
-            None,
-        )
+        .complete_trace(request_id, 200, true, Some(200), Some(100), None, None)
         .await
         .expect("Failed to complete trace");
 

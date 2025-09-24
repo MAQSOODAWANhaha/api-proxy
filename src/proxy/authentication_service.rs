@@ -535,7 +535,9 @@ impl AuthenticationService {
 
         // 如果没有可用的密钥，返回错误
         if provider_keys.is_empty() {
-            return Err(ProxyError::authentication("No provider keys available for round-robin selection"));
+            return Err(ProxyError::authentication(
+                "No provider keys available for round-robin selection",
+            ));
         }
 
         // 如果只有一个密钥，直接返回
@@ -897,5 +899,4 @@ impl AuthenticationService {
     pub fn validate_api_key_format(&self, api_key: &str) -> bool {
         self.auth_manager.validate_proxy_api_key_format(api_key)
     }
-
-  }
+}

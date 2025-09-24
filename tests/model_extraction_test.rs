@@ -2,8 +2,8 @@
 //!
 //! 测试新的多格式模型提取功能，验证对各种AI API响应格式的支持
 
-use api_proxy::statistics::service::StatisticsService;
 use api_proxy::pricing::PricingCalculatorService;
+use api_proxy::statistics::service::StatisticsService;
 use serde_json::json;
 use std::sync::Arc;
 

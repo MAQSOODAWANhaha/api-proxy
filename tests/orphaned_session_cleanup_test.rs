@@ -4,7 +4,7 @@
 
 use chrono::{Duration, Utc};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{Database, DatabaseConnection, Set, entity::*, QueryFilter, PaginatorTrait};
+use sea_orm::{Database, DatabaseConnection, PaginatorTrait, QueryFilter, Set, entity::*};
 use serial_test::serial;
 
 use api_proxy::auth::oauth_client::session_manager::SessionManager;
@@ -158,10 +158,7 @@ async fn test_orphaned_session_cleanup_functionality() {
     assert_eq!(initial_count, 3);
 
     // 验证有1个关联记录
-    let initial_keys_count = user_provider_keys::Entity::find()
-        .count(&db)
-        .await
-        .unwrap();
+    let initial_keys_count = user_provider_keys::Entity::find().count(&db).await.unwrap();
     assert_eq!(initial_keys_count, 1);
 
     // 创建 SessionManager 实例
@@ -186,7 +183,9 @@ async fn test_orphaned_session_cleanup_functionality() {
 
         if !has_association {
             // 删除孤立会话
-            let result = session_manager.delete_session(&orphaned_session.session_id, orphaned_session.user_id).await;
+            let result = session_manager
+                .delete_session(&orphaned_session.session_id, orphaned_session.user_id)
+                .await;
             assert!(result.is_ok(), "删除孤立会话应该成功");
         }
     }
@@ -240,10 +239,7 @@ async fn test_orphaned_session_cleanup_functionality() {
     assert!(!remaining_ids.contains(&orphaned_session.session_id));
 
     // 验证关联记录仍然存在
-    let final_keys_count = user_provider_keys::Entity::find()
-        .count(&db)
-        .await
-        .unwrap();
+    let final_keys_count = user_provider_keys::Entity::find().count(&db).await.unwrap();
     assert_eq!(final_keys_count, 1);
 }
 
@@ -307,11 +303,15 @@ async fn test_session_deletion_ownership_check() {
     let session_manager = SessionManager::new(db.clone());
 
     // 尝试用错误的用户ID删除会话（应该失败）
-    let result = session_manager.delete_session(&session_user1.session_id, 2).await; // 错误的用户ID
+    let result = session_manager
+        .delete_session(&session_user1.session_id, 2)
+        .await; // 错误的用户ID
     assert!(result.is_err(), "用错误的用户ID删除会话应该失败");
 
     // 用正确的用户ID删除会话（应该成功）
-    let result = session_manager.delete_session(&session_user1.session_id, 1).await; // 正确的用户ID
+    let result = session_manager
+        .delete_session(&session_user1.session_id, 1)
+        .await; // 正确的用户ID
     assert!(result.is_ok(), "用正确的用户ID删除会话应该成功");
 
     // 验证只有一个会话被删除

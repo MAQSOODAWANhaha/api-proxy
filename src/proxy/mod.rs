@@ -21,12 +21,12 @@ pub mod provider_strategy;
 pub mod tracing_service;
 // 执行流：通过多个步骤 Service 组合，由总服务顺序编排
 pub use crate::statistics::service::{RequestStats, ResponseStats, StatisticsService};
+pub use crate::statistics::types::{ComputedStats, PartialUsage, TokenUsageMetrics};
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use pingora_proxy::PingoraProxyServer;
-pub use request_handler::{RequestDetails, ResponseDetails};
-pub use crate::statistics::types::{ComputedStats, TokenUsageMetrics, PartialUsage};
 pub use request_handler::{ProxyContext, RequestHandler};
+pub use request_handler::{RequestDetails, ResponseDetails};
 pub use service::ProxyService;
 pub use tracing_service::{TracingContextHelper, TracingService};
 pub use types::{ForwardingContext, ForwardingResult, ProviderId};
@@ -35,8 +35,8 @@ pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
     pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
-    pub use super::request_handler::{RequestDetails, ResponseDetails};
     pub use super::request_handler::{ProxyContext, RequestHandler};
+    pub use super::request_handler::{RequestDetails, ResponseDetails};
     pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};
     pub use super::{PingoraProxyServer, ProxyService};

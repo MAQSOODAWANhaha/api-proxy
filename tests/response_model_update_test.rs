@@ -2,9 +2,9 @@
 //!
 //! 测试在响应处理阶段从响应体中提取并更新模型信息的功能
 
+use api_proxy::pricing::PricingCalculatorService;
 use api_proxy::proxy::ProxyContext;
 use api_proxy::statistics::service::StatisticsService;
-use api_proxy::pricing::PricingCalculatorService;
 use serde_json::json;
 
 /// 创建测试用的统计服务
@@ -12,7 +12,8 @@ async fn create_test_statistics_service() -> StatisticsService {
     let db = sea_orm::Database::connect("sqlite::memory:")
         .await
         .expect("Failed to connect to test database");
-    let pricing_calculator = std::sync::Arc::new(PricingCalculatorService::new(std::sync::Arc::new(db)));
+    let pricing_calculator =
+        std::sync::Arc::new(PricingCalculatorService::new(std::sync::Arc::new(db)));
     StatisticsService::new(pricing_calculator)
 }
 
@@ -117,7 +118,9 @@ async fn test_response_model_update_with_better_info() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证模型信息已更新为响应中的更准确信息
@@ -152,7 +155,9 @@ async fn test_response_model_update_no_response_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证仍然使用请求时的模型信息
@@ -187,7 +192,9 @@ async fn test_response_model_update_same_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证模型信息保持一致
@@ -221,7 +228,9 @@ async fn test_response_model_update_no_requested_model() {
     ctx.response_details.body = Some(response_body.to_string());
 
     // 调用统计信息提取
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了响应中的模型信息
@@ -245,7 +254,9 @@ async fn test_response_model_update_invalid_json() {
     ctx.response_details.body = Some("invalid json response".to_string());
 
     // 调用统计信息提取，应该返回默认统计信息
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了请求时的模型信息
@@ -269,7 +280,9 @@ async fn test_response_model_update_no_response_body() {
     ctx.response_details.body = None;
 
     // 调用统计信息提取，应该返回默认统计信息
-    let stats = service.extract_detailed_stats_from_response(&mut ctx).await
+    let stats = service
+        .extract_detailed_stats_from_response(&mut ctx)
+        .await
         .expect("Failed to extract stats from response body");
 
     // 验证使用了请求时的模型信息

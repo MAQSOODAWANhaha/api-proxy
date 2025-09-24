@@ -40,7 +40,8 @@ pub struct OAuthPollingResponse {
 
 impl OAuthPollingResponse {
     pub fn pending(session: &oauth_client_sessions::Model, interval: u32) -> Self {
-        let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+        let expires_in =
+            (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
         Self {
             status: AuthStatus::Pending,
             access_token: None,
@@ -54,7 +55,8 @@ impl OAuthPollingResponse {
     }
 
     pub fn authorized(session: &oauth_client_sessions::Model) -> Self {
-        let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+        let expires_in =
+            (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
         Self {
             status: AuthStatus::Authorized,
             access_token: session.access_token.clone(),
@@ -106,7 +108,6 @@ impl OAuthPollingResponse {
         }
     }
 }
-
 
 /// 轮询配置
 #[derive(Debug, Clone)]
@@ -177,15 +178,19 @@ impl OAuthPollingClient {
         // 检查会话状态并返回统一的OAuthPollingResponse
         let response = match session.status.as_str() {
             "pending" => {
-                let _expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                let _expires_in = (session.expires_at.and_utc().timestamp()
+                    - chrono::Utc::now().timestamp())
+                .max(0);
                 OAuthPollingResponse::pending(&session, self.config.default_interval)
-            },
+            }
             "authorized" => {
                 if session.access_token.is_some() {
                     OAuthPollingResponse::authorized(&session)
                 } else {
                     // Token交换中
-                    let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                    let expires_in = (session.expires_at.and_utc().timestamp()
+                        - chrono::Utc::now().timestamp())
+                    .max(0);
                     OAuthPollingResponse {
                         status: AuthStatus::Pending,
                         access_token: None,
@@ -197,19 +202,21 @@ impl OAuthPollingClient {
                         polling_interval: self.config.default_interval,
                     }
                 }
-            },
+            }
             "failed" | "error" => OAuthPollingResponse::error(&session),
             "expired" => OAuthPollingResponse::expired(),
             "revoked" => OAuthPollingResponse::revoked(),
             _ => {
                 // 未知状态，返回pending
-                let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                let expires_in = (session.expires_at.and_utc().timestamp()
+                    - chrono::Utc::now().timestamp())
+                .max(0);
                 OAuthPollingResponse {
                     status: AuthStatus::Pending,
                     access_token: None,
                     refresh_token: None,
                     id_token: None,
-                        error: None,
+                    error: None,
                     error_description: None,
                     expires_in: Some(expires_in),
                     polling_interval: self.config.default_interval,
@@ -272,7 +279,8 @@ impl OAuthPollingClient {
                         }
                         AuthStatus::Pending => {
                             // 使用建议的轮询间隔
-                            current_interval = response.polling_interval
+                            current_interval = response
+                                .polling_interval
                                 .max(self.config.min_interval)
                                 .min(self.config.max_interval);
                         }

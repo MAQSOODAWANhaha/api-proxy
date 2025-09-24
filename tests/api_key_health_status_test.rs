@@ -22,7 +22,8 @@ impl ToString for ApiKeyHealthStatus {
             ApiKeyHealthStatus::Healthy => "healthy",
             ApiKeyHealthStatus::RateLimited => "rate_limited",
             ApiKeyHealthStatus::Unhealthy => "unhealthy",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -119,7 +120,7 @@ mod tests {
             ("key1", "healthy", true),
             ("key2", "rate_limited", false),
             ("key3", "unhealthy", false),
-            ("key4", "error", false), // error 归类为不健康
+            ("key4", "error", false),   // error 归类为不健康
             ("key5", "unknown", false), // unknown 归类为不健康
         ];
 
@@ -133,8 +134,7 @@ mod tests {
             };
 
             assert_eq!(
-                is_healthy,
-                expected_healthy,
+                is_healthy, expected_healthy,
                 "Key {} with status {} should be healthy: {}",
                 key_name, health_status, expected_healthy
             );

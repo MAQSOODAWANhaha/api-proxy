@@ -38,7 +38,7 @@ fn test_array_index_path_extraction() {
     );
     assert_eq!(
         extractor.extract_token_u32(&response, "tokens_total"),
-        Some(40)  // 15 + 25
+        Some(40) // 15 + 25
     );
 }
 

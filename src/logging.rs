@@ -5,9 +5,9 @@
 //! - 数据库查询日志格式化
 //! - 日志系统初始化和配置
 
-use std::env;
-use std::collections::BTreeMap;
 use serde_json;
+use std::collections::BTreeMap;
+use std::env;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 // ================ Proxy 模块业务日志工具 ================
@@ -271,7 +271,9 @@ pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeM
 
 /// 将响应头转为 JSON 映射（键小写，按字母序）
 /// 注意：按当前仓库约定，此函数不做脱敏。
-pub fn headers_json_map_response(headers: &pingora_http::ResponseHeader) -> BTreeMap<String, String> {
+pub fn headers_json_map_response(
+    headers: &pingora_http::ResponseHeader,
+) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for (name, value) in headers.headers.iter() {
         let key = name.as_str().to_ascii_lowercase();

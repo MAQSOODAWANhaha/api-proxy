@@ -47,4 +47,3 @@ pub struct ComputedStats {
     pub cost: Option<f64>,
     pub cost_currency: Option<String>,
 }
-

@@ -197,7 +197,6 @@ impl ImmediateProxyTracer {
         Ok(())
     }
 
-    
     /// 完成追踪 - 更新最终结果
     pub async fn complete_trace(
         &self,
@@ -330,19 +329,21 @@ impl ImmediateProxyTracer {
         is_success: bool,
         trace_stats: crate::providers::TraceStats,
     ) -> Result<()> {
-        let result = self.complete_trace_with_stats(
-            request_id,
-            status_code,
-            is_success,
-            trace_stats.input_tokens,
-            trace_stats.output_tokens,
-            trace_stats.error_type,
-            trace_stats.error_message,
-            trace_stats.cache_create_tokens,
-            trace_stats.cache_read_tokens,
-            trace_stats.cost,
-            trace_stats.cost_currency,
-        ).await;
+        let result = self
+            .complete_trace_with_stats(
+                request_id,
+                status_code,
+                is_success,
+                trace_stats.input_tokens,
+                trace_stats.output_tokens,
+                trace_stats.error_type,
+                trace_stats.error_message,
+                trace_stats.cache_create_tokens,
+                trace_stats.cache_read_tokens,
+                trace_stats.cost,
+                trace_stats.cost_currency,
+            )
+            .await;
 
         match &result {
             Ok(_) => {
@@ -368,7 +369,6 @@ impl ImmediateProxyTracer {
         result
     }
 
-    
     /// 查询进行中的请求（未完成的追踪记录）
     pub async fn get_active_requests(&self, limit: u64) -> Result<Vec<proxy_tracing::Model>> {
         let records = proxy_tracing::Entity::find()
@@ -405,10 +405,10 @@ impl ImmediateProxyTracer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
     use chrono::Utc;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::{Database, EntityTrait, PaginatorTrait, Set};
+    use serial_test::serial;
     use std::sync::Arc;
 
     async fn setup_test_db() -> Arc<DatabaseConnection> {

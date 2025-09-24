@@ -106,7 +106,6 @@ impl Default for Model {
     }
 }
 
-
 /// OAuth客户端会话辅助方法
 impl Model {
     /// 检查会话是否已过期
