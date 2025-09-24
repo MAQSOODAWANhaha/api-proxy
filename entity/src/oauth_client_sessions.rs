@@ -22,7 +22,7 @@ pub struct Model {
     pub state: String,
     pub name: String,
     pub description: Option<String>,
-    pub status: String, // pending, completed, failed
+    pub status: String, // pending, authorized, error, expired, revoked
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub id_token: Option<String>,
@@ -106,43 +106,6 @@ impl Default for Model {
     }
 }
 
-/// OAuth会话状态枚举
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "expired")]
-    Expired,
-}
-
-impl From<SessionStatus> for String {
-    fn from(status: SessionStatus) -> Self {
-        match status {
-            SessionStatus::Pending => "pending".to_string(),
-            SessionStatus::Completed => "completed".to_string(),
-            SessionStatus::Failed => "failed".to_string(),
-            SessionStatus::Expired => "expired".to_string(),
-        }
-    }
-}
-
-impl TryFrom<String> for SessionStatus {
-    type Error = String;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match s.as_str() {
-            "pending" => Ok(SessionStatus::Pending),
-            "completed" => Ok(SessionStatus::Completed),
-            "failed" => Ok(SessionStatus::Failed),
-            "expired" => Ok(SessionStatus::Expired),
-            _ => Err(format!("Invalid session status: {s}")),
-        }
-    }
-}
 
 /// OAuth客户端会话辅助方法
 impl Model {
@@ -151,9 +114,9 @@ impl Model {
         chrono::Utc::now().naive_utc() > self.expires_at
     }
 
-    /// 检查会话是否已完成
-    pub fn is_completed(&self) -> bool {
-        self.status == "completed" && self.access_token.is_some()
+    /// 检查会话是否已授权
+    pub fn is_authorized(&self) -> bool {
+        self.status == "authorized" && self.access_token.is_some()
     }
 
     /// 检查会话是否仍然待处理
@@ -161,23 +124,22 @@ impl Model {
         self.status == "pending" && !self.is_expired()
     }
 
-    /// 获取会话状态枚举
-    pub fn get_status(&self) -> Result<SessionStatus, String> {
-        SessionStatus::try_from(self.status.clone())
+    /// 获取会话状态字符串
+    pub fn get_status_str(&self) -> &str {
+        &self.status
     }
 
-    /// 设置会话状态
-    pub fn set_status(&mut self, status: SessionStatus) {
-        let is_completed = status == SessionStatus::Completed;
-        self.status = status.into();
-        if is_completed {
+    /// 设置会话状态字符串
+    pub fn set_status_str(&mut self, status: &str) {
+        self.status = status.to_string();
+        if status == "authorized" {
             self.completed_at = Some(chrono::Utc::now().naive_utc());
         }
     }
 
     /// 检查是否有有效的访问令牌
     pub fn has_valid_token(&self) -> bool {
-        self.access_token.is_some() && self.is_completed() && !self.is_expired()
+        self.access_token.is_some() && self.is_authorized() && !self.is_expired()
     }
 
     /// 获取provider_type_id，如果没有则返回None

@@ -71,7 +71,7 @@ async fn test_oauth_cleanup_basic_functionality() {
     create_test_session(&db, "pending", 35).await; // 应该被清理
     create_test_session(&db, "pending", 40).await; // 应该被清理
     create_test_session(&db, "pending", 20).await; // 不应该被清理
-    create_test_session(&db, "completed", 50).await; // 不应该被清理
+    create_test_session(&db, "authorized", 50).await; // 不应该被清理
 
     let config = OAuthCleanupConfig {
         pending_expire_minutes: 30,

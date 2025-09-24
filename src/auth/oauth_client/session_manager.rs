@@ -7,6 +7,7 @@ use super::pkce::PkceParams;
 use super::{OAuthError, OAuthProviderConfig, OAuthResult, OAuthSessionInfo, OAuthTokenResponse};
 use chrono::{Duration, Utc};
 use entity::{OAuthClientSessions, oauth_client_sessions};
+use crate::auth::types::AuthStatus;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
     TransactionTrait,
@@ -14,25 +15,6 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// 会话状态枚举
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum SessionStatus {
-    Pending,
-    Completed,
-    Failed,
-    Expired,
-}
-
-impl From<SessionStatus> for String {
-    fn from(status: SessionStatus) -> Self {
-        match status {
-            SessionStatus::Pending => "pending".to_string(),
-            SessionStatus::Completed => "completed".to_string(),
-            SessionStatus::Failed => "failed".to_string(),
-            SessionStatus::Expired => "expired".to_string(),
-        }
-    }
-}
 
 /// 会话创建参数
 #[derive(Debug, Clone)]
@@ -94,7 +76,7 @@ impl SessionManager {
             state: Set(state),
             name: Set(name.to_string()),
             description: Set(description.map(|s| s.to_string())),
-            status: Set("pending".to_string()),
+            status: Set(AuthStatus::Pending.to_string()),
             expires_at: Set(expires_at),
             created_at: Set(now),
             updated_at: Set(now),
@@ -161,20 +143,20 @@ impl SessionManager {
     pub async fn update_session_status(
         &self,
         session_id: &str,
-        status: SessionStatus,
+        status: AuthStatus,
         error_message: Option<&str>,
     ) -> OAuthResult<()> {
         let session = self.get_session(session_id).await?;
 
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
-        active_model.status = Set(status.clone().into());
+        active_model.status = Set(status.to_string());
         active_model.updated_at = Set(Utc::now().naive_utc());
 
         if let Some(error) = error_message {
             active_model.error_message = Set(Some(error.to_string()));
         }
 
-        if status == SessionStatus::Completed {
+        if status == AuthStatus::Authorized {
             active_model.completed_at = Set(Some(Utc::now().naive_utc()));
         }
 
@@ -192,7 +174,7 @@ impl SessionManager {
 
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
         // authorization_code 字段已删除，不再持久化授权码（安全最佳实践）
-        active_model.status = Set("exchanging".to_string());
+        active_model.status = Set(AuthStatus::Pending.to_string()); // 临时状态，使用pending
         active_model.updated_at = Set(Utc::now().naive_utc());
 
         active_model.update(&self.db).await?;
@@ -230,7 +212,7 @@ impl SessionManager {
         active_model.token_type = Set(Some(token_response.token_type.clone()));
         active_model.expires_in = Set(token_response.expires_in);
         active_model.expires_at = Set(expires_at);
-        active_model.status = Set("completed".to_string());
+        active_model.status = Set(AuthStatus::Authorized.to_string());
         active_model.completed_at = Set(Some(Utc::now().naive_utc()));
         active_model.updated_at = Set(Utc::now().naive_utc());
 
@@ -273,7 +255,7 @@ impl SessionManager {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .filter(oauth_client_sessions::Column::ProviderName.eq(provider_name))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.gt(Utc::now().naive_utc()))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
             .all(&self.db)
@@ -291,7 +273,7 @@ impl SessionManager {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .filter(oauth_client_sessions::Column::ProviderTypeId.eq(provider_type_id))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.gt(Utc::now().naive_utc()))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
             .all(&self.db)
@@ -309,7 +291,7 @@ impl SessionManager {
     ) -> OAuthResult<Vec<oauth_client_sessions::Model>> {
         let mut query = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.gt(Utc::now().naive_utc()));
 
         // 优先使用provider_type_id查询
@@ -351,7 +333,7 @@ impl SessionManager {
         // 查找过期会话
         let expired_sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::ExpiresAt.lt(now))
-            .filter(oauth_client_sessions::Column::Status.ne("completed"))
+            .filter(oauth_client_sessions::Column::Status.ne(AuthStatus::Authorized.to_string()))
             .all(&self.db)
             .await?;
 
@@ -389,10 +371,10 @@ impl SessionManager {
 
         for session in sessions {
             match session.status.as_str() {
-                "pending" => stats.pending_sessions += 1,
-                "completed" => stats.completed_sessions += 1,
-                "failed" => stats.failed_sessions += 1,
-                "expired" => stats.expired_sessions += 1,
+                s if s == AuthStatus::Pending.to_string() => stats.pending_sessions += 1,
+                s if s == AuthStatus::Authorized.to_string() => stats.completed_sessions += 1,
+                s if s == AuthStatus::Error.to_string() => stats.failed_sessions += 1,
+                s if s == AuthStatus::Expired.to_string() => stats.expired_sessions += 1,
                 _ => {}
             }
 
@@ -421,7 +403,7 @@ impl SessionManager {
     pub async fn get_valid_access_token(&self, session_id: &str) -> OAuthResult<Option<String>> {
         let session = self.get_session(session_id).await?;
 
-        if session.status != "completed" {
+        if session.status != AuthStatus::Authorized.to_string() {
             return Ok(None);
         }
 
@@ -435,7 +417,7 @@ impl SessionManager {
     /// 批量更新会话状态
     pub async fn batch_update_sessions(
         &self,
-        updates: Vec<(String, SessionStatus, Option<String>)>,
+        updates: Vec<(String, AuthStatus, Option<String>)>,
     ) -> OAuthResult<()> {
         let txn = self.db.begin().await?;
 
@@ -447,7 +429,7 @@ impl SessionManager {
 
             if let Some(session) = session {
                 let mut active_model: oauth_client_sessions::ActiveModel = session.into();
-                active_model.status = Set(status.into());
+                active_model.status = Set(status.to_string());
                 active_model.updated_at = Set(Utc::now().naive_utc());
 
                 if let Some(error) = error_message {
@@ -495,13 +477,13 @@ mod tests {
 
     #[test]
     fn test_session_status_conversion() {
-        let status = SessionStatus::Pending;
-        let status_str: String = status.into();
+        let status = AuthStatus::Pending;
+        let status_str = status.to_string();
         assert_eq!(status_str, "pending");
 
-        let status = SessionStatus::Completed;
-        let status_str: String = status.into();
-        assert_eq!(status_str, "completed");
+        let status = AuthStatus::Authorized;
+        let status_str = status.to_string();
+        assert_eq!(status_str, "authorized");
     }
 
     #[test]

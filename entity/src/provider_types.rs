@@ -217,23 +217,6 @@ impl Model {
             Ok("UNKNOWN".to_string())
         }
     }
-
-    /// 替换动态参数
-    pub fn replace_dynamic_params(
-        &self,
-        oauth_config: &mut OAuthConfig,
-        params: &std::collections::HashMap<String, String>,
-    ) {
-        // 替换extra_params中的动态参数
-        if let Some(ref mut extra_params) = oauth_config.extra_params {
-            if let Some(project_id) = extra_params.get_mut("project_id")
-                && project_id == "{dynamic_project_id}"
-                && let Some(actual_project_id) = params.get("project_id")
-            {
-                *project_id = actual_project_id.clone();
-            }
-        }
-    }
 }
 
 impl Default for Model {

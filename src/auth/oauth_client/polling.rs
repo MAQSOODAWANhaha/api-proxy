@@ -5,50 +5,108 @@
 //!
 //! ## 轮询流程
 //! 1. 客户端获取授权URL并开始轮询
-//! 2. 服务器检查会话状态（pending/completed/failed/expired）
+//! 2. 服务器检查会话状态（pending/authorized/error/expired）
 //! 3. 授权完成后，自动进行Token交换
 //! 4. 返回最终的OAuth令牌或错误信息
 
 use super::session_manager::SessionManager;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
+use crate::auth::types::AuthStatus;
 use entity::oauth_client_sessions;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
-/// 轮询状态枚举
+/// 统一的OAuth轮询响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", content = "data")]
-pub enum PollingStatus {
-    /// 等待用户授权
-    #[serde(rename = "pending")]
-    Pending {
-        /// 剩余过期时间（秒）
-        expires_in: i64,
-        /// 建议轮询间隔（秒）
-        interval: u32,
-    },
-    /// 授权完成，令牌已获取
-    #[serde(rename = "completed")]
-    Completed {
-        /// OAuth令牌响应
-        token_response: OAuthTokenResponse,
-    },
-    /// 授权失败
-    #[serde(rename = "failed")]
-    Failed {
-        /// 错误代码
-        error: String,
-        /// 错误描述
-        error_description: Option<String>,
-    },
-    /// 会话已过期
-    #[serde(rename = "expired")]
-    Expired,
-    /// 等待Token交换中
-    #[serde(rename = "exchanging")]
-    Exchanging,
+pub struct OAuthPollingResponse {
+    /// 会话状态（直接使用 AuthStatus）
+    pub status: AuthStatus,
+    /// 访问令牌（已授权时存在）
+    pub access_token: Option<String>,
+    /// 刷新令牌（已授权时存在）
+    pub refresh_token: Option<String>,
+    /// ID令牌（已授权时存在）
+    pub id_token: Option<String>,
+    /// 错误信息（状态为Error时存在）
+    pub error: Option<String>,
+    /// 错误描述（可选）
+    pub error_description: Option<String>,
+    /// 剩余过期时间（秒，Pending/Authorized状态有效）
+    pub expires_in: Option<i64>,
+    /// 建议轮询间隔（秒，Pending状态需要）
+    pub polling_interval: u32,
 }
+
+impl OAuthPollingResponse {
+    pub fn pending(session: &oauth_client_sessions::Model, interval: u32) -> Self {
+        let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+        Self {
+            status: AuthStatus::Pending,
+            access_token: None,
+            refresh_token: None,
+            id_token: None,
+            error: None,
+            error_description: None,
+            expires_in: Some(expires_in),
+            polling_interval: interval,
+        }
+    }
+
+    pub fn authorized(session: &oauth_client_sessions::Model) -> Self {
+        let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+        Self {
+            status: AuthStatus::Authorized,
+            access_token: session.access_token.clone(),
+            refresh_token: session.refresh_token.clone(),
+            id_token: session.id_token.clone(),
+            error: None,
+            error_description: None,
+            expires_in: Some(expires_in),
+            polling_interval: 0, // 已完成，无需轮询
+        }
+    }
+
+    pub fn error(session: &oauth_client_sessions::Model) -> Self {
+        Self {
+            status: AuthStatus::Error,
+            access_token: None,
+            refresh_token: None,
+            id_token: None,
+            error: session.error_message.clone(),
+            error_description: None,
+            expires_in: None,
+            polling_interval: 0,
+        }
+    }
+
+    pub fn expired() -> Self {
+        Self {
+            status: AuthStatus::Expired,
+            access_token: None,
+            refresh_token: None,
+            id_token: None,
+            error: Some("Session expired".to_string()),
+            error_description: None,
+            expires_in: None,
+            polling_interval: 0,
+        }
+    }
+
+    pub fn revoked() -> Self {
+        Self {
+            status: AuthStatus::Revoked,
+            access_token: None,
+            refresh_token: None,
+            id_token: None,
+            error: Some("Session revoked".to_string()),
+            error_description: None,
+            expires_in: None,
+            polling_interval: 0,
+        }
+    }
+}
+
 
 /// 轮询配置
 #[derive(Debug, Clone)]
@@ -112,25 +170,54 @@ impl OAuthPollingClient {
         &self,
         session_manager: &SessionManager,
         session_id: &str,
-    ) -> OAuthResult<PollingStatus> {
+    ) -> OAuthResult<OAuthPollingResponse> {
         // 获取会话信息
         let session = session_manager.get_session(session_id).await?;
 
-        // 检查会话状态
-        match self.analyze_session_status(&session).await? {
-            PollingStatus::Pending {
-                expires_in,
-                interval,
-            } => Ok(PollingStatus::Pending {
-                expires_in,
-                interval,
-            }),
-            PollingStatus::Completed { .. } => {
-                // 会话已完成，返回令牌信息
-                self.get_completed_session_response(&session).await
+        // 检查会话状态并返回统一的OAuthPollingResponse
+        let response = match session.status.as_str() {
+            "pending" => {
+                let _expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                OAuthPollingResponse::pending(&session, self.config.default_interval)
+            },
+            "authorized" => {
+                if session.access_token.is_some() {
+                    OAuthPollingResponse::authorized(&session)
+                } else {
+                    // Token交换中
+                    let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                    OAuthPollingResponse {
+                        status: AuthStatus::Pending,
+                        access_token: None,
+                        refresh_token: None,
+                        id_token: None,
+                        error: None,
+                        error_description: None,
+                        expires_in: Some(expires_in),
+                        polling_interval: self.config.default_interval,
+                    }
+                }
+            },
+            "failed" | "error" => OAuthPollingResponse::error(&session),
+            "expired" => OAuthPollingResponse::expired(),
+            "revoked" => OAuthPollingResponse::revoked(),
+            _ => {
+                // 未知状态，返回pending
+                let expires_in = (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
+                OAuthPollingResponse {
+                    status: AuthStatus::Pending,
+                    access_token: None,
+                    refresh_token: None,
+                    id_token: None,
+                        error: None,
+                    error_description: None,
+                    expires_in: Some(expires_in),
+                    polling_interval: self.config.default_interval,
+                }
             }
-            other_status => Ok(other_status),
-        }
+        };
+
+        Ok(response)
     }
 
     /// 持续轮询直到完成或超时
@@ -152,30 +239,44 @@ impl OAuthPollingClient {
 
             // 轮询状态
             match self.poll_session(session_manager, session_id).await {
-                Ok(PollingStatus::Completed { token_response }) => {
-                    return Ok(token_response);
-                }
-                Ok(PollingStatus::Failed {
-                    error,
-                    error_description,
-                }) => {
-                    return Err(OAuthError::TokenExchangeFailed(format!(
-                        "{}: {}",
-                        error,
-                        error_description.unwrap_or_default()
-                    )));
-                }
-                Ok(PollingStatus::Expired) => {
-                    return Err(OAuthError::SessionExpired(session_id.to_string()));
-                }
-                Ok(PollingStatus::Pending { interval, .. }) => {
-                    // 使用服务器建议的间隔或当前间隔
-                    current_interval = interval
-                        .max(self.config.min_interval)
-                        .min(self.config.max_interval);
-                }
-                Ok(PollingStatus::Exchanging) => {
-                    // Token交换中，继续轮询
+                Ok(response) => {
+                    match response.status {
+                        AuthStatus::Authorized => {
+                            if let Some(access_token) = response.access_token {
+                                // 构建OAuthTokenResponse
+                                return Ok(OAuthTokenResponse {
+                                    session_id: session_id.to_string(),
+                                    access_token,
+                                    refresh_token: response.refresh_token,
+                                    id_token: response.id_token,
+                                    token_type: "Bearer".to_string(),
+                                    expires_in: response.expires_in.map(|x| x as i32),
+                                    scopes: Vec::new(),
+                                });
+                            } else {
+                                // Token交换中，继续轮询
+                            }
+                        }
+                        AuthStatus::Error => {
+                            return Err(OAuthError::TokenExchangeFailed(format!(
+                                "{}: {}",
+                                response.error.unwrap_or_default(),
+                                response.error_description.unwrap_or_default()
+                            )));
+                        }
+                        AuthStatus::Expired => {
+                            return Err(OAuthError::SessionExpired(session_id.to_string()));
+                        }
+                        AuthStatus::Revoked => {
+                            return Err(OAuthError::InvalidSession("Session revoked".to_string()));
+                        }
+                        AuthStatus::Pending => {
+                            // 使用建议的轮询间隔
+                            current_interval = response.polling_interval
+                                .max(self.config.min_interval)
+                                .min(self.config.max_interval);
+                        }
+                    }
                 }
                 Err(e) => {
                     retry_count += 1;
@@ -199,7 +300,7 @@ impl OAuthPollingClient {
         &self,
         session_manager: &SessionManager,
         session_ids: &[String],
-    ) -> Vec<(String, OAuthResult<PollingStatus>)> {
+    ) -> Vec<(String, OAuthResult<OAuthPollingResponse>)> {
         let mut results = Vec::new();
 
         // 并发轮询所有会话
@@ -213,88 +314,6 @@ impl OAuthPollingClient {
 
         results.extend(futures::future::join_all(futures).await);
         results
-    }
-
-    // 私有方法
-
-    /// 分析会话状态
-    async fn analyze_session_status(
-        &self,
-        session: &oauth_client_sessions::Model,
-    ) -> OAuthResult<PollingStatus> {
-        // 检查是否过期
-        if session.is_expired() {
-            return Ok(PollingStatus::Expired);
-        }
-
-        // 检查状态
-        match session.status.as_str() {
-            "completed" => {
-                if session.access_token.is_some() {
-                    Ok(PollingStatus::Completed {
-                        token_response: self.build_token_response(session)?,
-                    })
-                } else {
-                    Ok(PollingStatus::Exchanging)
-                }
-            }
-            "failed" => Ok(PollingStatus::Failed {
-                error: "authorization_failed".to_string(),
-                error_description: session.error_message.clone(),
-            }),
-            "pending" => {
-                let expires_in = (session.expires_at.and_utc().timestamp()
-                    - chrono::Utc::now().timestamp())
-                .max(0);
-                Ok(PollingStatus::Pending {
-                    expires_in,
-                    interval: self.config.default_interval,
-                })
-            }
-            _ => Ok(PollingStatus::Pending {
-                expires_in: 0,
-                interval: self.config.default_interval,
-            }),
-        }
-    }
-
-    /// 获取已完成会话的响应
-    async fn get_completed_session_response(
-        &self,
-        session: &oauth_client_sessions::Model,
-    ) -> OAuthResult<PollingStatus> {
-        if let Some(_) = &session.access_token {
-            Ok(PollingStatus::Completed {
-                token_response: self.build_token_response(session)?,
-            })
-        } else {
-            Ok(PollingStatus::Exchanging)
-        }
-    }
-
-    /// 构建令牌响应
-    fn build_token_response(
-        &self,
-        session: &oauth_client_sessions::Model,
-    ) -> OAuthResult<OAuthTokenResponse> {
-        let access_token = session
-            .access_token
-            .as_ref()
-            .ok_or_else(|| OAuthError::InvalidSession("Missing access token".to_string()))?
-            .clone();
-
-        Ok(OAuthTokenResponse {
-            session_id: session.session_id.clone(),
-            access_token,
-            refresh_token: session.refresh_token.clone(),
-            id_token: session.id_token.clone(),
-            token_type: session
-                .token_type
-                .clone()
-                .unwrap_or_else(|| "Bearer".to_string()),
-            expires_in: session.expires_in,
-            scopes: Vec::new(), // TODO: 从session中解析scopes
-        })
     }
 }
 
@@ -360,12 +379,12 @@ impl PollingMonitor {
     }
 
     /// 记录完成事件
-    pub fn record_completion(&self, status: &PollingStatus) {
+    pub fn record_completion(&self, status: &AuthStatus) {
         if let Ok(mut stats) = self.stats.lock() {
             match status {
-                PollingStatus::Completed { .. } => stats.completed_sessions += 1,
-                PollingStatus::Failed { .. } => stats.failed_sessions += 1,
-                PollingStatus::Expired => stats.expired_sessions += 1,
+                AuthStatus::Authorized => stats.completed_sessions += 1,
+                AuthStatus::Error => stats.failed_sessions += 1,
+                AuthStatus::Expired => stats.expired_sessions += 1,
                 _ => {}
             }
             stats.last_updated = chrono::Utc::now();

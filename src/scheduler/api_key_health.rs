@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use super::types::ApiKeyHealthStatus;
 use crate::proxy::types::ProviderId;
 use entity::{provider_types, user_provider_keys};
 use sea_orm::{ActiveModelTrait, Set};
-
 /// API密钥健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyHealthStatus {
+pub struct ApiKeyHealth {
     /// 密钥ID
     pub key_id: i32,
     /// 提供商类型ID
@@ -134,7 +134,7 @@ pub struct ApiKeyHealthChecker {
     /// HTTP客户端
     client: Client,
     /// 健康状态存储
-    health_status: Arc<RwLock<HashMap<i32, ApiKeyHealthStatus>>>,
+    health_status: Arc<RwLock<HashMap<i32, ApiKeyHealth>>>,
     /// 检查配置
     config: ApiKeyHealthConfig,
     /// 是否正在运行
@@ -406,22 +406,20 @@ impl ApiKeyHealthChecker {
     ) -> Result<()> {
         let mut health_map = self.health_status.write().await;
 
-        let status = health_map
-            .entry(key_id)
-            .or_insert_with(|| ApiKeyHealthStatus {
-                key_id,
-                provider_type_id,
-                provider_id: ProviderId::from_database_id(provider_type_id),
-                is_healthy: true,
-                last_check: None,
-                last_healthy: None,
-                consecutive_failures: 0,
-                consecutive_successes: 0,
-                avg_response_time_ms: 0,
-                health_score: 100.0,
-                last_error: None,
-                recent_results: Vec::new(),
-            });
+        let status = health_map.entry(key_id).or_insert_with(|| ApiKeyHealth {
+            key_id,
+            provider_type_id,
+            provider_id: ProviderId::from_database_id(provider_type_id),
+            is_healthy: true,
+            last_check: None,
+            last_healthy: None,
+            consecutive_failures: 0,
+            consecutive_successes: 0,
+            avg_response_time_ms: 0,
+            health_score: 100.0,
+            last_error: None,
+            recent_results: Vec::new(),
+        });
 
         // 更新检查时间
         status.last_check = Some(check_result.timestamp);
@@ -495,16 +493,16 @@ impl ApiKeyHealthChecker {
     async fn sync_health_status_to_database(
         &self,
         key_id: i32,
-        status: &ApiKeyHealthStatus,
+        status: &ApiKeyHealth,
         check_result: &ApiKeyCheckResult,
     ) -> Result<()> {
-        // 确定数据库健康状态
+        // 确定数据库健康状态（使用枚举的to_string方法）
         let db_health_status = if status.is_healthy {
-            "healthy"
+            ApiKeyHealthStatus::Healthy.to_string()
         } else if check_result.status_code == Some(429) {
-            "rate_limited"
+            ApiKeyHealthStatus::RateLimited.to_string()
         } else {
-            "unhealthy"
+            ApiKeyHealthStatus::Unhealthy.to_string()
         };
 
         // 准备健康状态详情
@@ -607,7 +605,7 @@ impl ApiKeyHealthChecker {
     }
 
     /// 计算健康分数
-    fn calculate_health_score(&self, status: &ApiKeyHealthStatus) -> f32 {
+    fn calculate_health_score(&self, status: &ApiKeyHealth) -> f32 {
         if status.recent_results.is_empty() {
             return 100.0;
         }
@@ -646,13 +644,13 @@ impl ApiKeyHealthChecker {
     }
 
     /// 获取特定API密钥的健康状态
-    pub async fn get_key_health_status(&self, key_id: i32) -> Option<ApiKeyHealthStatus> {
+    pub async fn get_key_health_status(&self, key_id: i32) -> Option<ApiKeyHealth> {
         let health_map = self.health_status.read().await;
         health_map.get(&key_id).cloned()
     }
 
     /// 获取所有API密钥的健康状态
-    pub async fn get_all_health_status(&self) -> HashMap<i32, ApiKeyHealthStatus> {
+    pub async fn get_all_health_status(&self) -> HashMap<i32, ApiKeyHealth> {
         let health_map = self.health_status.read().await;
         health_map.clone()
     }
@@ -725,25 +723,23 @@ impl ApiKeyHealthChecker {
         let mut health_map = self.health_status.write().await;
 
         for key in keys {
-            let status = health_map
-                .entry(key.id)
-                .or_insert_with(|| ApiKeyHealthStatus {
-                    key_id: key.id,
-                    provider_type_id: key.provider_type_id,
-                    provider_id: ProviderId::from_database_id(key.provider_type_id),
-                    is_healthy: key.health_status == "healthy" || key.health_status.is_empty(),
-                    last_check: None,
-                    last_healthy: None,
-                    consecutive_failures: 0,
-                    consecutive_successes: 0,
-                    avg_response_time_ms: 0,
-                    health_score: 100.0,
-                    last_error: None,
-                    recent_results: Vec::new(),
-                });
+            let status = health_map.entry(key.id).or_insert_with(|| ApiKeyHealth {
+                key_id: key.id,
+                provider_type_id: key.provider_type_id,
+                provider_id: ProviderId::from_database_id(key.provider_type_id),
+                is_healthy: key.health_status == "healthy", // unknown 和 error 都归类为 unhealthy
+                last_check: None,
+                last_healthy: None,
+                consecutive_failures: 0,
+                consecutive_successes: 0,
+                avg_response_time_ms: 0,
+                health_score: 100.0,
+                last_error: None,
+                recent_results: Vec::new(),
+            });
 
-            // 更新状态为数据库中的状态
-            status.is_healthy = key.health_status == "healthy" || key.health_status.is_empty();
+            // 更新状态为数据库中的状态（unknown 和 error 都归类为 unhealthy）
+            status.is_healthy = key.health_status == "healthy";
 
             // 如果数据库中有健康状态详情，解析它
             if let Some(ref detail) = key.health_status_detail {
@@ -832,7 +828,7 @@ impl ApiKeyHealthChecker {
     }
 }
 
-impl ApiKeyHealthStatus {
+impl ApiKeyHealth {
     /// 检查是否应该进行下次检查
     pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
         if let Some(last_check) = self.last_check {
@@ -888,7 +884,7 @@ mod tests {
         let db = Arc::new(sea_orm::DatabaseConnection::Disconnected);
         let checker = ApiKeyHealthChecker::new(db, None);
 
-        let mut status = ApiKeyHealthStatus {
+        let mut status = ApiKeyHealth {
             key_id: 1,
             provider_type_id: 1,
             provider_id: ProviderId::from_database_id(1),

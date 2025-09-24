@@ -105,14 +105,14 @@ export interface OAuthCallbackResponse {
 
 // OAuth轮询状态响应
 export interface OAuthPollingStatusResponse {
-  status: 'pending' | 'completed' | 'failed' | 'expired' | 'exchanging'
-  data?: {
-    expires_in?: number
-    interval?: number
-    token_response?: OAuthCallbackResponse
-    error?: string
-    error_description?: string
-  }
+  status: 'pending' | 'authorized' | 'error' | 'expired' | 'revoked'
+  access_token?: string
+  refresh_token?: string
+  id_token?: string
+  error?: string
+  error_description?: string
+  expires_in?: number
+  polling_interval: number
 }
 
 export interface OAuthExchangeRequest {

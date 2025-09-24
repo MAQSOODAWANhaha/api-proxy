@@ -1,6 +1,7 @@
 use crate::config::OAuthCleanupConfig;
 use chrono::Utc;
 use entity::oauth_client_sessions;
+use crate::auth::types::AuthStatus;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QuerySelect, Set,
@@ -50,7 +51,7 @@ impl OAuthCleanupTask {
 
         // 查找需要清理的会话
         let expired_sessions = oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq("pending"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Pending.to_string()))
             .filter(oauth_client_sessions::Column::CreatedAt.lt(cutoff_time.naive_utc()))
             .limit(self.config.max_cleanup_records)
             .all(&self.db)
@@ -67,7 +68,7 @@ impl OAuthCleanupTask {
             // 这样可以保留审计记录，便于后续分析
             for session in expired_sessions {
                 let mut active_session: oauth_client_sessions::ActiveModel = session.into();
-                active_session.status = Set("expired".to_string());
+                active_session.status = Set(AuthStatus::Expired.to_string());
                 active_session.error_message = Set(Some(format!(
                     "Session expired after {} minutes",
                     self.config.pending_expire_minutes
@@ -101,7 +102,7 @@ impl OAuthCleanupTask {
         let delete_cutoff_time = Utc::now() - chrono::Duration::days(retention_days as i64);
 
         let delete_result = oauth_client_sessions::Entity::delete_many()
-            .filter(oauth_client_sessions::Column::Status.eq("expired"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Expired.to_string()))
             .filter(oauth_client_sessions::Column::UpdatedAt.lt(delete_cutoff_time.naive_utc()))
             .exec(&self.db)
             .await?;
@@ -121,19 +122,19 @@ impl OAuthCleanupTask {
         &self,
     ) -> Result<OAuthCleanupStats, Box<dyn std::error::Error + Send + Sync>> {
         let pending_count = oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq("pending"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Pending.to_string()))
             .count(&self.db)
             .await?;
 
         let expired_count = oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq("expired"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Expired.to_string()))
             .count(&self.db)
             .await?;
 
         let cutoff_time =
             Utc::now() - chrono::Duration::minutes(self.config.pending_expire_minutes as i64);
         let expired_pending_count = oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq("pending"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Pending.to_string()))
             .filter(oauth_client_sessions::Column::CreatedAt.lt(cutoff_time.naive_utc()))
             .count(&self.db)
             .await?;

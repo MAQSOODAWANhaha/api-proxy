@@ -3,6 +3,7 @@
 //! 说明：当前仅做最小无害改写示例（如补充少量兼容性 Header），
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
+use super::ProviderStrategy;
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::proxy::ProxyContext;
@@ -11,8 +12,6 @@ use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use super::ProviderStrategy;
-
 
 #[derive(Debug, Clone, PartialEq)]
 enum GeminiProxyMode {
@@ -79,46 +78,9 @@ impl ProviderStrategy for GeminiStrategy {
     async fn modify_request(
         &self,
         session: &Session,
-        upstream_request: &mut RequestHeader,
+        _upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
-        // 对 generateContent/streamGenerateContent 额外设置 x-goog-request-params，
-        // 便于上游在未读取 body 时即可进行资源路由与校验
-        if let Some(backend) = ctx.selected_backend.as_ref() {
-            if backend.auth_type.as_str() == "oauth" {
-                if let Some(pid) = &backend.project_id {
-                    if !pid.is_empty() {
-                        let path = session.req_header().uri.path();
-                        let path_for_log = path.to_string();
-                        if path.contains("generateContent") {
-                            // 使用原始项目ID格式，不添加 projects/ 前缀
-                            let header_val = format!("project={}", pid);
-                            let _ = upstream_request
-                                .insert_header("x-goog-request-params", &header_val);
-                            proxy_info!(
-                                &ctx.request_id,
-                                LogStage::RequestModify,
-                                LogComponent::GeminiStrategy,
-                                "x_goog_request_params_added",
-                                "添加 x-goog-request-params 头",
-                                path = path_for_log,
-                                header_val = header_val
-                            );
-                        } else {
-                            proxy_debug!(
-                                &ctx.request_id,
-                                LogStage::RequestModify,
-                                LogComponent::GeminiStrategy,
-                                "x_goog_request_params_skipped",
-                                "路径不包含generateContent，跳过添加x-goog-request-params头",
-                                path = path_for_log
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
         if let Some(backend) = ctx.selected_backend.as_ref() {
             if backend.auth_type.as_str() == "oauth" {
@@ -156,59 +118,37 @@ impl ProviderStrategy for GeminiStrategy {
 
         let request_path = session.req_header().uri.path();
 
-        // 根据是否有 project_id 决定处理逻辑
-        let modified = if let Some(project_id) = backend.project_id.as_ref() {
-            if !project_id.is_empty() {
-                // 有 project_id，注入项目相关字段
-                let result = if request_path.contains("loadCodeAssist") {
-                    inject_loadcodeassist_fields(json_value, project_id, &ctx.request_id)
-                } else if request_path.contains("onboardUser") {
-                    inject_onboarduser_fields(json_value, project_id, &ctx.request_id)
-                } else if request_path.contains("countTokens") {
-                    inject_counttokens_fields(json_value, &ctx.request_id)
-                } else if request_path.contains("generateContent")
-                    && !request_path.contains("streamGenerateContent")
-                {
-                    inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
-                } else if request_path.contains("streamGenerateContent") {
-                    inject_generatecontent_fields(json_value, project_id, &ctx.request_id)
-                } else {
-                    false
-                };
+        // 智能项目ID选择逻辑：优先使用数据库中的project_id，没有则使用空字符串
+        let effective_project_id = backend.project_id.as_deref().unwrap_or("");
 
-                if result {
-                    if let Ok(json_str) = serde_json::to_string_pretty(json_value) {
-                        proxy_info!(
-                            &ctx.request_id,
-                            LogStage::RequestModify,
-                            LogComponent::GeminiStrategy,
-                            "project_fields_injected",
-                            "Gemini策略将项目字段注入到请求JSON中",
-                            project_id = project_id,
-                            route_path = request_path,
-                            modified_json = json_str
-                        );
-                    } else {
-                        proxy_info!(
-                            &ctx.request_id,
-                            LogStage::RequestModify,
-                            LogComponent::GeminiStrategy,
-                            "project_fields_injected",
-                            "Gemini策略将项目字段注入到请求JSON中",
-                            project_id = project_id,
-                            route_path = request_path
-                        );
-                    }
-                }
-                result
-            } else {
-                // project_id 为空字符串，移除项目相关字段
-                remove_project_fields(json_value, &ctx.request_id, request_path)
-            }
+        let modified = if request_path.contains("loadCodeAssist") {
+            inject_loadcodeassist_fields(json_value, effective_project_id, &ctx.request_id)
+        } else if request_path.contains("onboardUser") {
+            inject_onboarduser_fields(json_value, effective_project_id, &ctx.request_id)
+        } else if request_path.contains("countTokens") {
+            inject_counttokens_fields(json_value, &ctx.request_id)
+        } else if request_path.contains("generateContent") {
+            inject_generatecontent_fields(json_value, effective_project_id)
         } else {
-            // 没有 project_id，移除项目相关字段
-            remove_project_fields(json_value, &ctx.request_id, request_path)
+            false
         };
+
+        if modified {
+            proxy_info!(
+                &ctx.request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "smart_project_id_selected",
+                "Gemini策略智能选择项目ID并注入到请求中",
+                backend_project_id = backend.project_id.as_deref().unwrap_or("<none>"),
+                effective_project_id = if effective_project_id.is_empty() {
+                    "<empty>"
+                } else {
+                    effective_project_id
+                },
+                route_path = request_path
+            );
+        }
 
         Ok(modified)
     }
@@ -381,16 +321,12 @@ fn inject_onboarduser_fields(
     false
 }
 
-fn inject_generatecontent_fields(
-    json_value: &mut serde_json::Value,
-    project_id: &str,
-    request_id: &str,
-) -> bool {
+fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id: &str) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
         // 根据Google Gemini CLI实现，正确的格式是：
         // {
         //   "model": "gemini-2.5-flash",
-        //   "project": "project-id",
+        //   "project": "project-id", // 可以为空字符串
         //   "user_prompt_id": "uuid",
         //   "request": {
         //     "contents": [...],
@@ -398,46 +334,12 @@ fn inject_generatecontent_fields(
         //   }
         // }
 
-        // 确保有顶层project字段
+        // 设置 project 字段：可以为真实 project_id 或空字符串
         obj.insert(
             "project".to_string(),
             serde_json::Value::String(project_id.to_string()),
         );
 
-        // 确保有user_prompt_id字段
-        if !obj.contains_key("user_prompt_id") {
-            obj.insert(
-                "user_prompt_id".to_string(),
-                serde_json::Value::String(request_id.to_string()),
-            );
-        }
-
-        // 如果request对象存在，project已经在request外部设置
-        if obj
-            .get_mut("request")
-            .and_then(|v| v.as_object_mut())
-            .is_some()
-        {
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "project_injected_outside_request",
-                "将project字段注入到request对象外部（Google标准格式）",
-                project_id = project_id,
-                location = "top_level"
-            );
-        } else {
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "project_injected_at_top_no_request",
-                "在顶层注入project字段（无request对象）",
-                project_id = project_id,
-                location = "top_level"
-            );
-        }
         return true;
     }
     false
@@ -502,7 +404,7 @@ fn inject_counttokens_fields(json_value: &mut serde_json::Value, request_id: &st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::ProxyContext;
+    use crate::{auth::AuthStatus, proxy::ProxyContext};
     use entity::user_provider_keys;
     use sea_orm::prelude::DateTime;
 
@@ -524,7 +426,7 @@ mod tests {
             health_status_detail: None,
             rate_limit_resets_at: None,
             last_error_time: None,
-            auth_status: Some("authorized".to_string()),
+            auth_status: Some(AuthStatus::Authorized.to_string()),
             expires_at: None,
             last_auth_check: Some(now),
             project_id: project_id.map(|s| s.to_string()),
@@ -571,9 +473,17 @@ mod tests {
     #[test]
     fn test_inject_generatecontent_fields() {
         let mut v = serde_json::json!({});
-        let changed = inject_generatecontent_fields(&mut v, "p", "req");
+        let changed = inject_generatecontent_fields(&mut v, "p");
         assert!(changed);
         assert_eq!(v["project"], "p");
+    }
+
+    #[test]
+    fn test_inject_generatecontent_fields_with_empty_project() {
+        let mut v = serde_json::json!({});
+        let changed = inject_generatecontent_fields(&mut v, "");
+        assert!(changed);
+        assert_eq!(v["project"], "");
     }
 
     #[test]
@@ -587,5 +497,117 @@ mod tests {
         assert!(v["request"].is_object());
         assert_eq!(v["request"]["model"], "models/g1");
         assert!(v["request"]["contents"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_smart_project_id_selection_with_real_project() {
+        let mut ctx = ProxyContext::default();
+        ctx.request_id = "test-request-123".to_string();
+
+        // 创建一个有真实project_id的backend
+        let backend = dummy_key("oauth", Some("my-real-project-123"));
+        ctx.selected_backend = Some(backend);
+
+        // 测试JSON数据
+        let mut json_value = serde_json::json!({
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
+        });
+
+        // 直接测试核心逻辑：智能项目ID选择
+        let effective_project_id = ctx
+            .selected_backend
+            .as_ref()
+            .and_then(|b| b.project_id.as_deref())
+            .unwrap_or("");
+
+        assert_eq!(effective_project_id, "my-real-project-123");
+
+        // 测试注入函数
+        let result = inject_generatecontent_fields(&mut json_value, effective_project_id);
+        assert!(result);
+        assert_eq!(json_value["project"], "my-real-project-123");
+    }
+
+    #[tokio::test]
+    async fn test_smart_project_id_selection_with_empty_project() {
+        let mut ctx = ProxyContext::default();
+        ctx.request_id = "test-request-456".to_string();
+
+        // 创建一个project_id为空字符串的backend
+        let mut backend = dummy_key("oauth", None);
+        backend.project_id = Some("".to_string()); // 显式设置为空字符串
+        ctx.selected_backend = Some(backend);
+
+        // 测试JSON数据
+        let mut json_value = serde_json::json!({
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
+        });
+
+        // 直接测试核心逻辑：智能项目ID选择
+        let effective_project_id = ctx
+            .selected_backend
+            .as_ref()
+            .and_then(|b| b.project_id.as_deref())
+            .unwrap_or("");
+
+        assert_eq!(effective_project_id, "");
+
+        // 测试注入函数
+        let result = inject_generatecontent_fields(&mut json_value, effective_project_id);
+        assert!(result);
+        assert_eq!(json_value["project"], "");
+    }
+
+    #[tokio::test]
+    async fn test_smart_project_id_selection_with_no_project() {
+        let mut ctx = ProxyContext::default();
+        ctx.request_id = "test-request-789".to_string();
+
+        // 创建一个没有project_id的backend
+        let backend = dummy_key("oauth", None);
+        ctx.selected_backend = Some(backend);
+
+        // 测试JSON数据
+        let mut json_value = serde_json::json!({
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
+        });
+
+        // 直接测试核心逻辑：智能项目ID选择
+        let effective_project_id = ctx
+            .selected_backend
+            .as_ref()
+            .and_then(|b| b.project_id.as_deref())
+            .unwrap_or("");
+
+        assert_eq!(effective_project_id, "");
+
+        // 测试注入函数
+        let result = inject_generatecontent_fields(&mut json_value, effective_project_id);
+        assert!(result);
+        assert_eq!(json_value["project"], "");
+    }
+
+    #[test]
+    fn test_smart_project_id_selection_logic() {
+        // 测试核心的项目ID选择逻辑
+        let backend_with_project = dummy_key("oauth", Some("test-project"));
+        let backend_empty_project = {
+            let mut b = dummy_key("oauth", None);
+            b.project_id = Some("".to_string());
+            b
+        };
+        let backend_no_project = dummy_key("oauth", None);
+
+        // 测试有真实project_id
+        let effective_id = backend_with_project.project_id.as_deref().unwrap_or("");
+        assert_eq!(effective_id, "test-project");
+
+        // 测试空字符串project_id
+        let effective_id = backend_empty_project.project_id.as_deref().unwrap_or("");
+        assert_eq!(effective_id, "");
+
+        // 测试没有project_id
+        let effective_id = backend_no_project.project_id.as_deref().unwrap_or("");
+        assert_eq!(effective_id, "");
     }
 }

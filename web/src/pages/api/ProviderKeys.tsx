@@ -35,7 +35,7 @@ interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
   // 为了兼容现有UI，添加一些别名
   keyName: string  // 映射到 name
   keyValue: string // 映射到 api_key
-  status: 'active' | 'disabled' | 'error' // 基于 is_active 转换，覆盖原始status
+  status: 'active' | 'disabled', // 基于 is_active 转换，不再用于筛选
   createdAt: string // 映射到 created_at
   requestLimitPerMinute: number // 映射到 max_requests_per_minute
   tokenLimitPromptPerMinute: number // 映射到 max_tokens_prompt_per_minute
@@ -173,7 +173,7 @@ const ProviderKeysPage: React.FC = () => {
   
   // UI状态
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'error'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'healthy' | 'rate_limited' | 'unhealthy'>('all')
   const [providerFilter, setProviderFilter] = useState<string>('all')
   const [selectedItem, setSelectedItem] = useState<LocalProviderKey | null>(null)
   const [dialogType, setDialogType] = useState<DialogType>(null)
@@ -210,7 +210,8 @@ const ProviderKeysPage: React.FC = () => {
         limit: pageSize,
         search: searchTerm || undefined,
         provider: providerFilter === 'all' ? undefined : providerFilter,
-        status: statusFilter === 'all' ? undefined : statusFilter,
+        // 当选择"全部状态"时不传递status参数，因为后端枚举不包含"all"
+        ...(statusFilter !== 'all' && { status: statusFilter }),
       })
 
       if (response.success && response.data) {
@@ -554,12 +555,12 @@ const ProviderKeysPage: React.FC = () => {
           />
           <FilterSelect
             value={statusFilter}
-            onValueChange={(value) => setStatusFilter(value as 'all' | 'active' | 'disabled' | 'error')}
+            onValueChange={(value) => setStatusFilter(value as 'all' | 'healthy' | 'rate_limited' | 'unhealthy')}
             options={[
               { value: 'all', label: '全部状态' },
-              { value: 'active', label: '启用' },
-              { value: 'disabled', label: '停用' },
-              { value: 'error', label: '异常' }
+              { value: 'healthy', label: '健康' },
+              { value: 'rate_limited', label: '限流中' },
+              { value: 'unhealthy', label: '异常' }
             ]}
             placeholder="全部状态"
           />
@@ -823,7 +824,7 @@ const AddDialog: React.FC<{
     requestLimitPerMinute: 0,
     tokenLimitPromptPerMinute: 0,
     requestLimitPerDay: 0,
-    status: 'active' as 'active' | 'disabled',
+    status: 'active' as 'active' | 'disabled', // 保持为启用状态，不影响健康状态筛选
     project_id: '', // 新增 Gemini 项目ID字段
   })
 

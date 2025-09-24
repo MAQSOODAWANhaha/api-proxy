@@ -9,6 +9,7 @@ use super::token_exchange::TokenExchangeClient;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
 use chrono::{Duration, Utc};
 use entity::{oauth_client_sessions, user_provider_keys};
+use crate::auth::types::AuthStatus;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -76,9 +77,9 @@ impl AutoRefreshManager {
         // 获取会话信息
         let session = self.session_manager.get_session(session_id).await?;
 
-        if session.status != "completed" {
+        if session.status != AuthStatus::Authorized.to_string() {
             debug!(
-                "Session {} is not completed, status: {}",
+                "Session {} is not authorized, status: {}",
                 session_id, session.status
             );
             return Ok(None);

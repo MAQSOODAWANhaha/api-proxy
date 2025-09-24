@@ -12,6 +12,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::auth::oauth_client::OAuthClient;
+use crate::auth::types::AuthStatus;
 use crate::error::{ProxyError, Result};
 use entity::oauth_client_sessions;
 
@@ -231,7 +232,7 @@ impl OAuthTokenRefreshService {
     async fn should_refresh_token(&self, session_id: &str) -> Result<bool> {
         let session = oauth_client_sessions::Entity::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .one(&*self.db)
             .await
             .map_err(|e| {
@@ -372,7 +373,7 @@ impl OAuthTokenRefreshService {
         let expiry_threshold = now + buffer;
 
         oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq("completed"))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.lte(expiry_threshold))
             .filter(oauth_client_sessions::Column::AccessToken.is_not_null())
             .filter(oauth_client_sessions::Column::RefreshToken.is_not_null())

@@ -16,7 +16,7 @@ use url::form_urlencoded;
 
 use crate::auth::oauth_client::JWTParser;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
-use crate::auth::{AuthManager, AuthUtils};
+use crate::auth::{AuthManager, AuthUtils, types::AuthStatus};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::ProxyError;
@@ -854,9 +854,9 @@ impl RequestHandler {
             ProxyError::authentication(format!("OAuth session not found: {}", session_id))
         })?;
 
-        if session.status != "completed" {
+        if session.status != AuthStatus::Authorized.to_string() {
             return Err(ProxyError::authentication(format!(
-                "OAuth session {} is not completed (status: {})",
+                "OAuth session {} is not authorized (status: {})",
                 session_id, session.status
             )));
         }

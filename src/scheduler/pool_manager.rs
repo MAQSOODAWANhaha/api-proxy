@@ -4,12 +4,13 @@
 
 use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext};
 use super::api_key_health::ApiKeyHealthChecker;
-use super::types::SchedulingStrategy;
-use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider};
+use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
+use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, types::AuthStatus};
 use crate::error::{ProxyError, Result};
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -333,9 +334,10 @@ impl ApiKeyPoolManager {
             .filter(|key| {
                 // 1. 检查认证状态
                 if let Some(auth_status) = &key.auth_status {
-                    match auth_status.as_str() {
-                        "authorized" => {} // 认证成功，继续检查其他条件
-                        "pending" => {
+                    let status_enum = AuthStatus::from(auth_status.as_str());
+                    match status_enum {
+                        AuthStatus::Authorized => {} // 认证成功，继续检查其他条件
+                        AuthStatus::Pending => {
                             debug!(
                                 key_id = key.id,
                                 key_name = %key.name,
@@ -343,7 +345,7 @@ impl ApiKeyPoolManager {
                             );
                             return false;
                         }
-                        "expired" => {
+                        AuthStatus::Expired => {
                             debug!(
                                 key_id = key.id,
                                 key_name = %key.name,
@@ -351,7 +353,7 @@ impl ApiKeyPoolManager {
                             );
                             return false;
                         }
-                        "error" => {
+                        AuthStatus::Error => {
                             debug!(
                                 key_id = key.id,
                                 key_name = %key.name,
@@ -359,14 +361,13 @@ impl ApiKeyPoolManager {
                             );
                             return false;
                         }
-                        _ => {
-                            // 未知状态，保守地允许通过
+                        AuthStatus::Revoked => {
                             debug!(
                                 key_id = key.id,
                                 key_name = %key.name,
-                                unknown_status = %auth_status,
-                                "Unknown auth status, allowing key"
+                                "API key has been revoked, skipping"
                             );
+                            return false;
                         }
                     }
                 }
@@ -384,13 +385,13 @@ impl ApiKeyPoolManager {
                     }
                 }
 
-                // 3. 检查健康状态（现在有4个状态：healthy、rate_limited、unhealthy、error）
-                match key.health_status.as_str() {
-                    "healthy" | "unknown" => {
-                        // 健康或未知状态允许通过
+                // 3. 检查健康状态（使用统一的三状态枚举）
+                match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
+                    Ok(ApiKeyHealthStatus::Healthy) => {
+                        // 健康状态允许通过
                         true
                     }
-                    "rate_limited" => {
+                    Ok(ApiKeyHealthStatus::RateLimited) => {
                         // 限流状态：检查是否已经解除
                         if let Some(resets_at) = key.rate_limit_resets_at {
                             let now = chrono::Utc::now().naive_utc();
@@ -418,24 +419,24 @@ impl ApiKeyPoolManager {
                             false
                         }
                     }
-                    "unhealthy" | "error" => {
+                    Ok(ApiKeyHealthStatus::Unhealthy) => {
                         debug!(
                             key_id = key.id,
                             key_name = %key.name,
                             health_status = %key.health_status,
-                            "API key is unhealthy or in error state, skipping"
+                            "API key is unhealthy, skipping"
                         );
                         false
                     }
-                    _ => {
-                        // 其他状态保守地允许通过
+                    Err(_) => {
+                        // 无法解析的状态都归类为不健康（包括原来的 unknown 和 error）
                         debug!(
                             key_id = key.id,
                             key_name = %key.name,
                             unknown_health = %key.health_status,
-                            "Unknown health status, allowing key"
+                            "Unknown health status, treating as unhealthy"
                         );
-                        true
+                        false
                     }
                 }
             })
@@ -474,21 +475,22 @@ impl ApiKeyPoolManager {
                 let is_healthy_by_checker = healthy_key_ids.contains(&key.id);
 
                 // 然后检查本地的健康状态字段，考虑限流状态的自动恢复
-                let is_locally_healthy = match key.health_status.as_str() {
-                    "healthy" | "unknown" => true,
-                    "rate_limited" => {
-                        // 检查限流是否已经解除
-                        if let Some(resets_at) = key.rate_limit_resets_at {
-                            let now = chrono::Utc::now().naive_utc();
-                            now > resets_at
-                        } else {
-                            // 没有重置时间，保守地认为不健康
-                            false
+                let is_locally_healthy =
+                    match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
+                        Ok(ApiKeyHealthStatus::Healthy) => true,
+                        Ok(ApiKeyHealthStatus::RateLimited) => {
+                            // 检查限流是否已经解除
+                            if let Some(resets_at) = key.rate_limit_resets_at {
+                                let now = chrono::Utc::now().naive_utc();
+                                now > resets_at
+                            } else {
+                                // 没有重置时间，保守地认为不健康
+                                false
+                            }
                         }
-                    }
-                    "unhealthy" | "error" => false,
-                    _ => true, // 其他状态保守地允许通过
-                };
+                        Ok(ApiKeyHealthStatus::Unhealthy) => false,
+                        Err(_) => false, // 无法解析的状态都认为不健康
+                    };
 
                 let final_result = is_healthy_by_checker && is_locally_healthy;
 
@@ -544,14 +546,12 @@ impl ApiKeyPoolManager {
     pub async fn get_key_health_status(
         &self,
         key_id: i32,
-    ) -> Option<super::api_key_health::ApiKeyHealthStatus> {
+    ) -> Option<super::api_key_health::ApiKeyHealth> {
         self.health_checker.get_key_health_status(key_id).await
     }
 
     /// 获取所有API密钥的健康状态
-    pub async fn get_all_health_status(
-        &self,
-    ) -> HashMap<i32, super::api_key_health::ApiKeyHealthStatus> {
+    pub async fn get_all_health_status(&self) -> HashMap<i32, super::api_key_health::ApiKeyHealth> {
         self.health_checker.get_all_health_status().await
     }
 

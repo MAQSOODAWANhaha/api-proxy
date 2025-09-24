@@ -6,8 +6,7 @@
 use crate::auth::extract_user_id_from_headers;
 use crate::auth::oauth_client::session_manager::SessionStatistics;
 use crate::auth::oauth_client::{
-    AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthSessionInfo, OAuthTokenResponse,
-    PollingStatus,
+    AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
 use crate::management::{response, server::AppState};
 use axum::Json;
@@ -53,7 +52,7 @@ pub enum OAuthV2Response {
     #[serde(rename = "authorize_url")]
     AuthorizeUrl { data: AuthorizeUrlResponse },
     #[serde(rename = "polling_status")]
-    PollingStatus { data: PollingStatus },
+    PollingStatus { data: OAuthPollingResponse },
     #[serde(rename = "token_response")]
     TokenResponse { data: OAuthTokenResponse },
     #[serde(rename = "session_list")]

@@ -143,9 +143,9 @@ async fn test_orphaned_session_cleanup_functionality() {
     // - 1 个创建 6 分钟前且无 user_provider_keys 关联的会话（孤立会话）
     // - 1 个创建 6 分钟前但有 user_provider_keys 关联的会话（正常会话）
     // - 1 个创建 3 分钟前且无 user_provider_keys 关联的会话（年轻会话）
-    let orphaned_session = create_test_session(&db, "completed", 6, 1).await;
-    let normal_session = create_test_session(&db, "completed", 6, 2).await;
-    let young_session = create_test_session(&db, "completed", 3, 3).await;
+    let orphaned_session = create_test_session(&db, "authorized", 6, 1).await;
+    let normal_session = create_test_session(&db, "authorized", 6, 2).await;
+    let young_session = create_test_session(&db, "authorized", 3, 3).await;
 
     // 为正常会话创建关联的 user_provider_keys
     create_user_provider_key(&db, 2, 1, &normal_session.session_id).await;
@@ -253,7 +253,7 @@ async fn test_young_session_not_cleaned() {
     let db = create_test_db().await;
 
     // 创建一个3分钟的孤立会话
-    let young_session = create_test_session(&db, "completed", 3, 1).await;
+    let young_session = create_test_session(&db, "authorized", 3, 1).await;
 
     // 验证初始状态
     let initial_count = oauth_client_sessions::Entity::find()
@@ -293,8 +293,8 @@ async fn test_session_deletion_ownership_check() {
     let db = create_test_db().await;
 
     // 创建两个不同用户的会话
-    let session_user1 = create_test_session(&db, "completed", 6, 1).await;
-    let session_user2 = create_test_session(&db, "completed", 6, 2).await;
+    let session_user1 = create_test_session(&db, "authorized", 6, 1).await;
+    let session_user2 = create_test_session(&db, "authorized", 6, 2).await;
 
     // 验证初始状态
     let initial_count = oauth_client_sessions::Entity::find()

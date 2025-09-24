@@ -1,6 +1,7 @@
 //! # API密钥调度器类型定义
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// 调度策略枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11,6 +12,40 @@ pub enum SchedulingStrategy {
     Weighted,
     /// 健康度最佳调度
     HealthBest,
+}
+
+/// API密钥健康状态枚举
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ApiKeyHealthStatus {
+    /// 健康可用
+    Healthy,
+    /// 限流中
+    RateLimited,
+    /// 不健康 (包含原来的 unknown 和 error)
+    Unhealthy,
+}
+
+impl ToString for ApiKeyHealthStatus {
+    fn to_string(&self) -> String {
+        match self {
+            ApiKeyHealthStatus::Healthy => "healthy",
+            ApiKeyHealthStatus::RateLimited => "rate_limited",
+            ApiKeyHealthStatus::Unhealthy => "unhealthy",
+        }.to_string()
+    }
+}
+
+impl FromStr for ApiKeyHealthStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "healthy" => Ok(ApiKeyHealthStatus::Healthy),
+            "rate_limited" => Ok(ApiKeyHealthStatus::RateLimited),
+            "unhealthy" => Ok(ApiKeyHealthStatus::Unhealthy),
+            _ => Err(format!("Invalid health status: {}", s)),
+        }
+    }
 }
 
 impl Default for SchedulingStrategy {
@@ -66,5 +101,30 @@ mod tests {
         assert_eq!(SchedulingStrategy::RoundRobin.as_str(), "round_robin");
         assert_eq!(SchedulingStrategy::Weighted.as_str(), "weighted");
         assert_eq!(SchedulingStrategy::HealthBest.as_str(), "health_best");
+    }
+
+    #[test]
+    fn test_api_key_health_status_parsing() {
+        assert_eq!(
+            ApiKeyHealthStatus::from_str("healthy"),
+            Ok(ApiKeyHealthStatus::Healthy)
+        );
+        assert_eq!(
+            ApiKeyHealthStatus::from_str("rate_limited"),
+            Ok(ApiKeyHealthStatus::RateLimited)
+        );
+        assert_eq!(
+            ApiKeyHealthStatus::from_str("unhealthy"),
+            Ok(ApiKeyHealthStatus::Unhealthy)
+        );
+        assert!(ApiKeyHealthStatus::from_str("unknown").is_err());
+        assert!(ApiKeyHealthStatus::from_str("error").is_err());
+    }
+
+    #[test]
+    fn test_api_key_health_status_to_string() {
+        assert_eq!(ApiKeyHealthStatus::Healthy.to_string(), "healthy");
+        assert_eq!(ApiKeyHealthStatus::RateLimited.to_string(), "rate_limited");
+        assert_eq!(ApiKeyHealthStatus::Unhealthy.to_string(), "unhealthy");
     }
 }

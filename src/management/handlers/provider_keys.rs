@@ -2,7 +2,12 @@
 //!
 //! 处理上游AI服务商的API密钥管理相关请求
 
-use crate::auth::{extract_user_id_from_headers, gemini_code_assist_client::GeminiCodeAssistClient};
+use crate::auth::{
+    extract_user_id_from_headers, gemini_code_assist_client::GeminiCodeAssistClient,
+    types::AuthStatus,
+};
+use crate::scheduler::types::ApiKeyHealthStatus;
+use axum::response::IntoResponse;
 
 /// Gemini提供商名称常量
 const GEMINI_PROVIDER_NAME: &str = "gemini";
@@ -10,20 +15,18 @@ const GEMINI_PROVIDER_NAME: &str = "gemini";
 /// OAuth认证类型常量
 const OAUTH_AUTH_TYPE: &str = "oauth";
 
-/// OAuth会话完成状态常量
-const OAUTH_SESSION_STATUS_COMPLETED: &str = "completed";
 use crate::management::{response, server::AppState};
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use chrono::Utc;
-use tracing::info;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use tracing::info;
 
 /// 获取提供商密钥列表
 pub async fn get_provider_keys_list(
@@ -53,14 +56,28 @@ pub async fn get_provider_keys_list(
         }
     }
 
-    // 应用状态筛选
+    // 应用状态筛选 - 基于health_status而不是IsActive
     if let Some(status) = &query.status {
-        let is_active = match status.as_str() {
-            "active" => true,
-            "disabled" => false,
-            _ => true, // 默认活跃
-        };
-        select = select.filter(user_provider_keys::Column::IsActive.eq(is_active));
+        match status {
+            ApiKeyHealthStatus::Healthy => {
+                select = select.filter(
+                    user_provider_keys::Column::HealthStatus
+                        .eq(ApiKeyHealthStatus::Healthy.to_string()),
+                );
+            }
+            ApiKeyHealthStatus::RateLimited => {
+                select = select.filter(
+                    user_provider_keys::Column::HealthStatus
+                        .eq(ApiKeyHealthStatus::RateLimited.to_string()),
+                );
+            }
+            ApiKeyHealthStatus::Unhealthy => {
+                select = select.filter(
+                    user_provider_keys::Column::HealthStatus
+                        .eq(ApiKeyHealthStatus::Unhealthy.to_string()),
+                );
+            }
+        }
     }
 
     // 分页参数
@@ -129,18 +146,19 @@ pub async fn get_provider_keys_list(
         };
 
         // 计算限流剩余时间（秒）
-        let rate_limit_remaining_seconds = if let Some(resets_at) = provider_key.rate_limit_resets_at {
-            let now = Utc::now().naive_utc();
-            if resets_at > now {
-                let duration = resets_at.signed_duration_since(now);
-                let seconds = duration.num_seconds();
-                Some(seconds.max(0) as u64)
+        let rate_limit_remaining_seconds =
+            if let Some(resets_at) = provider_key.rate_limit_resets_at {
+                let now = Utc::now().naive_utc();
+                if resets_at > now {
+                    let duration = resets_at.signed_duration_since(now);
+                    let seconds = duration.num_seconds();
+                    Some(seconds.max(0) as u64)
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         let response_key = json!({
             "id": provider_key.id,
@@ -264,7 +282,9 @@ pub async fn create_provider_key(
             match OAuthSession::find()
                 .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
                 .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                .filter(oauth_client_sessions::Column::Status.eq("completed"))
+                .filter(
+                    oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
+                )
                 .one(db)
                 .await
             {
@@ -319,9 +339,10 @@ pub async fn create_provider_key(
     // 检查是否是Gemini OAuth场景且需要自动获取project_id
     if payload.auth_type == OAUTH_AUTH_TYPE && final_project_id.is_none() {
         // 查询provider类型信息，判断是否是Gemini
-        if let Ok(Some(provider_type)) = entity::provider_types::Entity::find_by_id(payload.provider_type_id)
-            .one(db)
-            .await
+        if let Ok(Some(provider_type)) =
+            entity::provider_types::Entity::find_by_id(payload.provider_type_id)
+                .one(db)
+                .await
         {
             if provider_type.name == GEMINI_PROVIDER_NAME {
                 tracing::info!(
@@ -337,13 +358,21 @@ pub async fn create_provider_key(
                     if let Ok(Some(oauth_session)) = OAuthSession::find()
                         .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
                         .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                        .filter(oauth_client_sessions::Column::Status.eq(OAUTH_SESSION_STATUS_COMPLETED))
+                        .filter(
+                            oauth_client_sessions::Column::Status
+                                .eq(AuthStatus::Authorized.to_string()),
+                        )
                         .one(db)
                         .await
                     {
                         // 使用Gemini Code Assist API客户端自动获取project_id
                         let gemini_client = GeminiCodeAssistClient::new();
-                        match gemini_client.auto_get_project_id(&oauth_session.access_token.as_deref().unwrap_or("")).await {
+                        match gemini_client
+                            .auto_get_project_id(
+                                &oauth_session.access_token.as_deref().unwrap_or(""),
+                            )
+                            .await
+                        {
                             Ok(Some(auto_project_id)) => {
                                 final_project_id = Some(auto_project_id.clone());
                                 tracing::info!(
@@ -389,7 +418,7 @@ pub async fn create_provider_key(
         name: Set(payload.name),
         api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
         auth_type: Set(payload.auth_type),
-        auth_status: Set(Some("active".to_string())),
+        auth_status: Set(Some(AuthStatus::Authorized.to_string())),
         weight: Set(payload.weight),
         max_requests_per_minute: Set(payload.max_requests_per_minute),
         max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
@@ -502,7 +531,8 @@ pub async fn get_provider_key_detail(
     };
 
     // 计算限流剩余时间（秒）
-    let rate_limit_remaining_seconds = if let Some(resets_at) = provider_key.0.rate_limit_resets_at {
+    let rate_limit_remaining_seconds = if let Some(resets_at) = provider_key.0.rate_limit_resets_at
+    {
         let now = Utc::now().naive_utc();
         info!(
             key_id = provider_key.0.id,
@@ -678,7 +708,9 @@ pub async fn update_provider_key(
             match OAuthSession::find()
                 .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
                 .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                .filter(oauth_client_sessions::Column::Status.eq("completed"))
+                .filter(
+                    oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
+                )
                 .one(db)
                 .await
             {
@@ -993,7 +1025,7 @@ pub async fn get_provider_keys_dashboard_stats(
     let (total_usage, total_cost) = if user_provider_key_ids.is_empty() {
         (0u64, 0.0f64)
     } else {
-        use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+        use entity::proxy_tracing::{Column, Entity as ProxyTracing};
 
         match ProxyTracing::find()
             .filter(Column::UserProviderKeyId.is_in(user_provider_key_ids))
@@ -1191,7 +1223,7 @@ pub struct ProviderKeysListQuery {
     /// 筛选指定服务商
     pub provider: Option<String>,
     /// 筛选状态
-    pub status: Option<String>,
+    pub status: Option<ApiKeyHealthStatus>,
 }
 
 /// 创建提供商密钥请求
@@ -1268,7 +1300,7 @@ async fn fetch_provider_keys_usage_stats(
     db: &sea_orm::DatabaseConnection,
     provider_key_ids: &[i32],
 ) -> HashMap<i32, ProviderKeyUsageStats> {
-    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+    use entity::proxy_tracing::{Column, Entity as ProxyTracing};
 
     let mut stats_map = HashMap::new();
 
@@ -1363,7 +1395,6 @@ pub async fn get_provider_key_trends(
     headers: HeaderMap,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
-    
 
     let db = state.database.as_ref();
 
@@ -1442,7 +1473,6 @@ pub async fn get_user_service_api_trends(
     headers: HeaderMap,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    
 
     let db = state.database.as_ref();
 
@@ -1485,17 +1515,18 @@ pub async fn get_user_service_api_trends(
     let start_date = end_date - chrono::Duration::days(days as i64);
 
     // 查询趋势数据
-    let trends = match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
-        Ok(trends) => trends,
-        Err(err) => {
-            tracing::error!("Failed to fetch user service api trends: {}", err);
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch trends data: {}",
-                err
-            ));
-        }
-    };
+    let trends =
+        match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
+            Ok(trends) => trends,
+            Err(err) => {
+                tracing::error!("Failed to fetch user service api trends: {}", err);
+                return crate::manage_error!(crate::proxy_err!(
+                    database,
+                    "Failed to fetch trends data: {}",
+                    err
+                ));
+            }
+        };
 
     let data = json!({
         "daily_usage": trends.daily_usage,
@@ -1534,7 +1565,7 @@ async fn fetch_key_trends_data(
     end_date: &chrono::NaiveDateTime,
     key_type: &str, // "provider" 或 "user_service"
 ) -> Result<TrendData, sea_orm::DbErr> {
-    use entity::proxy_tracing::{Entity as ProxyTracing, Column};
+    use entity::proxy_tracing::{Column, Entity as ProxyTracing};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     let mut trend_data = TrendData::default();
@@ -1559,7 +1590,9 @@ async fn fetch_key_trends_data(
 
     for trace in &traces {
         let date_str = trace.created_at.format("%Y-%m-%d").to_string();
-        let entry = daily_stats.entry(date_str).or_insert_with(|| DailyStats::default());
+        let entry = daily_stats
+            .entry(date_str)
+            .or_insert_with(|| DailyStats::default());
 
         entry.total_requests += 1;
         if trace.is_success {
@@ -1581,13 +1614,13 @@ async fn fetch_key_trends_data(
         if let Some(stats) = daily_stats.get(&date_str) {
             trend_data.daily_usage.push(stats.total_requests);
             trend_data.daily_cost.push(stats.total_cost);
-            trend_data.daily_response_time.push(
-                if stats.successful_requests > 0 {
+            trend_data
+                .daily_response_time
+                .push(if stats.successful_requests > 0 {
                     stats.total_response_time / stats.successful_requests
                 } else {
                     0
-                }
-            );
+                });
 
             // 累计汇总数据
             trend_data.total_requests += stats.total_requests;
@@ -1649,4 +1682,29 @@ struct DailyStats {
     total_cost: f64,
     total_response_time: i64,
     total_tokens: i64,
+}
+
+/// 获取API密钥健康状态列表
+pub async fn get_provider_key_health_statuses() -> axum::response::Response {
+    use crate::scheduler::types::ApiKeyHealthStatus;
+
+    let mut statuses = vec![json!({"value": "all", "label": "全部"})];
+
+    // 添加所有枚举状态
+    for status in &[
+        ApiKeyHealthStatus::Healthy,
+        ApiKeyHealthStatus::RateLimited,
+        ApiKeyHealthStatus::Unhealthy,
+    ] {
+        statuses.push(json!({
+            "value": status.to_string(),
+            "label": match status {
+                ApiKeyHealthStatus::Healthy => "健康",
+                ApiKeyHealthStatus::RateLimited => "限流中",
+                ApiKeyHealthStatus::Unhealthy => "不健康",
+            }
+        }));
+    }
+
+    Json(statuses).into_response()
 }

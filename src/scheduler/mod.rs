@@ -12,8 +12,8 @@ pub use algorithms::{
     SelectionContext, create_api_key_selector,
 };
 pub use api_key_health::{
-    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealthChecker,
-    ApiKeyHealthConfig, ApiKeyHealthStatus,
+    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealth, ApiKeyHealthChecker,
+    ApiKeyHealthConfig,
 };
 pub use pool_manager::{ApiKeyPoolManager, PoolStats, SmartApiKeySelectionResult};
 pub use types::SchedulingStrategy;

@@ -21,11 +21,12 @@ pub mod token_exchange;
 pub use auto_refresh::{AutoRefreshManager, RefreshPolicy};
 pub use jwt_extractor::{JWTParser, OpenAIAuthInfo, OpenAIJWTPayload};
 pub use pkce::{PkceChallenge, PkceVerifier};
-pub use polling::{OAuthPollingClient, PollingStatus};
+pub use polling::{OAuthPollingClient, OAuthPollingResponse};
 pub use providers::OAuthProviderManager;
-pub use session_manager::{SessionManager, SessionStatus};
+pub use session_manager::SessionManager;
 pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
+use crate::auth::types::AuthStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -360,7 +361,7 @@ impl OAuthClient {
     }
 
     /// 轮询会话状态
-    pub async fn poll_session(&self, session_id: &str) -> OAuthResult<PollingStatus> {
+    pub async fn poll_session(&self, session_id: &str) -> OAuthResult<OAuthPollingResponse> {
         self.polling_client
             .poll_session(&self.session_manager, session_id)
             .await
@@ -489,7 +490,7 @@ impl OAuthClient {
     ) -> OAuthResult<bool> {
         let session = self.session_manager.get_session(session_id).await?;
 
-        if session.status != "completed" || session.refresh_token.is_none() {
+        if session.status != AuthStatus::Authorized.to_string() || session.refresh_token.is_none() {
             return Ok(false);
         }
 

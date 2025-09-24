@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::auth::{AuthManager, AuthUtils};
+use crate::auth::{AuthManager, AuthUtils, types::AuthStatus};
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, sanitize_api_key};
 use crate::proxy::ProxyContext;
@@ -638,15 +638,15 @@ impl AuthenticationService {
         );
 
         // 验证session状态
-        if session.status != "completed" {
+        if session.status != AuthStatus::Authorized.to_string() {
             tracing::error!(
                 request_id = request_id,
                 session_id = session_id,
                 session_status = session.status,
-                "OAuth session is not in completed status"
+                "OAuth session is not in authorized status"
             );
             return Err(ProxyError::authentication(&format!(
-                "OAuth session {} is not completed, current status: {}",
+                "OAuth session {} is not authorized, current status: {}",
                 session_id, session.status
             )));
         }
