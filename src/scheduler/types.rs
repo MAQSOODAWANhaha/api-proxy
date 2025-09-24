@@ -16,6 +16,7 @@ pub enum SchedulingStrategy {
 
 /// API密钥健康状态枚举
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ApiKeyHealthStatus {
     /// 健康可用
     Healthy,
