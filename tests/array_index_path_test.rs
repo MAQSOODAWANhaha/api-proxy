@@ -2,7 +2,7 @@
 //!
 //! 测试新的数组索引路径解析功能，如 usage.0.usageMetadata.promptTokenCount
 
-use api_proxy::providers::field_extractor::{TokenFieldExtractor, TokenMappingConfig};
+use api_proxy::statistics::field_extractor::{TokenFieldExtractor, TokenMappingConfig};
 use serde_json::json;
 
 #[test]

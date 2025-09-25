@@ -4,9 +4,11 @@
 
 pub mod immediate;
 pub mod models;
+pub mod types;
 
 pub use immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
 pub use models::*;
+pub use types::TraceStats;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

@@ -15,7 +15,6 @@ pub mod error;
 pub mod logging;
 pub mod management;
 pub mod pricing;
-pub mod providers;
 pub mod proxy;
 pub mod scheduler;
 pub mod statistics;

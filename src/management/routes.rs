@@ -32,10 +32,10 @@ pub fn create_routes(state: AppState) -> Router {
 /// 健康检查路由
 fn health_routes() -> Router<AppState> {
     Router::new()
-        .route("/", get(crate::management::server::health_check))
+        .route("/", get(crate::management::handlers::health::health_check))
         .route(
             "/detailed",
-            get(crate::management::server::detailed_health_check),
+            get(crate::management::handlers::health::detailed_health_check),
         )
         .route(
             "/api-keys",

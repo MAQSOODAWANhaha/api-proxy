@@ -25,7 +25,7 @@ static MODEL_PATHS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 
 // 提取器缓存：provider_id -> TokenFieldExtractor
 static EXTRACTOR_CACHE: LazyLock<
-    RwLock<HashMap<i32, Arc<crate::providers::field_extractor::TokenFieldExtractor>>>,
+    RwLock<HashMap<i32, Arc<crate::statistics::field_extractor::TokenFieldExtractor>>>,
 > = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn extract_model_by_path(json: &Value, path: &str) -> Option<String> {
@@ -57,17 +57,17 @@ pub fn extract_model_from_json(json: &Value) -> Option<String> {
 
 fn get_or_build_extractor(
     provider: &entity::provider_types::Model,
-) -> Option<Arc<crate::providers::field_extractor::TokenFieldExtractor>> {
+) -> Option<Arc<crate::statistics::field_extractor::TokenFieldExtractor>> {
     let id = provider.id;
     if let Some(extractor) = EXTRACTOR_CACHE.read().unwrap().get(&id).cloned() {
         return Some(extractor);
     }
     let mapping_json = provider.token_mappings_json.as_ref()?;
-    let cfg = match crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json) {
+    let cfg = match crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json) {
         Ok(c) => c,
         Err(_) => return None,
     };
-    let extractor = Arc::new(crate::providers::field_extractor::TokenFieldExtractor::new(
+    let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(
         cfg,
     ));
     EXTRACTOR_CACHE

@@ -5,7 +5,6 @@ use crate::{
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::Result,
     management::server::{ManagementConfig, ManagementServer},
-    providers::DynamicAdapterManager,
     proxy::PingoraProxyServer,
 };
 use sea_orm::DatabaseConnection;
@@ -16,7 +15,6 @@ use tracing::{error, info};
 pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
     pub unified_auth_manager: Arc<AuthManager>,
-    pub adapter_manager: Arc<DynamicAdapterManager>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
     pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
@@ -69,7 +67,6 @@ pub async fn run_dual_port_servers() -> Result<()> {
         config.clone(),
         db.clone(),
         shared_services.auth_service.clone(),
-        shared_services.adapter_manager.clone(),
         shared_services.provider_config_manager.clone(),
         Some(shared_services.api_key_health_checker.clone()),
         Some(shared_services.oauth_client.clone()),
@@ -192,11 +189,6 @@ pub async fn initialize_shared_services() -> Result<(
     // Note: 旧的服务器健康检查已移除，现在使用API密钥健康检查系统
     // 参见: src/scheduler/api_key_health.rs
 
-    let adapter_manager = Arc::new(DynamicAdapterManager::new(
-        db.clone(),
-        provider_config_manager.clone(),
-    ));
-
     // 创建认证服务
     let auth_service = Arc::new(AuthService::new(
         jwt_manager,
@@ -280,7 +272,6 @@ pub async fn initialize_shared_services() -> Result<(
     let shared_services = SharedServices {
         auth_service,
         unified_auth_manager,
-        adapter_manager,
         provider_config_manager,
         api_key_health_checker,
         oauth_client,

@@ -164,6 +164,21 @@ pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::respons
     response::success(metrics)
 }
 
+/// 根路径处理器（管理API信息）
+pub async fn root_handler() -> axum::response::Response {
+    response::success(serde_json::json!({
+        "success": true,
+        "message": "AI Proxy Management API",
+        "version": env!("CARGO_PKG_VERSION"),
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// Ping 处理器
+pub async fn ping_handler() -> &'static str {
+    "pong"
+}
+
 /// 获取程序运行时间（秒）- 自动初始化
 fn get_uptime_seconds() -> u64 {
     // 第一次调用时自动初始化启动时间

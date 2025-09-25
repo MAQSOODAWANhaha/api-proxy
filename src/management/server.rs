@@ -6,19 +6,12 @@ use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;
 use crate::config::{AppConfig, ProviderConfigManager};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
-use crate::management::response::{self};
-use crate::providers::DynamicAdapterManager;
-use crate::providers::dynamic_manager::AdapterStats;
 use anyhow::Result;
-use axum::Json;
 use axum::Router;
-use axum::extract::State;
 // use axum::http::StatusCode; // not needed with manage_error!
-use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -76,8 +69,7 @@ pub struct AppState {
     pub database: Arc<DatabaseConnection>,
     /// 认证服务
     pub auth_service: Arc<AuthService>,
-    /// 适配器管理器
-    pub adapter_manager: Arc<DynamicAdapterManager>,
+    ///（已移除）适配器管理器 - 动态适配器功能已下线
     /// 提供商配置管理器
     pub provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥健康检查器
@@ -107,7 +99,6 @@ impl ManagementServer {
         app_config: Arc<AppConfig>,
         database: Arc<DatabaseConnection>,
         auth_service: Arc<AuthService>,
-        adapter_manager: Arc<DynamicAdapterManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
         api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
         oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
@@ -119,7 +110,6 @@ impl ManagementServer {
             config: app_config,
             database,
             auth_service,
-            adapter_manager,
             provider_config_manager,
             api_key_health_checker,
             oauth_client,
@@ -154,9 +144,9 @@ impl ManagementServer {
             None
         };
 
-        let mut app = Router::new()
+    let mut app = Router::new()
             .nest(&config.api_prefix, api_routes)
-            .route("/ping", get(ping_handler));
+            .route("/ping", get(crate::management::handlers::system::ping_handler));
 
         // 添加静态文件服务（如果可用）
         if let Some(service) = static_service {
@@ -164,7 +154,7 @@ impl ManagementServer {
             app = app.fallback_service(service);
         } else {
             // 如果没有静态文件，则提供API信息页面
-            app = app.route("/", get(root_handler));
+            app = app.route("/", get(crate::management::handlers::system::root_handler));
         }
 
         // 创建IP过滤配置
@@ -264,77 +254,4 @@ impl ManagementServer {
     }
 }
 
-/// 根路径处理器
-async fn root_handler() -> Response {
-    Json(serde_json::json!({
-        "success": true,
-        "message": "AI Proxy Management API",
-        "version": env!("CARGO_PKG_VERSION"),
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-    .into_response()
-}
-
-/// Ping处理器
-async fn ping_handler() -> &'static str {
-    "pong"
-}
-
-/// 简单健康检查处理器（系统存活检查）
-pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
-    // 简单的数据库连接检查
-    match state.database.ping().await {
-        Ok(_) => response::success(serde_json::json!({
-            "status": "healthy",
-            "database": "connected",
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        })),
-        Err(e) => {
-            warn!("Database ping failed: {}", e);
-            crate::manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
-        }
-    }
-}
-
-/// 详细健康检查处理器（系统详细状态）
-#[derive(Serialize)]
-struct DetailedHealthStatus {
-    database: String,
-    adapters: HashMap<String, AdapterStats>,
-    system_info: SystemInfo,
-    api_key_health: String,
-}
-
-#[derive(Serialize)]
-struct SystemInfo {
-    uptime: String,
-    timestamp: String,
-    version: String,
-}
-
-pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
-    // 检查数据库连接
-    let database_status = match state.database.ping().await {
-        Ok(_) => "connected".to_string(),
-        Err(e) => {
-            warn!("Database ping failed: {}", e);
-            "disconnected".to_string()
-        }
-    };
-
-    // 获取适配器统计信息
-    let adapter_stats = state.adapter_manager.get_adapter_stats().await;
-
-    let detailed_status = DetailedHealthStatus {
-        database: database_status,
-        adapters: adapter_stats,
-        system_info: SystemInfo {
-            uptime: "unknown".to_string(), // TODO: 实现真实的运行时间
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        },
-        api_key_health: "Available via /api/health/api-keys endpoint".to_string(),
-    };
-
-    response::success(detailed_status)
-}
+// 根路径处理器与 Ping 已迁移至 handlers::system

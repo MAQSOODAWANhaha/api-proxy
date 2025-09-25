@@ -151,8 +151,6 @@ curl http://127.0.0.1:9090/api/loadbalancer/status
 # 查看统计概览
 curl http://127.0.0.1:9090/api/statistics/overview
 
-# 获取适配器信息
-curl http://127.0.0.1:9090/api/adapters
 
 # OAuth 2.0 授权码获取 (需要配置OAuth提供商)
 curl -X GET "http://127.0.0.1:9090/api/oauth/authorize?response_type=code&client_id=your_client_id&redirect_uri=your_redirect_uri&scope=read"

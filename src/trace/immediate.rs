@@ -327,7 +327,7 @@ impl ImmediateProxyTracer {
         request_id: &str,
         status_code: u16,
         is_success: bool,
-        trace_stats: crate::providers::TraceStats,
+        trace_stats: crate::trace::TraceStats,
     ) -> Result<()> {
         let result = self
             .complete_trace_with_stats(

@@ -2,6 +2,7 @@
 //!
 //! 归档代理端统计服务，供代理/管理等子系统复用。
 
+pub mod field_extractor;
 pub mod price;
 pub mod request;
 pub mod response;

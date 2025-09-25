@@ -323,10 +323,10 @@ impl StatisticsService {
         if let Some(provider) = ctx.provider_type.as_ref() {
             if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
                 if let Ok(cfg) =
-                    crate::providers::field_extractor::TokenMappingConfig::from_json(mapping_json)
+                    crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
                 {
                     let extractor =
-                        crate::providers::field_extractor::TokenFieldExtractor::new(cfg);
+                        crate::statistics::field_extractor::TokenFieldExtractor::new(cfg);
                     stats.usage.prompt_tokens =
                         extractor.extract_token_u32(&normalized, "tokens_prompt");
                     stats.usage.completion_tokens =
@@ -536,7 +536,7 @@ impl StatisticsService {
             "Creating ModelExtractor from database configuration"
         );
 
-        let extractor = crate::providers::field_extractor::ModelExtractor::from_json_config(
+        let extractor = crate::statistics::field_extractor::ModelExtractor::from_json_config(
             model_extraction_json,
         )
         .map_err(|e| {

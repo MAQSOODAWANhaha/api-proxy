@@ -1,11 +1,14 @@
 //! API密钥健康检查相关处理器
 
 use crate::management::{response, server::AppState};
+use crate::manage_error;
+use tracing::warn;
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use axum::extract::{Path, State};
 use entity::{provider_types, user_provider_keys};
 // use pingora_http::StatusCode; // no longer needed with manage_error!
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{QuerySelect, PaginatorTrait, FromQueryResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::error;
@@ -63,6 +66,99 @@ pub struct ProviderHealthStats {
     pub healthy_keys: usize,
     /// 平均健康分数
     pub avg_health_score: f32,
+}
+
+/// 简单健康检查处理器（系统存活检查）
+pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
+    match state.database.ping().await {
+        Ok(_) => response::success(serde_json::json!({
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        })),
+        Err(e) => {
+            warn!("Database ping failed: {}", e);
+            manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
+        }
+    }
+}
+
+/// 详细健康检查处理器（系统详细状态）
+#[derive(Serialize)]
+struct DetailedHealthStatus {
+    database: String,
+    providers_active: u64,
+    user_service_apis_active: u64,
+    last_trace_time: Option<String>,
+    system_info: SystemInfo,
+    api_key_health: String,
+}
+
+#[derive(Serialize)]
+struct SystemInfo {
+    uptime: String,
+    timestamp: String,
+    version: String,
+}
+
+pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
+    // 数据库连接状态
+    let database_status = match state.database.ping().await {
+        Ok(_) => "connected".to_string(),
+        Err(e) => {
+            warn!("Database ping failed: {}", e);
+            "disconnected".to_string()
+        }
+    };
+
+    // 活跃 provider 与 user_service_apis 计数
+    let providers_active = entity::provider_types::Entity::find()
+        .filter(entity::provider_types::Column::IsActive.eq(true))
+        .count(&*state.database)
+        .await
+        .unwrap_or(0);
+
+    let user_service_apis_active = entity::user_service_apis::Entity::find()
+        .filter(entity::user_service_apis::Column::IsActive.eq(true))
+        .count(&*state.database)
+        .await
+        .unwrap_or(0);
+
+    // 最近一次 trace 时间
+    #[derive(FromQueryResult, Debug)]
+    struct LastTraceRow {
+        last_end: Option<chrono::NaiveDateTime>,
+        last_start: Option<chrono::NaiveDateTime>,
+    }
+
+    let last_row = entity::proxy_tracing::Entity::find()
+        .select_only()
+        .expr_as(sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::EndTime).max(), "last_end")
+        .expr_as(sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::StartTime).max(), "last_start")
+        .into_model::<LastTraceRow>()
+        .one(&*state.database)
+        .await
+        .ok()
+        .flatten();
+
+    let last_trace_time = last_row
+        .and_then(|r| r.last_end.or(r.last_start))
+        .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).to_rfc3339());
+
+    let detailed_status = DetailedHealthStatus {
+        database: database_status,
+        providers_active,
+        user_service_apis_active,
+        last_trace_time,
+        system_info: SystemInfo {
+            uptime: "unknown".to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        api_key_health: "Available via /api/health/api-keys endpoint".to_string(),
+    };
+
+    response::success(detailed_status)
 }
 
 /// 获取所有API密钥健康状态
