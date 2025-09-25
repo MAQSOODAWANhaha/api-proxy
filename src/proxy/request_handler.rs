@@ -26,6 +26,7 @@ use crate::proxy::{AuthenticationService, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::statistics::service::StatisticsService;
 use crate::statistics::types::{PartialUsage, TokenUsageMetrics};
+use crate::statistics::types::{RequestDetails, ResponseDetails};
 use crate::trace::immediate::ImmediateProxyTracer;
 use crate::{proxy_debug, proxy_info, proxy_warn};
 use entity::{
@@ -63,246 +64,11 @@ pub struct RequestHandler {
     tracing_service: Arc<TracingService>,
 }
 
-/// 请求详情
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct RequestDetails {
-    pub headers: std::collections::HashMap<String, String>,
-    pub body_size: Option<u64>,
-    pub content_type: Option<String>,
-    /// 真实客户端IP地址（考虑代理情况）
-    pub client_ip: String,
-    /// 用户代理字符串
-    pub user_agent: Option<String>,
-    /// 来源页面
-    pub referer: Option<String>,
-    /// 请求方法
-    pub method: String,
-    /// 请求路径
-    pub path: String,
-    /// 请求协议版本
-    pub protocol_version: Option<String>,
-}
-
-/// 响应详情
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct ResponseDetails {
-    pub headers: std::collections::HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_encoding: Option<String>,
-    /// HTTP状态码
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_code: Option<u16>,
-    /// 响应体数据块累积(用于收集响应体数据)
-    #[serde(skip_serializing)]
-    pub body_chunks: Vec<u8>,
-    /// 流式响应尾部窗口（仅保留末端用于模型/usage兜底解析）
-    #[serde(skip_serializing)]
-    pub tail_window: Vec<u8>,
-}
+// RequestDetails / ResponseDetails 类型已迁移到 statistics::types
 
 // SerializableResponseDetails 已合并到 ResponseDetails 的 serde 序列化中
 
-impl ResponseDetails {
-    /// 将数据块写入流式尾窗（环形缓存，仅保留末端窗口）
-    pub fn push_tail_window(&mut self, chunk: &[u8]) {
-        const STREAM_TAIL_WINDOW_BYTES: usize = 64 * 1024; // 64KB
-        if chunk.is_empty() {
-            return;
-        }
-        // 若总长超过窗口大小，只保留末端
-        if self.tail_window.len() + chunk.len() <= STREAM_TAIL_WINDOW_BYTES {
-            self.tail_window.extend_from_slice(chunk);
-        } else {
-            // 需要裁剪已有数据，确保追加后不超过窗口
-            let needed = STREAM_TAIL_WINDOW_BYTES.saturating_sub(chunk.len());
-            if needed == 0 {
-                self.tail_window.clear();
-            } else if self.tail_window.len() > needed {
-                let drop_len = self.tail_window.len() - needed;
-                self.tail_window.drain(0..drop_len);
-            }
-            self.tail_window.extend_from_slice(chunk);
-        }
-    }
-
-    /// 添加响应体数据块
-    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
-        let prev_size = self.body_chunks.len();
-        self.body_chunks.extend_from_slice(chunk);
-
-        // 只在累积大小达到特定阈值时记录日志（避免过多日志）
-        let new_size = self.body_chunks.len();
-        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
-            tracing::debug!(
-                chunk_size = chunk.len(),
-                total_size = new_size,
-                "Response body chunk added (milestone reached)"
-            );
-        }
-    }
-
-    /// 检测响应是否为SSE格式
-    pub fn is_sse_format(&self) -> bool {
-        // 检查Content-Type
-        if let Some(content_type) = &self.content_type {
-            if content_type.contains("text/event-stream") {
-                return true;
-            }
-        }
-
-        // 检查响应体内容格式（如果已经finalized）
-        if let Some(body) = &self.body {
-            let first_few_lines: Vec<&str> = body.lines().take(5).collect();
-            let data_line_count = first_few_lines
-                .iter()
-                .filter(|line| line.trim().starts_with("data: "))
-                .count();
-
-            // 如果有多个"data: "开头的行，很可能是SSE格式
-            return data_line_count > 1;
-        }
-
-        false
-    }
-
-    /// 获取SSE响应中的有效数据行数量
-    pub fn get_sse_data_line_count(&self) -> usize {
-        if let Some(body) = &self.body {
-            return body
-                .lines()
-                .filter(|line| line.trim().starts_with("data: ") && !line.contains("[DONE]"))
-                .count();
-        }
-        0
-    }
-
-    /// 完成响应体收集，将累积的数据转换为字符串
-    pub fn finalize_body(&mut self) {
-        let original_chunks_len = self.body_chunks.len();
-
-        if !self.body_chunks.is_empty() {
-            tracing::debug!(
-                raw_body_size = original_chunks_len,
-                "Starting response body finalization"
-            );
-
-            // 尝试将响应体转换为UTF-8字符串
-            match String::from_utf8(self.body_chunks.clone()) {
-                Ok(body_str) => {
-                    let original_str_len = body_str.len();
-
-                    // 对于大的响应体，只保留前64KB
-                    if body_str.len() > 65536 {
-                        self.body = Some(format!(
-                            "{}...[truncated {} bytes]",
-                            &body_str[..65536],
-                            body_str.len() - 65536
-                        ));
-                        tracing::info!(
-                            original_size = original_str_len,
-                            stored_size = 65536,
-                            truncated_bytes = original_str_len - 65536,
-                            "Response body finalized as UTF-8 string (truncated)"
-                        );
-                    } else {
-                        self.body = Some(body_str.clone());
-
-                        // 检测是否为SSE格式并记录相关信息
-                        let is_sse = body_str
-                            .lines()
-                            .any(|line| line.trim().starts_with("data: "));
-                        if is_sse {
-                            let data_line_count = body_str
-                                .lines()
-                                .filter(|line| {
-                                    line.trim().starts_with("data: ") && !line.contains("[DONE]")
-                                })
-                                .count();
-
-                            tracing::info!(
-                                body_size = original_str_len,
-                                is_sse_format = true,
-                                sse_data_lines = data_line_count,
-                                "Response body finalized as UTF-8 string (complete, SSE format detected)"
-                            );
-                        } else {
-                            tracing::info!(
-                                body_size = original_str_len,
-                                is_sse_format = false,
-                                "Response body finalized as UTF-8 string (complete)"
-                            );
-                        }
-                    }
-                }
-                Err(utf8_error) => {
-                    // 如果不是有效的UTF-8，保存为十六进制字符串（仅前1KB）
-                    let truncated_chunks = if self.body_chunks.len() > 1024 {
-                        &self.body_chunks[..1024]
-                    } else {
-                        &self.body_chunks
-                    };
-                    self.body = Some(format!("binary-data:{}", hex::encode(truncated_chunks)));
-
-                    tracing::info!(
-                        raw_size = original_chunks_len,
-                        encoded_size = truncated_chunks.len(),
-                        utf8_error = format!("{:?}", utf8_error),
-                        "Response body finalized as hex-encoded binary data"
-                    );
-                }
-            }
-            // 更新实际的body_size
-            self.body_size = Some(self.body_chunks.len() as u64);
-        } else {
-            tracing::debug!("No response body chunks to finalize (empty response)");
-        }
-    }
-
-    /// 清理已收集的原始分块，避免与字符串副本双份占用
-    pub fn clear_body_chunks(&mut self) {
-        if !self.body_chunks.is_empty() {
-            tracing::debug!(
-                cleared_bytes = self.body_chunks.len(),
-                "Clearing collected body chunks to reduce memory"
-            );
-            self.body_chunks.clear();
-        }
-    }
-
-    /// 生成有限大小的预览字符串（优先使用 body，其次使用 tail_window）
-    pub fn make_preview(&self, limit: usize) -> String {
-        if let Some(b) = &self.body {
-            if b.len() > limit {
-                format!("{}...[truncated {} bytes]", &b[..limit], b.len() - limit)
-            } else {
-                b.clone()
-            }
-        } else if !self.tail_window.is_empty() {
-            match String::from_utf8(self.tail_window.clone()) {
-                Ok(s) => {
-                    if s.len() > limit {
-                        format!("{}...[truncated {} bytes]", &s[..limit], s.len() - limit)
-                    } else {
-                        s
-                    }
-                }
-                Err(_) => format!(
-                    "<binary:{} bytes> {}",
-                    self.tail_window.len(),
-                    hex::encode(&self.tail_window[..self.tail_window.len().min(1024)])
-                ),
-            }
-        } else {
-            "<empty>".to_string()
-        }
-    }
-}
+// ResponseDetails 的方法已迁移至 statistics::response 模块的 impl
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
 
@@ -1156,21 +922,14 @@ impl RequestHandler {
             }
         };
 
-        // 记录未认证之前的请求头信息（关键头 + JSON 全量头）
-        let client_headers_before_auth =
-            self.extract_key_headers_from_request(session.req_header());
-        let upstream_headers_before_auth = self.extract_key_headers_from_request(upstream_request);
-
-        let client_headers_json = crate::logging::headers_json_string_request(session.req_header());
-        let upstream_headers_json = crate::logging::headers_json_string_request(upstream_request);
+        let client_headers = crate::logging::headers_json_string_request(session.req_header());
+        let upstream_headers = crate::logging::headers_json_string_request(upstream_request);
 
         tracing::debug!(
             request_id = ctx.request_id,
             stage = "before_auth",
-            client_headers_key = client_headers_before_auth,
-            upstream_headers_key = upstream_headers_before_auth,
-            client_headers_json = client_headers_json,
-            upstream_headers_json = upstream_headers_json,
+            client_headers = client_headers,
+            upstream_headers = upstream_headers,
             "Client and upstream headers (before auth)"
         );
 
@@ -1365,20 +1124,6 @@ impl RequestHandler {
             }
         }
 
-        // 记录认证后的头部信息变化（降级为 debug）
-        let client_headers_after_auth = self.extract_key_headers_from_request(session.req_header());
-        let upstream_headers_after_auth = self.extract_key_headers_from_request(upstream_request);
-
-        tracing::debug!(
-            request_id = ctx.request_id,
-            stage = "after_auth",
-            client_headers = client_headers_after_auth,
-            upstream_headers = upstream_headers_after_auth,
-            provider = provider_type.name,
-            backend_id = selected_backend.id,
-            "Headers after authentication and processing"
-        );
-
         tracing::debug!(
             request_id = ctx.request_id,
             method = upstream_request.method.to_string(),
@@ -1432,13 +1177,8 @@ impl RequestHandler {
             }
         }
 
-        // 注释掉可能导致问题的自定义头部
-        // upstream_request.insert_header("x-request-id", &ctx.request_id)
-        //     .map_err(|e| ProxyError::internal(format!("Failed to set request-id: {}", e)))?;
-
         // 添加详细的上游请求日志（JSON化的头部数据，已脱敏）
-        let upstream_headers_after_json =
-            crate::logging::headers_json_string_request(upstream_request);
+        let upstream_headers = crate::logging::headers_json_string_request(upstream_request);
 
         // 计算上游可读 URL（用于排查：host + path），仅用于日志
         let upstream_host_for_log = upstream_request
@@ -1461,7 +1201,7 @@ impl RequestHandler {
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
             auth = selected_backend.api_key,
-            upstream_headers_json = upstream_headers_after_json,
+            upstream_headers = upstream_headers,
             "上游请求已构建"
         );
 
@@ -1476,16 +1216,14 @@ impl RequestHandler {
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
         // 记录响应头信息（关键头 + JSON 全量头）
-        let response_headers = self.extract_key_headers_from_response(upstream_response);
-        let response_headers_json = crate::logging::headers_json_string_response(upstream_response);
+        let response_headers = crate::logging::headers_json_string_response(upstream_response);
 
         tracing::info!(
             event = "upstream_response_headers",
             component = "request_handler",
             request_id = ctx.request_id,
             status_code = upstream_response.status.as_u16(),
-            response_headers_key = response_headers,
-            response_headers_json = response_headers_json,
+            response_headers = response_headers,
             "收到上游响应头"
         );
 
@@ -1660,82 +1398,6 @@ impl RequestHandler {
         upstream_request.remove_header("api-key");
     }
 
-    /// 获取关键头部信息用于日志记录 (RequestHeader 版本)
-    fn extract_key_headers_from_request(&self, req_header: &RequestHeader) -> String {
-        let mut key_headers = Vec::new();
-
-        // 模仿现有代码的方式直接遍历头部
-        for (name, value) in req_header.headers.iter() {
-            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
-                let name_str = name.as_str().to_lowercase();
-
-                match name_str.as_str() {
-                    "authorization" => key_headers.push(format!("authorization: {}", value_str)),
-                    "content-type" => key_headers.push(format!("content-type: {}", value_str)),
-                    "host" => key_headers.push(format!("host: {}", value_str)),
-                    "user-agent" => key_headers.push(format!("user-agent: {}", value_str)),
-                    _ => {}
-                }
-            }
-        }
-
-        if key_headers.is_empty() {
-            "none".to_string()
-        } else {
-            key_headers.join(", ")
-        }
-    }
-
-    /// 将所有请求头格式化为人类可读的列表
-    fn format_all_request_headers(&self, req_header: &RequestHeader) -> Vec<String> {
-        let mut all = Vec::new();
-        for (name, value) in req_header.headers.iter() {
-            let name_str = name.as_str();
-            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-            all.push(format!("{}: {}", name_str, value_str));
-        }
-        all
-    }
-
-    /// 将所有响应头格式化为人类可读的列表
-    fn format_all_response_headers(&self, resp_header: &ResponseHeader) -> Vec<String> {
-        let mut all = Vec::new();
-        for (name, value) in resp_header.headers.iter() {
-            let name_str = name.as_str();
-            let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-            all.push(format!("{}: {}", name_str, value_str));
-        }
-        all
-    }
-
-    /// 获取关键头部信息用于日志记录 (ResponseHeader 版本)
-    fn extract_key_headers_from_response(&self, resp_header: &ResponseHeader) -> String {
-        let mut key_headers = Vec::new();
-
-        // 模仿现有代码的方式直接遍历头部
-        for (name, value) in resp_header.headers.iter() {
-            if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
-                let name_str = name.as_str().to_lowercase();
-
-                match name_str.as_str() {
-                    "content-type" => key_headers.push(format!("content-type: {}", value_str)),
-                    "content-length" => key_headers.push(format!("content-length: {}", value_str)),
-                    "content-encoding" => {
-                        key_headers.push(format!("content-encoding: {}", value_str))
-                    }
-                    "cache-control" => key_headers.push(format!("cache-control: {}", value_str)),
-                    _ => {}
-                }
-            }
-        }
-
-        if key_headers.is_empty() {
-            "none".to_string()
-        } else {
-            key_headers.join(", ")
-        }
-    }
-
     /// 检测并转换Pingora错误为ProxyError
     pub fn convert_pingora_error(&self, error: &PingoraError, ctx: &ProxyContext) -> ProxyError {
         let timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64; // 使用配置的超时或30秒fallback
@@ -1844,22 +1506,6 @@ impl RequestHandler {
                 ))
             }
         }
-    }
-
-    /// 获取 provider 的默认模型
-    fn get_provider_default_model(&self, ctx: &ProxyContext) -> Option<String> {
-        let provider = ctx.provider_type.as_ref()?;
-        let default_model = provider.default_model.as_ref()?;
-
-        tracing::debug!(
-            request_id = ctx.request_id,
-            model = default_model,
-            extraction_method = "provider_default",
-            provider_id = provider.id,
-            "Using provider default model (final fallback)"
-        );
-
-        Some(default_model.clone())
     }
 }
 

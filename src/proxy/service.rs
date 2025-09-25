@@ -703,9 +703,83 @@ impl ResponseBodyService for DefaultResponseBodyService {
                 .unwrap_or(false);
 
             if is_streaming {
-                // 仅保留末端窗口 + 增量统计，不累计全量
+                // 流式：仅保留末端窗口 + 行缓冲逐行解析（latest-wins），不累计全量
                 ctx.response_details.push_tail_window(data);
-                crate::statistics::service::ingest_streaming_chunk(ctx, data);
+
+                if let Ok(text) = std::str::from_utf8(data) {
+                    // 追加到跨块行缓冲
+                    ctx.sse_line_buffer.push_str(text);
+
+                    // 仅处理完整行，剩余半行留待下个分块
+                    if let Some(last_nl) = ctx.sse_line_buffer.rfind('\n') {
+                        let complete = ctx.sse_line_buffer[..=last_nl].to_string();
+                        let leftover = ctx.sse_line_buffer[last_nl + 1..].to_string();
+                        ctx.sse_line_buffer = leftover;
+
+                        let mut parsed_events = 0usize;
+                        let mut parse_errors = 0usize;
+
+                        for line in complete.lines() {
+                            let line = line.trim();
+                            if !line.starts_with("data:") {
+                                continue;
+                            }
+                            let mut t = line["data:".len()..].trim();
+                            if t.is_empty() || t.contains("[DONE]") {
+                                continue;
+                            }
+                            if let Some(pos) = t.find('{') {
+                                t = &t[pos..];
+                            } else {
+                                continue;
+                            }
+
+                            match serde_json::from_str::<serde_json::Value>(t) {
+                                Ok(json) => {
+                                    parsed_events += 1;
+                                    // 提取 tokens 并 latest-wins 合并
+                                    if let Some(provider) = ctx.provider_type.as_ref() {
+                                        let usage = crate::statistics::usage_model::extract_tokens_from_json(Some(provider), &json);
+                                        if usage.prompt_tokens.is_some()
+                                            || usage.completion_tokens.is_some()
+                                            || usage.total_tokens.is_some()
+                                            || usage.cache_create_tokens.is_some()
+                                            || usage.cache_read_tokens.is_some()
+                                        {
+                                            let partial = crate::statistics::types::PartialUsage {
+                                                prompt_tokens: usage.prompt_tokens,
+                                                completion_tokens: usage.completion_tokens,
+                                                total_tokens: usage.total_tokens,
+                                                cache_create_tokens: usage.cache_create_tokens,
+                                                cache_read_tokens: usage.cache_read_tokens,
+                                            };
+                                            ctx.usage_partial.merge_latest(&partial);
+                                        }
+                                    }
+                                    // 轻量模型兜底更新
+                                    if ctx.requested_model.is_none() {
+                                        if let Some(m) = json.get("model").and_then(|m| m.as_str())
+                                        {
+                                            ctx.requested_model = Some(m.to_string());
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    parse_errors += 1;
+                                }
+                            }
+                        }
+
+                        tracing::debug!(
+                            component = COMPONENT,
+                            request_id = %ctx.request_id,
+                            parsed_events = parsed_events,
+                            parse_errors = parse_errors,
+                            event = "streaming_chunk_parsed",
+                            "Processed streaming chunk lines"
+                        );
+                    }
+                }
             } else {
                 // 非流式：按块累计，供后续收口统计与（限量）解压
                 ctx.response_details.add_body_chunk(data);
@@ -1706,7 +1780,6 @@ impl ProxyHttp for ProxyService {
                             error = %e,
                             "Failed to extract stats from response body, using header-based data"
                         );
-                        // Fallback：不更新统计
                     }
                 }
             }

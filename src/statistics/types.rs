@@ -2,6 +2,57 @@
 
 use serde::Serialize;
 
+// === 请求/响应概览类型（采集层） ===
+#[derive(Debug, Clone)]
+pub struct RequestStats {
+    pub method: String,
+    pub path: String,
+    pub client_ip: String,
+    pub user_agent: Option<String>,
+    pub referer: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResponseStats {
+    pub status_code: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    pub content_type: Option<String>,
+    pub content_length: Option<i64>,
+}
+
+// === 请求/响应详情类型（上下文持久化） ===
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RequestDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body_size: Option<u64>,
+    pub content_type: Option<String>,
+    pub client_ip: String,
+    pub user_agent: Option<String>,
+    pub referer: Option<String>,
+    pub method: String,
+    pub path: String,
+    pub protocol_version: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ResponseDetails {
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_encoding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(skip_serializing)]
+    pub body_chunks: Vec<u8>,
+    #[serde(skip_serializing)]
+    pub tail_window: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct TokenUsageMetrics {
     pub prompt_tokens: Option<u32>,

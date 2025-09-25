@@ -13,22 +13,32 @@ use tracing::{debug, info, warn};
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenMapping {
     /// 直接映射字段路径
-    Direct { path: String },
+    Direct {
+        path: String,
+        fallback: Option<Box<TokenMapping>>,
+    },
     /// 数学表达式计算
     Expression {
         formula: String,
-        fallback: Option<String>,
+        fallback: Option<Box<TokenMapping>>,
     },
     /// 固定默认值
-    Default { value: Value },
+    Default {
+        value: Value,
+        fallback: Option<Box<TokenMapping>>,
+    },
     /// 条件判断映射
     Conditional {
         condition: String,
         true_value: String,
         false_value: Value,
+        fallback: Option<Box<TokenMapping>>,
     },
-    /// Fallback路径列表
-    Fallback { paths: Vec<String> },
+    /// Fallback路径列表（保持向后兼容）
+    Fallback {
+        paths: Vec<String>,
+        fallback: Option<Box<TokenMapping>>,
+    },
 }
 
 impl TokenMapping {
@@ -45,8 +55,21 @@ impl TokenMapping {
                     .get("path")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' field for direct mapping"))?;
+
+                // 解析可选的fallback
+                let fallback = if let Some(fallback_config) = config.get("fallback") {
+                    if fallback_config.is_null() {
+                        None
+                    } else {
+                        Some(Box::new(Self::from_json(fallback_config)?))
+                    }
+                } else {
+                    None
+                };
+
                 Ok(TokenMapping::Direct {
                     path: path.to_string(),
+                    fallback,
                 })
             }
             "expression" => {
@@ -54,10 +77,18 @@ impl TokenMapping {
                     .get("formula")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'formula' field for expression mapping"))?;
-                let fallback = config
-                    .get("fallback")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+
+                // 解析可选的fallback
+                let fallback = if let Some(fallback_config) = config.get("fallback") {
+                    if fallback_config.is_null() {
+                        None
+                    } else {
+                        Some(Box::new(Self::from_json(fallback_config)?))
+                    }
+                } else {
+                    None
+                };
+
                 Ok(TokenMapping::Expression {
                     formula: formula.to_string(),
                     fallback,
@@ -67,8 +98,21 @@ impl TokenMapping {
                 let value = config
                     .get("value")
                     .ok_or_else(|| anyhow!("Missing 'value' field for default mapping"))?;
+
+                // 解析可选的fallback
+                let fallback = if let Some(fallback_config) = config.get("fallback") {
+                    if fallback_config.is_null() {
+                        None
+                    } else {
+                        Some(Box::new(Self::from_json(fallback_config)?))
+                    }
+                } else {
+                    None
+                };
+
                 Ok(TokenMapping::Default {
                     value: value.clone(),
+                    fallback,
                 })
             }
             "conditional" => {
@@ -83,10 +127,23 @@ impl TokenMapping {
                 let false_value = config.get("false_value").ok_or_else(|| {
                     anyhow!("Missing 'false_value' field for conditional mapping")
                 })?;
+
+                // 解析可选的fallback
+                let fallback = if let Some(fallback_config) = config.get("fallback") {
+                    if fallback_config.is_null() {
+                        None
+                    } else {
+                        Some(Box::new(Self::from_json(fallback_config)?))
+                    }
+                } else {
+                    None
+                };
+
                 Ok(TokenMapping::Conditional {
                     condition: condition.to_string(),
                     true_value: true_value.to_string(),
                     false_value: false_value.clone(),
+                    fallback,
                 })
             }
             "fallback" => {
@@ -96,16 +153,29 @@ impl TokenMapping {
                     .ok_or_else(|| {
                         anyhow!("Missing or invalid 'paths' field for fallback mapping")
                     })?;
-                let path_strings: Result<Vec<String>> = paths
+                let path_strings: Vec<String> = paths
                     .iter()
                     .map(|v| {
                         v.as_str()
                             .ok_or_else(|| anyhow!("Invalid path in fallback list"))
                             .map(|s| s.to_string())
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // 解析可选的fallback
+                let fallback = if let Some(fallback_config) = config.get("fallback") {
+                    if fallback_config.is_null() {
+                        None
+                    } else {
+                        Some(Box::new(Self::from_json(fallback_config)?))
+                    }
+                } else {
+                    None
+                };
+
                 Ok(TokenMapping::Fallback {
-                    paths: path_strings?,
+                    paths: path_strings,
+                    fallback,
                 })
             }
             _ => Err(anyhow!("Unknown mapping type: {}", mapping_type)),
@@ -325,6 +395,21 @@ impl TokenFieldExtractor {
         Ok(Self::new(config))
     }
 
+    /// 尝试fallback逻辑
+    fn try_fallback(
+        &self,
+        response: &Value,
+        fallback: &Option<Box<TokenMapping>>,
+    ) -> Option<Value> {
+        if let Some(fallback_mapping) = fallback {
+            debug!("Attempting fallback extraction");
+            self.extract_by_mapping(response, fallback_mapping.as_ref())
+        } else {
+            debug!("No fallback available");
+            None
+        }
+    }
+
     /// 提取Token字段值
     pub fn extract_token_field(&self, response: &Value, field_name: &str) -> Option<Value> {
         if let Some(mapping) = self.config.token_mappings.get(field_name) {
@@ -338,37 +423,86 @@ impl TokenFieldExtractor {
     /// 根据映射规则提取值
     fn extract_by_mapping(&self, response: &Value, mapping: &TokenMapping) -> Option<Value> {
         match mapping {
-            TokenMapping::Direct { path } => self.extract_by_path(response, path),
-            TokenMapping::Expression { formula, fallback } => {
-                // 尝试计算表达式
-                if let Some(result) = self.evaluate_expression(response, formula) {
-                    Some(result)
-                } else if let Some(fallback_path) = fallback {
-                    // 使用fallback路径
-                    self.extract_by_path(response, fallback_path)
-                } else {
-                    None
+            TokenMapping::Direct { path, fallback } => {
+                // 尝试直接提取
+                if let Some(value) = self.extract_by_path(response, path) {
+                    return Some(value);
                 }
+
+                // 尝试fallback
+                if let Some(fallback_mapping) = fallback {
+                    return self.extract_by_mapping(response, fallback_mapping.as_ref());
+                }
+
+                None
             }
-            TokenMapping::Default { value } => Some(value.clone()),
+
+            TokenMapping::Expression { formula, fallback } => {
+                // 尝试表达式计算
+                if let Some(result) = self.evaluate_expression(response, formula) {
+                    return Some(result);
+                }
+
+                // 尝试fallback
+                if let Some(fallback_mapping) = fallback {
+                    return self.extract_by_mapping(response, fallback_mapping.as_ref());
+                }
+
+                None
+            }
+
+            TokenMapping::Default { value, fallback } => {
+                // 返回默认值
+                if !value.is_null() {
+                    return Some(value.clone());
+                }
+
+                // 尝试fallback
+                if let Some(fallback_mapping) = fallback {
+                    return self.extract_by_mapping(response, fallback_mapping.as_ref());
+                }
+
+                None
+            }
+
             TokenMapping::Conditional {
                 condition,
                 true_value,
                 false_value,
+                fallback,
             } => {
+                // 评估条件
                 if self.evaluate_condition(response, condition) {
-                    self.extract_by_path(response, true_value)
+                    if let Some(value) = self.extract_by_path(response, true_value) {
+                        return Some(value);
+                    }
                 } else {
-                    Some(false_value.clone())
+                    if !false_value.is_null() {
+                        return Some(false_value.clone());
+                    }
                 }
+
+                // 尝试fallback
+                if let Some(fallback_mapping) = fallback {
+                    return self.extract_by_mapping(response, fallback_mapping.as_ref());
+                }
+
+                None
             }
-            TokenMapping::Fallback { paths } => {
+
+            TokenMapping::Fallback { paths, fallback } => {
                 // 按顺序尝试每个路径
                 for path in paths {
                     if let Some(value) = self.extract_by_path(response, path) {
                         return Some(value);
                     }
                 }
+
+                // 尝试fallback
+                if let Some(fallback_mapping) = fallback {
+                    return self.extract_by_mapping(response, fallback_mapping.as_ref());
+                }
+
                 None
             }
         }
@@ -848,12 +982,14 @@ mod tests {
                     "tokens_prompt".to_string(),
                     TokenMapping::Direct {
                         path: "usageMetadata.promptTokenCount".to_string(),
+                        fallback: None,
                     },
                 ),
                 (
                     "tokens_completion".to_string(),
                     TokenMapping::Direct {
                         path: "usageMetadata.candidatesTokenCount".to_string(),
+                        fallback: None,
                     },
                 ),
             ]
@@ -889,7 +1025,10 @@ mod tests {
                 TokenMapping::Expression {
                     formula: "usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount"
                         .to_string(),
-                    fallback: Some("usageMetadata.totalTokenCount".to_string()),
+                    fallback: Some(Box::new(TokenMapping::Direct {
+                        path: "usageMetadata.totalTokenCount".to_string(),
+                        fallback: None,
+                    })),
                 },
             )]
             .into_iter()
@@ -921,7 +1060,10 @@ mod tests {
                 TokenMapping::Expression {
                     formula: "usageMetadata.missingField + usageMetadata.anotherMissingField"
                         .to_string(),
-                    fallback: Some("usageMetadata.totalTokenCount".to_string()),
+                    fallback: Some(Box::new(TokenMapping::Direct {
+                        path: "usageMetadata.totalTokenCount".to_string(),
+                        fallback: None,
+                    })),
                 },
             )]
             .into_iter()
@@ -950,7 +1092,10 @@ mod tests {
         let config = TokenMappingConfig {
             token_mappings: [(
                 "cache_create_tokens".to_string(),
-                TokenMapping::Default { value: json!(0) },
+                TokenMapping::Default {
+                    value: json!(0),
+                    fallback: None,
+                },
             )]
             .into_iter()
             .collect(),
@@ -975,6 +1120,7 @@ mod tests {
                     condition: "exists(usageMetadata.thoughtsTokenCount)".to_string(),
                     true_value: "usageMetadata.thoughtsTokenCount".to_string(),
                     false_value: json!(0),
+                    fallback: None,
                 },
             )]
             .into_iter()
@@ -1019,6 +1165,7 @@ mod tests {
                         "usage.cached_tokens".to_string(),
                         "0".to_string(),
                     ],
+                    fallback: None,
                 },
             )]
             .into_iter()
@@ -1059,16 +1206,22 @@ mod tests {
         let json_config = r#"{
             "tokens_prompt": {
                 "type": "direct",
-                "path": "usageMetadata.promptTokenCount"
+                "path": "usageMetadata.promptTokenCount",
+                "fallback": null
             },
             "tokens_total": {
                 "type": "expression",
                 "formula": "usageMetadata.promptTokenCount + usageMetadata.candidatesTokenCount",
-                "fallback": "usageMetadata.totalTokenCount"
+                "fallback": {
+                    "type": "direct",
+                    "path": "usageMetadata.totalTokenCount",
+                    "fallback": null
+                }
             },
             "cache_create_tokens": {
                 "type": "default",
-                "value": 0
+                "value": 0,
+                "fallback": null
             }
         }"#;
 
@@ -1401,16 +1554,142 @@ impl ModelExtractor {
         }
     }
 
-    /// 从JSON中提取模型名
+    /// 根据路径提取模型信息（支持数组索引）
     fn extract_from_json(&self, json: &Value, path: &str) -> Option<String> {
+        if path.is_empty() {
+            return None;
+        }
+
+        // 分割路径并遍历JSON结构
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = json;
 
         for part in parts {
-            current = current.get(part)?;
+            // 检查是否是数组索引访问，如 choices[0]
+            if let Some((field_name, index_str)) = self.parse_array_access(part) {
+                // 处理 field_name[index] 格式
+                if let Some(array_field) = current.get(field_name) {
+                    if let Some(array) = array_field.as_array() {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            if let Some(element) = array.get(index) {
+                                current = element;
+                                continue;
+                            } else {
+                                debug!(
+                                    path = %path,
+                                    field_name = %field_name,
+                                    index = %index_str,
+                                    array_len = array.len(),
+                                    "Array index out of bounds"
+                                );
+                                return None;
+                            }
+                        } else {
+                            debug!(
+                                path = %path,
+                                field_name = %field_name,
+                                index = %index_str,
+                                "Invalid array index format"
+                            );
+                            return None;
+                        }
+                    } else {
+                        debug!(
+                            path = %path,
+                            field_name = %field_name,
+                            "Field is not an array"
+                        );
+                        return None;
+                    }
+                } else {
+                    debug!(
+                        path = %path,
+                        field_name = %field_name,
+                        "Field not found"
+                    );
+                    return None;
+                }
+            } else if part.chars().all(|c| c.is_ascii_digit()) {
+                // 处理直接的数字索引，如 data.0.model 中的 "0"
+                if let Some(array) = current.as_array() {
+                    if let Ok(index) = part.parse::<usize>() {
+                        if let Some(element) = array.get(index) {
+                            current = element;
+                            continue;
+                        } else {
+                            debug!(
+                                path = %path,
+                                index = %part,
+                                array_len = array.len(),
+                                "Direct array index out of bounds"
+                            );
+                            return None;
+                        }
+                    } else {
+                        debug!(
+                            path = %path,
+                            index = %part,
+                            "Invalid direct array index format"
+                        );
+                        return None;
+                    }
+                } else {
+                    debug!(
+                        path = %path,
+                        index = %part,
+                        "Current value is not an array for direct indexing"
+                    );
+                    return None;
+                }
+            } else {
+                // 处理普通字段
+                if let Some(next) = current.get(part) {
+                    current = next;
+                } else {
+                    debug!(
+                        path = %path,
+                        part = %part,
+                        "Path segment not found"
+                    );
+                    return None;
+                }
+            }
         }
 
-        current.as_str().map(|s| s.to_string())
+        // 提取字符串值
+        if let Some(model_str) = current.as_str() {
+            let model = model_str.trim();
+            if !model.is_empty() {
+                return Some(model.to_string());
+            }
+        }
+
+        debug!(
+            path = %path,
+            final_value = %current,
+            "Model value is not a valid string"
+        );
+        None
+    }
+
+    /// 解析数组索引访问，如 choices[0] -> (choices, 0) 或 0 -> None
+    fn parse_array_access<'a>(&self, part: &'a str) -> Option<(&'a str, &'a str)> {
+        // 首先检查是否是直接的数字索引，如 "0"
+        if part.chars().all(|c| c.is_ascii_digit()) {
+            return None; // 直接数字索引，由调用者处理
+        }
+
+        // 检查是否是 field[index] 格式
+        if let Some(bracket_pos) = part.find('[') {
+            if let Some(close_bracket_pos) = part.find(']') {
+                if bracket_pos < close_bracket_pos {
+                    let field_name = &part[..bracket_pos];
+                    let index_str = &part[bracket_pos + 1..close_bracket_pos];
+                    return Some((field_name, index_str));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -1560,5 +1839,210 @@ mod model_extractor_tests {
             extractor.extract_model_name("/v1/chat/completions", Some(&body), &HashMap::new());
 
         assert_eq!(model, "fallback-model");
+    }
+
+    // ===== 通用SSE API测试 =====
+
+    #[test]
+    fn test_direct_mapping_for_sse_data() {
+        // 测试使用Direct映射处理SSE数据（新架构）
+        let config = TokenMappingConfig {
+            token_mappings: [
+                (
+                    "tokens_prompt".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.input_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+                (
+                    "tokens_completion".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.output_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+                (
+                    "tokens_total".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.total_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let extractor = TokenFieldExtractor::new(config);
+
+        // 模拟从SSE解析后的标准化JSON
+        let response = json!({
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": 180,
+                "total_tokens": 300
+            },
+            "response": {
+                "model": "gpt-4o-realtime"
+            }
+        });
+
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            Some(120)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_completion"),
+            Some(180)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_total"),
+            Some(300)
+        );
+    }
+
+    #[test]
+    fn test_direct_mapping_with_cache_tokens() {
+        // 测试使用Direct映射处理缓存token数据
+        let config = TokenMappingConfig {
+            token_mappings: [
+                (
+                    "tokens_prompt".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.input_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+                (
+                    "tokens_completion".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.output_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+                (
+                    "cache_read_tokens".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.input_tokens_details.cached_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+                (
+                    "cache_create_tokens".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.input_tokens_details.cache_creation_tokens".to_string(),
+                        fallback: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let extractor = TokenFieldExtractor::new(config);
+
+        // 测试带有缓存token的SSE响应
+        let response = json!({
+            "usage": {
+                "input_tokens": 200,
+                "output_tokens": 150,
+                "total_tokens": 350,
+                "input_tokens_details": {
+                    "cached_tokens": 80,
+                    "cache_creation_tokens": 20
+                }
+            }
+        });
+
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            Some(200)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_completion"),
+            Some(150)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "cache_read_tokens"),
+            Some(80)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "cache_create_tokens"),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn test_mixed_direct_mappings() {
+        // 测试混合使用不同的Direct映射
+        let config = TokenMappingConfig {
+            token_mappings: [
+                (
+                    "tokens_prompt".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.input_tokens".to_string(), // 兼容Chat Completion API
+                        fallback: None,
+                    },
+                ),
+                (
+                    "tokens_completion".to_string(),
+                    TokenMapping::Direct {
+                        path: "usage.output_tokens".to_string(), // Realtime API格式
+                        fallback: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let extractor = TokenFieldExtractor::new(config);
+
+        let response = json!({
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 200
+            }
+        });
+
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            Some(100)
+        );
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_completion"),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn test_direct_mapping_missing_data() {
+        let config = TokenMappingConfig {
+            token_mappings: [(
+                "tokens_prompt".to_string(),
+                TokenMapping::Direct {
+                    path: "usage.input_tokens".to_string(),
+                    fallback: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        let extractor = TokenFieldExtractor::new(config);
+
+        // 测试数据缺失的情况
+        let response = json!({
+            "usage": {
+                "output_tokens": 100
+                // 缺少 input_tokens
+            }
+        });
+
+        assert_eq!(
+            extractor.extract_token_u32(&response, "tokens_prompt"),
+            None
+        );
     }
 }
