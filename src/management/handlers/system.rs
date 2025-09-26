@@ -188,16 +188,19 @@ fn get_uptime_seconds() -> u64 {
 
 /// 格式化运行时间为可读字符串
 fn format_uptime(uptime_seconds: u64) -> String {
-    let days = uptime_seconds / 86400;
-    let hours = (uptime_seconds % 86400) / 3600;
-    let minutes = (uptime_seconds % 3600) / 60;
+    let days = uptime_seconds / 86_400;
+    let hours = (uptime_seconds % 86_400) / 3_600;
+    let minutes = (uptime_seconds % 3_600) / 60;
+    let seconds = uptime_seconds % 60;
 
     if days > 0 {
         format!("{}d {}h {}m", days, hours, minutes)
     } else if hours > 0 {
-        format!("{}h {}m", hours, minutes)
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
     } else {
-        format!("{}m", minutes)
+        format!("{}s", seconds)
     }
 }
 
