@@ -5,14 +5,14 @@
 use crate::error::ProxyError;
 use entity::{model_pricing, model_pricing_tiers, provider_types};
 use sea_orm::{
-    ColumnTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr,
-    EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    ColumnTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
+    PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
-use std::time::Duration;
 use sea_orm_migration::MigratorTrait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 /// 初始化数据库连接
@@ -246,22 +246,40 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
 async fn initialize_model_pricing_from_remote_or_local(
     db: &DatabaseConnection,
 ) -> Result<(), ProxyError> {
-    info!(component = "database.pricing", "尝试从远程获取最新模型定价（失败则回退本地）...");
+    info!(
+        component = "database.pricing",
+        "尝试从远程获取最新模型定价（失败则回退本地）..."
+    );
 
     // 读取远程或本地 JSON
     let json_data = load_json_data_remote_or_local().await?;
-    info!(component = "database.pricing", models = json_data.len(), "已获取模型定价原始数据");
+    info!(
+        component = "database.pricing",
+        models = json_data.len(),
+        "已获取模型定价原始数据"
+    );
 
     // 过滤并标准化
     let filtered_models = filter_target_models(&json_data);
-    info!(component = "database.pricing", count = filtered_models.len(), "根据规则筛选目标模型");
+    info!(
+        component = "database.pricing",
+        count = filtered_models.len(),
+        "根据规则筛选目标模型"
+    );
 
     // provider 映射
     let provider_mappings = get_provider_mappings(db, &filtered_models).await?;
-    info!(component = "database.pricing", mappings = provider_mappings.len(), "构建 provider 映射完成");
+    info!(
+        component = "database.pricing",
+        mappings = provider_mappings.len(),
+        "构建 provider 映射完成"
+    );
 
     // 事务内增量 upsert
-    let txn = db.begin().await.map_err(|e| ProxyError::database(format!("开启事务失败: {}", e)))?;
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| ProxyError::database(format!("开启事务失败: {}", e)))?;
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut tiers_written = 0usize;
@@ -347,7 +365,11 @@ async fn initialize_model_pricing_from_remote_or_local(
 async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
     match fetch_remote_json().await {
         Ok(map) => {
-            info!(component = "database.pricing", source = "remote", "使用远程模型定价数据");
+            info!(
+                component = "database.pricing",
+                source = "remote",
+                "使用远程模型定价数据"
+            );
             Ok(map)
         }
         Err(e) => {
@@ -361,7 +383,9 @@ async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceIn
 async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
     const REMOTE_URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
-    let url = REMOTE_URL.parse::<reqwest::Url>().map_err(|e| ProxyError::config(format!("远程URL非法: {}", e)))?;
+    let url = REMOTE_URL
+        .parse::<reqwest::Url>()
+        .map_err(|e| ProxyError::config(format!("远程URL非法: {}", e)))?;
     if url.scheme() != "https" {
         return Err(ProxyError::config("仅允许HTTPS的远程URL".to_string()));
     }
@@ -373,7 +397,10 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
 
     let resp = client
         .get(url)
-        .header(reqwest::header::USER_AGENT, format!("api-proxy/{}", env!("CARGO_PKG_VERSION")))
+        .header(
+            reqwest::header::USER_AGENT,
+            format!("api-proxy/{}", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .await
         .map_err(|e| ProxyError::config(format!("请求远程模型定价失败: {}", e)))?;

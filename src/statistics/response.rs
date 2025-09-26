@@ -53,24 +53,6 @@ pub fn collect_details(
 
 // 将 ResponseDetails 相关方法迁移到统计服务侧，便于集中维护
 impl crate::statistics::types::ResponseDetails {
-    pub fn push_tail_window(&mut self, chunk: &[u8]) {
-        const STREAM_TAIL_WINDOW_BYTES: usize = 64 * 1024; // 64KB
-        if chunk.is_empty() {
-            return;
-        }
-        if self.tail_window.len() + chunk.len() <= STREAM_TAIL_WINDOW_BYTES {
-            self.tail_window.extend_from_slice(chunk);
-        } else {
-            let needed = STREAM_TAIL_WINDOW_BYTES.saturating_sub(chunk.len());
-            if needed == 0 {
-                self.tail_window.clear();
-            } else if self.tail_window.len() > needed {
-                let drop_len = self.tail_window.len() - needed;
-                self.tail_window.drain(0..drop_len);
-            }
-            self.tail_window.extend_from_slice(chunk);
-        }
-    }
 
     pub fn add_body_chunk(&mut self, chunk: &[u8]) {
         let prev_size = self.body_chunks.len();
@@ -187,21 +169,6 @@ impl crate::statistics::types::ResponseDetails {
                 format!("{}...[truncated {} bytes]", &b[..limit], b.len() - limit)
             } else {
                 b.clone()
-            }
-        } else if !self.tail_window.is_empty() {
-            match String::from_utf8(self.tail_window.clone()) {
-                Ok(s) => {
-                    if s.len() > limit {
-                        format!("{}...[truncated {} bytes]", &s[..limit], s.len() - limit)
-                    } else {
-                        s
-                    }
-                }
-                Err(_) => format!(
-                    "<binary:{} bytes> {}",
-                    self.tail_window.len(),
-                    hex::encode(&self.tail_window[..self.tail_window.len().min(1024)])
-                ),
             }
         } else {
             "<empty>".to_string()

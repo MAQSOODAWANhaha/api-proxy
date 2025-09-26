@@ -49,8 +49,6 @@ pub struct ResponseDetails {
     pub status_code: Option<u16>,
     #[serde(skip_serializing)]
     pub body_chunks: Vec<u8>,
-    #[serde(skip_serializing)]
-    pub tail_window: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

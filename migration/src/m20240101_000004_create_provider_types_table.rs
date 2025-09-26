@@ -169,7 +169,7 @@ impl MigrationTrait for Migration {
                     ])
                     // Claude配置 - 支持API Key和OAuth2认证
                     .values_panic([
-                        "claude".into(),
+                        "anthropic".into(),
                         "Anthropic Claude".into(),
                         "api.anthropic.com".into(),
                         "anthropic".into(),

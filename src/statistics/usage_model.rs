@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 use crate::proxy::ProxyContext;
 use crate::statistics::types::{ComputedStats, TokenUsageMetrics};
+use tokio_util::codec::Decoder as _; // for EventStreamData decode
 
 // 预编译模型路径（按优先级）
 static MODEL_PATHS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -113,60 +114,177 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
 // 已统一仅使用 extract_tokens_from_json（数据库驱动 + 归一化），
 // 流式路径在合并阶段采用“累加”策略，不再需要 partial 版本。
 
-/// 流式收口：归总 usage_partial 并尝试从尾窗解析模型
-pub fn finalize_streaming(ctx: &mut ProxyContext) -> ComputedStats {
+/// 统一在 EOS（end_of_stream）时进行解析与统计。
+///
+/// 逻辑：
+/// - 使用完整的 `ctx.response_details.body_chunks` 进行解压与解析；
+/// - Content-Type 决定解析方式：SSE（按事件）、NDJSON（按行）、普通 JSON（整体/窗口）。
+/// - 用量字段采用“累加”策略；模型名称取最后一次出现或整体 JSON 中的字段。
+pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
+    use crate::statistics::util::{decompress_for_stats, find_last_balanced_json};
+    use bytes::BytesMut;
+
     let mut stats = ComputedStats::default();
 
-    // 使用增量聚合的 usage（latest-wins）
-    if ctx.usage_partial.prompt_tokens.is_some()
-        || ctx.usage_partial.completion_tokens.is_some()
-        || ctx.usage_partial.total_tokens.is_some()
-        || ctx.usage_partial.cache_create_tokens.is_some()
-        || ctx.usage_partial.cache_read_tokens.is_some()
-    {
-        stats.usage.prompt_tokens = ctx.usage_partial.prompt_tokens;
-        stats.usage.completion_tokens = ctx.usage_partial.completion_tokens;
-        stats.usage.total_tokens = ctx
-            .usage_partial
-            .total_tokens
-            .or_else(|| {
-                match (
-                    ctx.usage_partial.prompt_tokens,
-                    ctx.usage_partial.completion_tokens,
-                ) {
-                    (Some(p), Some(c)) => Some(p + c),
-                    (Some(p), None) => Some(p),
-                    (None, Some(c)) => Some(c),
-                    _ => Some(0),
-                }
-            })
-            .or(Some(0));
-        stats.usage.cache_create_tokens = ctx.usage_partial.cache_create_tokens;
-        stats.usage.cache_read_tokens = ctx.usage_partial.cache_read_tokens;
-    } else {
+    let content_type = ctx
+        .response_details
+        .content_type
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let encoding = ctx.response_details.content_encoding.as_deref();
+    let raw = &ctx.response_details.body_chunks;
+
+    // 无正文：置零并回退模型
+    if raw.is_empty() {
         stats.usage.prompt_tokens = Some(0);
         stats.usage.completion_tokens = Some(0);
         stats.usage.total_tokens = Some(0);
+        stats.model_name = ctx.requested_model.clone();
+        return stats;
     }
 
-    // 从尾窗尝试提取模型兜底
-    if stats.model_name.is_none() && !ctx.response_details.tail_window.is_empty() {
-        if let Ok(s) = String::from_utf8(ctx.response_details.tail_window.clone()) {
-            if let Some(last_json) = crate::statistics::util::find_last_balanced_json(&s) {
-                stats.model_name = extract_model_from_json(&last_json);
+    // 解压+限流读取（默认 2MB 上限）
+    let decoded = decompress_for_stats(encoding, raw, 2 * 1024 * 1024);
+    let body_str = match std::str::from_utf8(&decoded) {
+        Ok(s) => s,
+        Err(_) => {
+            // UTF-8 解码失败，无法进行 JSON 解析
+            stats.usage.prompt_tokens = Some(0);
+            stats.usage.completion_tokens = Some(0);
+            stats.usage.total_tokens = Some(0);
+            stats.model_name = ctx.requested_model.clone();
+            return stats;
+        }
+    };
+
+    // SSE：text/event-stream
+    if content_type.contains("text/event-stream") {
+        let mut decoder = crate::utils::event_stream::EventStreamData::new();
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(body_str.as_bytes());
+        let mut last_json: Option<serde_json::Value> = None;
+        loop {
+            match decoder.decode(&mut buf) {
+                Ok(Some(ev)) => {
+                    let json = ev.data;
+                    if !json.is_null() {
+                        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                        // 累加策略
+                        stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
+                        stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
+                        stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
+                        stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
+                        stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                        last_json = Some(json);
+                    }
+                }
+                Ok(None) => {
+                    // flush EOF
+                    if let Ok(Some(ev)) = decoder.decode_eof(&mut BytesMut::new()) {
+                        let json = ev.data;
+                        if !json.is_null() {
+                            let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                            stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
+                            stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
+                            stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
+                            stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
+                            stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                            last_json = Some(json);
+                        }
+                    }
+                    break;
+                }
+                Err(_) => break,
             }
         }
+        if stats.usage.total_tokens.is_none() {
+            stats.usage.prompt_tokens = Some(0);
+            stats.usage.completion_tokens = Some(0);
+            stats.usage.total_tokens = Some(0);
+        }
+        if let Some(j) = last_json {
+            stats.model_name = extract_model_from_json(&j);
+        }
+        if stats.model_name.is_none() {
+            stats.model_name = ctx.requested_model.clone();
+        }
+        return stats;
     }
 
-    // 最终兜底：仍无模型则使用请求阶段模型
-    if stats.model_name.is_none() {
-        stats.model_name = ctx.requested_model.clone();
+    // NDJSON：application/stream+json 或行式 JSON 退化
+    if content_type.contains("application/stream+json") {
+        let mut last_json: Option<serde_json::Value> = None;
+        for raw in body_str.lines() {
+            let mut line = raw.trim();
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("data:") {
+                line = rest.trim_start();
+            }
+            if let Some(pos) = line.find('{') {
+                let json_str = &line[pos..];
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                    stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
+                    stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
+                    stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
+                    stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
+                    stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                    last_json = Some(json);
+                }
+            }
+        }
+        if stats.usage.total_tokens.is_none() {
+            stats.usage.prompt_tokens = Some(0);
+            stats.usage.completion_tokens = Some(0);
+            stats.usage.total_tokens = Some(0);
+        }
+        if let Some(j) = last_json {
+            stats.model_name = extract_model_from_json(&j);
+        }
+        if stats.model_name.is_none() {
+            stats.model_name = ctx.requested_model.clone();
+        }
+        return stats;
     }
 
-    // 将最终模型覆盖写回请求上下文，保证 logging 阶段使用最终模型
-    if let Some(m) = stats.model_name.clone() {
-        ctx.requested_model = Some(m);
+    // 普通 JSON：整体/窗口解析
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
+        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+        stats.usage = usage;
+        stats.model_name = extract_model_from_json(&json).or_else(|| ctx.requested_model.clone());
+        return stats;
+    } else {
+        // 尝试窗口：逐行扫描最后一段 JSON 或查找最后一个平衡的 JSON
+        let mut last_json: Option<serde_json::Value> = None;
+        for line in body_str.lines() {
+            let t = line.trim_start_matches("data:").trim();
+            if let Some(pos) = t.find('{') {
+                if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+                    last_json = Some(j);
+                }
+            }
+        }
+        if last_json.is_none() {
+            last_json = find_last_balanced_json(body_str);
+        }
+        if let Some(j) = last_json {
+            let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &j);
+            stats.usage = usage;
+            stats.model_name = extract_model_from_json(&j);
+        }
+        if stats.usage.total_tokens.is_none() {
+            stats.usage.prompt_tokens = Some(0);
+            stats.usage.completion_tokens = Some(0);
+            stats.usage.total_tokens = Some(0);
+        }
+        if stats.model_name.is_none() {
+            stats.model_name = ctx.requested_model.clone();
+        }
+        return stats;
     }
-
-    stats
 }
+
+// 注意：不再提供 finalize_streaming 别名，统一使用 finalize_eos。
