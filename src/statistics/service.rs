@@ -16,8 +16,8 @@ use crate::proxy::ProxyContext;
 // 提取器在此处不直接依赖，避免强耦合；如需高级解析可在 providers 层使用。
 
 // 复用统计模块类型定义
-use crate::statistics::types::{ComputedStats, RequestStats, ResponseStats};
 pub use crate::statistics::types::{RequestDetails, ResponseDetails};
+use crate::statistics::types::{RequestStats, ResponseStats};
 
 // RequestStats/ResponseStats 已迁移至 statistics::types
 
@@ -236,233 +236,6 @@ impl StatisticsService {
     }
 
     /// 从上下文响应体中提取统计信息（统一实现）
-    pub async fn extract_detailed_stats_from_response(
-        &self,
-        ctx: &mut ProxyContext,
-    ) -> Result<ComputedStats, ProxyError> {
-        let mut stats = ComputedStats::default();
-
-        // 如果没有响应体或JSON解析失败，直接使用请求时的模型信息
-        let body = match ctx.response_details.body.as_ref() {
-            Some(b) => b,
-            None => {
-                // 没有响应体，直接使用请求时的模型信息
-                if let Some(requested_model) = &ctx.requested_model {
-                    stats.model_name = Some(requested_model.clone());
-                    tracing::debug!(
-                        component = "statistics.service",
-                        request_id = %ctx.request_id,
-                        requested_model = %requested_model,
-                        "No response body, using requested model info"
-                    );
-                }
-                return Ok(stats);
-            }
-        };
-
-        // 尝试解析 JSON
-        let parsed: serde_json::Value = match serde_json::from_str(body) {
-            Ok(v) => v,
-            Err(_) => {
-                // JSON解析失败，直接使用请求时的模型信息
-                if let Some(requested_model) = &ctx.requested_model {
-                    stats.model_name = Some(requested_model.clone());
-                    tracing::debug!(
-                        component = "statistics.service",
-                        request_id = %ctx.request_id,
-                        requested_model = %requested_model,
-                        "Invalid JSON response, using requested model info"
-                    );
-                }
-                return Ok(stats);
-            }
-        };
-
-        // 直接使用原始解析的JSON，不再进行格式转换
-        let normalized = parsed;
-
-        // === 响应时模型信息提取逻辑 ===
-        // 在响应处理阶段，尝试从响应体中提取更准确的模型信息
-        let response_model = self.extract_model_from_response_body(&normalized);
-
-        // 如果从响应中提取到模型信息，并且与请求时的模型信息不同，则更新追踪记录
-        if let Some(ref response_model_name) = response_model {
-            // 检查是否与请求时的模型信息不同或请求时没有模型信息
-            let should_update = ctx.requested_model.as_ref().map_or(true, |requested| {
-                requested != response_model_name || requested.is_empty()
-            });
-
-            if should_update {
-                tracing::info!(
-                    component = "statistics.service",
-                    request_id = %ctx.request_id,
-                    requested_model = ?ctx.requested_model,
-                    response_model = %response_model_name,
-                    "响应时检测到模型信息变化，准备更新追踪记录"
-                );
-
-                // 注意：这里我们不能直接调用 tracing_service.update_trace_model_info，
-                // 因为 statistics service 不应该直接依赖 tracing service。
-                // 我们将模型信息存储在 stats 中，由调用者决定是否更新追踪记录。
-                stats.model_name = Some(response_model_name.clone());
-
-                // 同时更新上下文中的请求模型信息，确保后续处理使用最新的模型信息
-                ctx.requested_model = Some(response_model_name.clone());
-
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = %ctx.request_id,
-                    updated_model = %response_model_name,
-                    "模型信息已更新到上下文和统计信息中"
-                );
-            }
-        }
-
-        // 若 provider 配置了 token_mappings_json，则用数据库映射优先提取
-        if let Some(provider) = ctx.provider_type.as_ref() {
-            if let Some(mapping_json) = provider.token_mappings_json.as_ref() {
-                if let Ok(cfg) =
-                    crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
-                {
-                    let extractor =
-                        crate::statistics::field_extractor::TokenFieldExtractor::new(cfg);
-                    stats.usage.prompt_tokens =
-                        extractor.extract_token_u32(&normalized, "tokens_prompt");
-                    stats.usage.completion_tokens =
-                        extractor.extract_token_u32(&normalized, "tokens_completion");
-                    // total: 优先映射，如果没有，则根据 prompt+completion 回退
-                    stats.usage.total_tokens = extractor
-                        .extract_token_u32(&normalized, "tokens_total")
-                        .or_else(|| {
-                            match (stats.usage.prompt_tokens, stats.usage.completion_tokens) {
-                                (Some(p), Some(c)) => Some(p + c),
-                                (Some(p), None) => Some(p),
-                                (None, Some(c)) => Some(c),
-                                _ => None,
-                            }
-                        });
-                    // 可选缓存字段
-                    stats.usage.cache_create_tokens =
-                        extractor.extract_token_u32(&normalized, "cache_create_tokens");
-                    stats.usage.cache_read_tokens =
-                        extractor.extract_token_u32(&normalized, "cache_read_tokens");
-                }
-            }
-        }
-
-        // 若数据库未配置或未提取到token字段，则设为0值
-        if stats.usage.prompt_tokens.is_none() {
-            stats.usage.prompt_tokens = Some(0);
-        }
-        if stats.usage.completion_tokens.is_none() {
-            stats.usage.completion_tokens = Some(0);
-        }
-        if stats.usage.total_tokens.is_none() {
-            stats.usage.total_tokens = Some(0);
-        }
-
-        // 同步模型名（优先使用请求时已提取的模型信息）
-        // 请求时的模型信息通常是最准确的，但如果响应中提取到了更准确的模型信息，则保持响应提取的结果
-        if let Some(requested_model) = &ctx.requested_model {
-            // 只有在stats中没有模型信息或者模型信息为空时，才使用请求时的模型信息
-            if stats.model_name.is_none()
-                || stats
-                    .model_name
-                    .as_ref()
-                    .map(|m| m.is_empty())
-                    .unwrap_or(false)
-            {
-                stats.model_name = Some(requested_model.clone());
-                tracing::debug!(
-                    request_id = %ctx.request_id,
-                    requested_model = %requested_model,
-                    previous_model = ?stats.model_name,
-                    "模型信息同步：使用请求时提取的模型信息（覆盖响应提取）"
-                );
-            } else {
-                // 如果stats中已经有模型信息（来自响应提取），验证是否与请求时一致
-                if let Some(ref response_model) = stats.model_name {
-                    if requested_model != response_model {
-                        tracing::info!(
-                            request_id = %ctx.request_id,
-                            requested_model = %requested_model,
-                            response_model = %response_model,
-                            "模型信息不一致：请求时的模型与响应中的模型不同，保持响应提取的结果"
-                        );
-                    }
-                }
-            }
-        }
-
-        // 记录模型提取结果用于调试
-        if let Some(requested) = &ctx.requested_model {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                requested_model = requested,
-                response_model = stats.model_name.as_deref().unwrap_or("unknown"),
-                "Model extraction: requested vs response"
-            );
-        }
-
-        // 若存在模型与provider，计算费用
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            model_name = ?stats.model_name,
-            provider_id = ?ctx.provider_type.as_ref().map(|p| p.id),
-            input_tokens = ?stats.usage.prompt_tokens,
-            output_tokens = ?stats.usage.completion_tokens,
-            "费用计算条件检查"
-        );
-
-        if let (Some(model), Some(provider)) =
-            (stats.model_name.clone(), ctx.provider_type.as_ref())
-        {
-            tracing::info!(
-                request_id = %ctx.request_id,
-                model = %model,
-                provider_id = provider.id,
-                "开始计算费用"
-            );
-
-            let pricing_usage = crate::pricing::TokenUsage {
-                prompt_tokens: stats.usage.prompt_tokens,
-                completion_tokens: stats.usage.completion_tokens,
-                cache_create_tokens: stats.usage.cache_create_tokens,
-                cache_read_tokens: stats.usage.cache_read_tokens,
-            };
-            match self
-                .pricing_calculator
-                .calculate_cost(&model, provider.id, &pricing_usage, &ctx.request_id)
-                .await
-            {
-                Ok(cost) => {
-                    let total_cost = cost.total_cost;
-                    let currency = cost.currency.clone();
-                    stats.cost = Some(total_cost);
-                    stats.cost_currency = Some(currency.clone());
-                    tracing::info!(
-                        request_id = %ctx.request_id,
-                        total_cost = total_cost,
-                        currency = %currency,
-                        "费用计算成功"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(component = "statistics.service", request_id = %ctx.request_id, error = %e, "Failed to calc cost");
-                }
-            }
-        } else {
-            tracing::warn!(
-                component = "statistics.service",
-                request_id = %ctx.request_id,
-                model_name = ?stats.model_name,
-                provider_available = ?ctx.provider_type.as_ref().is_some(),
-                "费用计算条件不满足：缺少模型信息或提供商信息"
-            );
-        }
-
-        Ok(stats)
-    }
 
     // ========== 请求阶段模型提取方法 ==========
 
@@ -582,11 +355,11 @@ impl StatisticsService {
         tracing::debug!(
             component = "statistics.service",
             request_id = ctx.request_id,
-            body_size = ctx.body.len(),
+            body_size = ctx.request_body.len(),
             "Attempting to extract model from request body"
         );
 
-        if ctx.body.is_empty() {
+        if ctx.request_body.is_empty() {
             tracing::debug!(
                 request_id = ctx.request_id,
                 "Request body is empty, skipping body extraction"
@@ -594,7 +367,7 @@ impl StatisticsService {
             return None;
         }
 
-        let body_str = std::str::from_utf8(&ctx.body)
+        let body_str = std::str::from_utf8(&ctx.request_body)
             .map_err(|e| {
                 tracing::debug!(
                     component = "statistics.service",
@@ -654,11 +427,11 @@ impl StatisticsService {
 
     /// 解析请求体用于模型提取
     pub fn parse_request_body_for_model(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
-        if ctx.body.is_empty() {
+        if ctx.response_body.is_empty() {
             return None;
         }
 
-        let body_str = std::str::from_utf8(&ctx.body)
+        let body_str = std::str::from_utf8(&ctx.response_body)
             .map_err(|e| {
                 tracing::debug!(
                     component = "statistics.service",

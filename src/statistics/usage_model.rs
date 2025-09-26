@@ -64,13 +64,12 @@ fn get_or_build_extractor(
         return Some(extractor);
     }
     let mapping_json = provider.token_mappings_json.as_ref()?;
-    let cfg = match crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json) {
+    let cfg = match crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
+    {
         Ok(c) => c,
         Err(_) => return None,
     };
-    let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(
-        cfg,
-    ));
+    let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(cfg));
     EXTRACTOR_CACHE
         .write()
         .unwrap()
@@ -117,7 +116,7 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
 /// 统一在 EOS（end_of_stream）时进行解析与统计。
 ///
 /// 逻辑：
-/// - 使用完整的 `ctx.response_details.body_chunks` 进行解压与解析；
+/// - 使用完整的 `ctx.body` 进行解压与解析；
 /// - Content-Type 决定解析方式：SSE（按事件）、NDJSON（按行）、普通 JSON（整体/窗口）。
 /// - 用量字段采用“累加”策略；模型名称取最后一次出现或整体 JSON 中的字段。
 pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
@@ -133,7 +132,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         .unwrap_or("")
         .to_ascii_lowercase();
     let encoding = ctx.response_details.content_encoding.as_deref();
-    let raw = &ctx.response_details.body_chunks;
+    let raw = &ctx.response_body;
 
     // 无正文：置零并回退模型
     if raw.is_empty() {
@@ -171,11 +170,25 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                     if !json.is_null() {
                         let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
                         // 累加策略
-                        stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
-                        stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
-                        stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
-                        stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
-                        stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                        stats.usage.prompt_tokens = Some(
+                            stats.usage.prompt_tokens.unwrap_or(0)
+                                + usage.prompt_tokens.unwrap_or(0),
+                        );
+                        stats.usage.completion_tokens = Some(
+                            stats.usage.completion_tokens.unwrap_or(0)
+                                + usage.completion_tokens.unwrap_or(0),
+                        );
+                        stats.usage.total_tokens = Some(
+                            stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0),
+                        );
+                        stats.usage.cache_create_tokens = Some(
+                            stats.usage.cache_create_tokens.unwrap_or(0)
+                                + usage.cache_create_tokens.unwrap_or(0),
+                        );
+                        stats.usage.cache_read_tokens = Some(
+                            stats.usage.cache_read_tokens.unwrap_or(0)
+                                + usage.cache_read_tokens.unwrap_or(0),
+                        );
                         last_json = Some(json);
                     }
                 }
@@ -185,11 +198,26 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                         let json = ev.data;
                         if !json.is_null() {
                             let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
-                            stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
-                            stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
-                            stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
-                            stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
-                            stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                            stats.usage.prompt_tokens = Some(
+                                stats.usage.prompt_tokens.unwrap_or(0)
+                                    + usage.prompt_tokens.unwrap_or(0),
+                            );
+                            stats.usage.completion_tokens = Some(
+                                stats.usage.completion_tokens.unwrap_or(0)
+                                    + usage.completion_tokens.unwrap_or(0),
+                            );
+                            stats.usage.total_tokens = Some(
+                                stats.usage.total_tokens.unwrap_or(0)
+                                    + usage.total_tokens.unwrap_or(0),
+                            );
+                            stats.usage.cache_create_tokens = Some(
+                                stats.usage.cache_create_tokens.unwrap_or(0)
+                                    + usage.cache_create_tokens.unwrap_or(0),
+                            );
+                            stats.usage.cache_read_tokens = Some(
+                                stats.usage.cache_read_tokens.unwrap_or(0)
+                                    + usage.cache_read_tokens.unwrap_or(0),
+                            );
                             last_json = Some(json);
                         }
                     }
@@ -227,11 +255,24 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                 let json_str = &line[pos..];
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
                     let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
-                    stats.usage.prompt_tokens = Some(stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0));
-                    stats.usage.completion_tokens = Some(stats.usage.completion_tokens.unwrap_or(0) + usage.completion_tokens.unwrap_or(0));
-                    stats.usage.total_tokens = Some(stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0));
-                    stats.usage.cache_create_tokens = Some(stats.usage.cache_create_tokens.unwrap_or(0) + usage.cache_create_tokens.unwrap_or(0));
-                    stats.usage.cache_read_tokens = Some(stats.usage.cache_read_tokens.unwrap_or(0) + usage.cache_read_tokens.unwrap_or(0));
+                    stats.usage.prompt_tokens = Some(
+                        stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0),
+                    );
+                    stats.usage.completion_tokens = Some(
+                        stats.usage.completion_tokens.unwrap_or(0)
+                            + usage.completion_tokens.unwrap_or(0),
+                    );
+                    stats.usage.total_tokens = Some(
+                        stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0),
+                    );
+                    stats.usage.cache_create_tokens = Some(
+                        stats.usage.cache_create_tokens.unwrap_or(0)
+                            + usage.cache_create_tokens.unwrap_or(0),
+                    );
+                    stats.usage.cache_read_tokens = Some(
+                        stats.usage.cache_read_tokens.unwrap_or(0)
+                            + usage.cache_read_tokens.unwrap_or(0),
+                    );
                     last_json = Some(json);
                 }
             }

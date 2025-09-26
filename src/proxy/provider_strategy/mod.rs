@@ -16,6 +16,7 @@ use sea_orm::DatabaseConnection;
 
 use crate::error::ProxyError;
 use crate::proxy::ProxyContext;
+use crate::proxy::service::ResponseBodyService;
 use entity::user_provider_keys;
 
 #[async_trait::async_trait]
@@ -102,6 +103,22 @@ pub fn make_strategy(
             strategy.set_db_connection(db.clone());
             Some(Arc::new(strategy))
         }
+        "openai" => {
+            let mut strategy = OpenAIStrategy::new();
+            strategy.set_db_connection(db);
+            Some(Arc::new(strategy))
+        }
+        _ => None,
+    }
+}
+
+/// 为响应体阶段创建可选的服务（若该策略实现了 ResponseBodyService 则返回）
+pub fn make_provider_response_body_service(
+    name: &str,
+    db: Option<Arc<DatabaseConnection>>,
+) -> Option<Arc<dyn ResponseBodyService>> {
+    match name {
+        // 目前仅 OpenAI 提供响应体阶段处理（429 立即处理）；其他返回 None
         "openai" => {
             let mut strategy = OpenAIStrategy::new();
             strategy.set_db_connection(db);

@@ -37,18 +37,9 @@ pub struct RequestDetails {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ResponseDetails {
     pub headers: std::collections::HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_encoding: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
-    #[serde(skip_serializing)]
-    pub body_chunks: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

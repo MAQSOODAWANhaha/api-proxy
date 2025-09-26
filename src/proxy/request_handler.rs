@@ -82,9 +82,7 @@ pub enum StreamingMode {
         bytes: bytes::BytesMut,
     },
     /// 行式 JSON（application/stream+json 或退化行式）：跨 chunk 行缓冲
-    JsonLines {
-        buf: String,
-    },
+    JsonLines { buf: String },
 }
 
 /// 流式解析状态容器（仅在判定为流式响应时按需初始化）
@@ -117,7 +115,9 @@ pub struct ProxyContext {
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
     /// 请求体缓冲区 (用于request_body_filter中的数据收集)
-    pub body: Vec<u8>,
+    pub request_body: Vec<u8>,
+    /// 响应体缓冲区 (用于response_body_filter中的数据收集)
+    pub response_body: Vec<u8>,
     /// 是否计划修改请求体（供上游头部处理决策使用）
     pub will_modify_body: bool,
     /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
@@ -149,7 +149,8 @@ impl Default for ProxyContext {
             response_details: ResponseDetails::default(),
             selected_provider: None,
             timeout_seconds: None,
-            body: Vec::new(),
+            request_body: Vec::new(),
+            response_body: Vec::new(),
             will_modify_body: false,
             resolved_credential: None,
             account_id: None,
@@ -185,7 +186,10 @@ impl ProxyContext {
         }
         // 现在安全地取可变引用
         match self.stream.as_mut().unwrap().mode {
-            StreamingMode::Sse { ref mut codec, ref mut bytes } => (codec, bytes),
+            StreamingMode::Sse {
+                ref mut codec,
+                ref mut bytes,
+            } => (codec, bytes),
             _ => unreachable!(),
         }
     }
@@ -205,6 +209,31 @@ impl ProxyContext {
         match self.stream.as_mut().unwrap().mode {
             StreamingMode::JsonLines { ref mut buf } => buf,
             _ => unreachable!(),
+        }
+    }
+
+    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
+        let prev_size = self.response_body.len();
+        self.response_body.extend_from_slice(chunk);
+        let new_size = self.response_body.len();
+        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
+            tracing::debug!(
+                component = "statistics.collector",
+                chunk_size = chunk.len(),
+                total_size = new_size,
+                "Response body chunk added (milestone reached)"
+            );
+        }
+    }
+
+    pub fn clear_body_chunks(&mut self) {
+        if !self.response_body.is_empty() {
+            tracing::debug!(
+                component = "statistics.collector",
+                cleared_bytes = self.response_body.len(),
+                "Clearing collected body chunks to reduce memory"
+            );
+            self.response_body.clear();
         }
     }
 }
@@ -1258,31 +1287,16 @@ impl RequestHandler {
             }
         }
 
-        // 添加详细的上游请求日志（JSON化的头部数据，已脱敏）
-        let upstream_headers = crate::logging::headers_json_string_request(upstream_request);
-
-        // 计算上游可读 URL（用于排查：host + path），仅用于日志
-        let upstream_host_for_log = upstream_request
-            .headers
-            .get("host")
-            .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-            .unwrap_or("<unknown-host>");
-        let upstream_url_for_log =
-            format!("https://{}{}", upstream_host_for_log, upstream_request.uri);
-
+        // 精简上游请求日志（去除大体量头部与敏感信息）
         tracing::info!(
             event = "upstream_request_ready",
             component = "proxy.headers",
             request_id = ctx.request_id,
             method = upstream_request.method.to_string(),
-            final_uri = upstream_request.uri.to_string(),
-            upstream_host = upstream_host_for_log,
-            upstream_url = upstream_url_for_log,
+            uri = upstream_request.uri.to_string(),
             provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
-            auth = selected_backend.api_key,
-            upstream_headers = upstream_headers,
             "上游请求已构建"
         );
 
@@ -1292,7 +1306,7 @@ impl RequestHandler {
     /// 过滤上游响应 - 协调器模式：委托给专门服务
     pub async fn filter_upstream_response(
         &self,
-        session: &Session,
+        _session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
@@ -1327,48 +1341,6 @@ impl RequestHandler {
         self.statistics_service
             .collect_response_details(upstream_response, ctx);
 
-        // 旧的初始化token使用信息逻辑已移除，统计由收口阶段统一完成
-
-        // 调用提供商策略处理响应
-        if let Some(provider_name) = ctx.provider_type.as_ref().map(|p| p.name.clone()) {
-            if let Some(name) =
-                crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider_name)
-            {
-                if let Some(strategy) =
-                    crate::proxy::provider_strategy::make_strategy(name, Some(self.db().clone()))
-                {
-                    // 先完成响应体收集，确保有完整的数据供策略处理
-                    ctx.response_details.finalize_body();
-
-                    // 获取响应体 - 优先使用已解析的body，否则使用原始的body_chunks
-                    let response_body = if let Some(body) = &ctx.response_details.body {
-                        body.as_bytes()
-                    } else {
-                        &ctx.response_details.body_chunks
-                    };
-
-                    if let Err(e) = strategy
-                        .handle_response_body(
-                            session, // 使用传入的session
-                            ctx,
-                            upstream_response.status.as_u16(),
-                            response_body,
-                        )
-                        .await
-                    {
-                        tracing::debug!(
-                            request_id = %ctx.request_id,
-                            provider = provider_name,
-                            error = format!("{:?}", e),
-                            "Provider strategy handle_response_body returned error, continue with default path"
-                        );
-                    }
-                }
-            }
-        }
-
-        // 模型信息的扩展追踪由 ProxyService 统一处理
-
         // ========== 压缩响应处理 ==========
         // 检测响应是否被压缩
         let content_encoding = upstream_response
@@ -1393,45 +1365,16 @@ impl RequestHandler {
             ctx.response_details.content_encoding = None;
         }
 
-        // 检测是否为流式响应
-        // 默认支持流式，主要通过Content-Type自动检测
-        let is_streaming = content_type.contains("text/event-stream")
-            || content_type.contains("application/stream+json")
-            || content_type.contains("text/plain");
-
         // 日志记录响应信息
         tracing::info!(
             request_id = ctx.request_id,
             status = upstream_response.status.as_u16(),
             content_type = content_type,
             content_encoding = ?content_encoding,
-            is_streaming = is_streaming,
             content_length = upstream_response.headers.get("content-length")
                 .and_then(|v| std::str::from_utf8(v.as_bytes()).ok()),
             "Processing upstream response"
         );
-
-        // ========== 透明响应传递 ==========
-        // 对于压缩响应，确保完整透传所有相关头部
-        if content_encoding.is_some() {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                encoding = ?content_encoding,
-                "Preserving compressed response with all headers"
-            );
-            // 保持压缩相关的所有头部，让客户端处理解压
-            // 不移除 Content-Encoding, Content-Length, Transfer-Encoding 等关键头部
-        }
-
-        // 对于流式响应，确保支持chunk传输
-        if is_streaming {
-            tracing::debug!(
-                request_id = ctx.request_id,
-                "Configuring for streaming response"
-            );
-            // 保持流式传输相关头部
-            // Transfer-Encoding: chunked 应该保持
-        }
 
         // ========== 安全头部处理 ==========
         // 只移除可能暴露服务器信息的头部，保留传输相关的核心头部

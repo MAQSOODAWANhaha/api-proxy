@@ -194,21 +194,16 @@ impl ProxyService {
     ) -> Vec<Arc<dyn ResponseBodyService>> {
         let mut services = Vec::new();
 
-        // 根据provider类型注册相应的响应体处理服务
+        // 根据 provider 注册相应的响应体处理服务（通过 ProviderRegistry + 工厂函数）
         if let Some(provider) = ctx.provider_type.as_ref() {
-            if let Some(strategy_name) =
+            if let Some(name) =
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name)
             {
-                match strategy_name {
-                    "openai" => {
-                        // 创建OpenAI策略并设置数据库连接
-                        let db_connection = self.ai_handler.db_connection();
-                        let mut strategy = crate::proxy::provider_strategy::provider_strategy_openai::OpenAIStrategy::new();
-                        strategy = strategy.with_db(db_connection);
-                        services.push(Arc::new(strategy) as Arc<dyn ResponseBodyService>);
-                    }
-                    // 其他provider可以在这里扩展
-                    _ => {}
+                let db = Some(self.ai_handler.db_connection());
+                if let Some(svc) =
+                    crate::proxy::provider_strategy::make_provider_response_body_service(name, db)
+                {
+                    services.push(svc);
                 }
             }
         }
@@ -428,21 +423,21 @@ impl RequestBodyService for DefaultRequestBodyService {
 
         if is_json && should_modify {
             if let Some(chunk) = body_chunk.take() {
-                ctx.body.extend_from_slice(&chunk);
+                ctx.request_body.extend_from_slice(&chunk);
                 debug!(
                     request_id = %ctx.request_id,
                     chunk_size = chunk.len(),
-                    total_buffer_size = ctx.body.len(),
+                    total_buffer_size = ctx.request_body.len(),
                     end_of_stream = end_of_stream,
                     "Accumulated JSON request body chunk (will modify)"
                 );
             }
         } else if let Some(chunk) = body_chunk.as_ref() {
-            ctx.body.extend_from_slice(chunk);
+            ctx.request_body.extend_from_slice(chunk);
             debug!(
                 request_id = %ctx.request_id,
                 chunk_size = chunk.len(),
-                total_buffer_size = ctx.body.len(),
+                total_buffer_size = ctx.request_body.len(),
                 end_of_stream = end_of_stream,
                 "Observed request body chunk (pass-through)"
             );
@@ -453,13 +448,13 @@ impl RequestBodyService for DefaultRequestBodyService {
                     event = "upstream_request_body_final",
                     component = COMPONENT,
                     request_id = %ctx.request_id,
-                    size = ctx.body.len(),
+                    size = ctx.request_body.len(),
                     "上游请求体（最终）"
                 );
                 return Ok(());
             }
 
-            let modified_body = match serde_json::from_slice::<Value>(&ctx.body) {
+            let modified_body = match serde_json::from_slice::<Value>(&ctx.request_body) {
                 Ok(mut json_value) => {
                     debug!(
                         request_id = %ctx.request_id,
@@ -481,14 +476,14 @@ impl RequestBodyService for DefaultRequestBodyService {
                                         error = %e,
                                         "Failed to serialize modified JSON, using original body"
                                     );
-                                    ctx.body.clone()
+                                    ctx.request_body.clone()
                                 })
                             } else {
                                 debug!(
                                     request_id = %ctx.request_id,
                                     "No modifications needed after parse; forwarding original body"
                                 );
-                                ctx.body.clone()
+                                ctx.request_body.clone()
                             }
                         }
                         Err(e) => {
@@ -497,7 +492,7 @@ impl RequestBodyService for DefaultRequestBodyService {
                                 error = %e,
                                 "Failed to modify request body, using original"
                             );
-                            ctx.body.clone()
+                            ctx.request_body.clone()
                         }
                     }
                 }
@@ -507,7 +502,7 @@ impl RequestBodyService for DefaultRequestBodyService {
                         error = %e,
                         "Failed to parse body as JSON, forwarding original body"
                     );
-                    ctx.body.clone()
+                    ctx.request_body.clone()
                 }
             };
 
@@ -592,35 +587,12 @@ impl ResponseBodyService for DefaultResponseBodyService {
     fn exec(
         &self,
         body: &mut Option<bytes::Bytes>,
-        end_of_stream: bool,
+        _end_of_stream: bool,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
-            ctx.response_details.add_body_chunk(data);
+            ctx.add_body_chunk(data);
         }
-        // 单入口收尾：在 DefaultResponseBodyService 内完成唯一收口（统一 EOS 解析）
-        if end_of_stream {
-            let stats = crate::statistics::usage_model::finalize_eos(ctx);
-            ctx.usage_final = Some(stats.usage.clone());
-            if let Some(m) = stats.model_name {
-                ctx.requested_model = Some(m);
-            }
-
-            // 清理缓冲
-            ctx.response_details.clear_body_chunks();
-
-            tracing::info!(
-                component = COMPONENT_BUFFER,
-                event = "response_aggregate_done",
-                request_id = %ctx.request_id,
-                prompt_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.prompt_tokens),
-                completion_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
-                total_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.total_tokens),
-                model_name = ?ctx.requested_model,
-                "Final usage aggregation completed at EOS",
-            );
-        }
-
         Ok(None)
     }
 }
@@ -1386,7 +1358,6 @@ impl ProxyHttp for ProxyService {
                 next = ret;
             }
         }
-
         Ok(next)
     }
 
@@ -1448,23 +1419,8 @@ impl ProxyHttp for ProxyService {
 
             // 获取更多详细的上下文信息
             let request_url = session.req_header().uri.to_string();
-            let request_headers_json =
-                crate::logging::headers_json_string_request(session.req_header());
+            let request_headers = crate::logging::headers_json_string_request(session.req_header());
             let request_method = session.req_header().method.as_str();
-
-            // 统一合并失败日志（结构化 JSON 字段）
-            let selected_backend_id = ctx.selected_backend.as_ref().map(|b| b.id);
-            let selected_backend_key_preview = ctx.selected_backend.as_ref().map(|b| {
-                if b.api_key.len() > 8 {
-                    format!(
-                        "{}***{}",
-                        &b.api_key[..4],
-                        &b.api_key[b.api_key.len() - 4..]
-                    )
-                } else {
-                    "***".to_string()
-                }
-            });
 
             error!(
                 event = "request_failed",
@@ -1479,9 +1435,9 @@ impl ProxyHttp for ProxyService {
                 duration_ms = duration.as_millis(),
                 is_timeout_error = is_timeout_error,
                 is_network_error = is_network_error,
-                request_headers_json = request_headers_json,
-                selected_backend_id = selected_backend_id,
-                selected_backend_key_preview = ?selected_backend_key_preview,
+                request_headers = request_headers,
+                selected_backend_id = ?ctx.selected_backend.as_ref().map(|b| b.id),
+                selected_backend_key = ?ctx.selected_backend.as_ref().map(|b| b.api_key.as_str()),
                 provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
                 timeout_seconds = ?ctx.timeout_seconds,
                 "请求失败"
@@ -1498,128 +1454,89 @@ impl ProxyHttp for ProxyService {
                 );
             }
         } else {
-            // 成功请求完成，记录追踪信息（使用分块阶段已聚合的 usage/model，执行计费与追踪写入）
-            if let Some(tracer) = &self.tracer {
-                let status_code = session
-                    .response_written()
-                    .map(|resp| resp.status.as_u16())
-                    .unwrap_or(200);
-
-                // 如果响应非2xx/3xx，记录响应体用于排查
-                if status_code >= 400 {
-                    if ctx.response_details.body.is_none() {
-                        ctx.response_details.finalize_body();
-                    }
-                    let content_type = ctx
-                        .response_details
-                        .content_type
-                        .clone()
-                        .unwrap_or_else(|| "application/json".to_string());
-                    let body_preview = ctx
-                        .response_details
-                        .body
-                        .clone()
-                        .unwrap_or_else(|| "<empty>".to_string());
-
-                    // 记录基本错误信息（error级别）
-                    error!(
-                        request_id = %ctx.request_id,
-                        status = status_code,
-                        content_type = %content_type,
-                        body_length = body_preview.len(),
-                        "上游响应失败"
-                    );
-                }
-
-                // 使用分块阶段聚合的 usage/model 执行计费与追踪完成
-                // 1) 读取最终 usage
-                let final_usage = ctx
-                    .usage_final
-                    .clone()
-                    .unwrap_or(crate::statistics::types::TokenUsageMetrics::default());
-                // final_usage 已写入 usage_final
-
-                // 2) 模型：优先使用请求阶段/流式聚合结果
-                let final_model = ctx.requested_model.clone();
-                if let Some(model) = final_model.clone() {
-                    let _ = self
-                        .ai_handler
-                        .tracing_service()
-                        .update_trace_model_info(&ctx.request_id, None, Some(model), None)
-                        .await;
-                }
-
-                // 3) 费用计算（有模型与 provider），然后完成追踪
-                let mut cost_val: Option<f64> = None;
-                let mut currency_val: Option<String> = None;
-                if let (Some(model), Some(provider)) =
-                    (final_model.clone(), ctx.provider_type.as_ref())
-                {
-                    let pricing_usage = crate::pricing::TokenUsage {
-                        prompt_tokens: final_usage.prompt_tokens,
-                        completion_tokens: final_usage.completion_tokens,
-                        cache_create_tokens: final_usage.cache_create_tokens,
-                        cache_read_tokens: final_usage.cache_read_tokens,
-                    };
-                    match self
-                        .ai_handler
-                        .statistics_service()
-                        .calculate_cost_direct(&model, provider.id, &pricing_usage, &ctx.request_id)
-                        .await
-                    {
-                        Ok((c, cur)) => {
-                            cost_val = c;
-                            currency_val = cur;
-                        }
-                        Err(e) => {
-                            warn!(component = "statistics.price", request_id = %ctx.request_id, error = %e, "Failed to calculate cost in logging phase");
-                        }
-                    }
-                }
-
-                if let Err(e) = tracer
-                    .complete_trace_with_stats(
-                        &ctx.request_id,
-                        status_code,
-                        true,
-                        final_usage.prompt_tokens,
-                        final_usage.completion_tokens,
-                        None,
-                        None,
-                        final_usage.cache_create_tokens,
-                        final_usage.cache_read_tokens,
-                        cost_val,
-                        currency_val.clone(),
-                    )
-                    .await
-                {
-                    error!(
-                        request_id = %ctx.request_id,
-                        error = %e,
-                        "Failed to store complete trace with stats"
-                    );
-                }
-
-                info!(
-                    event = "stats_ok",
-                    component = COMPONENT,
-                    request_id = %ctx.request_id,
-                    tokens_prompt = ?final_usage.prompt_tokens,
-                    tokens_completion = ?final_usage.completion_tokens,
-                    tokens_total = ?final_usage.total_tokens,
-                    model_used = ?final_model,
-                    cost = ?cost_val,
-                    cost_currency = ?currency_val,
-                    "统计与计费完成"
-                );
+            let stats = crate::statistics::usage_model::finalize_eos(ctx);
+            ctx.usage_final = Some(stats.usage.clone());
+            if let Some(m) = stats.model_name {
+                ctx.requested_model = Some(m);
             }
 
-            debug!(
+            // 2) 费用计算 + 追踪完成（异步，不阻塞发送路径）
+            if let Some(usage) = ctx.usage_final.clone() {
+                let model_opt = ctx.requested_model.clone();
+                let provider_opt = ctx.provider_type.clone();
+                let tracer = self.tracer.clone();
+                let req_id = ctx.request_id.clone();
+                let stats_svc = self.ai_handler.statistics_service().clone();
+                let tracing_svc = self.ai_handler.tracing_service().clone();
+                let status_code = ctx.response_details.status_code.unwrap_or(200);
+                tokio::spawn(async move {
+                    // 更新模型信息（如有）
+                    if let Some(model) = model_opt.clone() {
+                        let _ = tracing_svc
+                            .update_trace_model_info(&req_id, None, Some(model), None)
+                            .await;
+                    }
+                    // 计费
+                    let mut cost_val: Option<f64> = None;
+                    let mut currency_val: Option<String> = None;
+                    if let (Some(model), Some(provider)) = (model_opt, provider_opt) {
+                        let pricing_usage = crate::pricing::TokenUsage {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            cache_create_tokens: usage.cache_create_tokens,
+                            cache_read_tokens: usage.cache_read_tokens,
+                        };
+                        match stats_svc
+                            .calculate_cost_direct(&model, provider.id, &pricing_usage, &req_id)
+                            .await
+                        {
+                            Ok((c, cur)) => {
+                                cost_val = c;
+                                currency_val = cur;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    component = COMPONENT_BUFFER,
+                                    request_id = %req_id,
+                                    error = %e,
+                                    "Failed to calculate cost at EOS",
+                                );
+                            }
+                        }
+                    }
+                    // 完成追踪
+                    if let Some(tracer) = tracer {
+                        let _ = tracer
+                            .complete_trace_with_stats(
+                                &req_id,
+                                status_code,
+                                true,
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                                None,
+                                None,
+                                usage.cache_create_tokens,
+                                usage.cache_read_tokens,
+                                cost_val,
+                                currency_val.clone(),
+                            )
+                            .await;
+                    }
+                });
+            }
+
+            tracing::info!(
+                component = COMPONENT_BUFFER,
+                event = "response_aggregate_done",
                 request_id = %ctx.request_id,
-                duration_ms = duration.as_millis(),
-                // tokens_used 移除，统计以 usage_final 为准
-                "AI proxy request completed successfully"
+                prompt_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.prompt_tokens),
+                completion_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
+                total_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.total_tokens),
+                model_name = ?ctx.requested_model,
+                "Final usage aggregation completed at EOS",
             );
         }
+
+        ctx.clear_body_chunks();
     }
 }

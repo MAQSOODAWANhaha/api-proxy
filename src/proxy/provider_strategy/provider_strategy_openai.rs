@@ -315,7 +315,7 @@ impl ProviderStrategy for OpenAIStrategy {
 impl ResponseBodyService for OpenAIStrategy {
     fn exec(
         &self,
-        body: &mut Option<Bytes>,
+        _body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<Duration>> {
@@ -324,14 +324,8 @@ impl ResponseBodyService for OpenAIStrategy {
             return Ok(None);
         }
 
-        // 收集响应体数据
-        if let Some(body_bytes) = body {
-            ctx.response_details.add_body_chunk(body_bytes);
-
-            // 流结束时立即处理429错误
-            if end_of_stream && !ctx.response_details.body_chunks.is_empty() {
-                self.handle_429_immediately(&ctx.response_details.body_chunks, ctx);
-            }
+        if !ctx.response_body.is_empty() {
+            self.handle_429_immediately(&ctx.response_body, ctx);
         }
 
         Ok(None)
