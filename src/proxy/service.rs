@@ -11,6 +11,7 @@ use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_util::codec::Decoder as _; // bring decode into scope for SseCodec
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -49,6 +50,9 @@ pub struct ProxyService {
 }
 
 const COMPONENT: &str = "proxy.service";
+const COMPONENT_STREAM: &str = "proxy.body.stream";
+const COMPONENT_BUFFER: &str = "proxy.body.buffer";
+const COMPONENT_UPSTREAM: &str = "proxy.upstream";
 
 impl ProxyService {
     // 为日志限制请求/响应体的最大输出长度
@@ -667,7 +671,6 @@ impl ResponseHeaderService for DefaultResponseHeaderService {
             request_id = %ctx.request_id,
             status_code = status_code,
             response_time_ms = response_time.as_millis(),
-            tokens_used = ctx.tokens_used,
             "上游响应处理完成"
         );
         Ok(())
@@ -687,111 +690,148 @@ struct DefaultResponseBodyService;
 impl ResponseBodyService for DefaultResponseBodyService {
     fn exec(
         &self,
-        body: &mut Option<Bytes>,
+        body: &mut Option<bytes::Bytes>,
         _end_of_stream: bool,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
-            // 判定是否为流式
-            let is_streaming = ctx
+            // 判定流式类型
+            let (is_sse, is_json_stream) = ctx
                 .response_details
                 .content_type
                 .as_deref()
-                .map(|ct| {
-                    ct.contains("text/event-stream") || ct.contains("application/stream+json")
-                })
-                .unwrap_or(false);
+                .map(|ct| (ct.contains("text/event-stream"), ct.contains("application/stream+json")))
+                .unwrap_or((false, false));
 
-            if is_streaming {
-                // 流式：仅保留末端窗口 + 行缓冲逐行解析（latest-wins），不累计全量
+            if is_sse || is_json_stream {
+                // 流式：仅保留尾窗，用事件/行解析（latest-wins），不累计全量
                 ctx.response_details.push_tail_window(data);
 
-                if let Ok(text) = std::str::from_utf8(data) {
-                    // 追加到跨块行缓冲
-                    ctx.sse_line_buffer.push_str(text);
-
-                    // 仅处理完整行，剩余半行留待下个分块
-                    if let Some(last_nl) = ctx.sse_line_buffer.rfind('\n') {
-                        let complete = ctx.sse_line_buffer[..=last_nl].to_string();
-                        let leftover = ctx.sse_line_buffer[last_nl + 1..].to_string();
-                        ctx.sse_line_buffer = leftover;
-
-                        let mut parsed_events = 0usize;
-                        let mut parse_errors = 0usize;
-
-                        for line in complete.lines() {
-                            let line = line.trim();
-                            if !line.starts_with("data:") {
-                                continue;
-                            }
-                            let mut t = line["data:".len()..].trim();
-                            if t.is_empty() || t.contains("[DONE]") {
-                                continue;
-                            }
-                            if let Some(pos) = t.find('{') {
-                                t = &t[pos..];
-                            } else {
-                                continue;
-                            }
-
-                            match serde_json::from_str::<serde_json::Value>(t) {
-                                Ok(json) => {
-                                    parsed_events += 1;
-                                    // 提取 tokens 并 latest-wins 合并
-                                    if let Some(provider) = ctx.provider_type.as_ref() {
-                                        let usage = crate::statistics::usage_model::extract_tokens_from_json(Some(provider), &json);
-                                        if usage.prompt_tokens.is_some()
-                                            || usage.completion_tokens.is_some()
-                                            || usage.total_tokens.is_some()
-                                            || usage.cache_create_tokens.is_some()
-                                            || usage.cache_read_tokens.is_some()
-                                        {
-                                            let partial = crate::statistics::types::PartialUsage {
-                                                prompt_tokens: usage.prompt_tokens,
-                                                completion_tokens: usage.completion_tokens,
-                                                total_tokens: usage.total_tokens,
-                                                cache_create_tokens: usage.cache_create_tokens,
-                                                cache_read_tokens: usage.cache_read_tokens,
-                                            };
-                                            ctx.usage_partial.merge_latest(&partial);
-                                        }
-                                    }
-                                    // 轻量模型兜底更新
-                                    if ctx.requested_model.is_none() {
-                                        if let Some(m) = json.get("model").and_then(|m| m.as_str())
-                                        {
-                                            ctx.requested_model = Some(m.to_string());
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    parse_errors += 1;
-                                }
+                if is_sse {
+                    // 严格 SSE：使用 codec 解码事件，再聚合 usage/model
+                    let (codec, bytes_buf) = ctx.ensure_sse_state();
+                    bytes_buf.extend_from_slice(data);
+                    let mut parsed_events = 0usize;
+                    let mut parse_errors = 0usize;
+                    let mut events: Vec<crate::utils::event_stream::EventStream> = Vec::new();
+                    loop {
+                        match codec.decode(bytes_buf) {
+                            Ok(Some(ev)) => events.push(ev),
+                            Ok(None) => break,
+                            Err(_) => break,
+                        }
+                    }
+                    for ev in events {
+                        let json = ev.data;
+                        if json.is_null() { parse_errors += 1; continue; }
+                        parsed_events += 1;
+                        if let Some(provider) = ctx.provider_type.as_ref() {
+                            let usage = crate::statistics::usage_model::extract_tokens_from_json(Some(provider), &json);
+                            if usage.prompt_tokens.is_some()
+                                || usage.completion_tokens.is_some()
+                                || usage.total_tokens.is_some()
+                                || usage.cache_create_tokens.is_some()
+                                || usage.cache_read_tokens.is_some() {
+                                let partial = crate::statistics::types::PartialUsage {
+                                    prompt_tokens: usage.prompt_tokens,
+                                    completion_tokens: usage.completion_tokens,
+                                    total_tokens: usage.total_tokens,
+                                    cache_create_tokens: usage.cache_create_tokens,
+                                    cache_read_tokens: usage.cache_read_tokens,
+                                };
+                                ctx.usage_partial.merge_latest(&partial);
                             }
                         }
+                        if ctx.requested_model.is_none() {
+                            if let Some(m) = json.get("model").and_then(|m| m.as_str()) {
+                                ctx.requested_model = Some(m.to_string());
+                            }
+                        }
+                        ctx.last_parsed_json = Some(json);
+                    }
+                    tracing::debug!(
+                        component = COMPONENT_STREAM,
+                        request_id = %ctx.request_id,
+                        parsed_events = parsed_events,
+                        parse_errors = parse_errors,
+                        event = "streaming_chunk_parsed",
+                        "Processed streaming chunk via codec",
+                    );
+                } else {
+                    // application/stream+json：逐行 JSON 解析（每行一个事件）
+                    if let Ok(text) = std::str::from_utf8(data) {
+                        let line_buf = ctx.ensure_json_lines_state();
+                        line_buf.push_str(text);
 
-                        tracing::debug!(
-                            component = COMPONENT,
-                            request_id = %ctx.request_id,
-                            parsed_events = parsed_events,
-                            parse_errors = parse_errors,
-                            event = "streaming_chunk_parsed",
-                            "Processed streaming chunk lines"
-                        );
+                        if let Some(last_nl) = line_buf.rfind('\n') {
+                            let complete = line_buf[..=last_nl].to_string();
+                            let leftover = line_buf[last_nl + 1..].to_string();
+                            *line_buf = leftover;
+
+                            let mut parsed_events = 0usize;
+                            let mut parse_errors = 0usize;
+
+                            for raw in complete.lines() {
+                                let mut line = raw.trim();
+                                if line.is_empty() || line.starts_with(':') { continue; }
+                                if let Some(rest) = line.strip_prefix("data:") { line = rest.trim_start(); }
+                                if let Some(pos) = line.find('{') {
+                                    let json_str = &line[pos..];
+                                    match serde_json::from_str::<serde_json::Value>(json_str) {
+                                        Ok(json) => {
+                                            parsed_events += 1;
+                                            if let Some(provider) = ctx.provider_type.as_ref() {
+                                                let usage = crate::statistics::usage_model::extract_tokens_from_json(Some(provider), &json);
+                                                if usage.prompt_tokens.is_some()
+                                                    || usage.completion_tokens.is_some()
+                                                    || usage.total_tokens.is_some()
+                                                    || usage.cache_create_tokens.is_some()
+                                                    || usage.cache_read_tokens.is_some() {
+                                                    let partial = crate::statistics::types::PartialUsage {
+                                                        prompt_tokens: usage.prompt_tokens,
+                                                        completion_tokens: usage.completion_tokens,
+                                                        total_tokens: usage.total_tokens,
+                                                        cache_create_tokens: usage.cache_create_tokens,
+                                                        cache_read_tokens: usage.cache_read_tokens,
+                                                    };
+                                                    ctx.usage_partial.merge_latest(&partial);
+                                                }
+                                            }
+                                            if ctx.requested_model.is_none() {
+                                                if let Some(m) = json.get("model").and_then(|m| m.as_str()) {
+                                                    ctx.requested_model = Some(m.to_string());
+                                                }
+                                            }
+                                            ctx.last_parsed_json = Some(json);
+                                        }
+                                        Err(_) => parse_errors += 1,
+                                    }
+                                }
+                            }
+
+                            tracing::debug!(
+                                component = COMPONENT_STREAM,
+                                request_id = %ctx.request_id,
+                                parsed_events = parsed_events,
+                                parse_errors = parse_errors,
+                                event = "streaming_chunk_parsed",
+                                "Processed streaming JSON lines chunk",
+                            );
+                        }
                     }
                 }
             } else {
                 // 非流式：按块累计，供后续收口统计与（限量）解压
                 ctx.response_details.add_body_chunk(data);
+                tracing::debug!(
+                    component = COMPONENT_BUFFER,
+                    request_id = %ctx.request_id,
+                    chunk_size = data.len(),
+                    total_size = ctx.response_details.body_chunks.len(),
+                    event = "response_chunk",
+                    "Buffered response body chunk",
+                );
             }
-            debug!(
-                component = COMPONENT,
-                request_id = %ctx.request_id,
-                chunk_size = data.len(),
-                total_size = ctx.response_details.body_chunks.len(),
-                event = "response_chunk",
-                "Collected response body chunk"
-            );
         }
         Ok(None)
     }
@@ -898,7 +938,7 @@ impl ConnectedToUpstreamService for DefaultConnectedToUpstreamService {
     ) -> pingora_core::Result<()> {
         info!(
             event = "upstream_connected",
-            component = COMPONENT,
+            component = COMPONENT_UPSTREAM,
             request_id = %ctx.request_id,
             reused = reused,
             peer_addr = ?peer._address,
@@ -1559,6 +1599,128 @@ impl ProxyHttp for ProxyService {
             }
         }
 
+        // 在响应体阶段完成最终收口（不再依赖后续 finalize 阶段）
+        if end_of_stream {
+            // 统计与计费：根据流式/非流式分别处理
+            let mut stats = crate::statistics::types::ComputedStats::default();
+
+            let (is_sse, is_json_stream) = ctx
+                .response_details
+                .content_type
+                .as_deref()
+                .map(|ct| {
+                    (
+                        ct.contains("text/event-stream"),
+                        ct.contains("application/stream+json"),
+                    )
+                })
+                .unwrap_or((false, false));
+
+            if is_sse || is_json_stream {
+                // 流式：使用增量聚合收口（此处不做异步计费）
+                stats = crate::statistics::usage_model::finalize_streaming(ctx);
+                // 同步 usage_final（计费放到 logging 阶段）
+                ctx.usage_final = Some(stats.usage.clone());
+
+                tracing::info!(
+                    component = COMPONENT_STREAM,
+                    event = "streaming_finalize",
+                    request_id = %ctx.request_id,
+                    prompt_tokens = ?stats.usage.prompt_tokens,
+                    completion_tokens = ?stats.usage.completion_tokens,
+                    total_tokens = ?stats.usage.total_tokens,
+                    model_name = ?stats.model_name,
+                    cost = ?stats.cost,
+                    currency = ?stats.cost_currency,
+                    "Streaming response finalized with usage and model"
+                );
+            } else {
+                // 非流式：解析已缓冲正文（限量窗口 + 尾窗兜底）
+                use crate::statistics::util::{decompress_for_stats, find_last_balanced_json};
+                let encoding_owned = ctx.response_details.content_encoding.clone();
+                let encoding = encoding_owned.as_deref();
+                let raw = &ctx.response_details.body_chunks;
+
+                let mut parsed_json: Option<serde_json::Value> = None;
+                if !raw.is_empty() {
+                    let decoded = decompress_for_stats(encoding, raw, 2 * 1024 * 1024);
+                    if let Ok(body_str) = std::str::from_utf8(&decoded) {
+                        let window = if body_str.len() > 1024 * 1024 {
+                            &body_str[body_str.len() - 512 * 1024..]
+                        } else {
+                            body_str
+                        };
+                        // 1) 直接 JSON
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(window) {
+                            parsed_json = Some(v);
+                        } else {
+                            // 2) 行式 data: {...}
+                            let mut last_json: Option<serde_json::Value> = None;
+                            for line in window.lines() {
+                                let t = line.trim_start_matches("data:").trim();
+                                if let Some(pos) = t.find('{') {
+                                    if let Ok(j) =
+                                        serde_json::from_str::<serde_json::Value>(&t[pos..])
+                                    {
+                                        last_json = Some(j);
+                                    }
+                                }
+                            }
+                            if last_json.is_some() {
+                                parsed_json = last_json;
+                            } else {
+                                // 3) 尾窗括号平衡
+                                parsed_json = find_last_balanced_json(window);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(json) = parsed_json {
+                    // 同步提取 usage/model（不做计费）
+                    let usage = crate::statistics::usage_model::extract_tokens_from_json(
+                        ctx.provider_type.as_ref(),
+                        &json,
+                    );
+                    if stats.model_name.is_none() {
+                        stats.model_name =
+                            crate::statistics::usage_model::extract_model_from_json(&json);
+                    }
+                    // 写回 ctx
+                    ctx.usage_final = Some(usage.clone());
+                    if stats.model_name.is_some() && ctx.requested_model.is_none() {
+                        ctx.requested_model = stats.model_name.clone();
+                    }
+                } else {
+                    // 解析失败兜底
+                    ctx.usage_final = Some(crate::statistics::types::TokenUsageMetrics {
+                        prompt_tokens: Some(0),
+                        completion_tokens: Some(0),
+                        total_tokens: Some(0),
+                        cache_create_tokens: None,
+                        cache_read_tokens: None,
+                    });
+                    stats.model_name = ctx.requested_model.clone();
+                }
+
+                // 清理缓冲，避免重复占用内存
+                ctx.response_details.clear_body_chunks();
+
+                tracing::info!(
+                    component = COMPONENT_BUFFER,
+                    event = "buffer_finalize",
+                    request_id = %ctx.request_id,
+                    prompt_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.prompt_tokens),
+                    completion_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
+                    total_tokens = ?ctx.usage_final.as_ref().and_then(|u| u.total_tokens),
+                    model_name = ?stats.model_name,
+                    "Buffered response finalized with usage and model"
+                );
+            }
+
+            // 追踪完成写入与计费改由 logging 成功分支执行（此处仅聚合 usage/model）
+        }
+
         Ok(next)
     }
 
@@ -1670,7 +1832,7 @@ impl ProxyHttp for ProxyService {
                 );
             }
         } else {
-            // 成功请求完成，记录追踪信息
+            // 成功请求完成，记录追踪信息（使用分块阶段已聚合的 usage/model，执行计费与追踪写入）
             if let Some(tracer) = &self.tracer {
                 let status_code = session
                     .response_written()
@@ -1711,83 +1873,93 @@ impl ProxyHttp for ProxyService {
                     );
                 }
 
-                // 使用 StatisticsService 统一完成 finalize + 提取 + 合并（含 SSE 覆盖与重算成本）
-                match self
-                    .ai_handler
-                    .statistics_service()
-                    .finalize_and_extract_stats(ctx)
-                    .await
+                // 使用分块阶段聚合的 usage/model 执行计费与追踪完成
+                // 1) 读取最终 usage
+                let final_usage = ctx
+                    .usage_final
+                    .clone()
+                    .unwrap_or(crate::statistics::types::TokenUsageMetrics::default());
+                // final_usage 已写入 usage_final
+
+                // 2) 模型：优先使用请求阶段/流式聚合结果
+                let final_model = ctx.requested_model.clone();
+                if let Some(model) = final_model.clone() {
+                    let _ = self
+                        .ai_handler
+                        .tracing_service()
+                        .update_trace_model_info(&ctx.request_id, None, Some(model), None)
+                        .await;
+                }
+
+                // 3) 费用计算（有模型与 provider），然后完成追踪
+                let mut cost_val: Option<f64> = None;
+                let mut currency_val: Option<String> = None;
+                if let (Some(model), Some(provider)) =
+                    (final_model.clone(), ctx.provider_type.as_ref())
                 {
-                    Ok(new_stats) => {
-                        // 统一使用 usage_final（由统计服务设置）与模型名
-                        let final_usage = ctx
-                            .usage_final
-                            .clone()
-                            .unwrap_or(crate::statistics::types::TokenUsageMetrics::default());
-                        ctx.tokens_used = final_usage.total_tokens.unwrap_or(0);
-
-                        // 统一更新扩展追踪中的模型信息（成功路径）
-                        if let Some(model) = new_stats.model_name.clone() {
-                            let _ = self
-                                .ai_handler
-                                .tracing_service()
-                                .update_trace_model_info(&ctx.request_id, None, Some(model), None)
-                                .await;
+                    let pricing_usage = crate::pricing::TokenUsage {
+                        prompt_tokens: final_usage.prompt_tokens,
+                        completion_tokens: final_usage.completion_tokens,
+                        cache_create_tokens: final_usage.cache_create_tokens,
+                        cache_read_tokens: final_usage.cache_read_tokens,
+                    };
+                    match self
+                        .ai_handler
+                        .statistics_service()
+                        .calculate_cost_direct(&model, provider.id, &pricing_usage, &ctx.request_id)
+                        .await
+                    {
+                        Ok((c, cur)) => {
+                            cost_val = c;
+                            currency_val = cur;
                         }
-
-                        // 使用合并后的统计信息完成追踪
-                        let cc = new_stats.cost_currency.clone();
-                        if let Err(e) = tracer
-                            .complete_trace_with_stats(
-                                &ctx.request_id,
-                                status_code,
-                                true, // is_success
-                                final_usage.prompt_tokens,
-                                final_usage.completion_tokens,
-                                None, // error_type
-                                None, // error_message
-                                final_usage.cache_create_tokens,
-                                final_usage.cache_read_tokens,
-                                new_stats.cost,
-                                cc.clone(),
-                            )
-                            .await
-                        {
-                            error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                "Failed to store complete trace with stats"
-                            );
+                        Err(e) => {
+                            warn!(component = "statistics.price", request_id = %ctx.request_id, error = %e, "Failed to calculate cost in logging phase");
                         }
-                        let cost_val = new_stats.cost;
-                        let currency_val = cc;
-                        info!(
-                            event = "stats_ok",
-                            component = COMPONENT,
-                            request_id = %ctx.request_id,
-                            tokens_prompt = ?final_usage.prompt_tokens,
-                            tokens_completion = ?final_usage.completion_tokens,
-                            tokens_total = ?final_usage.total_tokens,
-                            model_used = ?new_stats.model_name,
-                            cost = ?cost_val,
-                            cost_currency = ?currency_val,
-                            "统计与计费完成"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            request_id = %ctx.request_id,
-                            error = %e,
-                            "Failed to extract stats from response body, using header-based data"
-                        );
                     }
                 }
+
+                if let Err(e) = tracer
+                    .complete_trace_with_stats(
+                        &ctx.request_id,
+                        status_code,
+                        true,
+                        final_usage.prompt_tokens,
+                        final_usage.completion_tokens,
+                        None,
+                        None,
+                        final_usage.cache_create_tokens,
+                        final_usage.cache_read_tokens,
+                        cost_val,
+                        currency_val.clone(),
+                    )
+                    .await
+                {
+                    error!(
+                        request_id = %ctx.request_id,
+                        error = %e,
+                        "Failed to store complete trace with stats"
+                    );
+                }
+
+                info!(
+                    event = "stats_ok",
+                    component = COMPONENT,
+                    request_id = %ctx.request_id,
+                    tokens_prompt = ?final_usage.prompt_tokens,
+                    tokens_completion = ?final_usage.completion_tokens,
+                    tokens_total = ?final_usage.total_tokens,
+                    model_used = ?final_model,
+                    cost = ?cost_val,
+                    cost_currency = ?currency_val,
+                    "统计与计费完成"
+                );
             }
 
             debug!(
                 request_id = %ctx.request_id,
                 duration_ms = duration.as_millis(),
-                tokens_used = ctx.tokens_used,
+                // tokens_used 移除，统计以 usage_final 为准
                 "AI proxy request completed successfully"
             );
         }

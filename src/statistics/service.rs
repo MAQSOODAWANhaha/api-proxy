@@ -767,7 +767,11 @@ impl StatisticsService {
                     cache_create_tokens: None,
                     cache_read_tokens: None,
                 });
-                return Ok(ComputedStats::default());
+                let mut st = ComputedStats::default();
+                if st.model_name.is_none() {
+                    st.model_name = ctx.requested_model.clone();
+                }
+                return Ok(st);
             }
         }
 
@@ -785,7 +789,11 @@ impl StatisticsService {
                 cache_create_tokens: None,
                 cache_read_tokens: None,
             });
-            return Ok(ComputedStats::default());
+            let mut st = ComputedStats::default();
+            if st.model_name.is_none() {
+                st.model_name = ctx.requested_model.clone();
+            }
+            return Ok(st);
         }
 
         // 计算总数据大小并验证合理性
@@ -804,7 +812,11 @@ impl StatisticsService {
                 cache_create_tokens: None,
                 cache_read_tokens: None,
             });
-            return Ok(ComputedStats::default());
+            let mut st = ComputedStats::default();
+            if st.model_name.is_none() {
+                st.model_name = ctx.requested_model.clone();
+            }
+            return Ok(st);
         }
 
         // 检查数据大小是否在合理范围内
@@ -906,7 +918,11 @@ impl StatisticsService {
                 cache_create_tokens: None,
                 cache_read_tokens: None,
             });
-            return Ok(ComputedStats::default());
+            let mut st = ComputedStats::default();
+            if st.model_name.is_none() {
+                st.model_name = ctx.requested_model.clone();
+            }
+            return Ok(st);
         }
 
         // 主要JSON解析
@@ -938,7 +954,11 @@ impl StatisticsService {
                     cache_create_tokens: None,
                     cache_read_tokens: None,
                 });
-                Ok(ComputedStats::default())
+                let mut st = ComputedStats::default();
+                if st.model_name.is_none() {
+                    st.model_name = ctx.requested_model.clone();
+                }
+                Ok(st)
             }
         }
     }

@@ -10,6 +10,7 @@ use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
 use sea_orm::prelude::Decimal;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use url::form_urlencoded;
@@ -72,6 +73,26 @@ pub struct RequestHandler {
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
 
+/// 流式解析模式
+#[derive(Debug, Clone)]
+pub enum StreamingMode {
+    /// 严格 SSE（text/event-stream）：使用 EventStreamData 编码器 + 字节缓冲
+    Sse {
+        codec: crate::utils::event_stream::EventStreamData,
+        bytes: bytes::BytesMut,
+    },
+    /// 行式 JSON（application/stream+json 或退化行式）：跨 chunk 行缓冲
+    JsonLines {
+        buf: String,
+    },
+}
+
+/// 流式解析状态容器（仅在判定为流式响应时按需初始化）
+#[derive(Debug, Clone)]
+pub struct StreamParseState {
+    pub mode: StreamingMode,
+}
+
 /// 请求上下文
 #[derive(Debug, Clone)]
 pub struct ProxyContext {
@@ -87,8 +108,6 @@ pub struct ProxyContext {
     pub start_time: std::time::Instant,
     /// 重试次数
     pub retry_count: u32,
-    /// 使用的tokens（向后兼容）
-    pub tokens_used: u32,
     /// 请求详情
     pub request_details: RequestDetails,
     /// 响应详情
@@ -107,8 +126,10 @@ pub struct ProxyContext {
     pub account_id: Option<String>,
     /// 用户请求的模型名称
     pub requested_model: Option<String>,
-    /// SSE 行缓冲（用于流式分块行合并）
-    pub sse_line_buffer: String,
+    /// 流式解析状态（仅在 text/event-stream 或 application/stream+json 时使用）
+    pub stream: Option<StreamParseState>,
+    /// 最近一次解析到的 JSON（SSE/行式/非流均会更新，用于后续获取数据）
+    pub last_parsed_json: Option<Value>,
     /// 流式增量使用量（最新一次覆盖）
     pub usage_partial: PartialUsage,
     /// 最终使用量（统一出口）
@@ -124,7 +145,6 @@ impl Default for ProxyContext {
             provider_type: None,
             start_time: std::time::Instant::now(),
             retry_count: 0,
-            tokens_used: 0,
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
             selected_provider: None,
@@ -134,9 +154,57 @@ impl Default for ProxyContext {
             resolved_credential: None,
             account_id: None,
             requested_model: None,
-            sse_line_buffer: String::new(),
+            stream: None,
+            last_parsed_json: None,
             usage_partial: PartialUsage::default(),
             usage_final: None,
+        }
+    }
+}
+
+impl ProxyContext {
+    /// 确保并返回 SSE 解析状态（codec 与字节缓冲）
+    pub fn ensure_sse_state(
+        &mut self,
+    ) -> (
+        &mut crate::utils::event_stream::EventStreamData,
+        &mut bytes::BytesMut,
+    ) {
+        // 如果未设置或模式错误，先设置为 SSE 模式
+        let need_reset = match self.stream.as_ref() {
+            Some(state) => !matches!(state.mode, StreamingMode::Sse { .. }),
+            None => true,
+        };
+        if need_reset {
+            self.stream = Some(StreamParseState {
+                mode: StreamingMode::Sse {
+                    codec: crate::utils::event_stream::EventStreamData::new(),
+                    bytes: bytes::BytesMut::new(),
+                },
+            });
+        }
+        // 现在安全地取可变引用
+        match self.stream.as_mut().unwrap().mode {
+            StreamingMode::Sse { ref mut codec, ref mut bytes } => (codec, bytes),
+            _ => unreachable!(),
+        }
+    }
+
+    /// 确保并返回 JsonLines 行缓冲状态
+    pub fn ensure_json_lines_state(&mut self) -> &mut String {
+        // 如果未设置或模式错误，先设置为 JsonLines 模式
+        let need_reset = match self.stream.as_ref() {
+            Some(state) => !matches!(state.mode, StreamingMode::JsonLines { .. }),
+            None => true,
+        };
+        if need_reset {
+            self.stream = Some(StreamParseState {
+                mode: StreamingMode::JsonLines { buf: String::new() },
+            });
+        }
+        match self.stream.as_mut().unwrap().mode {
+            StreamingMode::JsonLines { ref mut buf } => buf,
+            _ => unreachable!(),
         }
     }
 }
@@ -897,6 +965,19 @@ impl RequestHandler {
                 extraction_method = "unified_service",
                 "Model extracted successfully using StatisticsService"
             );
+            // 第一层：即时更新追踪中的模型信息，避免后续阶段丢失
+            if let Err(err) = self
+                .tracing_service()
+                .update_trace_model_info(&ctx.request_id, None, Some(model_name.clone()), None)
+                .await
+            {
+                tracing::warn!(
+                    component = "tracing_service",
+                    request_id = ctx.request_id,
+                    error = %err,
+                    "Failed to update trace with extracted model (immediate)"
+                );
+            }
         }
 
         // Request size no longer stored in simplified trace schema
@@ -1191,7 +1272,7 @@ impl RequestHandler {
 
         tracing::info!(
             event = "upstream_request_ready",
-            component = "request_handler",
+            component = "proxy.headers",
             request_id = ctx.request_id,
             method = upstream_request.method.to_string(),
             final_uri = upstream_request.uri.to_string(),
@@ -1220,7 +1301,7 @@ impl RequestHandler {
 
         tracing::info!(
             event = "upstream_response_headers",
-            component = "request_handler",
+            component = "proxy.headers",
             request_id = ctx.request_id,
             status_code = upstream_response.status.as_u16(),
             response_headers = response_headers,
@@ -1232,7 +1313,7 @@ impl RequestHandler {
         if status_code >= 400 {
             tracing::info!(
                 event = "fail",
-                component = "request_handler",
+                component = "proxy.headers",
                 request_id = ctx.request_id,
                 status_code = status_code,
                 "上游响应失败"
@@ -1382,7 +1463,6 @@ impl RequestHandler {
         tracing::debug!(
             request_id = ctx.request_id,
             status = upstream_response.status.as_u16(),
-            tokens_used = ctx.tokens_used,
             preserved_encoding = ?content_encoding,
             "Upstream response processed successfully"
         );

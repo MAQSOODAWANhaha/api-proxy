@@ -1,1 +1,3 @@
-//\! # Utils 模块占位符
+//! Utils 模块
+
+pub mod event_stream;

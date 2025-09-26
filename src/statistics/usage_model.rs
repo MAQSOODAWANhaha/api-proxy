@@ -153,5 +153,10 @@ pub fn finalize_streaming(ctx: &mut ProxyContext) -> ComputedStats {
         }
     }
 
+    // 最终兜底：仍无模型则使用请求阶段模型
+    if stats.model_name.is_none() {
+        stats.model_name = ctx.requested_model.clone();
+    }
+
     stats
 }

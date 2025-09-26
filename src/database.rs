@@ -5,8 +5,10 @@
 use crate::error::ProxyError;
 use entity::{model_pricing, model_pricing_tiers, provider_types};
 use sea_orm::{
-    ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, Set,
+    ColumnTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
+use std::time::Duration;
 use sea_orm_migration::MigratorTrait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -152,25 +154,31 @@ struct FilteredModel {
     price_info: ModelPriceInfo,
 }
 
-/// 确保模型定价数据的完整性
-/// 检查数据库中是否存在模型定价数据，如果不存在则进行初始化
+/// 确保模型定价数据的完整性（启动时初始化一次，远程优先，增量更新）
+/// 始终尝试拉取并增量更新，失败时使用本地文件回退；如果都失败且已有数据，则保留现状。
 pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), ProxyError> {
     info!("🔍 检查模型定价数据完整性...");
-
-    // 检查 model_pricing 表是否为空
-    let pricing_count = model_pricing::Entity::find()
-        .count(db)
-        .await
-        .map_err(|e| ProxyError::database(format!("查询模型定价数据失败: {}", e)))?;
-
-    if pricing_count == 0 {
-        info!("📊 模型定价数据为空，开始初始化...");
-        initialize_model_pricing_from_json(db).await?;
-    } else {
-        info!("✅ 模型定价数据已存在 ({} 条记录)", pricing_count);
+    // 始终尝试远程优先的增量更新
+    match initialize_model_pricing_from_remote_or_local(db).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // 如果已经有数据，保留现状；否则向上抛出错误
+            let pricing_count = model_pricing::Entity::find()
+                .count(db)
+                .await
+                .map_err(|err| ProxyError::database(format!("查询模型定价数据失败: {}", err)))?;
+            if pricing_count > 0 {
+                error!(
+                    component = "database.pricing",
+                    error = %e,
+                    "远程与本地初始化均失败，保留现有定价数据"
+                );
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
     }
-
-    Ok(())
 }
 
 /// 强制重新初始化模型定价数据
@@ -196,7 +204,7 @@ pub async fn force_initialize_model_pricing_data(
     Ok(())
 }
 
-/// 从 JSON 文件初始化数据（完全数据驱动）
+/// 从 JSON 文件初始化数据（完全数据驱动，旧逻辑，仅在空表或强制清理后使用）
 async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(), ProxyError> {
     info!("📂 从JSON文件读取模型定价数据...");
 
@@ -234,6 +242,157 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
     Ok(())
 }
 
+/// 远程优先的初始化与增量更新（不删除未出现在数据源中的旧模型）
+async fn initialize_model_pricing_from_remote_or_local(
+    db: &DatabaseConnection,
+) -> Result<(), ProxyError> {
+    info!(component = "database.pricing", "尝试从远程获取最新模型定价（失败则回退本地）...");
+
+    // 读取远程或本地 JSON
+    let json_data = load_json_data_remote_or_local().await?;
+    info!(component = "database.pricing", models = json_data.len(), "已获取模型定价原始数据");
+
+    // 过滤并标准化
+    let filtered_models = filter_target_models(&json_data);
+    info!(component = "database.pricing", count = filtered_models.len(), "根据规则筛选目标模型");
+
+    // provider 映射
+    let provider_mappings = get_provider_mappings(db, &filtered_models).await?;
+    info!(component = "database.pricing", mappings = provider_mappings.len(), "构建 provider 映射完成");
+
+    // 事务内增量 upsert
+    let txn = db.begin().await.map_err(|e| ProxyError::database(format!("开启事务失败: {}", e)))?;
+    let mut inserted = 0usize;
+    let mut updated = 0usize;
+    let mut tiers_written = 0usize;
+
+    for model in filtered_models {
+        if let Some(&provider_id) = provider_mappings.get(&model.provider_name) {
+            // 查找是否存在同 provider + model_name 的记录
+            let existing = model_pricing::Entity::find()
+                .filter(model_pricing::Column::ProviderTypeId.eq(provider_id))
+                .filter(model_pricing::Column::ModelName.eq(&model.name))
+                .one(&txn)
+                .await
+                .map_err(|e| ProxyError::database(format!("查询现有定价记录失败: {}", e)))?;
+
+            if let Some(existing_model) = existing {
+                // 更新基础字段
+                let id = existing_model.id;
+                let mut am: model_pricing::ActiveModel = existing_model.into();
+                am.description = Set(Some(model.description.clone()));
+                am.cost_currency = Set("USD".to_string());
+                model_pricing::Entity::update(am)
+                    .exec(&txn)
+                    .await
+                    .map_err(|e| ProxyError::database(format!("更新模型定价失败: {}", e)))?;
+
+                // 替换 tiers
+                model_pricing_tiers::Entity::delete_many()
+                    .filter(model_pricing_tiers::Column::ModelPricingId.eq(id))
+                    .exec(&txn)
+                    .await
+                    .map_err(|e| ProxyError::database(format!("清理旧定价层级失败: {}", e)))?;
+
+                let pricing_tiers = parse_pricing_tiers(&model.price_info);
+                for tier in pricing_tiers {
+                    let tier_model = model_pricing_tiers::ActiveModel {
+                        model_pricing_id: Set(id),
+                        token_type: Set(tier.token_type),
+                        min_tokens: Set(tier.min_tokens),
+                        max_tokens: Set(tier.max_tokens),
+                        price_per_token: Set(tier.price_per_token),
+                        ..Default::default()
+                    };
+                    model_pricing_tiers::Entity::insert(tier_model)
+                        .exec(&txn)
+                        .await
+                        .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
+                    tiers_written += 1;
+                }
+                updated += 1;
+            } else {
+                // 新增
+                insert_model_with_pricing_txn(&txn, &model, provider_id).await?;
+                let tiers = parse_pricing_tiers(&model.price_info);
+                tiers_written += tiers.len();
+                inserted += 1;
+            }
+        } else {
+            warn!(
+                component = "database.pricing",
+                provider = %model.provider_name,
+                model = %model.name,
+                "跳过：provider 在数据库中不存在"
+            );
+        }
+    }
+
+    txn.commit()
+        .await
+        .map_err(|e| ProxyError::database(format!("提交模型定价事务失败: {}", e)))?;
+
+    info!(
+        component = "database.pricing",
+        inserted = inserted,
+        updated = updated,
+        tiers_written = tiers_written,
+        "模型定价增量更新完成"
+    );
+
+    Ok(())
+}
+
+/// 远程优先：先拉取远程 JSON，失败则回退本地文件
+async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
+    match fetch_remote_json().await {
+        Ok(map) => {
+            info!(component = "database.pricing", source = "remote", "使用远程模型定价数据");
+            Ok(map)
+        }
+        Err(e) => {
+            warn!(component = "database.pricing", error = %e, "远程获取失败，回退到本地JSON");
+            load_json_data().await
+        }
+    }
+}
+
+/// 拉取远程 JSON 模型定价
+async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
+    const REMOTE_URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
+    let url = REMOTE_URL.parse::<reqwest::Url>().map_err(|e| ProxyError::config(format!("远程URL非法: {}", e)))?;
+    if url.scheme() != "https" {
+        return Err(ProxyError::config("仅允许HTTPS的远程URL".to_string()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(5000))
+        .build()
+        .map_err(|e| ProxyError::config(format!("创建HTTP客户端失败: {}", e)))?;
+
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, format!("api-proxy/{}", env!("CARGO_PKG_VERSION")))
+        .send()
+        .await
+        .map_err(|e| ProxyError::config(format!("请求远程模型定价失败: {}", e)))?;
+
+    if !resp.status().is_success() {
+        return Err(ProxyError::config(format!(
+            "远程定价响应非成功状态: {}",
+            resp.status()
+        )));
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| ProxyError::config(format!("读取远程响应失败: {}", e)))?;
+
+    serde_json::from_str::<HashMap<String, ModelPriceInfo>>(&text)
+        .map_err(|e| ProxyError::config(format!("解析远程JSON失败: {}", e)))
+}
 /// 加载并解析JSON文件
 async fn load_json_data() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
     let json_path = std::env::current_dir()
@@ -428,6 +587,52 @@ async fn insert_model_with_pricing(
 
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(db)
+            .await
+            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
+    }
+
+    Ok(())
+}
+
+/// 事务版本：插入单个模型及其定价数据
+async fn insert_model_with_pricing_txn(
+    txn: &DatabaseTransaction,
+    model: &FilteredModel,
+    provider_id: i32,
+) -> Result<(), ProxyError> {
+    info!(
+        "💰 插入模型定价: {} (provider_id: {})",
+        model.name, provider_id
+    );
+
+    let pricing_model = model_pricing::ActiveModel {
+        provider_type_id: Set(provider_id),
+        model_name: Set(model.name.clone()),
+        description: Set(Some(model.description.clone())),
+        cost_currency: Set("USD".to_string()),
+        ..Default::default()
+    };
+
+    let pricing_result = model_pricing::Entity::insert(pricing_model)
+        .exec(txn)
+        .await
+        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {}", e)))?;
+
+    let model_pricing_id = pricing_result.last_insert_id;
+
+    let pricing_tiers = parse_pricing_tiers(&model.price_info);
+    for tier in pricing_tiers {
+        let tier_model = model_pricing_tiers::ActiveModel {
+            model_pricing_id: Set(model_pricing_id),
+            token_type: Set(tier.token_type),
+            min_tokens: Set(tier.min_tokens),
+            max_tokens: Set(tier.max_tokens),
+            price_per_token: Set(tier.price_per_token),
+            ..Default::default()
+        };
+
+        model_pricing_tiers::Entity::insert(tier_model)
+            .exec(txn)
             .await
             .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
     }
