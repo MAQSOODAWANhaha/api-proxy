@@ -10,6 +10,10 @@ async fn main() -> anyhow::Result<()> {
     // 初始化日志系统
     api_proxy::logging::init_optimized_logging(None);
 
+    // 初始化管理端系统启动时间（用于 /api/system/metrics uptime）
+    // 确保在进程启动时即记录，而非在首次 API 调用时懒初始化
+    api_proxy::management::handlers::system::init_start_time();
+
     info!(
         version = env!("CARGO_PKG_VERSION"),
         flow = "service_boot",
