@@ -1,7 +1,7 @@
+//! 测试：utils::event_stream 的 SSE 解析行为（data 解析为 JSON Value）
+
 use bytes::BytesMut;
 use tokio_util::codec::Decoder; // bring decode/decode_eof into scope
-
-// 测试 utils::event_stream 的 SSE 解析行为（data 解析为 JSON Value）
 
 #[test]
 fn sse_single_event_basic_json() {
@@ -41,11 +41,17 @@ fn sse_cross_chunk_and_crlf() {
     buf1.extend_from_slice(b"event: delta\r\n");
     buf1.extend_from_slice(b"id: 123\r\n");
     buf1.extend_from_slice(b"data: {\"k\":\"v\"}\r\n");
-    assert!(codec.decode(&mut buf1).unwrap().is_none(), "no complete event yet");
+    assert!(
+        codec.decode(&mut buf1).unwrap().is_none(),
+        "no complete event yet"
+    );
 
     // 第二块：空行结束事件
     buf2.extend_from_slice(b"\r\n");
-    let ev = codec.decode(&mut buf2).unwrap().expect("event after boundary");
+    let ev = codec
+        .decode(&mut buf2)
+        .unwrap()
+        .expect("event after boundary");
     assert_eq!(ev.event.as_deref(), Some("delta"));
     assert_eq!(ev.id.as_deref(), Some("123"));
     assert_eq!(ev.data.get("k").and_then(|x| x.as_str()), Some("v"));

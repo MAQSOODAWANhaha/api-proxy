@@ -89,6 +89,24 @@ impl PartialUsage {
             self.cache_read_tokens = other.cache_read_tokens;
         }
     }
+
+    pub fn merge_sum(&mut self, other: &PartialUsage) {
+        if let Some(v) = other.prompt_tokens {
+            self.prompt_tokens = Some(self.prompt_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.completion_tokens {
+            self.completion_tokens = Some(self.completion_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.total_tokens {
+            self.total_tokens = Some(self.total_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.cache_create_tokens {
+            self.cache_create_tokens = Some(self.cache_create_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.cache_read_tokens {
+            self.cache_read_tokens = Some(self.cache_read_tokens.unwrap_or(0) + v);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

@@ -108,6 +108,11 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
     }
 }
 
+// 流式请求一律采用“累加”策略（单事件/单行提取的用量按字段相加）。
+
+// 已统一仅使用 extract_tokens_from_json（数据库驱动 + 归一化），
+// 流式路径在合并阶段采用“累加”策略，不再需要 partial 版本。
+
 /// 流式收口：归总 usage_partial 并尝试从尾窗解析模型
 pub fn finalize_streaming(ctx: &mut ProxyContext) -> ComputedStats {
     let mut stats = ComputedStats::default();
@@ -156,6 +161,11 @@ pub fn finalize_streaming(ctx: &mut ProxyContext) -> ComputedStats {
     // 最终兜底：仍无模型则使用请求阶段模型
     if stats.model_name.is_none() {
         stats.model_name = ctx.requested_model.clone();
+    }
+
+    // 将最终模型覆盖写回请求上下文，保证 logging 阶段使用最终模型
+    if let Some(m) = stats.model_name.clone() {
+        ctx.requested_model = Some(m);
     }
 
     stats
