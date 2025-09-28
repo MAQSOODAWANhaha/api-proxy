@@ -451,6 +451,125 @@ impl GeminiCodeAssistClient {
         .await
     }
 
+    /// 带重试机制的onboardUser调用
+    ///
+    /// 最多重试5次，使用指数退避算法
+    pub async fn onboard_user_with_retry(
+        &self,
+        access_token: &str,
+        project_id: Option<&str>,
+        tier_id: Option<&str>,
+        client_metadata: Option<&ClientMetadata>,
+    ) -> Result<OnboardUserResponse, ProxyError> {
+        const MAX_RETRIES: usize = 5;
+        const BASE_DELAY_MS: u64 = 1000; // 1秒基础延迟
+
+        let mut retry_count = 0;
+        let mut last_error = None;
+
+        while retry_count < MAX_RETRIES {
+            match self.onboard_user(access_token, project_id, tier_id, client_metadata).await {
+                Ok(response) => {
+                    if retry_count > 0 {
+                        tracing::info!(
+                            "onboardUser在第{}次重试后成功",
+                            retry_count
+                        );
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    last_error = Some(format!("{}", e));
+                    retry_count += 1;
+
+                    if retry_count < MAX_RETRIES {
+                        // 指数退避计算延迟时间
+                        let delay_ms = BASE_DELAY_MS * 2u64.pow(retry_count as u32 - 1);
+                        tracing::warn!(
+                            "onboardUser第{}次调用失败，{}ms后进行第{}次重试. 错误: {}",
+                            retry_count,
+                            delay_ms,
+                            retry_count + 1,
+                            e
+                        );
+
+                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    } else {
+                        tracing::error!(
+                            "onboardUser重试{}次后仍然失败，最终错误: {}",
+                            MAX_RETRIES,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // 所有重试都失败了，返回最后一个错误
+        Err(ProxyError::gemini_code_assist(last_error.unwrap_or_else(|| {
+            "onboardUser重试失败，但没有具体的错误信息".to_string()
+        })))
+    }
+
+    /// 自动获取project_id（带重试机制）
+    ///
+    /// 1. 调用loadCodeAssist检查是否已有project
+    /// 2. 如果没有cloudaicompanionProject，调用onboardUser初始化新项目（带重试）
+    /// 3. 返回获取到的project_id
+    pub async fn auto_get_project_id_with_retry(
+        &self,
+        access_token: &str,
+    ) -> Result<Option<String>, ProxyError> {
+        tracing::info!("开始自动获取Gemini project_id（带重试）");
+
+        // Step 1: 调用loadCodeAssist (不携带project_id)
+        tracing::debug!("Step 1: 调用loadCodeAssist检查现有项目");
+        let load_response = match self.load_code_assist(access_token, None, None).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("loadCodeAssist调用失败: {}", e);
+                return Err(e);
+            }
+        };
+
+        // 检查是否已有project
+        if let Some(project_id) = load_response.cloudaicompanionProject {
+            tracing::info!("通过loadCodeAssist获取到project_id: {}", project_id);
+            return Ok(Some(project_id));
+        }
+
+        // Step 2: 如果没有cloudaicompanionProject，调用onboardUser初始化项目（带重试）
+        tracing::debug!(
+            "Step 2: loadCodeAssist未返回cloudaicompanionProject，调用onboardUser初始化（带重试）"
+        );
+
+        // 从loadCodeAssist响应中获取tierId
+        let tier_id = self.get_tier_id_from_load_response(&load_response);
+        tracing::debug!("从loadCodeAssist获取到tierId: {}", tier_id);
+
+        let onboard_response = match self.onboard_user_with_retry(
+            access_token,
+            None,
+            Some(tier_id),
+            None
+        ).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("onboardUser重试调用失败: {}", e);
+                return Err(e);
+            }
+        };
+
+        let project_id = Some(onboard_response.cloudaicompanionProject.id);
+        tracing::info!(
+            "通过onboardUser重试获取到project_id: {:?} (display_name: {})",
+            project_id,
+            onboard_response.cloudaicompanionProject.display_name
+        );
+
+        Ok(project_id)
+    }
+
     /// 从loadCodeAssist响应中获取tierId
     ///
     /// 参考JavaScript实现中的getOnboardTier逻辑

@@ -333,28 +333,24 @@ pub async fn create_provider_key(
         }
     }
 
-    // 自动获取Gemini OAuth场景的project_id
+    // Gemini OAuth 场景处理
     let mut final_project_id = payload.project_id.clone();
+    let mut health_status = ApiKeyHealthStatus::Healthy.to_string();
 
-    // 检查是否是Gemini OAuth场景且需要自动获取project_id
-    if payload.auth_type == OAUTH_AUTH_TYPE && final_project_id.is_none() {
-        // 查询provider类型信息，判断是否是Gemini
+    // 异步任务标志
+    let mut needs_auto_get_project_id_async = false;
+
+    if payload.auth_type == OAUTH_AUTH_TYPE {
+        // 查询 provider 类型确认是否为 gemini
         if let Ok(Some(provider_type)) =
             entity::provider_types::Entity::find_by_id(payload.provider_type_id)
                 .one(db)
                 .await
         {
             if provider_type.name == GEMINI_PROVIDER_NAME {
-                tracing::info!(
-                    user_id = user_id,
-                    provider_type_id = payload.provider_type_id,
-                    "检测到Gemini OAuth且无project_id，开始自动获取"
-                );
-
-                // 获取OAuth会话的access_token
+                // 需要访问 OAuth 会话拿 access_token
                 if let Some(session_id) = &payload.api_key {
                     use entity::oauth_client_sessions::{self, Entity as OAuthSession};
-
                     if let Ok(Some(oauth_session)) = OAuthSession::find()
                         .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
                         .filter(oauth_client_sessions::Column::UserId.eq(user_id))
@@ -365,47 +361,79 @@ pub async fn create_provider_key(
                         .one(db)
                         .await
                     {
-                        // 使用Gemini Code Assist API客户端自动获取project_id
+                        let access_token = oauth_session.access_token.as_deref().unwrap_or("");
                         let gemini_client = GeminiCodeAssistClient::new();
-                        match gemini_client
-                            .auto_get_project_id(
-                                &oauth_session.access_token.as_deref().unwrap_or(""),
-                            )
-                            .await
-                        {
-                            Ok(Some(auto_project_id)) => {
-                                final_project_id = Some(auto_project_id.clone());
-                                tracing::info!(
-                                    user_id = user_id,
-                                    session_id = session_id,
-                                    auto_project_id = auto_project_id,
-                                    "成功自动获取Gemini project_id"
-                                );
+
+                        // 如果用户传递了 project_id, 直接带 project_id 调用 loadCodeAssist
+                        if let Some(provided_pid) = final_project_id.clone() {
+                            tracing::info!(
+                                user_id = user_id,
+                                project_id = %provided_pid,
+                                "Gemini OAuth: 使用用户提供的 project_id 调用 loadCodeAssist"
+                            );
+                            match gemini_client
+                                .load_code_assist(access_token, Some(&provided_pid), None)
+                                .await
+                            {
+                                Ok(resp) => {
+                                    // 如果后端返回了 cloudaicompanionProject 则以其为准
+                                    if let Some(server_pid) = resp.cloudaicompanionProject {
+                                        final_project_id = Some(server_pid);
+                                    } else {
+                                        // 没有返回 cloudaicompanionProject，说明用户提供的 project_id 无效或不存在
+                                        // 需要走自动获取流程来获取正确的 project_id
+                                        tracing::info!(
+                                            user_id = user_id,
+                                            provided_project_id = %provided_pid,
+                                            "loadCodeAssist 未返回 cloudaicompanionProject，用户提供的 project_id 无效"
+                                        );
+
+                                        // 设置为不健康状态，用户提供的project_id无效，需要自动获取
+                                        health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                                        needs_auto_get_project_id_async = true;
+                                        final_project_id = None; // 清空无效的project_id
+
+                                        tracing::info!(
+                                            user_id = user_id,
+                                            provided_project_id = %provided_pid,
+                                            "Gemini OAuth: 用户提供的 project_id 无效，将自动获取 project_id"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                                    tracing::error!(user_id = user_id, error = %e, "Gemini OAuth: loadCodeAssist 调用失败（带 project_id）");
+                                }
                             }
-                            Ok(None) => {
-                                tracing::warn!(
-                                    user_id = user_id,
-                                    session_id = session_id,
-                                    "Gemini auto_get_project_id返回None，将使用空project_id创建"
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    user_id = user_id,
-                                    session_id = session_id,
-                                    error = %e,
-                                    "自动获取Gemini project_id失败，将使用空project_id创建"
-                                );
-                                // 不阻断创建流程，继续使用空project_id
-                            }
+                        } else {
+                            // 未提供 project_id: 走自动流程（loadCodeAssist -> 若无则 onboardUser）
+                            tracing::info!(
+                                user_id = user_id,
+                                "Gemini OAuth: 未提供 project_id, 将异步自动获取 (loadCodeAssist / onboardUser)"
+                            );
+
+                            // 设置为不健康状态，标记需要异步执行自动获取 project_id
+                            health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                            needs_auto_get_project_id_async = true;
+
+                            tracing::info!(
+                                user_id = user_id,
+                                "Gemini OAuth: 标记需要异步执行自动获取 project_id，key创建为不健康状态"
+                            );
                         }
                     } else {
-                        tracing::warn!(
+                        tracing::error!(
                             user_id = user_id,
-                            session_id = session_id,
-                            "无法找到OAuth会话，跳过自动获取project_id"
+                            "Gemini OAuth: 未找到授权的 OAuth 会话, 无法校验 project_id"
                         );
+                        health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                     }
+                } else {
+                    tracing::error!(
+                        user_id = user_id,
+                        "Gemini OAuth: 缺少 session_id(api_key 字段) 无法完成验证流程"
+                    );
+                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                 }
             }
         }
@@ -424,9 +452,8 @@ pub async fn create_provider_key(
         max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
         max_requests_per_day: Set(payload.max_requests_per_day),
         is_active: Set(payload.is_active.unwrap_or(true)),
-        // 保存最终确定的project_id到数据库（可能是传入的，也可能是自动获取的）
         project_id: Set(final_project_id),
-        health_status: Set("healthy".to_string()),
+        health_status: Set(health_status),
         created_at: Set(Utc::now().naive_utc()),
         updated_at: Set(Utc::now().naive_utc()),
         ..Default::default()
@@ -443,6 +470,34 @@ pub async fn create_provider_key(
         }
     };
 
+    // 启动异步任务处理Gemini OAuth
+    if needs_auto_get_project_id_async {
+        let key_id = result.id;
+        let user_id_for_task = user_id.to_string();
+        let db_clone = db.clone();
+
+        tokio::spawn(async move {
+            tracing::info!(
+                user_id = user_id_for_task,
+                key_id = %key_id,
+                "启动异步自动获取 project_id 任务"
+            );
+
+            if let Err(e) = execute_auto_get_project_id_async(
+                &db_clone,
+                key_id,
+                &user_id_for_task,
+            ).await {
+                tracing::error!(
+                    user_id = user_id_for_task,
+                    key_id = %key_id,
+                    error = %e,
+                    "异步自动获取 project_id 任务执行失败"
+                );
+            }
+        });
+    }
+
     // 获取provider类型信息
     let provider_name = match entity::provider_types::Entity::find_by_id(payload.provider_type_id)
         .one(db)
@@ -452,16 +507,30 @@ pub async fn create_provider_key(
         _ => "Unknown".to_string(),
     };
 
+    let mut message = "创建成功".to_string();
+
+    // 如果有后台任务，添加提示信息
+    if needs_auto_get_project_id_async {
+        message.push_str("，正在后台自动获取 project_id");
+        message.push_str("，请稍后查看 key 状态");
+    }
+
     let data = json!({
         "id": result.id,
         "provider": provider_name,
         "name": result.name,
         "auth_type": result.auth_type,
         "auth_status": result.auth_status,
+        "health_status": result.health_status,
+        "project_id": result.project_id,
+        "has_background_tasks": needs_auto_get_project_id_async,
+        "background_tasks": {
+            "auto_get_project_id_pending": needs_auto_get_project_id_async
+        },
         "created_at": result.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
     });
 
-    response::success_with_message(data, "创建成功")
+    response::success_with_message(data, &message)
 }
 
 /// 获取提供商密钥详情
@@ -1707,4 +1776,166 @@ pub async fn get_provider_key_health_statuses() -> axum::response::Response {
     }
 
     Json(statuses).into_response()
+}
+
+/// 异步执行自动获取project_id任务的辅助方法
+async fn execute_auto_get_project_id_async(
+    db: &sea_orm::DatabaseConnection,
+    key_id: i32,
+    user_id: &str,
+) -> Result<(), crate::ProxyError> {
+    use entity::user_provider_keys::{ActiveModel, Entity as UserProviderKey};
+    use sea_orm::ActiveValue::Set;
+    use crate::auth::gemini_code_assist_client::GeminiCodeAssistClient;
+
+    // 创建Gemini客户端
+    let gemini_client = GeminiCodeAssistClient::new();
+
+    // 从数据库重新获取OAuth会话和access token
+    let access_token = match get_access_token_for_key(db, key_id, user_id).await {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::error!(
+                user_id = user_id,
+                key_id = %key_id,
+                error = %e,
+                "无法获取access token执行自动获取project_id"
+            );
+            return Err(e);
+        }
+    };
+
+    // 调用auto_get_project_id_with_retry
+    match gemini_client.auto_get_project_id_with_retry(&access_token).await {
+        Ok(pid_opt) => {
+            if let Some(pid) = pid_opt {
+                tracing::info!(
+                    user_id = user_id,
+                    key_id = %key_id,
+                    project_id = %pid,
+                    "异步自动获取 project_id 成功"
+                );
+
+                // 更新数据库记录
+                let key_opt = UserProviderKey::find_by_id(key_id).one(db).await?;
+                if let Some(key_model) = key_opt {
+                    let mut active_key: ActiveModel = key_model.into();
+                    active_key.project_id = Set(Some(pid.clone()));
+                    active_key.health_status = Set(ApiKeyHealthStatus::Healthy.to_string());
+                    active_key.updated_at = Set(Utc::now().naive_utc());
+
+                    active_key.update(db).await?;
+                    tracing::info!(
+                        user_id = user_id,
+                        key_id = %key_id,
+                        project_id = %pid,
+                        "异步更新自动获取的 project_id 成功"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    user_id = user_id,
+                    key_id = %key_id,
+                    "异步自动获取 project_id 返回为空"
+                );
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(
+                user_id = user_id,
+                key_id = %key_id,
+                error = %e,
+                "异步自动获取 project_id 重试失败"
+            );
+            Err(e)
+        }
+    }
+}
+
+/// 为指定key获取access token的辅助方法
+async fn get_access_token_for_key(
+    db: &sea_orm::DatabaseConnection,
+    key_id: i32,
+    user_id: &str,
+) -> Result<String, crate::ProxyError> {
+    use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+    use entity::user_provider_keys::Entity as UserProviderKey;
+
+    // 首先获取user_provider_key记录，找到session_id
+    let key_record = match UserProviderKey::find_by_id(key_id)
+        .one(db)
+        .await
+    {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            return Err(crate::ProxyError::business(&format!(
+                "未找到key记录: key_id={}, user_id={}",
+                key_id, user_id
+            )));
+        }
+        Err(e) => {
+            return Err(crate::ProxyError::database_with_source(
+                "查询key记录失败",
+                e,
+            ));
+        }
+    };
+
+    // 确保是OAuth类型的key
+    if key_record.auth_type != OAUTH_AUTH_TYPE {
+        return Err(crate::ProxyError::business(&format!(
+            "key不是OAuth类型: auth_type={}",
+            key_record.auth_type
+        )));
+    }
+
+    // 从api_key字段获取session_id
+    let session_id = key_record.api_key;
+    if session_id.is_empty() {
+        return Err(crate::ProxyError::business("OAuth key的session_id为空"));
+    }
+
+    // 查询OAuth会话获取access_token
+    let oauth_session = match OAuthSession::find()
+        .filter(oauth_client_sessions::Column::SessionId.eq(&session_id))
+        .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+        .filter(
+            oauth_client_sessions::Column::Status
+                .eq(AuthStatus::Authorized.to_string()),
+        )
+        .one(db)
+        .await
+    {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return Err(crate::ProxyError::business(&format!(
+                "未找到授权的OAuth会话: session_id={}, user_id={}",
+                session_id, user_id
+            )));
+        }
+        Err(e) => {
+            return Err(crate::ProxyError::database_with_source(
+                "查询OAuth会话失败",
+                e,
+            ));
+        }
+    };
+
+    // 检查access_token是否存在
+    if let Some(ref access_token) = oauth_session.access_token {
+        if !access_token.is_empty() {
+            tracing::debug!(
+                user_id = user_id,
+                key_id = %key_id,
+                session_id = %session_id,
+                "成功获取access_token"
+            );
+            Ok(access_token.clone())
+        } else {
+            Err(crate::ProxyError::business("OAuth会话中的access_token为空"))
+        }
+    } else {
+        Err(crate::ProxyError::business("OAuth会话中没有access_token"))
+    }
 }
