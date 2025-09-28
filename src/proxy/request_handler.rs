@@ -1121,6 +1121,7 @@ impl RequestHandler {
             provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
+            body = ?String::from_utf8_lossy(&ctx.request_body),
             "上游请求已构建"
         );
 
