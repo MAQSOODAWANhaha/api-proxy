@@ -54,7 +54,7 @@ impl ProviderStrategy for GeminiStrategy {
         &self,
         ctx: &crate::proxy::ProxyContext,
     ) -> Result<Option<String>, ProxyError> {
-        let Some(backend) = ctx.selected_backend.as_ref() else {
+        let Some(backend) = &ctx.selected_backend else {
             return Ok(None);
         };
         let mode = match backend.auth_type.as_str() {
@@ -82,7 +82,7 @@ impl ProviderStrategy for GeminiStrategy {
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
-        if let Some(backend) = ctx.selected_backend.as_ref() {
+        if let Some(backend) = &ctx.selected_backend {
             if backend.auth_type.as_str() == "oauth" {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
@@ -107,7 +107,7 @@ impl ProviderStrategy for GeminiStrategy {
         ctx: &ProxyContext,
         json_value: &mut serde_json::Value,
     ) -> Result<bool, ProxyError> {
-        let Some(backend) = ctx.selected_backend.as_ref() else {
+        let Some(backend) = &ctx.selected_backend else {
             return Ok(false);
         };
 
@@ -515,8 +515,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend
-            .as_ref()
+            .selected_backend.as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 
@@ -545,8 +544,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend
-            .as_ref()
+            .selected_backend.as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 
@@ -574,8 +572,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend
-            .as_ref()
+            .selected_backend.as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 

@@ -10,7 +10,6 @@ use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::Session;
 use sea_orm::prelude::Decimal;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
-use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use url::form_urlencoded;
@@ -19,15 +18,14 @@ use crate::auth::oauth_client::JWTParser;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::{AuthManager, types::AuthStatus};
 use crate::cache::CacheManager;
-use crate::config::{AppConfig, ProviderConfigManager};
+use crate::config::ProviderConfigManager;
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::pricing::PricingCalculatorService;
-use crate::proxy::{AuthenticationService, TracingService};
+use crate::proxy::{AuthenticationService, TracingService, ProxyContext};
+use crate::proxy::context::ResolvedCredential;
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::statistics::service::StatisticsService;
-use crate::statistics::types::{PartialUsage, TokenUsageMetrics};
-use crate::statistics::types::{RequestDetails, ResponseDetails};
 use crate::trace::immediate::ImmediateProxyTracer;
 use crate::{proxy_debug, proxy_info, proxy_warn};
 use entity::{
@@ -51,8 +49,6 @@ pub struct RequestHandler {
     db: Arc<DatabaseConnection>,
     /// 统一缓存管理器
     cache: Arc<CacheManager>,
-    /// 配置 (未来使用)
-    _config: Arc<AppConfig>,
     /// 服务商配置管理器
     provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥池管理器
@@ -73,179 +69,6 @@ pub struct RequestHandler {
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
 
-/// 流式解析模式
-#[derive(Debug, Clone)]
-pub enum StreamingMode {
-    /// 严格 SSE（text/event-stream）：使用 EventStreamData 编码器 + 字节缓冲
-    Sse {
-        codec: crate::utils::event_stream::EventStreamData,
-        bytes: bytes::BytesMut,
-    },
-    /// 行式 JSON（application/stream+json 或退化行式）：跨 chunk 行缓冲
-    JsonLines { buf: String },
-}
-
-/// 流式解析状态容器（仅在判定为流式响应时按需初始化）
-#[derive(Debug, Clone)]
-pub struct StreamParseState {
-    pub mode: StreamingMode,
-}
-
-/// 请求上下文
-#[derive(Debug, Clone)]
-pub struct ProxyContext {
-    /// 请求ID
-    pub request_id: String,
-    /// 用户对外API配置
-    pub user_service_api: Option<user_service_apis::Model>,
-    /// 选择的后端API密钥
-    pub selected_backend: Option<user_provider_keys::Model>,
-    /// 提供商类型配置
-    pub provider_type: Option<provider_types::Model>,
-    /// 开始时间
-    pub start_time: std::time::Instant,
-    /// 重试次数
-    pub retry_count: u32,
-    /// 请求详情
-    pub request_details: RequestDetails,
-    /// 响应详情
-    pub response_details: ResponseDetails,
-    /// 选择的提供商名称
-    pub selected_provider: Option<String>,
-    /// 连接超时时间(秒)
-    pub timeout_seconds: Option<i32>,
-    /// 请求体缓冲区 (用于request_body_filter中的数据收集)
-    pub request_body: Vec<u8>,
-    /// 响应体缓冲区 (用于response_body_filter中的数据收集)
-    pub response_body: Vec<u8>,
-    /// 是否计划修改请求体（供上游头部处理决策使用）
-    pub will_modify_body: bool,
-    /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
-    pub resolved_credential: Option<ResolvedCredential>,
-    /// ChatGPT Account ID（用于OpenAI ChatGPT API）
-    pub account_id: Option<String>,
-    /// 用户请求的模型名称
-    pub requested_model: Option<String>,
-    /// 流式解析状态（仅在 text/event-stream 或 application/stream+json 时使用）
-    pub stream: Option<StreamParseState>,
-    /// 最近一次解析到的 JSON（SSE/行式/非流均会更新，用于后续获取数据）
-    pub last_parsed_json: Option<Value>,
-    /// 流式增量使用量（最新一次覆盖）
-    pub usage_partial: PartialUsage,
-    /// 最终使用量（统一出口）
-    pub usage_final: Option<TokenUsageMetrics>,
-}
-
-impl Default for ProxyContext {
-    fn default() -> Self {
-        Self {
-            request_id: String::new(),
-            user_service_api: None,
-            selected_backend: None,
-            provider_type: None,
-            start_time: std::time::Instant::now(),
-            retry_count: 0,
-            request_details: RequestDetails::default(),
-            response_details: ResponseDetails::default(),
-            selected_provider: None,
-            timeout_seconds: None,
-            request_body: Vec::new(),
-            response_body: Vec::new(),
-            will_modify_body: false,
-            resolved_credential: None,
-            account_id: None,
-            requested_model: None,
-            stream: None,
-            last_parsed_json: None,
-            usage_partial: PartialUsage::default(),
-            usage_final: None,
-        }
-    }
-}
-
-impl ProxyContext {
-    /// 确保并返回 SSE 解析状态（codec 与字节缓冲）
-    pub fn ensure_sse_state(
-        &mut self,
-    ) -> (
-        &mut crate::utils::event_stream::EventStreamData,
-        &mut bytes::BytesMut,
-    ) {
-        // 如果未设置或模式错误，先设置为 SSE 模式
-        let need_reset = match self.stream.as_ref() {
-            Some(state) => !matches!(state.mode, StreamingMode::Sse { .. }),
-            None => true,
-        };
-        if need_reset {
-            self.stream = Some(StreamParseState {
-                mode: StreamingMode::Sse {
-                    codec: crate::utils::event_stream::EventStreamData::new(),
-                    bytes: bytes::BytesMut::new(),
-                },
-            });
-        }
-        // 现在安全地取可变引用
-        match self.stream.as_mut().unwrap().mode {
-            StreamingMode::Sse {
-                ref mut codec,
-                ref mut bytes,
-            } => (codec, bytes),
-            _ => unreachable!(),
-        }
-    }
-
-    /// 确保并返回 JsonLines 行缓冲状态
-    pub fn ensure_json_lines_state(&mut self) -> &mut String {
-        // 如果未设置或模式错误，先设置为 JsonLines 模式
-        let need_reset = match self.stream.as_ref() {
-            Some(state) => !matches!(state.mode, StreamingMode::JsonLines { .. }),
-            None => true,
-        };
-        if need_reset {
-            self.stream = Some(StreamParseState {
-                mode: StreamingMode::JsonLines { buf: String::new() },
-            });
-        }
-        match self.stream.as_mut().unwrap().mode {
-            StreamingMode::JsonLines { ref mut buf } => buf,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
-        let prev_size = self.response_body.len();
-        self.response_body.extend_from_slice(chunk);
-        let new_size = self.response_body.len();
-        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
-            tracing::debug!(
-                component = "statistics.collector",
-                chunk_size = chunk.len(),
-                total_size = new_size,
-                "Response body chunk added (milestone reached)"
-            );
-        }
-    }
-
-    pub fn clear_body_chunks(&mut self) {
-        if !self.response_body.is_empty() {
-            tracing::debug!(
-                component = "statistics.collector",
-                cleared_bytes = self.response_body.len(),
-                "Clearing collected body chunks to reduce memory"
-            );
-            self.response_body.clear();
-        }
-    }
-}
-
-/// 解析后的最终上游凭证
-#[derive(Debug, Clone)]
-pub enum ResolvedCredential {
-    /// 直接上游 API Key
-    ApiKey(String),
-    /// OAuth 访问令牌
-    OAuthAccessToken(String),
-}
 
 // 已统一为 statistics::types::PartialUsage / TokenUsageMetrics
 
@@ -346,7 +169,6 @@ impl RequestHandler {
     pub fn new(
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        _config: Arc<AppConfig>,
         tracer: Option<Arc<ImmediateProxyTracer>>,
         provider_config_manager: Arc<ProviderConfigManager>,
         auth_manager: Arc<AuthManager>,
@@ -368,7 +190,6 @@ impl RequestHandler {
         Self {
             db,
             cache,
-            _config,
             provider_config_manager,
             api_key_pool,
             auth_service,

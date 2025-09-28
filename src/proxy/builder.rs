@@ -202,7 +202,6 @@ impl ProxyServerBuilder {
             .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
 
         ProxyService::new(
-            self.config.clone(),
             db,
             cache,
             provider_config_manager,

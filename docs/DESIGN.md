@@ -223,22 +223,12 @@ Client → Axum(9090) → Auth → Business Logic → Database/Redis → Respons
 // 简化的代理核心逻辑
 async fn proxy_request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) -> Result<bool> {
     let path = session.req_header().uri.path();
-    
-    // 步骤1: 简单路径前缀匹配 (高性能)
-    if !self.is_proxy_request(path) {
-        return self.reject_non_proxy_request(path);
-    }
-    
-    // 步骤2: 身份认证 (统一认证服务)
-    self.authenticate_request(session, ctx).await?;
-    
-    // 步骤3: 其他全部透明转发，不做业务判断
-    Ok(false) // 继续正常代理流程
-}
 
-fn is_proxy_request(&self, path: &str) -> bool {
-    // 仅检查路径前缀，不解析具体参数
-    path.starts_with("/v1/") || path.starts_with("/proxy/")
+    // 步骤1: 身份认证 (统一认证服务)
+    self.authenticate_request(session, ctx).await?;
+
+    // 步骤2: 其他全部透明转发，不做业务判断
+    Ok(false) // 继续正常代理流程
 }
 ```
 

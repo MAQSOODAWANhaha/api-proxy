@@ -16,16 +16,19 @@ use uuid::Uuid;
 
 use crate::auth::{AuthManager, types::AuthType};
 use crate::cache::CacheManager;
-use crate::config::{AppConfig, ProviderConfigManager};
+use crate::config::ProviderConfigManager;
 use crate::proxy::provider_strategy;
-use crate::proxy::request_handler::{ProxyContext, RequestHandler, ResolvedCredential};
+use crate::proxy::{
+    context::{ProxyContext, ResolvedCredential},
+    request_handler::RequestHandler,
+};
 use crate::trace::{TraceSystem, immediate::ImmediateProxyTracer};
 use sea_orm::DatabaseConnection;
 
 /// 简化的AI代理服务 - 保持完整业务逻辑
 pub struct ProxyService {
     /// AI代理处理器 - 保持原有完整功能
-    ai_handler: Arc<RequestHandler>,
+    request: Arc<RequestHandler>,
     /// 即时写入追踪器
     tracer: Option<Arc<ImmediateProxyTracer>>,
     /// 早期阶段服务（在 early_request_filter 执行）
@@ -54,44 +57,6 @@ const COMPONENT_BUFFER: &str = "proxy.body.buffer";
 const COMPONENT_UPSTREAM: &str = "proxy.upstream";
 
 impl ProxyService {
-    // 为日志限制请求/响应体的最大输出长度
-    const MAX_LOG_BODY_BYTES: usize = 32 * 1024; // 32KB
-
-    // 脱敏 JSON 中疑似敏感字段（key/token/secret/authorization/cookie 等）
-    fn sanitize_json_value(v: &mut Value) {
-        match v {
-            Value::Object(map) => {
-                for (k, val) in map.iter_mut() {
-                    let kl = k.to_ascii_lowercase();
-                    let is_sensitive = ["key", "token", "secret", "authorization", "cookie"]
-                        .iter()
-                        .any(|m| kl.contains(m));
-                    if is_sensitive {
-                        if let Value::String(s) = val {
-                            if s.len() > 8 {
-                                let masked =
-                                    format!("{}...{}", &s[..4], &s[s.len().saturating_sub(4)..]);
-                                *val = Value::String(masked);
-                            } else {
-                                *val = Value::String("****".to_string());
-                            }
-                        } else {
-                            *val = Value::String("****".to_string());
-                        }
-                    } else {
-                        ProxyService::sanitize_json_value(val);
-                    }
-                }
-            }
-            Value::Array(arr) => {
-                for item in arr.iter_mut() {
-                    ProxyService::sanitize_json_value(item);
-                }
-            }
-            _ => {}
-        }
-    }
-
     // 运行 early_request_filter 阶段所有服务
     async fn run_early_services(
         &self,
@@ -100,13 +65,12 @@ impl ProxyService {
     ) -> pingora_core::Result<()> {
         for svc in &self.early_services {
             tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), "run early step");
-            svc.exec(&self.ai_handler, session, ctx).await?;
+            svc.exec(&self.request, session, ctx).await?;
         }
         Ok(())
     }
     /// 创建新的代理服务实例 - 保持原有完整功能
     pub fn new(
-        config: Arc<AppConfig>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         provider_config_manager: Arc<ProviderConfigManager>,
@@ -117,10 +81,9 @@ impl ProxyService {
         let tracer = trace_system.as_ref().and_then(|ts| ts.immediate_tracer());
 
         // 创建AI代理处理器 - 保持原有完整功能
-        let ai_handler = Arc::new(RequestHandler::new(
+        let request = Arc::new(RequestHandler::new(
             db,
             cache,
-            config.clone(),
             tracer.clone(),
             provider_config_manager,
             auth_manager,
@@ -161,7 +124,7 @@ impl ProxyService {
         let logging_services: Vec<Arc<dyn LoggingService>> = vec![Arc::new(DefaultLoggingService)];
 
         Ok(Self {
-            ai_handler,
+            request,
             tracer,
             early_services,
             upstream_request_services,
@@ -175,18 +138,7 @@ impl ProxyService {
         })
     }
 
-    /// 检查是否为代理请求（透明代理设计）
-    fn is_proxy_request(&self, path: &str) -> bool {
-        // 透明代理：除了管理API之外的所有请求都当作AI代理请求
-        // 用户决定发送什么格式给什么提供商，系统只负责认证和密钥替换
-        !self.is_management_request(path)
-    }
-
-    /// 检查是否为管理请求（应该发送到端口9090）
-    fn is_management_request(&self, path: &str) -> bool {
-        path.starts_with("/api/") || path.starts_with("/admin/") || path == "/"
-    }
-
+  
     /// 创建provider特定的响应体处理服务
     fn provider_response_body_services(
         &self,
@@ -195,11 +147,11 @@ impl ProxyService {
         let mut services = Vec::new();
 
         // 根据 provider 注册相应的响应体处理服务（通过 ProviderRegistry + 工厂函数）
-        if let Some(provider) = ctx.provider_type.as_ref() {
+        if let Some(provider) = &ctx.provider_type {
             if let Some(name) =
                 crate::proxy::provider_strategy::ProviderRegistry::match_name(&provider.name)
             {
-                let db = Some(self.ai_handler.db_connection());
+                let db = Some(self.request.db_connection());
                 if let Some(svc) =
                     crate::proxy::provider_strategy::make_provider_response_body_service(name, db)
                 {
@@ -278,7 +230,7 @@ impl EarlyRequestService for EarlyTraceStartService {
         session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        if let Some(user_api) = ctx.user_service_api.as_ref() {
+        if let Some(user_api) = &ctx.user_service_api {
             let method = session.req_header().method.as_str();
             let path_owned = session.req_header().uri.path().to_string();
             let req_stats = ai.statistics_service().collect_request_stats(session);
@@ -368,7 +320,7 @@ impl UpstreamRequestService for DefaultUpstreamRequestService {
             })?;
 
         // provider 特定策略的请求改写（如 Gemini 注入/补充 Header）
-        if let Some(pt) = ctx.provider_type.as_ref() {
+        if let Some(pt) = &ctx.provider_type {
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&pt.name) {
                 if let Some(strategy) = provider_strategy::make_strategy(name, None) {
                     strategy
@@ -899,7 +851,7 @@ impl LoggingService for DefaultLoggingService {
 // =============== Provider Service Registry（按需注入） ===============
 
 fn provider_upstream_request_services(ctx: &ProxyContext) -> Vec<Arc<dyn UpstreamRequestService>> {
-    if let Some(pt) = ctx.provider_type.as_ref() {
+    if let Some(pt) = &ctx.provider_type {
         let name = pt.name.to_ascii_lowercase();
         // 示例：Gemini 可在此返回自定义的 UpstreamRequestService；当前默认由 DefaultUpstreamRequestService 调用 strategy.modify_request
         if name.contains("gemini") {
@@ -919,7 +871,7 @@ fn provider_response_header_services(_ctx: &ProxyContext) -> Vec<Arc<dyn Respons
 // #[async_trait]
 // impl UpstreamRequestService for GeminiUpstreamRequestService {
 //     async fn exec(&self, ai: &RequestHandler, session: &mut Session, upstream_request: &mut RequestHeader, ctx: &mut ProxyContext) -> pingora_core::Result<()> {
-//         if let Some(pt) = ctx.provider_type.as_ref() {
+//         if let Some(pt) = &ctx.provider_type {
 //             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&pt.name) {
 //                 if let Some(strategy) = provider_strategy::make_strategy(name, None) {
 //                     strategy.modify_request(session, upstream_request, ctx)
@@ -944,7 +896,7 @@ impl EarlyRequestService for EarlyRateLimitService {
         _session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        if let Some(user_api) = ctx.user_service_api.as_ref() {
+        if let Some(user_api) = &ctx.user_service_api {
             if let Err(e) = ai.check_rate_limit(user_api).await {
                 warn!(event = "rate_limited", component = COMPONENT, request_id = %ctx.request_id, error = %e, "命中限流");
                 let _ = ai
@@ -1075,7 +1027,9 @@ impl EarlyRequestService for EarlyCredentialResolveService {
     }
 }
 
-// 7) 下游超时配置（与业务超时联动）
+// 7) 创建认证上下文
+
+// 8) 下游超时配置（与业务超时联动）
 struct EarlyDownstreamTimeoutService;
 #[async_trait]
 impl EarlyRequestService for EarlyDownstreamTimeoutService {
@@ -1115,9 +1069,7 @@ impl EarlyRequestService for EarlyTraceExtendService {
         _session: &mut Session,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        if let (Some(pt), Some(backend)) =
-            (ctx.provider_type.as_ref(), ctx.selected_backend.as_ref())
-        {
+        if let (Some(pt), Some(backend)) = (&ctx.provider_type, &ctx.selected_backend) {
             if let Err(err) = ai
                 .tracing_service()
                 .update_trace_model_info(
@@ -1167,7 +1119,7 @@ impl ProxyHttp for ProxyService {
 
         // 收集部分客户端信息用于日志
         let req_stats = self
-            .ai_handler
+            .request
             .statistics_service()
             .collect_request_stats(session);
 
@@ -1198,37 +1150,7 @@ impl ProxyHttp for ProxyService {
             "下游请求头"
         );
 
-        // 透明代理设计：仅处理代理请求，其他全部拒绝
-        if !self.is_proxy_request(path) {
-            if self.is_management_request(path) {
-                warn!(
-                    event = "wrong_port",
-                    component = COMPONENT,
-                    request_id = %ctx.request_id,
-                    path = %path,
-                    "管理接口请求被发送到代理端口，应使用管理端口(默认: 9090)"
-                );
-                let e = crate::proxy_err!(
-                    upstream_not_found,
-                    "请使用管理端口访问管理接口(默认端口: 9090)"
-                );
-                return Err(crate::pingora_error!(e));
-            } else {
-                warn!(
-                    event = "not_proxy_endpoint",
-                    component = COMPONENT,
-                    request_id = %ctx.request_id,
-                    path = %path,
-                    "非代理端点：该端口仅处理 AI 代理请求"
-                );
-                let e = crate::proxy_err!(
-                    upstream_not_found,
-                    "该端口仅处理 AI 代理请求(非管理/非静态)"
-                );
-                return Err(crate::pingora_error!(e));
-            }
-        }
-
+  
         // 处理CORS预检请求
         if method == "OPTIONS" {
             return Err(crate::pingora_http!(200, "CORS preflight"));
@@ -1267,7 +1189,7 @@ impl ProxyHttp for ProxyService {
             tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms as u64)).await;
         }
         for svc in &self.upstream_peer_services {
-            if let Some(peer) = svc.select(&self.ai_handler, _session, ctx).await? {
+            if let Some(peer) = svc.select(&self.request, _session, ctx).await? {
                 return Ok(peer);
             }
         }
@@ -1287,13 +1209,13 @@ impl ProxyHttp for ProxyService {
     ) -> pingora_core::Result<()> {
         for svc in &self.upstream_request_services {
             tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), "run upstream_request step");
-            svc.exec(&self.ai_handler, session, upstream_request, ctx)
+            svc.exec(&self.request, session, upstream_request, ctx)
                 .await?;
         }
         // provider 特定的上游请求服务（按需注入，默认在通用服务之后执行以便覆盖）
         for svc in provider_upstream_request_services(ctx) {
-            tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), provider = ?ctx.provider_type.as_ref().map(|p| p.name.clone()), "run provider upstream_request step");
-            svc.exec(&self.ai_handler, session, upstream_request, ctx)
+            tracing::debug!(component = COMPONENT, request_id = %ctx.request_id, step = svc.name(), provider = ?ctx.provider_type.as_ref().map(|p| p.name.as_str()), "run provider upstream_request step");
+            svc.exec(&self.request, session, upstream_request, ctx)
                 .await?;
         }
         Ok(())
@@ -1307,7 +1229,7 @@ impl ProxyHttp for ProxyService {
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
         for svc in &self.request_body_services {
-            svc.exec(&self.ai_handler, session, body_chunk, end_of_stream, ctx)
+            svc.exec(&self.request, session, body_chunk, end_of_stream, ctx)
                 .await?;
         }
         Ok(())
@@ -1322,12 +1244,12 @@ impl ProxyHttp for ProxyService {
         // 统一由 request_handler 打印 upstream_response_headers 日志，避免重复与格式不一致
 
         for svc in &self.response_header_services {
-            svc.exec(&self.ai_handler, _session, upstream_response, ctx)
+            svc.exec(&self.request, _session, upstream_response, ctx)
                 .await?;
         }
         // provider 特定的响应头服务
         for svc in provider_response_header_services(ctx) {
-            svc.exec(&self.ai_handler, _session, upstream_response, ctx)
+            svc.exec(&self.request, _session, upstream_response, ctx)
                 .await?;
         }
         Ok(())
@@ -1388,7 +1310,7 @@ impl ProxyHttp for ProxyService {
         let tracer = self.tracer.clone();
         let mut result = None;
         for svc in &self.proxy_failure_services {
-            result = Some(svc.handle(tracer.clone(), &self.ai_handler, e, ctx));
+            result = Some(svc.handle(tracer.clone(), &self.request, e, ctx));
             break;
         }
         result.unwrap_or(FailToProxy {
@@ -1400,7 +1322,7 @@ impl ProxyHttp for ProxyService {
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
         // 可插拔日志服务（扩展点）
         for svc in &self.logging_services {
-            svc.exec(&self.ai_handler, self.tracer.clone(), session, e, ctx)
+            svc.exec(&self.request, self.tracer.clone(), session, e, ctx)
                 .await;
         }
 
@@ -1438,14 +1360,14 @@ impl ProxyHttp for ProxyService {
                 request_headers = request_headers,
                 selected_backend_id = ?ctx.selected_backend.as_ref().map(|b| b.id),
                 selected_backend_key = ?ctx.selected_backend.as_ref().map(|b| b.api_key.as_str()),
-                provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
+                provider_type = ?ctx.provider_type.as_ref().map(|p| p.name.as_str()),
                 timeout_seconds = ?ctx.timeout_seconds,
                 "请求失败"
             );
 
             // 如果是超时或网络错误，使用AI处理器进行错误转换
             if is_timeout_error || is_network_error {
-                let converted_error = self.ai_handler.convert_pingora_error(error, ctx);
+                let converted_error = self.request.convert_pingora_error(error, ctx);
                 warn!(
                     request_id = %ctx.request_id,
                     original_error = %error,
@@ -1466,8 +1388,8 @@ impl ProxyHttp for ProxyService {
                 let provider_opt = ctx.provider_type.clone();
                 let tracer = self.tracer.clone();
                 let req_id = ctx.request_id.clone();
-                let stats_svc = self.ai_handler.statistics_service().clone();
-                let tracing_svc = self.ai_handler.tracing_service().clone();
+                let stats_svc = self.request.statistics_service().clone();
+                let tracing_svc = self.request.tracing_service().clone();
                 let status_code = ctx.response_details.status_code.unwrap_or(200);
                 tokio::spawn(async move {
                     // 更新模型信息（如有）
@@ -1479,7 +1401,7 @@ impl ProxyHttp for ProxyService {
                     // 计费
                     let mut cost_val: Option<f64> = None;
                     let mut currency_val: Option<String> = None;
-                    if let (Some(model), Some(provider)) = (model_opt, provider_opt) {
+                    if let (Some(model), Some(provider)) = (model_opt, provider_opt.as_ref()) {
                         let pricing_usage = crate::pricing::TokenUsage {
                             prompt_tokens: usage.prompt_tokens,
                             completion_tokens: usage.completion_tokens,

@@ -86,9 +86,7 @@ flowchart TD
         NewCtx --> RequestFilter["request_filter(session, ctx)"]
         
         subgraph RequestFilterDetail["request_filter 详细流程"]
-            RequestFilter --> CheckProxyReq{"is_proxy_request(path)?<br/>透明代理检查"}
-            CheckProxyReq -->|否| ReturnError["返回404/管理端口提示"]
-            CheckProxyReq -->|是| HandleCORS{"method == OPTIONS?"}
+            RequestFilter --> HandleCORS{"method == OPTIONS?"}
             HandleCORS -->|是| Return200["返回200 CORS响应"]
             HandleCORS -->|否| AuthPhase["身份验证<br/>AuthenticationStep"]
             AuthPhase --> StartTrace["开始追踪<br/>TracingService::start_trace()"]
@@ -315,7 +313,6 @@ PingoraProxyServer::start()
 ProxyService (实现 ProxyHttp trait):
 ├── new_ctx() → 创建ProxyContext + request_id
 ├── request_filter(session, ctx):97
-│   ├── is_proxy_request() // 透明代理检查：除管理API外都作为AI代理请求
 │   ├── OPTIONS方法的CORS预检处理
 │   └── ai_handler.prepare_proxy_request() // 协调器模式核心
 │       ├── 步骤0: ProviderResolver::resolve_from_request() // 从URL路径识别provider
@@ -507,7 +504,7 @@ API密钥健康监控和恢复：
 
 ### 1. 透明代理设计
 - **设计理念**: 用户决定发送什么格式给什么提供商，系统只负责认证和密钥替换
-- **实现方式**: 所有非管理API的请求都被视为AI代理请求 (`is_proxy_request()`)
+- **实现方式**: 简化的请求处理，专注于认证和转发
 - **路径识别**: 从URL路径 `/{provider}/{api_path}` 自动识别服务商
 - **代码位置**: `src/proxy/service.rs:63`
 

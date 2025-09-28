@@ -9,6 +9,7 @@
 //! - `types`: 轻量通用类型
 //! - `logging`: 统一日志工具和格式标准
 
+pub mod context;
 pub mod service;
 pub mod types;
 // 统一通过 `ProxyService` 调度；`RequestHandler` 提供纯业务方法
@@ -27,7 +28,8 @@ pub use crate::statistics::types::{RequestStats, ResponseStats};
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use pingora_proxy::PingoraProxyServer;
-pub use request_handler::{ProxyContext, RequestHandler};
+pub use context::{AuthContext, ProxyContext};
+pub use request_handler::RequestHandler;
 pub use service::ProxyService;
 pub use tracing_service::{TracingContextHelper, TracingService};
 pub use types::{ForwardingContext, ForwardingResult, ProviderId};
@@ -36,7 +38,8 @@ pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
     pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
-    pub use super::request_handler::{ProxyContext, RequestHandler};
+    pub use super::context::{AuthContext, ProxyContext};
+    pub use super::request_handler::RequestHandler;
     pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};
     pub use super::{PingoraProxyServer, ProxyService};
