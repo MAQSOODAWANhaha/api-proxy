@@ -7,7 +7,7 @@ use super::ProviderStrategy;
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::proxy::ProxyContext;
-use crate::{proxy_debug, proxy_info};
+use crate::proxy_info;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
@@ -87,12 +87,8 @@ impl ProviderStrategy for GeminiStrategy {
                 if let Some(pid) = &backend.project_id {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
-                        let need = path.contains("loadCodeAssist")
-                            || path.contains("onboardUser")
-                            || path.contains("countTokens")
-                            || path.contains("streamGenerateContent")
-                            || (path.contains("generateContent")
-                                && !path.contains("streamGenerateContent"));
+                        let need = path.contains("streamGenerateContent")
+                            || (path.contains("generateContent"));
                         ctx.will_modify_body = need;
                     }
                 }
@@ -118,17 +114,17 @@ impl ProviderStrategy for GeminiStrategy {
 
         let request_path = session.req_header().uri.path();
 
-        // 智能项目ID选择逻辑：优先使用数据库中的project_id，没有则使用空字符串
-        let effective_project_id = backend.project_id.as_deref().unwrap_or("");
-
-        let modified = if request_path.contains("loadCodeAssist") {
-            inject_loadcodeassist_fields(json_value, effective_project_id, &ctx.request_id)
-        } else if request_path.contains("onboardUser") {
-            inject_onboarduser_fields(json_value, effective_project_id, &ctx.request_id)
-        } else if request_path.contains("countTokens") {
-            inject_counttokens_fields(json_value, &ctx.request_id)
-        } else if request_path.contains("generateContent") {
-            inject_generatecontent_fields(json_value, effective_project_id)
+        // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
+        let modified = if ctx.will_modify_body {
+            if let Some(project_id) = &backend.project_id {
+                if !project_id.is_empty() {
+                    inject_generatecontent_fields(json_value, project_id)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -141,11 +137,6 @@ impl ProviderStrategy for GeminiStrategy {
                 "smart_project_id_selected",
                 "Gemini策略智能选择项目ID并注入到请求中",
                 backend_project_id = backend.project_id.as_deref().unwrap_or("<none>"),
-                effective_project_id = if effective_project_id.is_empty() {
-                    "<empty>"
-                } else {
-                    effective_project_id
-                },
                 route_path = request_path
             );
         }
@@ -176,150 +167,7 @@ impl ProviderStrategy for GeminiStrategy {
     }
 }
 
-// ---------------- 项目字段处理函数 ----------------
-
-/// 移除项目相关字段
-/// 当backend没有project_id时调用此函数
-pub fn remove_project_fields(
-    json_value: &mut serde_json::Value,
-    request_id: &str,
-    route_path: &str,
-) -> bool {
-    let mut modified = false;
-
-    if let Some(obj) = json_value.as_object_mut() {
-        // 移除顶层的project字段
-        if obj.remove("project").is_some() {
-            modified = true;
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "project_field_removed",
-                "移除顶层project字段",
-                route_path = route_path
-            );
-        }
-
-        // 移除cloudaicompanionProject字段
-        if obj.remove("cloudaicompanionProject").is_some() {
-            modified = true;
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "cloudaicompanion_project_field_removed",
-                "移除cloudaicompanionProject字段",
-                route_path = route_path
-            );
-        }
-
-        // 移除metadata中的duetProject字段
-        if let Some(metadata) = obj.get_mut("metadata").and_then(|v| v.as_object_mut()) {
-            if metadata.remove("duetProject").is_some() {
-                modified = true;
-                proxy_debug!(
-                    request_id,
-                    LogStage::RequestModify,
-                    LogComponent::GeminiStrategy,
-                    "duet_project_field_removed",
-                    "移除metadata.duetProject字段",
-                    route_path = route_path
-                );
-            }
-        }
-
-        // 对于countTokens，保持标准格式但移除project相关字段
-        if route_path.contains("countTokens") {
-            if let Some(request) = obj.get_mut("request").and_then(|v| v.as_object_mut()) {
-                // 确保request对象存在但移除project字段（如果有）
-                if request.remove("project").is_some() {
-                    modified = true;
-                    proxy_debug!(
-                        request_id,
-                        LogStage::RequestModify,
-                        LogComponent::GeminiStrategy,
-                        "request_project_field_removed",
-                        "移除request.project字段",
-                        route_path = route_path
-                    );
-                }
-            }
-        }
-    }
-
-    if modified {
-        proxy_info!(
-            request_id,
-            LogStage::RequestModify,
-            LogComponent::GeminiStrategy,
-            "project_fields_removed",
-            "Gemini策略移除了所有项目相关字段",
-            route_path = route_path
-        );
-    }
-
-    modified
-}
-
 // ---------------- 注入帮助函数（取自原 RequestHandler 逻辑，简化后无副作用） ----------------
-
-pub fn inject_loadcodeassist_fields(
-    json_value: &mut serde_json::Value,
-    project_id: &str,
-    request_id: &str,
-) -> bool {
-    if let Some(obj) = json_value.as_object_mut() {
-        let metadata = obj
-            .entry("metadata")
-            .or_insert_with(|| serde_json::json!({}));
-        if let Some(metadata_obj) = metadata.as_object_mut() {
-            metadata_obj.insert(
-                "duetProject".to_string(),
-                serde_json::Value::String(project_id.to_owned()),
-            );
-            proxy_debug!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "duet_project_injected",
-                "注入metadata.duetProject",
-                project_id = project_id,
-                location = "metadata.duetProject"
-            );
-        }
-        obj.insert(
-            "cloudaicompanionProject".to_string(),
-            serde_json::Value::String(project_id.to_owned()),
-        );
-        return true;
-    }
-    false
-}
-
-fn inject_onboarduser_fields(
-    json_value: &mut serde_json::Value,
-    project_id: &str,
-    request_id: &str,
-) -> bool {
-    if let Some(obj) = json_value.as_object_mut() {
-        obj.insert(
-            "cloudaicompanionProject".to_string(),
-            serde_json::Value::String(project_id.to_owned()),
-        );
-        proxy_debug!(
-            request_id,
-            LogStage::RequestModify,
-            LogComponent::GeminiStrategy,
-            "cloudaicompanion_project_injected_onboard",
-            "注入cloudaicompanionProject (onboardUser)",
-            project_id = project_id,
-            location = "top_level"
-        );
-        return true;
-    }
-    false
-}
 
 fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id: &str) -> bool {
     if let Some(obj) = json_value.as_object_mut() {
@@ -343,62 +191,6 @@ fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id:
         return true;
     }
     false
-}
-
-fn inject_counttokens_fields(json_value: &mut serde_json::Value, request_id: &str) -> bool {
-    let mut modified = false;
-    if let Some(root) = json_value.as_object_mut() {
-        let mut request_obj = if let Some(request_val) = root.get_mut("request") {
-            if let Some(obj) = request_val.as_object_mut() {
-                obj.clone()
-            } else {
-                serde_json::Map::new()
-            }
-        } else {
-            serde_json::Map::new()
-        };
-
-        if let Some(model_val) = request_obj
-            .get("model")
-            .and_then(|v| v.as_str())
-            .or_else(|| root.get("model").and_then(|v| v.as_str()))
-        {
-            let model_str = if model_val.starts_with("models/") {
-                model_val.to_string()
-            } else {
-                format!("models/{}", model_val)
-            };
-            request_obj.insert("model".to_string(), serde_json::Value::String(model_str));
-            modified = true;
-        }
-
-        if let Some(contents_val) = request_obj
-            .get("contents")
-            .cloned()
-            .or_else(|| root.get("contents").cloned())
-        {
-            request_obj.insert("contents".to_string(), contents_val);
-            modified = true;
-        }
-
-        root.insert(
-            "request".to_string(),
-            serde_json::Value::Object(request_obj),
-        );
-    }
-
-    if modified {
-        proxy_info!(
-            request_id,
-            LogStage::RequestModify,
-            LogComponent::GeminiStrategy,
-            "count_tokens_standardized",
-            "标准化countTokens请求体结构",
-            action = "standardize_count_tokens",
-            result = "wrapped_in_request_object"
-        );
-    }
-    modified
 }
 
 #[cfg(test)]
@@ -454,23 +246,6 @@ mod tests {
     }
 
     #[test]
-    fn test_inject_loadcodeassist_fields() {
-        let mut v = serde_json::json!({});
-        let changed = inject_loadcodeassist_fields(&mut v, "p", "req");
-        assert!(changed);
-        assert_eq!(v["metadata"]["duetProject"], "p");
-        assert_eq!(v["cloudaicompanionProject"], "p");
-    }
-
-    #[test]
-    fn test_inject_onboarduser_fields() {
-        let mut v = serde_json::json!({});
-        let changed = inject_onboarduser_fields(&mut v, "p", "req");
-        assert!(changed);
-        assert_eq!(v["cloudaicompanionProject"], "p");
-    }
-
-    #[test]
     fn test_inject_generatecontent_fields() {
         let mut v = serde_json::json!({});
         let changed = inject_generatecontent_fields(&mut v, "p");
@@ -484,19 +259,6 @@ mod tests {
         let changed = inject_generatecontent_fields(&mut v, "");
         assert!(changed);
         assert_eq!(v["project"], "");
-    }
-
-    #[test]
-    fn test_inject_counttokens_fields() {
-        let mut v = serde_json::json!({
-            "model": "g1",
-            "contents": [ {"role":"user","parts":[{"text":"hi"}]} ]
-        });
-        let changed = inject_counttokens_fields(&mut v, "req");
-        assert!(changed);
-        assert!(v["request"].is_object());
-        assert_eq!(v["request"]["model"], "models/g1");
-        assert!(v["request"]["contents"].is_array());
     }
 
     #[tokio::test]
@@ -515,7 +277,8 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend.as_ref()
+            .selected_backend
+            .as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 
@@ -544,7 +307,8 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend.as_ref()
+            .selected_backend
+            .as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 
@@ -572,7 +336,8 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
-            .selected_backend.as_ref()
+            .selected_backend
+            .as_ref()
             .and_then(|b| b.project_id.as_deref())
             .unwrap_or("");
 
