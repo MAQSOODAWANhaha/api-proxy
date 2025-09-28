@@ -1064,16 +1064,20 @@ impl RequestHandler {
 
         // Content-Length 处理策略：
         // - 对将要修改请求体的路由（如 generateContent/streamGenerateContent/onboardUser），移除原始 Content-Length，避免长度不一致
+        // - 对所有流式（SSE）请求，移除 Content-Length，启用 Transfer-Encoding: chunked 来正确处理 HTTP/2 帧传输
         // - 否则若方法为 POST/PUT/PATCH 且缺少 Content-Length/Transfer-Encoding，则显式设置 Content-Length: 0，避免上游 411
         let method_upper = upstream_request.method.to_string().to_uppercase();
         let path_for_len = upstream_request.uri.path().to_string();
+        let is_sse_endpoint = self.is_sse_request(session, upstream_request);
 
-        if ctx.will_modify_body {
+        if ctx.will_modify_body || is_sse_endpoint {
             upstream_request.remove_header("content-length");
             tracing::debug!(
                 request_id = ctx.request_id,
                 path = path_for_len,
-                "将修改请求体，移除原始 Content-Length"
+                will_modify_body = ctx.will_modify_body,
+                is_sse = is_sse_endpoint,
+                "将修改请求体或为SSE请求，移除原始 Content-Length 以启用分块传输"
             );
         } else {
             // 优先以下游客户端请求头为准判断是否“无请求体”
