@@ -138,7 +138,6 @@ impl ProxyService {
         })
     }
 
-  
     /// 创建provider特定的响应体处理服务
     fn provider_response_body_services(
         &self,
@@ -412,24 +411,38 @@ impl RequestBodyService for DefaultRequestBodyService {
                         request_id = %ctx.request_id,
                         "Successfully parsed request body as JSON, applying modifications"
                     );
+
+                    // 在 JSON 修改前记录原始请求体大小
+                    let original_size = ctx.request_body.len();
+
                     match ai
                         .modify_provider_request_body_json(&mut json_value, session, ctx)
                         .await
                     {
                         Ok(modified) => {
                             if modified {
-                                info!(
-                                    request_id = %ctx.request_id,
-                                    "Request body successfully modified for Google Code Assist API"
-                                );
-                                serde_json::to_vec(&json_value).unwrap_or_else(|e| {
-                                    error!(
-                                        request_id = %ctx.request_id,
-                                        error = %e,
-                                        "Failed to serialize modified JSON, using original body"
-                                    );
-                                    ctx.request_body.clone()
-                                })
+                                match serde_json::to_vec(&json_value) {
+                                    Ok(modified_bytes) => {
+                                        let new_size = modified_bytes.len();
+                                        info!(
+                                            request_id = %ctx.request_id,
+                                            original_size = original_size,
+                                            new_size = new_size,
+                                            size_diff = new_size as i32 - original_size as i32,
+                                            "Request body successfully modified and size updated"
+                                        );
+                                        modified_bytes
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            request_id = %ctx.request_id,
+                                            error = %e,
+                                            original_size = original_size,
+                                            "Failed to serialize modified JSON, using original body to avoid protocol errors"
+                                        );
+                                        ctx.request_body.clone()
+                                    }
+                                }
                             } else {
                                 debug!(
                                     request_id = %ctx.request_id,
@@ -442,7 +455,8 @@ impl RequestBodyService for DefaultRequestBodyService {
                             error!(
                                 request_id = %ctx.request_id,
                                 error = %e,
-                                "Failed to modify request body, using original"
+                                original_size = original_size,
+                                "Failed to modify request body, using original to avoid protocol errors"
                             );
                             ctx.request_body.clone()
                         }
@@ -452,7 +466,8 @@ impl RequestBodyService for DefaultRequestBodyService {
                     warn!(
                         request_id = %ctx.request_id,
                         error = %e,
-                        "Failed to parse body as JSON, forwarding original body"
+                        original_size = ctx.request_body.len(),
+                        "Failed to parse body as JSON, forwarding original body to avoid protocol errors"
                     );
                     ctx.request_body.clone()
                 }
@@ -463,6 +478,7 @@ impl RequestBodyService for DefaultRequestBodyService {
                 component = COMPONENT,
                 request_id = %ctx.request_id,
                 size = modified_body.len(),
+                body = ?String::from_utf8_lossy(&modified_body),
                 "上游请求体（最终）"
             );
 
@@ -1150,7 +1166,6 @@ impl ProxyHttp for ProxyService {
             "下游请求头"
         );
 
-  
         // 处理CORS预检请求
         if method == "OPTIONS" {
             return Err(crate::pingora_http!(200, "CORS preflight"));

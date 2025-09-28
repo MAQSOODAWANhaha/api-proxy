@@ -182,7 +182,7 @@ fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id:
         //   }
         // }
 
-        // 设置 project 字段：可以为真实 project_id 或空字符串
+        // 设置 project 字段：insert 方法会自动处理插入新值或替换已存在值
         obj.insert(
             "project".to_string(),
             serde_json::Value::String(project_id.to_string()),
@@ -347,6 +347,89 @@ mod tests {
         let result = inject_generatecontent_fields(&mut json_value, effective_project_id);
         assert!(result);
         assert_eq!(json_value["project"], "");
+    }
+
+    #[test]
+    fn test_inject_generatecontent_fields_with_real_gemini_structure() {
+        // 测试真实的 Gemini API 请求结构
+        let mut json_value = serde_json::json!({
+            "model": "gemini-2.5-flash",
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Hello, how are you?"}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 1000
+            }
+        });
+
+        let project_id = "my-gemini-project";
+        let result = inject_generatecontent_fields(&mut json_value, project_id);
+
+        assert!(result);
+        assert_eq!(json_value["project"], project_id);
+        assert_eq!(json_value["model"], "gemini-2.5-flash");
+        assert!(json_value["contents"].is_array());
+        assert!(json_value["generationConfig"].is_object());
+
+        // 验证注入后的结构符合 Gemini API 要求
+        assert!(json_value.as_object().unwrap().contains_key("project"));
+        assert!(json_value.as_object().unwrap().contains_key("model"));
+        assert!(json_value.as_object().unwrap().contains_key("contents"));
+    }
+
+    #[test]
+    fn test_inject_generatecontent_fields_existing_project_replacement() {
+        // 测试 project 字段已存在时的替换逻辑
+        let mut json_value = serde_json::json!({
+            "model": "gemini-2.5-flash",
+            "project": "old-project-id",
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Hello, how are you?"}]
+                }
+            ]
+        });
+
+        let new_project_id = "new-gemini-project";
+        let result = inject_generatecontent_fields(&mut json_value, new_project_id);
+
+        assert!(result);
+        assert_eq!(json_value["project"], new_project_id);
+        assert_eq!(json_value["model"], "gemini-2.5-flash");
+        assert!(json_value["contents"].is_array());
+
+        // 验证 project 字段被正确替换
+        assert_ne!(json_value["project"], "old-project-id");
+    }
+
+    #[test]
+    fn test_inject_generatecontent_fields_no_existing_project() {
+        // 测试 project 字段不存在时的添加逻辑
+        let mut json_value = serde_json::json!({
+            "model": "gemini-2.5-flash",
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Hello, how are you?"}]
+                }
+            ]
+        });
+
+        let project_id = "test-gemini-project";
+        let result = inject_generatecontent_fields(&mut json_value, project_id);
+
+        assert!(result);
+        assert_eq!(json_value["project"], project_id);
+        assert_eq!(json_value["model"], "gemini-2.5-flash");
+        assert!(json_value["contents"].is_array());
+
+        // 验证 project 字段被正确添加
+        assert!(json_value.as_object().unwrap().contains_key("project"));
     }
 
     #[test]

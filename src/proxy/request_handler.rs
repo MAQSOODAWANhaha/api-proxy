@@ -22,8 +22,8 @@ use crate::config::ProviderConfigManager;
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::pricing::PricingCalculatorService;
-use crate::proxy::{AuthenticationService, TracingService, ProxyContext};
 use crate::proxy::context::ResolvedCredential;
+use crate::proxy::{AuthenticationService, ProxyContext, TracingService};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::statistics::service::StatisticsService;
 use crate::trace::immediate::ImmediateProxyTracer;
@@ -68,7 +68,6 @@ pub struct RequestHandler {
 // ResponseDetails 的方法已迁移至 statistics::response 模块的 impl
 
 // Gemini 特定逻辑已迁移至 provider_strategy::GeminiStrategy
-
 
 // 已统一为 statistics::types::PartialUsage / TokenUsageMetrics
 
@@ -1151,6 +1150,7 @@ impl RequestHandler {
                 component = "proxy.headers",
                 request_id = ctx.request_id,
                 status_code = status_code,
+                response_body = ?String::from_utf8_lossy(&ctx.response_body),
                 "上游响应失败"
             );
         }
@@ -1337,11 +1337,19 @@ impl RequestHandler {
                 ))
             }
             _ => {
+                // 添加 HTTP/2 特定的错误诊断信息
+                let error_details =
+                    format!("Network error: {:?} - {:?}", error.etype, error.esource);
+                let is_h2_protocol = format!("{:?}", error.etype).contains("h2")
+                    || format!("{:?}", error.esource).contains("h2");
+
                 tracing::error!(
                     request_id = ctx.request_id,
                     provider = provider_name,
                     error_type = ?error.etype,
                     error_source = ?error.esource,
+                    error_details = error_details,
+                    is_h2_protocol = is_h2_protocol,
                     "Upstream error"
                 );
                 ProxyError::network(format!(
