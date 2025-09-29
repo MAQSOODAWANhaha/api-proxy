@@ -10,7 +10,7 @@ use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use crate::error::ProxyError;
 use crate::logging::LogComponent;
 use crate::proxy::context::ProxyContext;
-use crate::proxy_debug;
+use crate::proxy_info;
 use sea_orm::DatabaseConnection;
 
 /// 上游服务
@@ -52,25 +52,26 @@ impl UpstreamService {
             }
         });
 
-        proxy_debug!(
+        proxy_info!(
             &ctx.request_id,
             LogStage::UpstreamRequest,
             LogComponent::UpstreamService,
             "upstream_peer_selected",
             "上游节点选择完成",
             upstream = final_addr,
-            provider = provider_type.name
+            provider = provider_type.name,
+            provider_url = provider_type.base_url
         );
 
         let mut peer = HttpPeer::new(&final_addr, true, provider_type.base_url.clone());
 
-        let connection_timeout_secs = ctx.timeout_seconds.unwrap_or(30) as u64;
-        let total_timeout_secs = connection_timeout_secs + 5;
-        let read_timeout_secs = connection_timeout_secs * 2;
+        let timeout = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let total_timeout_secs = timeout + 5;
+        let read_timeout_secs = timeout * 2;
 
         if let Some(options) = peer.get_mut_peer_options() {
             options.alpn = ALPN::H2H1;
-            options.connection_timeout = Some(Duration::from_secs(connection_timeout_secs));
+            options.connection_timeout = Some(Duration::from_secs(timeout));
             options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
             options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
@@ -78,14 +79,14 @@ impl UpstreamService {
             options.max_h2_streams = 100;
         }
 
-        proxy_debug!(
+        proxy_info!(
             &ctx.request_id,
             LogStage::UpstreamRequest,
             LogComponent::UpstreamService,
             "peer_options_configured",
             "配置通用peer选项（动态超时）",
             provider = provider_type.name,
-            connection_timeout_s = connection_timeout_secs
+            connection_timeout_s = timeout
         );
 
         Ok(Box::new(peer))
