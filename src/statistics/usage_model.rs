@@ -194,10 +194,11 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                 }
                 Ok(None) => {
                     // flush EOF
-                    if let Ok(Some(ev)) = decoder.decode_eof(&mut BytesMut::new()) {
+                    if let Ok(Some(ev)) = decoder.decode_eof(&mut buf) {
                         let json = ev.data;
                         if !json.is_null() {
                             let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                            // 累加策略
                             stats.usage.prompt_tokens = Some(
                                 stats.usage.prompt_tokens.unwrap_or(0)
                                     + usage.prompt_tokens.unwrap_or(0),
@@ -207,8 +208,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                                     + usage.completion_tokens.unwrap_or(0),
                             );
                             stats.usage.total_tokens = Some(
-                                stats.usage.total_tokens.unwrap_or(0)
-                                    + usage.total_tokens.unwrap_or(0),
+                                stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0),
                             );
                             stats.usage.cache_create_tokens = Some(
                                 stats.usage.cache_create_tokens.unwrap_or(0)
