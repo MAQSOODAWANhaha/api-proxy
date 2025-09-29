@@ -10,7 +10,7 @@ use sea_orm::DatabaseConnection;
 
 use crate::auth::oauth_client::JWTParser;
 use crate::error::ProxyError;
-use crate::logging::LogComponent;
+use crate::logging::{self, LogComponent};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::proxy_info;
 
@@ -58,6 +58,7 @@ impl RequestTransformService {
             "request_transformed",
             "上游请求转换完成",
             method = upstream_request.method.to_string(),
+            request_headers = logging::headers_json_string_request(upstream_request),
             uri = upstream_request.uri.to_string()
         );
 

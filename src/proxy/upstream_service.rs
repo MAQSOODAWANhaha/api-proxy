@@ -63,7 +63,12 @@ impl UpstreamService {
             provider_url = provider_type.base_url
         );
 
-        let mut peer = HttpPeer::new(&final_addr, true, provider_type.base_url.clone());
+        let sni = final_addr
+            .split(':')
+            .next()
+            .unwrap_or(&final_addr)
+            .to_string();
+        let mut peer = HttpPeer::new(&final_addr, true, sni);
 
         let timeout = ctx.timeout_seconds.unwrap_or(30) as u64;
         let total_timeout_secs = timeout + 5;
@@ -86,7 +91,7 @@ impl UpstreamService {
             "peer_options_configured",
             "配置通用peer选项（动态超时）",
             provider = provider_type.name,
-            connection_timeout_s = timeout
+            timeout = timeout,
         );
 
         Ok(Box::new(peer))

@@ -5,7 +5,7 @@
 
 use super::ProviderStrategy;
 use crate::error::ProxyError;
-use crate::logging::LogComponent;
+use crate::logging::{self, LogComponent};
 use crate::proxy::ProxyContext;
 use crate::proxy_info;
 use pingora_http::RequestHeader;
@@ -90,9 +90,10 @@ impl ProviderStrategy for GeminiStrategy {
                 )));
             }
 
-            tracing::debug!(
+            tracing::info!(
                 request_id = ctx.request_id,
-                host = host,
+                request_headers = logging::headers_json_string_request(upstream_request),
+                request_body = String::from_utf8_lossy(&ctx.request_body).to_string(),
                 "Set correct Host header for Gemini provider"
             );
         }
@@ -104,7 +105,8 @@ impl ProviderStrategy for GeminiStrategy {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
                         let need = path.contains("streamGenerateContent")
-                            || (path.contains("generateContent"));
+                            || path.contains("generateContent")
+                            || path.contains("loadCodeAssist");
                         ctx.will_modify_body = need;
                     }
                 }

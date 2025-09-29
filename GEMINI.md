@@ -32,14 +32,9 @@ Both services share a common data layer consisting of a SQLite database and a Re
     cd api-proxy
     ```
 
-2.  **Initialize the database:**
-    ```bash
-    cargo run --bin migration up
-    ```
-
 3.  **Start the services (dual-port mode):**
     ```bash
-    cargo run
+    cargo run --bin api-proxy
     ```
 
     *   The Pingora proxy service will be available at `http://localhost:8080`.
