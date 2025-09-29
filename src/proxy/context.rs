@@ -109,23 +109,4 @@ impl Default for ProxyContext {
 }
 
 impl ProxyContext {
-    pub async fn add_body_chunk(&self, chunk: &[u8]) {
-        if let Ok(mut body) = self.response_body.lock() {
-            body.extend_from_slice(chunk);
-        }
-    }
-
-    pub async fn clear_body_chunks(&self) {
-        if let Ok(mut body) = self.response_body.lock() {
-            let cleared_bytes = body.len();
-            if cleared_bytes > 0 {
-                body.clear();
-                tracing::debug!(
-                    component = "statistics.collector",
-                    cleared_bytes,
-                    "Clearing collected body chunks to reduce memory"
-                );
-            }
-        }
-    }
 }

@@ -8,7 +8,6 @@ use pingora_core::protocols::Digest;
 use pingora_core::{ErrorType, prelude::*, upstreams::peer::HttpPeer};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
-use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -357,52 +356,12 @@ struct DefaultRequestBodyService;
 impl RequestBodyService for DefaultRequestBodyService {
     async fn exec(
         &self,
-        ai: &RequestHandler,
-        session: &mut Session,
-        body_chunk: &mut Option<Bytes>,
-        end_of_stream: bool,
-        ctx: &mut ProxyContext,
+        _request: &RequestHandler,
+        _session: &mut Session,
+        _body_chunk: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        _ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
-        if let Some(bytes) = body_chunk.take() {
-            if let Ok(mut request_body) = ctx.request_body.lock() {
-                request_body.extend_from_slice(&bytes);
-            }
-        }
-
-        if end_of_stream {
-            let request_body_data = match ctx.request_body.lock() {
-                Ok(body) => body.clone(),
-                Err(e) => {
-                    error!(request_id = %ctx.request_id, error = %e, "Failed to lock request body for modification");
-                    return Ok(());
-                }
-            };
-
-            if let Ok(mut json_value) = serde_json::from_slice::<Value>(&request_body_data) {
-                match ai
-                    .modify_provider_request_body_json(&mut json_value, session, ctx)
-                    .await
-                {
-                    Ok(modified) => {
-                        if modified {
-                            if let Ok(mut body) = ctx.request_body.lock() {
-                                body.clear();
-                                if let Ok(serialized) = serde_json::to_vec(&json_value) {
-                                    body.extend_from_slice(&serialized);
-                                } else {
-                                    error!(request_id = %ctx.request_id, "Failed to serialize modified JSON");
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!(request_id = %ctx.request_id, error = %e, "Failed to modify request body");
-                    }
-                }
-            } else {
-                warn!(request_id = %ctx.request_id, "Failed to parse body as JSON, forwarding original");
-            }
-        }
         Ok(())
     }
 }
@@ -477,7 +436,7 @@ impl ResponseBodyService for DefaultResponseBodyService {
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
-            // 直接操作内部数据，因为add_body_chunk现在是异步的
+            // 直接操作内部数据
             if let Ok(mut body_mutex) = ctx.response_body.lock() {
                 body_mutex.extend_from_slice(data);
             }
@@ -1186,20 +1145,21 @@ impl ProxyHttp for ProxyService {
             svc.exec(&self.request, session, upstream_request, ctx)
                 .await?;
         }
+
         Ok(())
     }
 
     async fn request_body_filter(
         &self,
-        session: &mut Session,
-        body_chunk: &mut Option<Bytes>,
-        end_of_stream: bool,
-        ctx: &mut Self::CTX,
+        _session: &mut Session,
+        _body_chunk: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        _ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        for svc in &self.request_body_services {
+        /* for svc in &self.request_body_services {
             svc.exec(&self.request, session, body_chunk, end_of_stream, ctx)
                 .await?;
-        }
+        } */
         Ok(())
     }
 
@@ -1427,8 +1387,7 @@ impl ProxyHttp for ProxyService {
             );
         }
 
-        // 注意：clear_body_chunks 现在是异步的，但我们在同步上下文中
-        // 这里暂时直接清空，避免异步调用
+        // 直接清空响应体缓冲区
         if let Ok(mut body) = ctx.response_body.lock() {
             body.clear();
         }
