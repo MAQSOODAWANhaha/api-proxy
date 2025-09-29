@@ -3,7 +3,7 @@
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use pingora_core::prelude::*;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
@@ -172,30 +172,100 @@ impl ProxyHttp for ProxyService {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body_chunk: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        if let Some(chunk) = body_chunk.take() {
-            ctx.request_body.extend_from_slice(&chunk);
+        // 收集所有 body 数据
+        if let Some(chunk) = body_chunk.as_ref() {
+            ctx.request_body.extend_from_slice(chunk);
+            
+            // 记录接收到的数据
+            tracing::debug!(
+                request_id = %ctx.request_id,
+                chunk_size = chunk.len(),
+                total_size = ctx.request_body.len(),
+                end_of_stream = end_of_stream,
+                "接收请求体数据块"
+            );
         }
 
-        if end_of_stream && !ctx.request_body.is_empty() {
-            if let (Ok(mut json_value), Some(strategy)) = (
-                serde_json::from_slice::<Value>(&ctx.request_body),
-                &ctx.strategy,
-            ) {
-                if let Ok(true) = strategy
-                    .modify_request_body_json(_session, ctx, &mut json_value)
-                    .await
-                {
-                    if let Ok(serialized) = serde_json::to_vec(&json_value) {
-                        *body_chunk = Some(Bytes::from(serialized));
+        // 只在流结束时处理完整的 body
+        if end_of_stream {
+            tracing::info!(
+                request_id = %ctx.request_id,
+                body_size = ctx.request_body.len(),
+                has_strategy = ctx.strategy.is_some(),
+                will_modify = ctx.will_modify_body,
+                "请求体接收完成，准备处理"
+            );
+
+            // 确保有完整的 body 数据才进行 JSON 修改
+            if !ctx.request_body.is_empty() && ctx.will_modify_body {
+                if let Some(strategy) = &ctx.strategy {
+                    match serde_json::from_slice::<Value>(&ctx.request_body) {
+                        Ok(mut json_value) => {
+                            match strategy
+                                .modify_request_body_json(session, ctx, &mut json_value)
+                                .await
+                            {
+                                Ok(true) => {
+                                    match serde_json::to_vec(&json_value) {
+                                        Ok(serialized) => {
+                                            tracing::info!(
+                                                request_id = %ctx.request_id,
+                                                original_size = ctx.request_body.len(),
+                                                modified_size = serialized.len(),
+                                                "JSON 请求体修改成功"
+                                            );
+                                            
+                                            // 更新 body 并重新设置到 chunk
+                                            ctx.request_body = BytesMut::from(serialized.as_slice());
+                                            *body_chunk = Some(Bytes::from(serialized));
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                request_id = %ctx.request_id,
+                                                error = %e,
+                                                "序列化修改后的 JSON 失败"
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(false) => {
+                                    tracing::debug!(
+                                        request_id = %ctx.request_id,
+                                        "策略选择不修改请求体"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        request_id = %ctx.request_id,
+                                        error = %e,
+                                        "执行请求体修改策略失败"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                request_id = %ctx.request_id,
+                                error = %e,
+                                body_preview = %String::from_utf8_lossy(&ctx.request_body[..std::cmp::min(500, ctx.request_body.len())]),
+                                "解析请求体 JSON 失败"
+                            );
+                        }
                     }
                 }
+            } else if ctx.request_body.is_empty() && ctx.will_modify_body {
+                tracing::warn!(
+                    request_id = %ctx.request_id,
+                    "策略期望修改请求体，但请求体为空"
+                );
             }
         }
+
         Ok(())
     }
 

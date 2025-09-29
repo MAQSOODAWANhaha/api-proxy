@@ -176,7 +176,23 @@ impl RequestTransformService {
     ) {
         let is_sse = session.req_header().uri.path().contains("stream"); // Simplified check
 
-        if ctx.will_modify_body || is_sse {
+        if ctx.will_modify_body && !ctx.request_body.is_empty() {
+            // 如果请求体被修改了，需要更新 Content-Length
+            let new_length = ctx.request_body.len().to_string();
+            if let Err(e) = upstream_request.insert_header("content-length", &new_length) {
+                tracing::error!(
+                    request_id = %ctx.request_id,
+                    error = %e,
+                    "更新 Content-Length 头失败"
+                );
+            } else {
+                tracing::debug!(
+                    request_id = %ctx.request_id,
+                    new_length = new_length,
+                    "已更新 Content-Length 头"
+                );
+            }
+        } else if ctx.will_modify_body || is_sse {
             upstream_request.remove_header("content-length");
         } else {
             let method = upstream_request.method.as_str();
