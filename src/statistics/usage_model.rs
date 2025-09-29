@@ -132,11 +132,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         .unwrap_or("")
         .to_ascii_lowercase();
     let encoding = ctx.response_details.content_encoding.as_deref();
-    let raw = if let Ok(body) = ctx.response_body.lock() {
-        body.clone()
-    } else {
-        BytesMut::new()
-    };
+    let raw = ctx.response_body.clone();
 
     // 无正文：置零并回退模型
     if raw.is_empty() {

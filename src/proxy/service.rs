@@ -8,6 +8,7 @@ use pingora_core::protocols::Digest;
 use pingora_core::{ErrorType, prelude::*, upstreams::peer::HttpPeer};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -356,12 +357,46 @@ struct DefaultRequestBodyService;
 impl RequestBodyService for DefaultRequestBodyService {
     async fn exec(
         &self,
-        _request: &RequestHandler,
-        _session: &mut Session,
-        _body_chunk: &mut Option<Bytes>,
-        _end_of_stream: bool,
-        _ctx: &mut ProxyContext,
+        ai: &RequestHandler,
+        session: &mut Session,
+        body_chunk: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut ProxyContext,
     ) -> pingora_core::Result<()> {
+        if let Some(chunk) = body_chunk.take() {
+            info!(request_id = %ctx.request_id, chunk_size = chunk.len(), end_of_stream = end_of_stream, "Received request body chunk");
+            ctx.request_body.extend_from_slice(&chunk);
+        }
+
+        if end_of_stream && !ctx.request_body.is_empty() {
+            info!(
+                "Processing complete request body: {} bytes",
+                ctx.request_body.len()
+            );
+            if let Ok(mut json_value) = serde_json::from_slice::<Value>(&ctx.request_body) {
+                match ai
+                    .modify_provider_request_body_json(&mut json_value, session, ctx)
+                    .await
+                {
+                    Ok(modified) => {
+                        if modified {
+                            if let Ok(serialized) = serde_json::to_vec(&json_value) {
+                                *body_chunk = Some(Bytes::from(serialized));
+                                info!(request_id = %ctx.request_id, "Request body JSON was modified and replaced");
+                            } else {
+                                error!(request_id = %ctx.request_id, "Failed to serialize modified JSON");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(request_id = %ctx.request_id, error = %e, "Failed to modify request body");
+                    }
+                }
+            } else {
+                debug!(request_id = %ctx.request_id, "Request body is not JSON, forwarding as-is");
+            }
+        }
+
         Ok(())
     }
 }
@@ -432,40 +467,25 @@ impl ResponseBodyService for DefaultResponseBodyService {
     fn exec(
         &self,
         body: &mut Option<bytes::Bytes>,
-        _end_of_stream: bool,
+        end_of_stream: bool,
         ctx: &mut ProxyContext,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
-        if let Some(data) = body {
-            // 直接操作内部数据
-            if let Ok(mut body_mutex) = ctx.response_body.lock() {
-                body_mutex.extend_from_slice(data);
-            }
+        // 直接操作内部数据
+        if let Some(chunk) = body.take() {
+            info!(request_id = %ctx.request_id, chunk_size = chunk.len(), end_of_stream = end_of_stream, "Received request body chunk");
+            ctx.response_body.extend_from_slice(&chunk);
+        }
 
-            // 只在响应体完全接收后记录错误响应日志
-            if _end_of_stream {
-                if let Some(status_code) = ctx.response_details.status_code {
-                    let has_body = if let Ok(body_mutex) = ctx.response_body.lock() {
-                        !body_mutex.is_empty()
-                    } else {
-                        false
-                    };
-
-                    if status_code >= 400 && has_body {
-                        let path = &ctx.request_details.path;
-                        let body_data = if let Ok(body_mutex) = ctx.response_body.lock() {
-                            body_mutex.to_vec()
-                        } else {
-                            Vec::new()
-                        };
-
-                        crate::logging::log_error_response(
-                            &ctx.request_id,
-                            path,
-                            status_code,
-                            &pingora_http::ResponseHeader::build(200, None).unwrap(), // 构建空的响应头
-                            &body_data,
-                        );
-                    }
+        // 只在响应体完全接收后记录错误响应日志
+        if end_of_stream {
+            if let Some(status_code) = ctx.response_details.status_code {
+                if status_code >= 400 {
+                    crate::logging::log_error_response(
+                        &ctx.request_id,
+                        &ctx.request_details.path,
+                        status_code,
+                        &ctx.response_body,
+                    );
                 }
             }
         }
@@ -1151,15 +1171,15 @@ impl ProxyHttp for ProxyService {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
-        _body_chunk: &mut Option<Bytes>,
-        _end_of_stream: bool,
-        _ctx: &mut Self::CTX,
+        session: &mut Session,
+        body_chunk: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        /* for svc in &self.request_body_services {
+        for svc in &self.request_body_services {
             svc.exec(&self.request, session, body_chunk, end_of_stream, ctx)
                 .await?;
-        } */
+        }
         Ok(())
     }
 
@@ -1388,8 +1408,6 @@ impl ProxyHttp for ProxyService {
         }
 
         // 直接清空响应体缓冲区
-        if let Ok(mut body) = ctx.response_body.lock() {
-            body.clear();
-        }
+        ctx.response_body.clear();
     }
 }

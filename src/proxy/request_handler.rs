@@ -1110,8 +1110,8 @@ impl RequestHandler {
             provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
-            body = ?if let Ok(body_guard) = ctx.request_body.lock() {
-                String::from_utf8_lossy(&body_guard.clone()).to_string()
+            body = ?if !ctx.request_body.is_empty() {
+                String::from_utf8_lossy(&ctx.request_body).to_string()
             } else {
                 "".to_string()
             },

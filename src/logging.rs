@@ -770,12 +770,8 @@ pub async fn log_complete_request(
     ctx: &ProxyContext,
 ) {
     // 读取请求体
-    let request_body = if let Ok(body) = ctx.request_body.lock() {
-        if !body.is_empty() {
-            String::from_utf8_lossy(&body).to_string()
-        } else {
-            "".to_string()
-        }
+    let request_body = if !ctx.request_body.is_empty() {
+        String::from_utf8_lossy(&ctx.request_body).to_string()
     } else {
         "".to_string()
     };
@@ -827,19 +823,12 @@ pub fn log_complete_response(
 }
 
 /// 记录错误响应信息（状态码 >= 400）
-pub fn log_error_response(
-    request_id: &str,
-    path: &str,
-    status_code: u16,
-    response_header: &ResponseHeader,
-    response_body: &[u8],
-) {
+pub fn log_error_response(request_id: &str, path: &str, status_code: u16, response_body: &[u8]) {
     tracing::info!(
         target: "error_response",
         request_id = %request_id,
         path = %path,
         status_code = %status_code,
-        response_headers = ?response_header,
         response_body = %String::from_utf8_lossy(response_body),
         operation = "error_response",
         "=== ERROR RESPONSE ==="

@@ -352,11 +352,7 @@ impl StatisticsService {
 
     /// 尝试从请求体直接提取模型（fallback方法）
     pub fn extract_model_from_request_body_fallback(&self, ctx: &ProxyContext) -> Option<String> {
-        let body_data = if let Ok(body) = ctx.request_body.lock() {
-            body.clone()
-        } else {
-            return None;
-        };
+        let body_data = ctx.request_body.clone();
 
         tracing::debug!(
             component = "statistics.service",
@@ -433,11 +429,7 @@ impl StatisticsService {
 
     /// 解析请求体用于模型提取
     pub fn parse_request_body_for_model(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
-        let body_data = if let Ok(body) = ctx.request_body.lock() {
-            body.clone()
-        } else {
-            return None;
-        };
+        let body_data = ctx.request_body.clone();
 
         if body_data.is_empty() {
             return None;

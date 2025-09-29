@@ -324,10 +324,8 @@ impl ResponseBodyService for OpenAIStrategy {
             return Ok(None);
         }
 
-        if let Ok(body) = ctx.response_body.lock() {
-            if !body.is_empty() {
-                self.handle_429_immediately(&body, ctx);
-            }
+        if !ctx.response_body.is_empty() {
+            self.handle_429_immediately(&ctx.response_body, ctx);
         }
 
         Ok(None)

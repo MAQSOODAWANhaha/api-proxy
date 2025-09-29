@@ -3,7 +3,6 @@
 //! 包含代理请求处理过程中使用的上下文类型定义
 
 use bytes::BytesMut;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::statistics::types::TokenUsageMetrics;
@@ -61,9 +60,9 @@ pub struct ProxyContext {
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
     /// 请求体缓冲区 (用于request_body_filter中的数据收集)
-    pub request_body: Arc<Mutex<BytesMut>>,
+    pub request_body: BytesMut,
     /// 响应体缓冲区 (用于response_body_filter中的数据收集)
-    pub response_body: Arc<Mutex<BytesMut>>,
+    pub response_body: BytesMut,
     /// 是否计划修改请求体（供上游头部处理决策使用）
     pub will_modify_body: bool,
     /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
@@ -93,8 +92,8 @@ impl Default for ProxyContext {
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
             timeout_seconds: None,
-            request_body: Arc::new(Mutex::new(BytesMut::new())),
-            response_body: Arc::new(Mutex::new(BytesMut::new())),
+            request_body: BytesMut::new(),
+            response_body: BytesMut::new(),
             will_modify_body: false,
             resolved_credential: None,
             account_id: None,
@@ -108,5 +107,4 @@ impl Default for ProxyContext {
     }
 }
 
-impl ProxyContext {
-}
+impl ProxyContext {}
