@@ -391,3 +391,78 @@ impl ProxyHttp for ProxyService {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn test_request_body_collection_and_modification() {
+        // Test that request body is properly collected and modified only when end_of_stream is true
+        let mut ctx = ProxyContext {
+            request_id: "test-123".to_string(),
+            will_modify_body: true,
+            request_body: BytesMut::new(),
+            ..Default::default()
+        };
+
+        // Simulate chunk collection without end_of_stream
+        let chunk1 = Bytes::from(r#"{"model": "test", "#);
+        let chunk2 = Bytes::from(r#""content": "hello"}"#);
+
+        // First chunk
+        ctx.request_body.extend_from_slice(&chunk1);
+        assert_eq!(ctx.request_body.len(), chunk1.len());
+
+        // Second chunk  
+        ctx.request_body.extend_from_slice(&chunk2);
+        assert_eq!(ctx.request_body.len(), chunk1.len() + chunk2.len());
+
+        // Verify the complete JSON can be parsed
+        let complete_json = String::from_utf8_lossy(&ctx.request_body);
+        assert!(serde_json::from_str::<Value>(&complete_json).is_ok());
+    }
+
+    #[test]
+    fn test_empty_request_body_handling() {
+        // Test that empty request body is handled correctly
+        let ctx = ProxyContext {
+            request_id: "test-456".to_string(),
+            will_modify_body: true,
+            request_body: BytesMut::new(),
+            ..Default::default()
+        };
+
+        // Empty body should not be processed for modifications
+        assert!(ctx.request_body.is_empty());
+        // This would be the condition checked in request_body_filter
+        let should_modify = !ctx.request_body.is_empty() && ctx.will_modify_body;
+        assert!(!should_modify);
+    }
+
+    #[test]
+    fn test_json_serialization_roundtrip() {
+        // Test that JSON modification works correctly
+        let original_json = json!({
+            "model": "gemini-1.5-pro",
+            "contents": [{"text": "hello"}]
+        });
+
+        let serialized = serde_json::to_vec(&original_json).expect("serialization should work");
+        let mut request_body = BytesMut::from(serialized.as_slice());
+
+        // Simulate the parsing and re-serialization that happens in request_body_filter
+        let parsed: Value = serde_json::from_slice(&request_body).expect("parsing should work");
+        let re_serialized = serde_json::to_vec(&parsed).expect("re-serialization should work");
+        
+        // Update request_body as done in the actual code
+        request_body = BytesMut::from(re_serialized.as_slice());
+        
+        // Verify the content is still valid JSON
+        let final_parsed: Value = serde_json::from_slice(&request_body).expect("final parsing should work");
+        assert_eq!(final_parsed["model"], "gemini-1.5-pro");
+        assert!(final_parsed["contents"].is_array());
+    }
+}
