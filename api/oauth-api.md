@@ -31,7 +31,7 @@
 | 参数名 | 类型 | 必填 | 描述 |
 |--------|------|------|------|
 | provider_type_id | int | 是 | 服务商类型ID |
-| auth_type | string | 是 | 认证类型 (oauth2, google_oauth等) |
+| auth_type | string | 是 | 认证类型 (oauth) |
 | name | string | 是 | API Key名称 |
 | description | string | 否 | 描述信息 |
 | redirect_uri | string | 否 | 重定向URI，默认使用系统配置 |

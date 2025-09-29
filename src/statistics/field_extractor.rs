@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
-use tracing::{debug};
+use tracing::debug;
 
 /// Token字段映射类型
 #[derive(Debug, Clone, PartialEq)]
@@ -121,10 +121,9 @@ impl TokenMapping {
                     .get("true_value")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'true_value' field for conditional mapping"))?;
-                let false_value = config
-                    .get("false_value")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Missing 'false_value' field for conditional mapping"))?;
+                let false_value = config.get("false_value").cloned().ok_or_else(|| {
+                    anyhow!("Missing 'false_value' field for conditional mapping")
+                })?;
 
                 // 解析可选的fallback
                 let fallback = if let Some(fallback_config) = config.get("fallback") {
@@ -148,7 +147,9 @@ impl TokenMapping {
                 let paths = config
                     .get("paths")
                     .and_then(|v| v.as_array())
-                    .ok_or_else(|| anyhow!("Missing or invalid 'paths' field for fallback mapping"))?;
+                    .ok_or_else(|| {
+                        anyhow!("Missing or invalid 'paths' field for fallback mapping")
+                    })?;
 
                 let mut path_strings = Vec::new();
                 for path in paths {
@@ -428,7 +429,12 @@ impl TokenFieldExtractor {
                     Some(value.clone())
                 }
             }
-            TokenMapping::Conditional { condition, true_value, false_value, fallback } => {
+            TokenMapping::Conditional {
+                condition,
+                true_value,
+                false_value,
+                fallback,
+            } => {
                 let result = if self.evaluate_condition(response, condition) {
                     self.json_path_lookup(response, true_value)
                         .or_else(|| Some(Value::String(true_value.clone())))
@@ -609,19 +615,28 @@ impl ModelExtractor {
                 match r#type {
                     "body_json" => {
                         if let Some(path) = item.get("path").and_then(|x| x.as_str()) {
-                            rules.push(ModelRule::BodyJson { path: path.to_string(), priority: prio });
+                            rules.push(ModelRule::BodyJson {
+                                path: path.to_string(),
+                                priority: prio,
+                            });
                         }
                     }
                     "url_regex" => {
                         if let Some(pattern) = item.get("pattern").and_then(|x| x.as_str()) {
                             if let Ok(re) = Regex::new(pattern) {
-                                rules.push(ModelRule::UrlRegex { pattern: re, priority: prio });
+                                rules.push(ModelRule::UrlRegex {
+                                    pattern: re,
+                                    priority: prio,
+                                });
                             }
                         }
                     }
                     "query_param" => {
                         if let Some(name) = item.get("parameter").and_then(|x| x.as_str()) {
-                            rules.push(ModelRule::QueryParam { name: name.to_string(), priority: prio });
+                            rules.push(ModelRule::QueryParam {
+                                name: name.to_string(),
+                                priority: prio,
+                            });
                         }
                     }
                     _ => {}
@@ -629,9 +644,19 @@ impl ModelExtractor {
             }
         }
         // priority 小的优先
-        rules.sort_by_key(|r| match r { ModelRule::BodyJson{priority, ..} | ModelRule::UrlRegex{priority, ..} | ModelRule::QueryParam{priority, ..} => *priority });
-        let fallback_model = v.get("fallback_model").and_then(|x| x.as_str()).map(|s| s.to_string());
-        Ok(Self { rules, fallback_model })
+        rules.sort_by_key(|r| match r {
+            ModelRule::BodyJson { priority, .. }
+            | ModelRule::UrlRegex { priority, .. }
+            | ModelRule::QueryParam { priority, .. } => *priority,
+        });
+        let fallback_model = v
+            .get("fallback_model")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+        Ok(Self {
+            rules,
+            fallback_model,
+        })
     }
 
     pub fn extract_model_name(
@@ -644,27 +669,39 @@ impl ModelExtractor {
             match rule {
                 ModelRule::BodyJson { path, .. } => {
                     if let Some(val) = body_json.and_then(|v| json_path_lookup(v, path)) {
-                        if let Some(s) = val.as_str() { return s.to_string(); }
+                        if let Some(s) = val.as_str() {
+                            return s.to_string();
+                        }
                     }
                 }
                 ModelRule::UrlRegex { pattern, .. } => {
                     if let Some(cap) = pattern.captures(url_path) {
-                        if let Some(m) = cap.get(1) { return m.as_str().to_string(); }
+                        if let Some(m) = cap.get(1) {
+                            return m.as_str().to_string();
+                        }
                     }
                 }
                 ModelRule::QueryParam { name, .. } => {
-                    if let Some(v) = query_params.get(name) { return v.clone(); }
+                    if let Some(v) = query_params.get(name) {
+                        return v.clone();
+                    }
                 }
             }
         }
-        self.fallback_model.clone().unwrap_or_else(|| "unknown".to_string())
+        self.fallback_model
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string())
     }
 }
 
 fn json_path_lookup(v: &Value, path: &str) -> Option<Value> {
     let mut cur = v;
     for seg in path.split('.') {
-        if let Ok(idx) = seg.parse::<usize>() { cur = cur.get(idx)?; } else { cur = cur.get(seg)?; }
+        if let Ok(idx) = seg.parse::<usize>() {
+            cur = cur.get(idx)?;
+        } else {
+            cur = cur.get(seg)?;
+        }
     }
     Some(cur.clone())
 }

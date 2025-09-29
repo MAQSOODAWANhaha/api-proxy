@@ -90,7 +90,7 @@
 | provider | string | 服务商名称（通过provider_type_id关联查询） |
 | name | string | 密钥名称 |
 | api_key | string | API密钥值（已掉码处理），仅在api_key认证类型时显示 |
-| auth_type | string | 认证类型（api_key/oauth2/google_oauth/service_account/adc） |
+| auth_type | string | 认证类型（api_key/oauth） |
 | auth_status | string | 认证状态（active/expired/error/pending） |
 | auth_config_json | object \| null | OAuth认证配置信息，仅OAuth类型使用 |
 | expires_at | string \| null | OAuth令牌过期时间（ISO 8601格式） |
@@ -154,25 +154,6 @@
 }
 ```
 
-#### Google OAuth 认证类型示例
-```json
-{
-    "provider_type_id": 3,
-    "name": "Google AI OAuth",
-    "auth_type": "google_oauth",
-    "api_key": null,
-    "auth_config_json": {
-        "client_id": "your-google-client-id.googleusercontent.com",
-        "client_secret": "your-google-client-secret",
-        "redirect_uri": "http://localhost:3000/oauth/google/callback",
-        "scopes": "https://www.googleapis.com/auth/generative-language"
-    },
-    "weight": 1,
-    "max_requests_per_minute": 60,
-    "max_tokens_prompt_per_minute": 1000,
-    "max_requests_per_day": 10000,
-    "is_active": true
-}
 ```
 
 ### 请求字段说明
@@ -180,7 +161,7 @@
 |--------|------|------|------|
 | provider_type_id | int | 是 | 服务商类型id |
 | name | string | 是 | 密钥名称 |
-| auth_type | string | 是 | 认证类型（api_key/oauth2/google_oauth/service_account/adc） |
+| auth_type | string | 是 | 认证类型（api_key/oauth） |
 | api_key | string \| null | 有条件 | API密钥值，仅api_key类型必填 |
 | auth_config_json | object \| null | 有条件 | OAuth认证配置，仅OAuth类型必填 |
 | weight | int | 否 | 权重，默认1 |

@@ -48,18 +48,12 @@
                 "description": "Google Gemini系列模型",
                 "is_active": true,
                 "supported_models": ["gemini-pro", "gemini-pro-vision"],
-                "supported_auth_types": ["api_key", "google_oauth", "service_account", "adc"],
+                "supported_auth_types": ["api_key", "oauth"],
                 "auth_configs": {
                     "api_key": {},
-                    "google_oauth": {
+                    "oauth": {
                         "authorize_url": "https://accounts.google.com/o/oauth2/auth",
-                        "scopes": "https://www.googleapis.com/auth/generative-language"
-                    },
-                    "service_account": {
                         "token_url": "https://oauth2.googleapis.com/token",
-                        "scopes": "https://www.googleapis.com/auth/generative-language"
-                    },
-                    "adc": {
                         "scopes": "https://www.googleapis.com/auth/generative-language"
                     }
                 },
@@ -109,10 +103,7 @@
 | 类型 | 描述 |
 |------|------|
 | api_key | API密钥认证 |
-| oauth2 | OAuth 2.0认证 |
-| google_oauth | Google OAuth认证 |
-| service_account | Google服务账户认证 |
-| adc | Google应用默认凭据认证 |
+| oauth | OAuth 2.0认证 |
 
 ---
 

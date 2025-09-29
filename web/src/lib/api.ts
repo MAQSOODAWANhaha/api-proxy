@@ -238,7 +238,7 @@ export interface ProviderKey {
   provider: string
   name: string
   api_key: string
-  auth_type: string // "api_key", "oauth", "service_account", "adc"
+  auth_type: string // "api_key", "oauth"
   weight: number
   max_requests_per_minute: number
   max_tokens_prompt_per_minute: number
@@ -282,7 +282,7 @@ export interface CreateProviderKeyRequest {
   provider_type_id: number
   name: string
   api_key?: string
-  auth_type: string // "api_key", "oauth", "service_account", "adc"
+  auth_type: string // "api_key", "oauth"
   weight?: number
   max_requests_per_minute?: number
   max_tokens_prompt_per_minute?: number
@@ -301,7 +301,7 @@ export interface UpdateProviderKeyRequest {
   provider_type_id: number
   name: string
   api_key?: string
-  auth_type: string // "api_key", "oauth", "service_account", "adc"
+  auth_type: string // "api_key", "oauth"
   weight?: number
   max_requests_per_minute?: number
   max_tokens_prompt_per_minute?: number

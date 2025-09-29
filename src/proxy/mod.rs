@@ -27,8 +27,8 @@ pub use crate::statistics::types::{RequestDetails, ResponseDetails};
 pub use crate::statistics::types::{RequestStats, ResponseStats};
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
-pub use pingora_proxy::PingoraProxyServer;
 pub use context::{AuthContext, ProxyContext};
+pub use pingora_proxy::PingoraProxyServer;
 pub use request_handler::RequestHandler;
 pub use service::ProxyService;
 pub use tracing_service::{TracingContextHelper, TracingService};
@@ -37,8 +37,8 @@ pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 /// 统一导入集合（建议上层使用）
 pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
-    pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
     pub use super::context::{AuthContext, ProxyContext};
+    pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
     pub use super::request_handler::RequestHandler;
     pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};

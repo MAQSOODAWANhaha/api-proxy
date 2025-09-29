@@ -468,13 +468,13 @@ impl GeminiCodeAssistClient {
         let mut last_error = None;
 
         while retry_count < MAX_RETRIES {
-            match self.onboard_user(access_token, project_id, tier_id, client_metadata).await {
+            match self
+                .onboard_user(access_token, project_id, tier_id, client_metadata)
+                .await
+            {
                 Ok(response) => {
                     if retry_count > 0 {
-                        tracing::info!(
-                            "onboardUser在第{}次重试后成功",
-                            retry_count
-                        );
+                        tracing::info!("onboardUser在第{}次重试后成功", retry_count);
                     }
                     return Ok(response);
                 }
@@ -506,9 +506,9 @@ impl GeminiCodeAssistClient {
         }
 
         // 所有重试都失败了，返回最后一个错误
-        Err(ProxyError::gemini_code_assist(last_error.unwrap_or_else(|| {
-            "onboardUser重试失败，但没有具体的错误信息".to_string()
-        })))
+        Err(ProxyError::gemini_code_assist(last_error.unwrap_or_else(
+            || "onboardUser重试失败，但没有具体的错误信息".to_string(),
+        )))
     }
 
     /// 自动获取project_id（带重试机制）
@@ -547,12 +547,10 @@ impl GeminiCodeAssistClient {
         let tier_id = self.get_tier_id_from_load_response(&load_response);
         tracing::debug!("从loadCodeAssist获取到tierId: {}", tier_id);
 
-        let onboard_response = match self.onboard_user_with_retry(
-            access_token,
-            None,
-            Some(tier_id),
-            None
-        ).await {
+        let onboard_response = match self
+            .onboard_user_with_retry(access_token, None, Some(tier_id), None)
+            .await
+        {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("onboardUser重试调用失败: {}", e);

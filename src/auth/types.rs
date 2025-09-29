@@ -369,10 +369,6 @@ pub enum AuthType {
     ApiKey,
     /// 统一OAuth认证策略（支持所有OAuth 2.0提供商）
     OAuth,
-    /// Google服务账户认证策略
-    ServiceAccount,
-    /// Google应用默认凭据策略
-    Adc,
 }
 
 impl fmt::Display for AuthType {
@@ -380,8 +376,6 @@ impl fmt::Display for AuthType {
         match self {
             AuthType::ApiKey => write!(f, "api_key"),
             AuthType::OAuth => write!(f, "oauth"),
-            AuthType::ServiceAccount => write!(f, "service_account"),
-            AuthType::Adc => write!(f, "adc"),
         }
     }
 }
@@ -392,8 +386,6 @@ impl AuthType {
         match s.to_lowercase().as_str() {
             "api_key" => Some(AuthType::ApiKey),
             "oauth" => Some(AuthType::OAuth),
-            "service_account" => Some(AuthType::ServiceAccount),
-            "adc" => Some(AuthType::Adc),
             _ => None,
         }
     }
@@ -643,16 +635,12 @@ mod tests {
     fn test_auth_type_display() {
         assert_eq!(AuthType::ApiKey.to_string(), "api_key");
         assert_eq!(AuthType::OAuth.to_string(), "oauth");
-        assert_eq!(AuthType::ServiceAccount.to_string(), "service_account");
-        assert_eq!(AuthType::Adc.to_string(), "adc");
     }
 
     #[test]
     fn test_auth_type_from() {
         assert_eq!(AuthType::from("api_key"), Some(AuthType::ApiKey));
         assert_eq!(AuthType::from("oauth"), Some(AuthType::OAuth));
-        assert_eq!(AuthType::from("service_account"), Some(AuthType::ServiceAccount));
-        assert_eq!(AuthType::from("adc"), Some(AuthType::Adc));
         assert_eq!(AuthType::from("API_KEY"), Some(AuthType::ApiKey)); // 测试大小写
         assert_eq!(AuthType::from("unknown"), None); // 未知类型返回 None
     }

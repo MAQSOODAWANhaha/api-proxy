@@ -6,11 +6,7 @@ use std::time::Instant;
 
 use crate::statistics::types::TokenUsageMetrics;
 use crate::statistics::types::{RequestDetails, ResponseDetails};
-use entity::{
-    provider_types,
-    user_provider_keys,
-    user_service_apis,
-};
+use entity::{provider_types, user_provider_keys, user_service_apis};
 
 /// 解析后的最终上游凭证
 #[derive(Debug, Clone)]
@@ -102,16 +98,15 @@ impl Default for ProxyContext {
             account_id: None,
             requested_model: None,
             usage_final: None,
-        // 认证相关字段
-        user_service_api: None,
-        selected_backend: None,
-        provider_type: None,
+            // 认证相关字段
+            user_service_api: None,
+            selected_backend: None,
+            provider_type: None,
         }
     }
 }
 
 impl ProxyContext {
-    
     pub fn add_body_chunk(&mut self, chunk: &[u8]) {
         let prev_size = self.response_body.len();
         self.response_body.extend_from_slice(chunk);

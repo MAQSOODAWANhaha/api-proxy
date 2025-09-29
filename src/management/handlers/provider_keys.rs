@@ -483,11 +483,9 @@ pub async fn create_provider_key(
                 "启动异步自动获取 project_id 任务"
             );
 
-            if let Err(e) = execute_auto_get_project_id_async(
-                &db_clone,
-                key_id,
-                &user_id_for_task,
-            ).await {
+            if let Err(e) =
+                execute_auto_get_project_id_async(&db_clone, key_id, &user_id_for_task).await
+            {
                 tracing::error!(
                     user_id = user_id_for_task,
                     key_id = %key_id,
@@ -1301,7 +1299,7 @@ pub struct CreateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
     pub api_key: Option<String>,
-    pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
+    pub auth_type: String, // "api_key", "oauth"
     // OAuth认证类型现在通过api_key字段传递session_id
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
@@ -1318,7 +1316,7 @@ pub struct UpdateProviderKeyRequest {
     pub provider_type_id: i32,
     pub name: String,
     pub api_key: Option<String>,
-    pub auth_type: String, // "api_key", "oauth", "service_account", "adc"
+    pub auth_type: String, // "api_key", "oauth"
     // OAuth认证类型现在通过api_key字段传递session_id
     pub weight: Option<i32>,
     pub max_requests_per_minute: Option<i32>,
@@ -1784,9 +1782,9 @@ async fn execute_auto_get_project_id_async(
     key_id: i32,
     user_id: &str,
 ) -> Result<(), crate::ProxyError> {
+    use crate::auth::gemini_code_assist_client::GeminiCodeAssistClient;
     use entity::user_provider_keys::{ActiveModel, Entity as UserProviderKey};
     use sea_orm::ActiveValue::Set;
-    use crate::auth::gemini_code_assist_client::GeminiCodeAssistClient;
 
     // 创建Gemini客户端
     let gemini_client = GeminiCodeAssistClient::new();
@@ -1806,7 +1804,10 @@ async fn execute_auto_get_project_id_async(
     };
 
     // 调用auto_get_project_id_with_retry
-    match gemini_client.auto_get_project_id_with_retry(&access_token).await {
+    match gemini_client
+        .auto_get_project_id_with_retry(&access_token)
+        .await
+    {
         Ok(pid_opt) => {
             if let Some(pid) = pid_opt {
                 tracing::info!(
@@ -1863,10 +1864,7 @@ async fn get_access_token_for_key(
     use entity::user_provider_keys::Entity as UserProviderKey;
 
     // 首先获取user_provider_key记录，找到session_id
-    let key_record = match UserProviderKey::find_by_id(key_id)
-        .one(db)
-        .await
-    {
+    let key_record = match UserProviderKey::find_by_id(key_id).one(db).await {
         Ok(Some(key)) => key,
         Ok(None) => {
             return Err(crate::ProxyError::business(&format!(
@@ -1900,10 +1898,7 @@ async fn get_access_token_for_key(
     let oauth_session = match OAuthSession::find()
         .filter(oauth_client_sessions::Column::SessionId.eq(&session_id))
         .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-        .filter(
-            oauth_client_sessions::Column::Status
-                .eq(AuthStatus::Authorized.to_string()),
-        )
+        .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
         .one(db)
         .await
     {

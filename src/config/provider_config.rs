@@ -585,28 +585,22 @@ mod tests {
             "oauth": {
                 "client_id": "test-client-id",
                 "client_secret": "test-secret"
-            },
-            "service_account": {
-                "token_url": "https://oauth2.googleapis.com/token"
             }
         }"#;
 
         let result = manager.parse_auth_configs_from_map(gemini_config).unwrap();
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 2);
 
         // 检查包含的认证类型
         let auth_types: Vec<AuthType> = result.iter().map(|c| c.auth_type.clone()).collect();
         assert!(auth_types.contains(&AuthType::ApiKey));
         assert!(auth_types.contains(&AuthType::OAuth));
-        assert!(auth_types.contains(&AuthType::ServiceAccount));
 
         // 验证 extra_config 正确设置
         for config in &result {
             match config.auth_type {
                 AuthType::ApiKey => assert!(config.extra_config.is_none()), // 空对象
-                AuthType::OAuth => assert!(config.extra_config.is_some()),   // 有配置
-                AuthType::ServiceAccount => assert!(config.extra_config.is_some()), // 有配置
-                AuthType::Adc => {} // 不在这个测试中
+                AuthType::OAuth => assert!(config.extra_config.is_some()),  // 有配置
             }
         }
 
@@ -614,17 +608,15 @@ mod tests {
         let mixed_config = r#"{
             "api_key": {},
             "oauth": {"client_id": "test"},
-            "unknown_type": {},
-            "adc": {"scopes": "https://www.googleapis.com/auth/cloud-platform"}
+            "unknown_type": {}
         }"#;
 
         let result = manager.parse_auth_configs_from_map(mixed_config).unwrap();
-        assert_eq!(result.len(), 3); // unknown_type 被跳过
+        assert_eq!(result.len(), 2); // unknown_type 被跳过
 
         // 检查包含的认证类型，不依赖顺序
         let auth_types: Vec<AuthType> = result.iter().map(|c| c.auth_type.clone()).collect();
         assert!(auth_types.contains(&AuthType::ApiKey));
         assert!(auth_types.contains(&AuthType::OAuth));
-        assert!(auth_types.contains(&AuthType::Adc));
     }
 }

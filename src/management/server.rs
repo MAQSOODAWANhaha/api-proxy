@@ -144,9 +144,10 @@ impl ManagementServer {
             None
         };
 
-    let mut app = Router::new()
-            .nest(&config.api_prefix, api_routes)
-            .route("/ping", get(crate::management::handlers::system::ping_handler));
+        let mut app = Router::new().nest(&config.api_prefix, api_routes).route(
+            "/ping",
+            get(crate::management::handlers::system::ping_handler),
+        );
 
         // 添加静态文件服务（如果可用）
         if let Some(service) = static_service {

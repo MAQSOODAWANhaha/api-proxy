@@ -13,4 +13,3 @@ pub struct TraceStats {
     pub error_type: Option<String>,
     pub error_message: Option<String>,
 }
-

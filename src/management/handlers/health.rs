@@ -1,14 +1,14 @@
 //! API密钥健康检查相关处理器
 
-use crate::management::{response, server::AppState};
 use crate::manage_error;
-use tracing::warn;
+use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use axum::extract::{Path, State};
 use entity::{provider_types, user_provider_keys};
+use tracing::warn;
 // use pingora_http::StatusCode; // no longer needed with manage_error!
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use sea_orm::{QuerySelect, PaginatorTrait, FromQueryResult};
+use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::error;
@@ -133,8 +133,14 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
 
     let last_row = entity::proxy_tracing::Entity::find()
         .select_only()
-        .expr_as(sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::EndTime).max(), "last_end")
-        .expr_as(sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::StartTime).max(), "last_start")
+        .expr_as(
+            sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::EndTime).max(),
+            "last_end",
+        )
+        .expr_as(
+            sea_orm::sea_query::Expr::col(entity::proxy_tracing::Column::StartTime).max(),
+            "last_start",
+        )
         .into_model::<LastTraceRow>()
         .one(&*state.database)
         .await
@@ -143,7 +149,9 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
 
     let last_trace_time = last_row
         .and_then(|r| r.last_end.or(r.last_start))
-        .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).to_rfc3339());
+        .map(|dt| {
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).to_rfc3339()
+        });
 
     let detailed_status = DetailedHealthStatus {
         database: database_status,

@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { Shield, Key, User, Zap } from 'lucide-react'
+import { Shield, Key } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -40,19 +40,7 @@ const AUTH_TYPE_CONFIG: Record<string, AuthTypeOption> = {
     icon: Shield,
     recommended: true,
   },
-  service_account: {
-    value: 'service_account',
-    label: 'Service Account',
-    description: '使用Google服务账户密钥认证',
-    icon: Zap,
-  },
-  adc: {
-    value: 'adc',
-    label: 'ADC',
-    description: '应用默认凭据（Application Default Credentials）',
-    icon: Shield,
-  },
-}
+  }
 
 /** 组件Props */
 export interface AuthTypeSelectorProps {

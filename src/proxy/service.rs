@@ -1000,7 +1000,7 @@ impl EarlyRequestService for EarlyCredentialResolveService {
                 ctx.resolved_credential = Some(ResolvedCredential::OAuthAccessToken(token));
             }
             _ => {
-                // ServiceAccount 和 Adc 类型的处理
+                // 其他未实现的认证类型处理
                 let err = crate::proxy_err!(
                     business,
                     "Auth type not implemented: {}",
