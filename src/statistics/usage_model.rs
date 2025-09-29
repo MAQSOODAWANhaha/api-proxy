@@ -132,7 +132,11 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         .unwrap_or("")
         .to_ascii_lowercase();
     let encoding = ctx.response_details.content_encoding.as_deref();
-    let raw = &ctx.response_body;
+    let raw = if let Ok(body) = ctx.response_body.lock() {
+        body.clone()
+    } else {
+        BytesMut::new()
+    };
 
     // 无正文：置零并回退模型
     if raw.is_empty() {
@@ -144,7 +148,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
     }
 
     // 解压+限流读取（默认 2MB 上限）
-    let decoded = decompress_for_stats(encoding, raw, 2 * 1024 * 1024);
+    let decoded = decompress_for_stats(encoding, &raw, 2 * 1024 * 1024);
     let body_str = match std::str::from_utf8(&decoded) {
         Ok(s) => s,
         Err(_) => {

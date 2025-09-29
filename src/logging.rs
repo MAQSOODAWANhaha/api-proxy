@@ -770,8 +770,12 @@ pub async fn log_complete_request(
     ctx: &ProxyContext,
 ) {
     // 读取请求体
-    let request_body = if !ctx.request_body.is_empty() {
-        String::from_utf8_lossy(&ctx.request_body).to_string()
+    let request_body = if let Ok(body) = ctx.request_body.lock() {
+        if !body.is_empty() {
+            String::from_utf8_lossy(&body).to_string()
+        } else {
+            "".to_string()
+        }
     } else {
         "".to_string()
     };

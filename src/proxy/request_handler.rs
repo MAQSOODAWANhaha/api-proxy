@@ -961,16 +961,15 @@ impl RequestHandler {
         // 移除可能暴露客户端信息的头部 - 完全隐藏源信息
         let headers_to_remove = [
             "x-forwarded-for",
-            "x-real-ip",
-            "x-forwarded-proto",
-            "x-original-forwarded-for",
-            "x-client-ip",
-            "cf-connecting-ip",
             "x-forwarded-host",
-            "x-forwarded-port",
+            "x-forwarded-proto",
+            "x-real-ip",
+            "forwarded",
+            "proxy-authorization",
+            "x-proxy-user",
+            "x-proxy-credential",
             "via",
         ];
-
         for header in &headers_to_remove {
             upstream_request.remove_header(*header);
         }
@@ -1111,7 +1110,11 @@ impl RequestHandler {
             provider = provider_type.name,
             provider_type_id = provider_type.id,
             backend_key_id = selected_backend.id,
-            body = ?String::from_utf8_lossy(&ctx.request_body),
+            body = ?if let Ok(body_guard) = ctx.request_body.lock() {
+                String::from_utf8_lossy(&body_guard.clone()).to_string()
+            } else {
+                "".to_string()
+            },
             "上游请求已构建"
         );
 

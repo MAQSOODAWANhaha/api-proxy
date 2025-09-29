@@ -2,6 +2,8 @@
 //!
 //! 包含代理请求处理过程中使用的上下文类型定义
 
+use bytes::BytesMut;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::statistics::types::TokenUsageMetrics;
@@ -59,9 +61,9 @@ pub struct ProxyContext {
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
     /// 请求体缓冲区 (用于request_body_filter中的数据收集)
-    pub request_body: Vec<u8>,
+    pub request_body: Arc<Mutex<BytesMut>>,
     /// 响应体缓冲区 (用于response_body_filter中的数据收集)
-    pub response_body: Vec<u8>,
+    pub response_body: Arc<Mutex<BytesMut>>,
     /// 是否计划修改请求体（供上游头部处理决策使用）
     pub will_modify_body: bool,
     /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
@@ -91,8 +93,8 @@ impl Default for ProxyContext {
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
             timeout_seconds: None,
-            request_body: Vec::new(),
-            response_body: Vec::new(),
+            request_body: Arc::new(Mutex::new(BytesMut::new())),
+            response_body: Arc::new(Mutex::new(BytesMut::new())),
             will_modify_body: false,
             resolved_credential: None,
             account_id: None,
@@ -107,28 +109,23 @@ impl Default for ProxyContext {
 }
 
 impl ProxyContext {
-    pub fn add_body_chunk(&mut self, chunk: &[u8]) {
-        let prev_size = self.response_body.len();
-        self.response_body.extend_from_slice(chunk);
-        let new_size = self.response_body.len();
-        if new_size % 8192 == 0 || (prev_size < 1024 && new_size >= 1024) {
-            tracing::debug!(
-                component = "statistics.collector",
-                chunk_size = chunk.len(),
-                total_size = new_size,
-                "Response body chunk added (milestone reached)"
-            );
+    pub async fn add_body_chunk(&self, chunk: &[u8]) {
+        if let Ok(mut body) = self.response_body.lock() {
+            body.extend_from_slice(chunk);
         }
     }
 
-    pub fn clear_body_chunks(&mut self) {
-        if !self.response_body.is_empty() {
-            tracing::debug!(
-                component = "statistics.collector",
-                cleared_bytes = self.response_body.len(),
-                "Clearing collected body chunks to reduce memory"
-            );
-            self.response_body.clear();
+    pub async fn clear_body_chunks(&self) {
+        if let Ok(mut body) = self.response_body.lock() {
+            let cleared_bytes = body.len();
+            if cleared_bytes > 0 {
+                body.clear();
+                tracing::debug!(
+                    component = "statistics.collector",
+                    cleared_bytes,
+                    "Clearing collected body chunks to reduce memory"
+                );
+            }
         }
     }
 }

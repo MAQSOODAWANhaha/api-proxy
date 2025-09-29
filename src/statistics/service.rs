@@ -352,14 +352,20 @@ impl StatisticsService {
 
     /// 尝试从请求体直接提取模型（fallback方法）
     pub fn extract_model_from_request_body_fallback(&self, ctx: &ProxyContext) -> Option<String> {
+        let body_data = if let Ok(body) = ctx.request_body.lock() {
+            body.clone()
+        } else {
+            return None;
+        };
+
         tracing::debug!(
             component = "statistics.service",
             request_id = ctx.request_id,
-            body_size = ctx.request_body.len(),
+            body_size = body_data.len(),
             "Attempting to extract model from request body"
         );
 
-        if ctx.request_body.is_empty() {
+        if body_data.is_empty() {
             tracing::debug!(
                 request_id = ctx.request_id,
                 "Request body is empty, skipping body extraction"
@@ -367,7 +373,7 @@ impl StatisticsService {
             return None;
         }
 
-        let body_str = std::str::from_utf8(&ctx.request_body)
+        let body_str = std::str::from_utf8(&body_data)
             .map_err(|e| {
                 tracing::debug!(
                     component = "statistics.service",
@@ -427,11 +433,17 @@ impl StatisticsService {
 
     /// 解析请求体用于模型提取
     pub fn parse_request_body_for_model(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
-        if ctx.response_body.is_empty() {
+        let body_data = if let Ok(body) = ctx.request_body.lock() {
+            body.clone()
+        } else {
+            return None;
+        };
+
+        if body_data.is_empty() {
             return None;
         }
 
-        let body_str = std::str::from_utf8(&ctx.response_body)
+        let body_str = std::str::from_utf8(&body_data)
             .map_err(|e| {
                 tracing::debug!(
                     component = "statistics.service",
