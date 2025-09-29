@@ -958,16 +958,6 @@ impl RequestHandler {
             }
         }
 
-        // 设置正确的Host头 - 只使用域名，不包含协议
-        let host_name = provider_type
-            .base_url
-            .replace("https://", "")
-            .replace("http://", "");
-        if let Err(e) = upstream_request.insert_header("host", &host_name) {
-            let error = ProxyError::internal(format!("Failed to set host header: {}", e));
-            return Err(error);
-        }
-
         // 移除可能暴露客户端信息的头部 - 完全隐藏源信息
         let headers_to_remove = [
             "x-forwarded-for",

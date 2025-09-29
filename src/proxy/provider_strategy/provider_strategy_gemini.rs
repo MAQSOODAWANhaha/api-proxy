@@ -78,9 +78,25 @@ impl ProviderStrategy for GeminiStrategy {
     async fn modify_request(
         &self,
         session: &Session,
-        _upstream_request: &mut RequestHeader,
+        upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 设置正确的Host头 - 复用 select_upstream_host 的逻辑
+        if let Ok(Some(host)) = self.select_upstream_host(ctx).await {
+            if let Err(e) = upstream_request.insert_header("host", &host) {
+                return Err(ProxyError::internal(format!(
+                    "Failed to set host header for Gemini: {}",
+                    e
+                )));
+            }
+
+            tracing::debug!(
+                request_id = ctx.request_id,
+                host = host,
+                "Set correct Host header for Gemini provider"
+            );
+        }
+
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
         if let Some(backend) = &ctx.selected_backend {
             if backend.auth_type.as_str() == "oauth" {
