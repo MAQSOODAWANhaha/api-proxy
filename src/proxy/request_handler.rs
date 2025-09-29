@@ -1131,10 +1131,24 @@ impl RequestHandler {
     /// 过滤上游响应 - 协调器模式：委托给专门服务
     pub async fn filter_upstream_response(
         &self,
-        _session: &Session,
+        session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
     ) -> Result<(), ProxyError> {
+        // 检查是否为 Gemini provider 的特定路由，记录请求信息
+        if let Some(provider) = &ctx.provider_type {
+            if provider.name == "gemini" {
+                let path = session.req_header().uri.path();
+
+                // 记录请求信息
+                if path.contains("onboardUser")
+                    || path.contains("loadCodeAssist")
+                    || path.contains("streamGenerateContent")
+                {
+                    crate::logging::log_complete_request(&ctx.request_id, path, session, ctx).await;
+                }
+            }
+        }
         // 记录响应头信息（关键头 + JSON 全量头）
         let response_headers = crate::logging::headers_json_string_response(upstream_response);
 
@@ -1147,18 +1161,7 @@ impl RequestHandler {
             "收到上游响应头"
         );
 
-        // 如果状态码为 4xx/5xx，标记失败阶段（响应体会在后续阶段打印）
-        let status_code = upstream_response.status.as_u16();
-        if status_code >= 400 {
-            tracing::info!(
-                event = "fail",
-                component = "proxy.headers",
-                request_id = ctx.request_id,
-                status_code = status_code,
-                response_body = ?String::from_utf8_lossy(&ctx.response_body),
-                "上游响应失败"
-            );
-        }
+        // 状态码现在在 response_body_filter 阶段处理
 
         // 设置响应状态码
         ctx.response_details.status_code = Some(upstream_response.status.as_u16());

@@ -370,19 +370,18 @@ impl RequestBodyService for DefaultRequestBodyService {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         let is_json = content_type.contains("application/json");
-        let should_modify = ctx.will_modify_body && is_json;
 
-        if is_json && should_modify {
-            if let Some(chunk) = body_chunk.take() {
-                ctx.request_body.extend_from_slice(&chunk);
-                debug!(
-                    request_id = %ctx.request_id,
-                    chunk_size = chunk.len(),
-                    total_buffer_size = ctx.request_body.len(),
-                    end_of_stream = end_of_stream,
-                    "Accumulated JSON request body chunk (will modify)"
-                );
-            }
+        // 对所有请求都收集请求体数据，不限制于 will_modify_body
+        if let Some(chunk) = body_chunk.take() {
+            ctx.request_body.extend_from_slice(&chunk);
+            debug!(
+                request_id = %ctx.request_id,
+                chunk_size = chunk.len(),
+                total_buffer_size = ctx.request_body.len(),
+                end_of_stream = end_of_stream,
+                is_json = is_json,
+                "Accumulated request body chunk"
+            );
         } else if let Some(chunk) = body_chunk.as_ref() {
             ctx.request_body.extend_from_slice(chunk);
             debug!(
@@ -390,99 +389,85 @@ impl RequestBodyService for DefaultRequestBodyService {
                 chunk_size = chunk.len(),
                 total_buffer_size = ctx.request_body.len(),
                 end_of_stream = end_of_stream,
-                "Observed request body chunk (pass-through)"
+                is_json = is_json,
+                "Observed request body chunk (reference)"
             );
         }
         if end_of_stream {
-            if !is_json || !should_modify {
-                info!(
-                    event = "upstream_request_body_final",
-                    component = COMPONENT,
-                    request_id = %ctx.request_id,
-                    size = ctx.request_body.len(),
-                    "上游请求体（最终）"
-                );
-                return Ok(());
-            }
+            // 如果需要修改请求体（例如Gemini项目ID注入），则在这里处理
+            if ctx.will_modify_body && is_json {
+                let original_size = ctx.request_body.len();
 
-            let modified_body = match serde_json::from_slice::<Value>(&ctx.request_body) {
-                Ok(mut json_value) => {
-                    debug!(
-                        request_id = %ctx.request_id,
-                        "Successfully parsed request body as JSON, applying modifications"
-                    );
+                let modified_body = match serde_json::from_slice::<Value>(&ctx.request_body) {
+                    Ok(mut json_value) => {
+                        debug!(
+                            request_id = %ctx.request_id,
+                            "Successfully parsed request body as JSON, applying modifications"
+                        );
 
-                    // 在 JSON 修改前记录原始请求体大小
-                    let original_size = ctx.request_body.len();
-
-                    match ai
-                        .modify_provider_request_body_json(&mut json_value, session, ctx)
-                        .await
-                    {
-                        Ok(modified) => {
-                            if modified {
-                                match serde_json::to_vec(&json_value) {
-                                    Ok(modified_bytes) => {
-                                        let new_size = modified_bytes.len();
-                                        info!(
-                                            request_id = %ctx.request_id,
-                                            original_size = original_size,
-                                            new_size = new_size,
-                                            size_diff = new_size as i32 - original_size as i32,
-                                            "Request body successfully modified and size updated"
-                                        );
-                                        modified_bytes
+                        match ai
+                            .modify_provider_request_body_json(&mut json_value, session, ctx)
+                            .await
+                        {
+                            Ok(modified) => {
+                                if modified {
+                                    match serde_json::to_vec(&json_value) {
+                                        Ok(modified_bytes) => {
+                                            let new_size = modified_bytes.len();
+                                            info!(
+                                                request_id = %ctx.request_id,
+                                                original_size = original_size,
+                                                new_size = new_size,
+                                                size_diff = new_size as i32 - original_size as i32,
+                                                "Request body successfully modified and size updated"
+                                            );
+                                            modified_bytes
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                request_id = %ctx.request_id,
+                                                error = %e,
+                                                original_size = original_size,
+                                                "Failed to serialize modified JSON, using original body to avoid protocol errors"
+                                            );
+                                            ctx.request_body.clone()
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!(
-                                            request_id = %ctx.request_id,
-                                            error = %e,
-                                            original_size = original_size,
-                                            "Failed to serialize modified JSON, using original body to avoid protocol errors"
-                                        );
-                                        ctx.request_body.clone()
-                                    }
+                                } else {
+                                    debug!(
+                                        request_id = %ctx.request_id,
+                                        "No modifications needed after parse; forwarding original body"
+                                    );
+                                    ctx.request_body.clone()
                                 }
-                            } else {
-                                debug!(
+                            }
+                            Err(e) => {
+                                error!(
                                     request_id = %ctx.request_id,
-                                    "No modifications needed after parse; forwarding original body"
+                                    error = %e,
+                                    original_size = original_size,
+                                    "Failed to modify request body, using original to avoid protocol errors"
                                 );
                                 ctx.request_body.clone()
                             }
                         }
-                        Err(e) => {
-                            error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                original_size = original_size,
-                                "Failed to modify request body, using original to avoid protocol errors"
-                            );
-                            ctx.request_body.clone()
-                        }
                     }
-                }
-                Err(e) => {
-                    warn!(
-                        request_id = %ctx.request_id,
-                        error = %e,
-                        original_size = ctx.request_body.len(),
-                        "Failed to parse body as JSON, forwarding original body to avoid protocol errors"
-                    );
-                    ctx.request_body.clone()
-                }
-            };
+                    Err(e) => {
+                        warn!(
+                            request_id = %ctx.request_id,
+                            error = %e,
+                            original_size = ctx.request_body.len(),
+                            "Failed to parse body as JSON, forwarding original body to avoid protocol errors"
+                        );
+                        ctx.request_body.clone()
+                    }
+                };
 
-            info!(
-                event = "upstream_request_body_final",
-                component = COMPONENT,
-                request_id = %ctx.request_id,
-                size = modified_body.len(),
-                body = ?String::from_utf8_lossy(&modified_body),
-                "上游请求体（最终）"
-            );
-
-            *body_chunk = Some(Bytes::from(modified_body));
+                *body_chunk = Some(Bytes::from(modified_body));
+            } else {
+                // 不需要修改的情况下，直接使用原始请求体
+                *body_chunk = Some(Bytes::from(ctx.request_body.clone()));
+            }
         }
 
         Ok(())
@@ -560,6 +545,22 @@ impl ResponseBodyService for DefaultResponseBodyService {
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(data) = body {
             ctx.add_body_chunk(data);
+
+            // 只在响应体完全接收后记录错误响应日志
+            if _end_of_stream {
+                if let Some(status_code) = ctx.response_details.status_code {
+                    if status_code >= 400 && !ctx.response_body.is_empty() {
+                        let path = &ctx.request_details.path;
+                        crate::logging::log_error_response(
+                            &ctx.request_id,
+                            path,
+                            status_code,
+                            &pingora_http::ResponseHeader::build(200, None).unwrap(), // 构建空的响应头
+                            &ctx.response_body,
+                        );
+                    }
+                }
+            }
         }
         Ok(None)
     }

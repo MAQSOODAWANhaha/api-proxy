@@ -5,6 +5,9 @@
 //! - 数据库查询日志格式化
 //! - 日志系统初始化和配置
 
+use crate::proxy::ProxyContext;
+use pingora_http::ResponseHeader;
+use pingora_proxy::Session;
 use serde_json;
 use std::collections::BTreeMap;
 use std::env;
@@ -754,5 +757,99 @@ impl LogFormatValidator {
         }
 
         warnings
+    }
+}
+
+// ================ Gemini Provider 日志工具 ================
+
+/// 记录 Gemini 完整请求信息
+pub async fn log_complete_request(
+    request_id: &str,
+    path: &str,
+    session: &Session,
+    ctx: &ProxyContext,
+) {
+    // 读取请求体
+    let request_body = if !ctx.request_body.is_empty() {
+        String::from_utf8_lossy(&ctx.request_body).to_string()
+    } else {
+        "".to_string()
+    };
+
+    // 过滤 request 字段
+    let filtered_body = if path.contains("streamGenerateContent") {
+        filter_request_field(&request_body)
+    } else {
+        request_body.clone()
+    };
+
+    // 记录请求头
+    let headers = headers_json_map_request(session.req_header());
+
+    tracing::info!(
+        request_id = %request_id,
+        route = path,
+        method = %session.req_header().method,
+        uri = %session.req_header().uri,
+        request_headers = %serde_json::to_string_pretty(&headers).unwrap_or_else(|_| "Failed to serialize headers".to_string()),
+        request_body = %filtered_body,
+        operation = "gemini_complete_request",
+        "=== GEMINI COMPLETE REQUEST ==="
+    );
+}
+
+/// 记录 Gemini 完整响应信息
+pub fn log_complete_response(
+    request_id: &str,
+    path: &str,
+    response_header: &ResponseHeader,
+    response_body: &[u8],
+) {
+    // 读取响应头
+    let response_headers = headers_json_map_response(response_header);
+
+    // 读取响应体
+    let body_str = String::from_utf8_lossy(response_body);
+
+    tracing::info!(
+        request_id = %request_id,
+        route = path,
+        status_code = %response_header.status,
+        response_headers = %serde_json::to_string_pretty(&response_headers).unwrap_or_else(|_| "Failed to serialize response headers".to_string()),
+        response_body = %body_str,
+        operation = "gemini_complete_response",
+        "=== GEMINI COMPLETE RESPONSE ==="
+    );
+}
+
+/// 记录错误响应信息（状态码 >= 400）
+pub fn log_error_response(
+    request_id: &str,
+    path: &str,
+    status_code: u16,
+    response_header: &ResponseHeader,
+    response_body: &[u8],
+) {
+    tracing::info!(
+        target: "error_response",
+        request_id = %request_id,
+        path = %path,
+        status_code = %status_code,
+        response_headers = ?response_header,
+        response_body = %String::from_utf8_lossy(response_body),
+        operation = "error_response",
+        "=== ERROR RESPONSE ==="
+    );
+}
+
+/// 过滤 JSON 中的 request 字段
+fn filter_request_field(json_str: &str) -> String {
+    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(json_str) {
+        if let Some(obj) = json.as_object_mut() {
+            obj.remove("request");
+        }
+        serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
+    } else {
+        json_str.to_string()
     }
 }
