@@ -386,14 +386,15 @@ impl fmt::Display for AuthType {
     }
 }
 
-impl From<&str> for AuthType {
-    fn from(s: &str) -> Self {
+impl AuthType {
+    /// 安全解析认证类型字符串，未知类型返回 None
+    pub fn from(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "api_key" => AuthType::ApiKey,
-            "oauth" => AuthType::OAuth,
-            "service_account" => AuthType::ServiceAccount,
-            "adc" => AuthType::Adc,
-            _ => AuthType::ApiKey, // 默认使用API密钥认证
+            "api_key" => Some(AuthType::ApiKey),
+            "oauth" => Some(AuthType::OAuth),
+            "service_account" => Some(AuthType::ServiceAccount),
+            "adc" => Some(AuthType::Adc),
+            _ => None,
         }
     }
 }
@@ -647,13 +648,13 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_type_from_str() {
-        assert_eq!(AuthType::from("api_key"), AuthType::ApiKey);
-        assert_eq!(AuthType::from("oauth"), AuthType::OAuth);
-        assert_eq!(AuthType::from("service_account"), AuthType::ServiceAccount);
-        assert_eq!(AuthType::from("adc"), AuthType::Adc);
-        assert_eq!(AuthType::from("ADC"), AuthType::Adc);
-        assert_eq!(AuthType::from("unknown"), AuthType::ApiKey); // 默认值
+    fn test_auth_type_from() {
+        assert_eq!(AuthType::from("api_key"), Some(AuthType::ApiKey));
+        assert_eq!(AuthType::from("oauth"), Some(AuthType::OAuth));
+        assert_eq!(AuthType::from("service_account"), Some(AuthType::ServiceAccount));
+        assert_eq!(AuthType::from("adc"), Some(AuthType::Adc));
+        assert_eq!(AuthType::from("API_KEY"), Some(AuthType::ApiKey)); // 测试大小写
+        assert_eq!(AuthType::from("unknown"), None); // 未知类型返回 None
     }
 
     #[test]

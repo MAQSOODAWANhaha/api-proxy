@@ -987,11 +987,11 @@ impl EarlyRequestService for EarlyCredentialResolveService {
             .as_ref()
             .expect("selected_backend must exist");
         match AuthType::from(selected_backend.auth_type.as_str()) {
-            AuthType::ApiKey => {
+            Some(AuthType::ApiKey) => {
                 ctx.resolved_credential =
                     Some(ResolvedCredential::ApiKey(selected_backend.api_key.clone()));
             }
-            AuthType::OAuth => {
+            Some(AuthType::OAuth) => {
                 let token = ai
                     .resolve_oauth_access_token(&selected_backend.api_key, &ctx.request_id)
                     .await
@@ -1000,8 +1000,13 @@ impl EarlyRequestService for EarlyCredentialResolveService {
                     })?;
                 ctx.resolved_credential = Some(ResolvedCredential::OAuthAccessToken(token));
             }
-            other => {
-                let err = crate::proxy_err!(business, "Unsupported auth type: {}", other);
+            _ => {
+                // ServiceAccount 和 Adc 类型的处理
+                let err = crate::proxy_err!(
+                    business,
+                    "Auth type not implemented: {}",
+                    selected_backend.auth_type
+                );
                 return Err(crate::pingora_error!(err));
             }
         }

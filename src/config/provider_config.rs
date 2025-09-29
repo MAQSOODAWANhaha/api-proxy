@@ -342,31 +342,16 @@ impl ProviderConfigManager {
         let supported_auth_types =
             self.parse_supported_auth_types(&provider.supported_auth_types)?;
 
-        // 解析认证配置
+        // 解析认证配置 - 支持对象映射格式
         let auth_configs = if let Some(ref json_str) = provider.auth_configs_json {
-            // 尝试解析为数组
-            match serde_json::from_str::<Vec<MultiAuthConfig>>(json_str) {
+            match self.parse_auth_configs_from_map(json_str) {
                 Ok(configs) => Some(configs),
                 Err(e) => {
-                    // 如果解析为数组失败，再尝试解析为单个对象
-                    if e.is_data() {
-                        match serde_json::from_str::<MultiAuthConfig>(json_str) {
-                            Ok(config) => Some(vec![config]), // 将单个对象包装成数组
-                            Err(e2) => {
-                                warn!(
-                                    "Failed to parse auth_configs_json for provider {} as both array and object. Error (array): {}, Error (object): {}. Raw JSON: '{}'",
-                                    provider.name, e, e2, json_str
-                                );
-                                None
-                            }
-                        }
-                    } else {
-                        warn!(
-                            "Failed to parse auth_configs_json for provider {}: {}. Raw JSON: '{}'",
-                            provider.name, e, json_str
-                        );
-                        None
-                    }
+                    warn!(
+                        "Failed to parse auth_configs_json for provider {}: {}. Raw JSON: '{}'",
+                        provider.name, e, json_str
+                    );
+                    None
                 }
             }
         } else {
@@ -397,6 +382,37 @@ impl ProviderConfigManager {
         })
     }
 
+    /// 解析对象映射格式的认证配置
+    fn parse_auth_configs_from_map(&self, map_str: &str) -> Result<Vec<MultiAuthConfig>> {
+        let config_map: std::collections::HashMap<String, serde_json::Value> =
+            serde_json::from_str(map_str).map_err(|e| {
+                ProxyError::config(&format!("Failed to parse auth_configs_map: {}", e))
+            })?;
+
+        let mut auth_configs = Vec::new();
+
+        for (auth_type_str, config_value) in config_map {
+            // 使用安全的解析方法
+            if let Some(auth_type) = AuthType::from(&auth_type_str) {
+                let extra_config =
+                    if config_value.is_object() && !config_value.as_object().unwrap().is_empty() {
+                        Some(config_value)
+                    } else {
+                        None
+                    };
+
+                auth_configs.push(MultiAuthConfig {
+                    auth_type,
+                    extra_config,
+                });
+            } else {
+                warn!("Unknown auth type in provider config: {}", auth_type_str);
+            }
+        }
+
+        Ok(auth_configs)
+    }
+
     /// 解析支持的认证类型字符串
     fn parse_supported_auth_types(&self, json_str: &str) -> Result<Vec<AuthType>> {
         let type_strings: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
@@ -405,14 +421,10 @@ impl ProviderConfigManager {
 
         let mut auth_types = Vec::new();
         for type_str in type_strings {
-            match type_str.as_str() {
-                "api_key" => auth_types.push(AuthType::ApiKey),
-                "oauth" => auth_types.push(AuthType::OAuth),
-                "service_account" => auth_types.push(AuthType::ServiceAccount),
-                "adc" => auth_types.push(AuthType::Adc),
-                _ => {
-                    warn!("Unknown auth type in configuration: {}", type_str);
-                }
+            if let Some(auth_type) = AuthType::from(&type_str) {
+                auth_types.push(auth_type);
+            } else {
+                warn!("Unknown auth type in configuration: {}", type_str);
             }
         }
 
@@ -556,5 +568,63 @@ mod tests {
             manager.get_api_endpoint(&test_config, "v1/models"),
             "https://api.openai.com/v1/models"
         );
+    }
+
+    #[test]
+    fn test_parse_auth_configs_from_map() {
+        use crate::config::CacheConfig;
+
+        let cache_config = CacheConfig::default();
+        let cache = CacheManager::new(&cache_config, "test").unwrap();
+        let manager =
+            ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
+
+        // 测试gemini格式的配置
+        let gemini_config = r#"{
+            "api_key": {},
+            "oauth": {
+                "client_id": "test-client-id",
+                "client_secret": "test-secret"
+            },
+            "service_account": {
+                "token_url": "https://oauth2.googleapis.com/token"
+            }
+        }"#;
+
+        let result = manager.parse_auth_configs_from_map(gemini_config).unwrap();
+        assert_eq!(result.len(), 3);
+
+        // 检查包含的认证类型
+        let auth_types: Vec<AuthType> = result.iter().map(|c| c.auth_type.clone()).collect();
+        assert!(auth_types.contains(&AuthType::ApiKey));
+        assert!(auth_types.contains(&AuthType::OAuth));
+        assert!(auth_types.contains(&AuthType::ServiceAccount));
+
+        // 验证 extra_config 正确设置
+        for config in &result {
+            match config.auth_type {
+                AuthType::ApiKey => assert!(config.extra_config.is_none()), // 空对象
+                AuthType::OAuth => assert!(config.extra_config.is_some()),   // 有配置
+                AuthType::ServiceAccount => assert!(config.extra_config.is_some()), // 有配置
+                AuthType::Adc => {} // 不在这个测试中
+            }
+        }
+
+        // 测试包含未知类型的配置
+        let mixed_config = r#"{
+            "api_key": {},
+            "oauth": {"client_id": "test"},
+            "unknown_type": {},
+            "adc": {"scopes": "https://www.googleapis.com/auth/cloud-platform"}
+        }"#;
+
+        let result = manager.parse_auth_configs_from_map(mixed_config).unwrap();
+        assert_eq!(result.len(), 3); // unknown_type 被跳过
+
+        // 检查包含的认证类型，不依赖顺序
+        let auth_types: Vec<AuthType> = result.iter().map(|c| c.auth_type.clone()).collect();
+        assert!(auth_types.contains(&AuthType::ApiKey));
+        assert!(auth_types.contains(&AuthType::OAuth));
+        assert!(auth_types.contains(&AuthType::Adc));
     }
 }
