@@ -105,8 +105,7 @@ impl ProviderStrategy for GeminiStrategy {
                     if !pid.is_empty() {
                         let path = session.req_header().uri.path();
                         let need = path.contains("streamGenerateContent")
-                            || path.contains("generateContent")
-                            || path.contains("loadCodeAssist");
+                            || path.contains("generateContent");
                         ctx.will_modify_body = need;
                     }
                 }
