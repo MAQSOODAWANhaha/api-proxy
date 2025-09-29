@@ -44,14 +44,18 @@ impl LogStage {
 /// 组件枚举
 #[derive(Debug, Clone, Copy)]
 pub enum LogComponent {
-    Proxy,
     AuthService,
-    RequestHandler,
-    TracingService,
-    Upstream,
-    Builder,
-    GeminiStrategy,
     Database,
+    Proxy,
+    // 以下为新增的服务组件
+    UpstreamService,
+    RequestTransformService,
+    ResponseTransformService,
+    StatisticsService,
+    TracingService,
+    GeminiStrategy,
+    OpenAIStrategy,
+    Builder,
 }
 
 impl LogComponent {
@@ -59,12 +63,15 @@ impl LogComponent {
         match self {
             LogComponent::Proxy => "proxy",
             LogComponent::AuthService => "auth_service",
-            LogComponent::RequestHandler => "request_handler",
-            LogComponent::TracingService => "tracing_service",
-            LogComponent::Upstream => "upstream",
-            LogComponent::Builder => "builder",
-            LogComponent::GeminiStrategy => "gemini_strategy",
             LogComponent::Database => "database",
+            LogComponent::UpstreamService => "upstream_service",
+            LogComponent::RequestTransformService => "request_transform_service",
+            LogComponent::ResponseTransformService => "response_transform_service",
+            LogComponent::StatisticsService => "statistics_service",
+            LogComponent::TracingService => "tracing_service",
+            LogComponent::GeminiStrategy => "gemini_strategy",
+            LogComponent::OpenAIStrategy => "openai_strategy",
+            LogComponent::Builder => "builder",
         }
     }
 }
@@ -671,12 +678,12 @@ impl LogFormatValidator {
         match component {
             LogComponent::Proxy
             | LogComponent::AuthService
-            | LogComponent::RequestHandler
             | LogComponent::TracingService
-            | LogComponent::Upstream
+            | LogComponent::UpstreamService
             | LogComponent::Builder
             | LogComponent::GeminiStrategy
             | LogComponent::Database => {}
+            _ => {}
         }
 
         true

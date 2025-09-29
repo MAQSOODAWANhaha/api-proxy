@@ -7,8 +7,14 @@ use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
 use crate::logging::LogComponent;
-use crate::proxy::service::ProxyService;
+use crate::pricing::PricingCalculatorService;
+use crate::proxy::{
+    AuthenticationService, RequestTransformService, ResponseTransformService, StatisticsService,
+    TracingService, UpstreamService, service::ProxyService,
+};
 use crate::proxy_info;
+use crate::scheduler::ApiKeyPoolManager;
+use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -51,47 +57,22 @@ impl ProxyServerBuilder {
     /// 创建或获取数据库连接
     pub async fn ensure_database(&mut self) -> Result<Arc<DatabaseConnection>> {
         if let Some(db) = &self.db {
-            proxy_info!(
-                "server_builder",
-                LogStage::RequestStart,
-                LogComponent::Builder,
-                "using_shared_db",
-                "使用共享数据库连接",
-            );
             return Ok(db.clone());
         }
-
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
-            LogComponent::Builder,
-            "setting_db_path",
-            "设置数据库路径",
-        );
         self.config
             .database
             .ensure_database_path()
             .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {}", e)))?;
-
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
-            LogComponent::Builder,
-            "creating_db_connection",
-            "创建数据库连接",
-        );
         let db_url = self
             .config
             .database
             .get_connection_url()
             .map_err(|e| ProxyError::server_init(format!("数据库URL准备失败: {}", e)))?;
-
         let db = Arc::new(
             sea_orm::Database::connect(&db_url)
                 .await
                 .map_err(|e| ProxyError::database(format!("数据库连接失败: {}", e)))?,
         );
-
         self.db = Some(db.clone());
         Ok(db)
     }
@@ -101,19 +82,10 @@ impl ProxyServerBuilder {
         if let Some(cache) = &self.cache {
             return Ok(cache.clone());
         }
-
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
-            LogComponent::Builder,
-            "creating_cache_manager",
-            "创建统一缓存管理器",
-        );
         let cache = Arc::new(
             CacheManager::new(&self.config.cache, &self.config.redis.url)
                 .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {}", e)))?,
         );
-
         self.cache = Some(cache.clone());
         Ok(cache)
     }
@@ -127,14 +99,6 @@ impl ProxyServerBuilder {
         if let Some(manager) = &self.provider_config_manager {
             return manager.clone();
         }
-
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
-            LogComponent::Builder,
-            "creating_provider_config_manager",
-            "创建服务商配置管理器",
-        );
         let manager = Arc::new(ProviderConfigManager::new(db, cache));
         self.provider_config_manager = Some(manager.clone());
         manager
@@ -146,10 +110,7 @@ impl ProxyServerBuilder {
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
     ) -> Result<Arc<AuthManager>> {
-        // 创建认证配置 - 使用默认配置
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
-
-        // 创建JWT和API密钥管理器
         let jwt_manager = Arc::new(
             crate::auth::JwtManager::new(auth_config.clone())
                 .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {}", e)))?,
@@ -158,24 +119,19 @@ impl ProxyServerBuilder {
             db.clone(),
             auth_config.clone(),
         ));
-
-        // 创建认证服务
         let auth_service = Arc::new(AuthService::new(
             jwt_manager,
             api_key_manager,
             db.clone(),
             auth_config.clone(),
         ));
-
-        // 创建统一认证管理器
         let auth_manager = AuthManager::new(auth_service, auth_config, db, cache).await?;
-
         proxy_info!(
             "server_builder",
             LogStage::RequestStart,
             LogComponent::Builder,
             "auth_manager_created",
-            "统一认证管理器创建完成",
+            "统一认证管理器创建完成"
         );
         Ok(Arc::new(auth_manager))
     }
@@ -185,46 +141,60 @@ impl ProxyServerBuilder {
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        provider_config_manager: Arc<ProviderConfigManager>,
+        _provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
         proxy_info!(
             "server_builder",
             LogStage::RequestStart,
             LogComponent::Builder,
             "creating_ai_proxy_service",
-            "创建AI代理服务",
+            "创建AI代理服务"
         );
 
-        // 创建统一认证管理器
         let auth_manager = self
             .create_auth_manager(db.clone(), cache.clone())
             .await
             .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
 
-        ProxyService::new(
-            db,
-            cache,
-            provider_config_manager,
-            self.trace_system.clone(),
+        // --- 服务依赖组装 ---
+        let health_checker = Arc::new(ApiKeyHealthChecker::new(db.clone(), None));
+        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
+        let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
+
+        let auth_service = Arc::new(AuthenticationService::new(
             auth_manager,
+            db.clone(),
+            cache.clone(),
+            api_key_pool,
+        ));
+        let stats_service = Arc::new(StatisticsService::new(pricing_calculator));
+        let trace_service = Arc::new(TracingService::new(
+            self.trace_system
+                .as_ref()
+                .and_then(|ts| ts.immediate_tracer()),
+        ));
+        let upstream_service = Arc::new(UpstreamService::new(db.clone()));
+        let req_transform_service = Arc::new(RequestTransformService::new(db.clone()));
+        let resp_transform_service = Arc::new(ResponseTransformService::new());
+
+        ProxyService::new(
+            db.clone(), // 直接注入DB
+            auth_service,
+            stats_service,
+            trace_service,
+            upstream_service,
+            req_transform_service,
+            resp_transform_service,
         )
     }
 
     /// 构建完整的组件集合
-    ///
-    /// 按照正确的依赖顺序创建所有必需的组件
     pub async fn build_components(&mut self) -> Result<ProxyServerComponents> {
-        // 1. 确保数据库连接
         let db = self.ensure_database().await?;
-
-        // 2. 确保缓存管理器
         let cache = self.ensure_cache()?;
-
-        // 3. 确保服务商配置管理器
         let provider_config_manager =
             self.ensure_provider_config_manager(db.clone(), cache.clone());
 
-        // 4. 创建代理服务
         let proxy_service = self
             .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
             .await
@@ -251,8 +221,6 @@ impl ProxyServerBuilder {
 }
 
 /// 代理服务器组件集合
-///
-/// 包含创建代理服务器所需的所有组件
 pub struct ProxyServerComponents {
     pub config: Arc<AppConfig>,
     pub db: Arc<DatabaseConnection>,

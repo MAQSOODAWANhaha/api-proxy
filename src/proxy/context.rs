@@ -2,7 +2,9 @@
 //!
 //! 包含代理请求处理过程中使用的上下文类型定义
 
+use crate::proxy::provider_strategy::ProviderStrategy;
 use bytes::BytesMut;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::statistics::types::TokenUsageMetrics;
@@ -45,7 +47,7 @@ impl AuthContext {
 }
 
 /// 请求上下文
-#[derive(Debug, Clone)]
+// #[derive(Debug, Clone)]
 pub struct ProxyContext {
     /// 请求ID
     pub request_id: String,
@@ -81,6 +83,8 @@ pub struct ProxyContext {
     pub selected_backend: Option<user_provider_keys::Model>,
     /// 提供商类型配置
     pub provider_type: Option<provider_types::Model>,
+    /// 选定的服务商策略
+    pub strategy: Option<Arc<dyn ProviderStrategy>>,
 }
 
 impl Default for ProxyContext {
@@ -103,6 +107,7 @@ impl Default for ProxyContext {
             user_service_api: None,
             selected_backend: None,
             provider_type: None,
+            strategy: None,
         }
     }
 }

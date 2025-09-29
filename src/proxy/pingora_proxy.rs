@@ -60,7 +60,7 @@ impl PingoraProxyServer {
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
-            LogComponent::Upstream,
+            LogComponent::UpstreamService,
             "creating_pingora_options",
             "创建Pingora基础配置选项",
         );
@@ -80,7 +80,7 @@ impl PingoraProxyServer {
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
-            LogComponent::Upstream,
+            LogComponent::UpstreamService,
             "creating_server_config",
             "创建Pingora服务器配置"
         );
@@ -92,7 +92,7 @@ impl PingoraProxyServer {
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
-            LogComponent::Upstream,
+            LogComponent::UpstreamService,
             "bootstrapping_server",
             "启动Pingora服务器引导"
         );
@@ -101,7 +101,7 @@ impl PingoraProxyServer {
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
-            LogComponent::Upstream,
+            LogComponent::UpstreamService,
             "timeout_config_dynamic",
             "超时配置现在从数据库动态获取"
         );
@@ -120,7 +120,7 @@ impl PingoraProxyServer {
             proxy_info!(
                 "server_init",
                 LogStage::RequestStart,
-                LogComponent::Upstream,
+                LogComponent::UpstreamService,
                 "using_trace_system",
                 "在Pingora代理构建器中使用提供的追踪系统"
             );
@@ -128,7 +128,7 @@ impl PingoraProxyServer {
             proxy_warn!(
                 "server_init",
                 LogStage::RequestStart,
-                LogComponent::Upstream,
+                LogComponent::UpstreamService,
                 "no_trace_system",
                 "未提供追踪系统给Pingora代理 - 追踪将被禁用"
             );
@@ -148,7 +148,7 @@ impl PingoraProxyServer {
         proxy_info!(
             "server_init",
             LogStage::RequestStart,
-            LogComponent::Upstream,
+            LogComponent::UpstreamService,
             "starting_server",
             "启动Pingora代理服务器",
             address = builder.get_server_address()
