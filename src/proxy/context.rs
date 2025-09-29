@@ -60,8 +60,6 @@ pub struct ProxyContext {
     pub request_details: RequestDetails,
     /// 响应详情
     pub response_details: ResponseDetails,
-    /// 选择的提供商名称
-    pub selected_provider: Option<String>,
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
     /// 请求体缓冲区 (用于request_body_filter中的数据收集)
@@ -96,7 +94,6 @@ impl Default for ProxyContext {
             retry_count: 0,
             request_details: RequestDetails::default(),
             response_details: ResponseDetails::default(),
-            selected_provider: None,
             timeout_seconds: None,
             request_body: Vec::new(),
             response_body: Vec::new(),

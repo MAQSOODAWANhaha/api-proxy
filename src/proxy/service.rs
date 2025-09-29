@@ -934,7 +934,6 @@ impl EarlyRequestService for EarlyProviderSetupService {
             .or(provider_type.timeout_seconds);
 
         ctx.provider_type = Some(provider_type.clone());
-        ctx.selected_provider = Some(provider_type.name.clone());
         ctx.timeout_seconds = timeout;
         Ok(())
     }
