@@ -344,14 +344,29 @@ impl ProviderConfigManager {
 
         // 解析认证配置
         let auth_configs = if let Some(ref json_str) = provider.auth_configs_json {
+            // 尝试解析为数组
             match serde_json::from_str::<Vec<MultiAuthConfig>>(json_str) {
                 Ok(configs) => Some(configs),
                 Err(e) => {
-                    warn!(
-                        "Failed to parse auth_configs_json for provider {}: {}",
-                        provider.name, e
-                    );
-                    None
+                    // 如果解析为数组失败，再尝试解析为单个对象
+                    if e.is_data() {
+                        match serde_json::from_str::<MultiAuthConfig>(json_str) {
+                            Ok(config) => Some(vec![config]), // 将单个对象包装成数组
+                            Err(e2) => {
+                                warn!(
+                                    "Failed to parse auth_configs_json for provider {} as both array and object. Error (array): {}, Error (object): {}. Raw JSON: '{}'",
+                                    provider.name, e, e2, json_str
+                                );
+                                None
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "Failed to parse auth_configs_json for provider {}: {}. Raw JSON: '{}'",
+                            provider.name, e, json_str
+                        );
+                        None
+                    }
                 }
             }
         } else {

@@ -371,103 +371,68 @@ impl RequestBodyService for DefaultRequestBodyService {
             .unwrap_or("");
         let is_json = content_type.contains("application/json");
 
-        // 对所有请求都收集请求体数据，不限制于 will_modify_body
-        if let Some(chunk) = body_chunk.take() {
-            ctx.request_body.extend_from_slice(&chunk);
-            debug!(
-                request_id = %ctx.request_id,
-                chunk_size = chunk.len(),
-                total_buffer_size = ctx.request_body.len(),
-                end_of_stream = end_of_stream,
-                is_json = is_json,
-                "Accumulated request body chunk"
-            );
-        } else if let Some(chunk) = body_chunk.as_ref() {
+        // 1. 将所有收到的 chunk 累加到 ctx.request_body
+        if let Some(chunk) = body_chunk.as_ref() {
             ctx.request_body.extend_from_slice(chunk);
             debug!(
                 request_id = %ctx.request_id,
                 chunk_size = chunk.len(),
                 total_buffer_size = ctx.request_body.len(),
                 end_of_stream = end_of_stream,
-                is_json = is_json,
-                "Observed request body chunk (reference)"
+                "Accumulated request body chunk"
             );
         }
-        if end_of_stream {
-            // 如果需要修改请求体（例如Gemini项目ID注入），则在这里处理
-            if ctx.will_modify_body && is_json {
-                let original_size = ctx.request_body.len();
 
+        if end_of_stream {
+            // 2. 当是最后一个 chunk 时，处理完整的 body
+            if ctx.will_modify_body && is_json {
+                // 场景 A: 需要修改 JSON body
+                let original_size = ctx.request_body.len();
                 let modified_body = match serde_json::from_slice::<Value>(&ctx.request_body) {
                     Ok(mut json_value) => {
-                        debug!(
-                            request_id = %ctx.request_id,
-                            "Successfully parsed request body as JSON, applying modifications"
-                        );
-
                         match ai
                             .modify_provider_request_body_json(&mut json_value, session, ctx)
                             .await
                         {
                             Ok(modified) => {
                                 if modified {
-                                    match serde_json::to_vec(&json_value) {
-                                        Ok(modified_bytes) => {
-                                            let new_size = modified_bytes.len();
-                                            info!(
-                                                request_id = %ctx.request_id,
-                                                original_size = original_size,
-                                                new_size = new_size,
-                                                size_diff = new_size as i32 - original_size as i32,
-                                                "Request body successfully modified and size updated"
-                                            );
-                                            modified_bytes
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                request_id = %ctx.request_id,
-                                                error = %e,
-                                                original_size = original_size,
-                                                "Failed to serialize modified JSON, using original body to avoid protocol errors"
-                                            );
-                                            ctx.request_body.clone()
-                                        }
-                                    }
+                                    serde_json::to_vec(&json_value).unwrap_or_else(|e| {
+                                        error!(request_id = %ctx.request_id, error = %e, "Failed to serialize modified JSON");
+                                        ctx.request_body.clone()
+                                    })
                                 } else {
-                                    debug!(
-                                        request_id = %ctx.request_id,
-                                        "No modifications needed after parse; forwarding original body"
-                                    );
                                     ctx.request_body.clone()
                                 }
                             }
                             Err(e) => {
-                                error!(
-                                    request_id = %ctx.request_id,
-                                    error = %e,
-                                    original_size = original_size,
-                                    "Failed to modify request body, using original to avoid protocol errors"
-                                );
+                                error!(request_id = %ctx.request_id, error = %e, "Failed to modify request body");
                                 ctx.request_body.clone()
                             }
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            request_id = %ctx.request_id,
-                            error = %e,
-                            original_size = ctx.request_body.len(),
-                            "Failed to parse body as JSON, forwarding original body to avoid protocol errors"
-                        );
+                        warn!(request_id = %ctx.request_id, error = %e, "Failed to parse body as JSON, forwarding original");
                         ctx.request_body.clone()
                     }
                 };
-
+                info!(
+                    request_id = %ctx.request_id,
+                    original_size = original_size,
+                    new_size = modified_body.len(),
+                    "Request body processed"
+                );
                 *body_chunk = Some(Bytes::from(modified_body));
             } else {
-                // 不需要修改的情况下，直接使用原始请求体
-                *body_chunk = Some(Bytes::from(ctx.request_body.clone()));
+                // 场景 B: 不需要修改，直接将完整 body 放入 chunk
+                if !ctx.request_body.is_empty() {
+                    *body_chunk = Some(Bytes::from(ctx.request_body.clone()));
+                } else {
+                    *body_chunk = None;
+                }
             }
+        } else {
+            // 3. 如果不是最后一个 chunk，则清空当前 chunk，防止不完整的数据被发送
+            *body_chunk = None;
         }
 
         Ok(())
