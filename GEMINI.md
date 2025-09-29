@@ -1,4 +1,5 @@
 ## Project Overview
+# 必须使用中文进行对话
 
 This is an enterprise-level AI service proxy platform named "AI Proxy Platform". It's built with Rust and the Pingora framework, featuring a dual-port separation architecture. The platform acts as a unified gateway for various AI services like OpenAI, Google Gemini, and Anthropic Claude.
 
