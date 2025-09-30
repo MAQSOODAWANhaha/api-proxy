@@ -220,7 +220,7 @@ impl ProxyHttp for ProxyService {
                 if let Some(strategy) = &ctx.strategy {
                     match serde_json::from_slice::<Value>(&ctx.request_body) {
                         Ok(mut json_value) => {
-                            tracing::info!(
+                            tracing::debug!(
                                 request_id = %ctx.request_id,
                                 body = json_value.to_string(),
                                 "请求体 JSON 解析成功，尝试应用策略修改"
@@ -230,20 +230,13 @@ impl ProxyHttp for ProxyService {
                                 .await
                             {
                                 Ok(true) => {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         request_id = %ctx.request_id,
                                         body = json_value.to_string(),
                                         "策略选择修改请求体，正在序列化回字节"
                                     );
                                     match serde_json::to_vec(&json_value) {
                                         Ok(serialized) => {
-                                            tracing::info!(
-                                                request_id = %ctx.request_id,
-                                                original_size = ctx.request_body.len(),
-                                                modified_size = serialized.len(),
-                                                body = %String::from_utf8_lossy(&serialized),
-                                                "JSON 请求体修改成功"
-                                            );
                                             // 更新 body 并重新设置到 chunk
                                             ctx.request_body = BytesMut::from(&serialized[..]);
                                             *body_chunk = Some(Bytes::from(serialized));
