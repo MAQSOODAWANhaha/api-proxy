@@ -19,8 +19,8 @@ static MODEL_PATHS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "data.0.model",
         "choices.0.model",
         "candidates.0.model",
-        "response.model",
-        "result.model",
+        "response.model",        // openai
+        "response.modelVersion", // gemini
     ]
 });
 
