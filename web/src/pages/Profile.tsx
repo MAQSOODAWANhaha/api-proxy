@@ -3,8 +3,10 @@
  * 个人信息页：用户资料管理和设置
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/auth'
+import { api } from '../lib/api'
+import { toast } from 'sonner'
 import {
   User,
   Mail,
@@ -27,10 +29,10 @@ interface UserProfile {
   email: string
   avatar: string
   role: string
-  joinDate: string
-  lastLogin: string
-  totalRequests: number
-  monthlyRequests: number
+  created_at: string
+  last_login?: string
+  total_requests: number
+  monthly_requests: number
 }
 
 /** 用户设置类型 */
@@ -44,18 +46,11 @@ interface UserSettings {
 /** 页面主组件 */
 const ProfilePage: React.FC = () => {
   const logout = useAuthStore((s) => s.logout)
-  
-  // 模拟用户数据
-  const [userProfile, setUserProfile] = useState<UserProfile>({
-    name: 'Admin',
-    email: 'admin@example.com',
-    avatar: 'https://pub-cdn.sider.ai/u/U024HX2V46R/web-coder/689c58b6f5303283889f5c38/resource/06fb1510-bf11-46d5-b986-fe2e72b98b34.jpg',
-    role: '系统管理员',
-    joinDate: '2024-01-01',
-    lastLogin: '2024-01-16 15:32',
-    totalRequests: 12845,
-    monthlyRequests: 2156
-  })
+
+  // 用户数据状态
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const [userSettings, setUserSettings] = useState<UserSettings>({
     emailNotifications: true,
@@ -66,26 +61,70 @@ const ProfilePage: React.FC = () => {
 
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({
-    name: userProfile.name,
-    email: userProfile.email
+    name: '',
+    email: ''
   })
 
+  // 加载用户数据
+  useEffect(() => {
+    loadUserProfile()
+  }, [])
+
+  const loadUserProfile = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      const response = await api.users.getProfile()
+
+      if (response.success && response.data) {
+        const profile = response.data
+        setUserProfile(profile)
+        setEditForm({
+          name: profile.name,
+          email: profile.email
+        })
+      } else {
+        setError(response.error?.message || '获取用户档案失败')
+        toast.error('获取用户档案失败')
+      }
+    } catch (err) {
+      console.error('Load user profile error:', err)
+      setError('网络错误，请稍后重试')
+      toast.error('网络错误，请稍后重试')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   // 保存用户信息
-  const handleSaveProfile = () => {
-    setUserProfile(prev => ({
-      ...prev,
-      name: editForm.name,
-      email: editForm.email
-    }))
-    setIsEditing(false)
+  const handleSaveProfile = async () => {
+    try {
+      const response = await api.users.updateProfile({
+        email: editForm.email
+      })
+
+      if (response.success && response.data) {
+        setUserProfile(response.data)
+        setIsEditing(false)
+        toast.success('用户档案更新成功')
+      } else {
+        toast.error(response.error?.message || '更新用户档案失败')
+      }
+    } catch (err) {
+      console.error('Update profile error:', err)
+      toast.error('网络错误，请稍后重试')
+    }
   }
 
   // 取消编辑
   const handleCancelEdit = () => {
-    setEditForm({
-      name: userProfile.name,
-      email: userProfile.email
-    })
+    if (userProfile) {
+      setEditForm({
+        name: userProfile.name,
+        email: userProfile.email
+      })
+    }
     setIsEditing(false)
   }
 
@@ -95,6 +134,45 @@ const ProfilePage: React.FC = () => {
       ...prev,
       [key]: value
     }))
+  }
+
+  // 加载状态显示
+  if (isLoading) {
+    return (
+      <div className="w-full">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+            <p className="mt-2 text-sm text-neutral-600">加载用户档案中...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 错误状态显示
+  if (error) {
+    return (
+      <div className="w-full">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="text-red-500 mb-2">❌</div>
+            <p className="text-sm text-neutral-600 mb-4">{error}</p>
+            <button
+              onClick={loadUserProfile}
+              className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-medium hover:bg-violet-700"
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 确保userProfile不为null
+  if (!userProfile) {
+    return null
   }
 
   return (
@@ -142,19 +220,19 @@ const ProfilePage: React.FC = () => {
       <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
           icon={<BarChart3 size={18} />}
-          value={userProfile.totalRequests.toLocaleString()}
+          value={userProfile.total_requests.toLocaleString()}
           label="总请求数"
           color="#7c3aed"
         />
         <StatCard
           icon={<Calendar size={18} />}
-          value={userProfile.monthlyRequests.toLocaleString()}
+          value={userProfile.monthly_requests.toLocaleString()}
           label="本月请求"
           color="#0ea5e9"
         />
         <StatCard
           icon={<Clock size={18} />}
-          value={userProfile.lastLogin}
+          value={userProfile.last_login || '从未登录'}
           label="最后登录"
           color="#10b981"
         />
@@ -226,7 +304,7 @@ const ProfilePage: React.FC = () => {
                 <label className="block text-sm font-medium text-neutral-700 mb-1">注册时间</label>
                 <div className="flex items-center gap-2">
                   <Calendar size={16} className="text-neutral-400" />
-                  <span className="text-sm text-neutral-600">{userProfile.joinDate}</span>
+                  <span className="text-sm text-neutral-600">{userProfile.created_at}</span>
                 </div>
               </div>
             </div>

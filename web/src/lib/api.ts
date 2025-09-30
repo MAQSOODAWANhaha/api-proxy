@@ -412,6 +412,27 @@ export interface DashboardCardsResponse {
   rate_avg_response_time_today: string
 }
 
+// 用户档案相关接口定义
+export interface UserProfile {
+  name: string
+  email: string
+  avatar: string
+  role: string
+  created_at: string
+  last_login?: string
+  total_requests: number
+  monthly_requests: number
+}
+
+export interface UpdateProfileRequest {
+  email?: string
+}
+
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+}
+
 // 用户服务API相关接口定义
 export interface UserServiceCardsResponse {
   total_api_keys: number
@@ -932,7 +953,63 @@ export const api = {
   login: (credentials: LoginRequest) => apiClient.login(credentials),
   logout: () => apiClient.logout(),
   validateToken: () => apiClient.validateToken(),
-  users: userApi,
+  users: {
+    ...userApi,
+
+    /**
+     * 获取用户档案信息
+     */
+    async getProfile(): Promise<ApiResponse<UserProfile>> {
+      try {
+        return await apiClient.get<UserProfile>('/users/profile')
+      } catch (error) {
+        console.error('[Users] Failed to fetch user profile:', error)
+        return {
+          success: false,
+          error: {
+            code: 'USER_PROFILE_ERROR',
+            message: '获取用户档案失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 更新用户档案
+     */
+    async updateProfile(data: UpdateProfileRequest): Promise<ApiResponse<UserProfile>> {
+      try {
+        return await apiClient.put<UserProfile>('/users/profile', data)
+      } catch (error) {
+        console.error('[Users] Failed to update user profile:', error)
+        return {
+          success: false,
+          error: {
+            code: 'UPDATE_USER_PROFILE_ERROR',
+            message: '更新用户档案失败'
+          }
+        }
+      }
+    },
+
+    /**
+     * 修改密码
+     */
+    async changePassword(data: ChangePasswordRequest): Promise<ApiResponse<void>> {
+      try {
+        return await apiClient.put<void>('/users/change-password', data)
+      } catch (error) {
+        console.error('[Users] Failed to change password:', error)
+        return {
+          success: false,
+          error: {
+            code: 'CHANGE_PASSWORD_ERROR',
+            message: '修改密码失败'
+          }
+        }
+      }
+    },
+  },
   
   // Dashboard相关API
   dashboard: {

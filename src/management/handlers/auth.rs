@@ -101,6 +101,28 @@ pub async fn login(
     match bcrypt::verify(&request.password, &user.password_hash) {
         Ok(true) => {
             tracing::info!("Successful login for user: {}", request.username);
+
+            // 更新用户最后登录时间
+            let user_id = user.id;
+            let now = Utc::now().naive_utc();
+            match Users::update_many()
+                .set(entity::users::ActiveModel {
+                    id: Set(user_id),
+                    last_login: Set(Some(now)),
+                    ..Default::default()
+                })
+                .filter(entity::users::Column::Id.eq(user_id))
+                .exec(state.database.as_ref())
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("Updated last login time for user: {}", request.username);
+                }
+                Err(err) => {
+                    tracing::error!("Failed to update last login time for user {}: {}", request.username, err);
+                    // 不中断登录流程，只记录错误
+                }
+            }
         }
         Ok(false) => {
             tracing::warn!(

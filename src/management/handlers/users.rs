@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
-use chrono::Utc;
+use chrono::{Utc, Datelike};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::{Rng, distributions::Alphanumeric};
@@ -225,6 +225,34 @@ async fn get_user_statistics(user_id: i32, db: &DatabaseConnection) -> UserStats
             total_tokens: 0,
         },
     }
+}
+
+/// 获取用户本月请求数的辅助函数
+async fn get_user_monthly_requests(user_id: i32, db: &DatabaseConnection) -> i64 {
+    let now = chrono::Utc::now().naive_utc();
+    let month_start = now.date().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+
+    let monthly_result = ProxyTracing::find()
+        .select_only()
+        .column_as(proxy_tracing::Column::Id.count(), "monthly_requests")
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .filter(proxy_tracing::Column::CreatedAt.gte(month_start))
+        .into_tuple::<Option<i64>>()
+        .one(db)
+        .await;
+
+    match monthly_result {
+        Ok(Some(Some(count))) => count,
+        _ => 0,
+    }
+}
+
+/// 生成用户头像URL
+fn generate_avatar_url(email: &str) -> String {
+    // 使用Gravatar生成头像，如果没有则使用默认头像
+    let email_hash = md5::compute(email.to_lowercase());
+    let hash_str = format!("{:x}", email_hash);
+    format!("https://www.gravatar.com/avatar/{}?d=identicon&s=200", hash_str)
 }
 
 /// 列出用户
@@ -580,11 +608,14 @@ pub async fn get_user(
 /// 用户档案响应
 #[derive(Debug, Serialize)]
 pub struct UserProfileResponse {
-    pub username: String,
+    pub name: String,
     pub email: String,
-    pub last_login: Option<String>,
-    pub is_admin: bool,
+    pub avatar: String,
+    pub role: String,
     pub created_at: String,
+    pub last_login: Option<String>,
+    pub total_requests: i64,
+    pub monthly_requests: i64,
 }
 
 /// 更新用户档案请求
@@ -641,14 +672,31 @@ pub async fn get_user_profile(
         }
     };
 
+    // 获取用户统计数据
+    let user_stats = get_user_statistics(user_id, state.database.as_ref()).await;
+    let monthly_requests = get_user_monthly_requests(user_id, state.database.as_ref()).await;
+
+    // 生成头像URL
+    let avatar_url = generate_avatar_url(&user.email);
+
+    // 确定用户角色
+    let role = if user.is_admin {
+        "系统管理员".to_string()
+    } else {
+        "普通用户".to_string()
+    };
+
     let profile = UserProfileResponse {
-        username: user.username,
+        name: user.username,
         email: user.email,
+        avatar: avatar_url,
+        role,
+        created_at: user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         last_login: user
             .last_login
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
-        is_admin: user.is_admin,
-        created_at: user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        total_requests: user_stats.total_requests,
+        monthly_requests,
     };
 
     response::success(profile)
@@ -713,17 +761,34 @@ pub async fn update_user_profile(
 
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
+            // 获取更新后的统计数据
+            let user_stats = get_user_statistics(user_id, state.database.as_ref()).await;
+            let monthly_requests = get_user_monthly_requests(user_id, state.database.as_ref()).await;
+
+            // 生成头像URL
+            let avatar_url = generate_avatar_url(&updated_user.email);
+
+            // 确定用户角色
+            let role = if updated_user.is_admin {
+                "系统管理员".to_string()
+            } else {
+                "普通用户".to_string()
+            };
+
             let profile = UserProfileResponse {
-                username: updated_user.username,
+                name: updated_user.username,
                 email: updated_user.email,
-                last_login: updated_user
-                    .last_login
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
-                is_admin: updated_user.is_admin,
+                avatar: avatar_url,
+                role,
                 created_at: updated_user
                     .created_at
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string(),
+                last_login: updated_user
+                    .last_login
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+                total_requests: user_stats.total_requests,
+                monthly_requests,
             };
 
             response::success_with_message(profile, "Profile updated successfully")

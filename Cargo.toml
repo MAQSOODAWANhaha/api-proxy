@@ -58,6 +58,7 @@ aes-gcm = "0.10"
 rand = "0.8"
 hex = "0.4"
 sha2 = "0.10"
+md5 = "0.7"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 brotli-decompressor = "4"
 

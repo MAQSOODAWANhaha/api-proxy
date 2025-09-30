@@ -9,12 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 核心架构
 
 ### 双端口分离架构原理
-- **Pingora 代理服务** (端口8080): 专注高性能AI请求代理，基于Pingora 0.5.0原生性能
+- **Pingora 代理服务** (端口8080): 专注高性能AI请求代理，基于Pingora 0.6.0原生性能
 - **Axum 管理服务** (端口9090): 专注业务管理逻辑，用户管理、API密钥管理、统计查询
 - **共享数据层**: SQLite数据库 + Redis缓存 + 统一认证系统
 
 ### 技术栈
-- **核心框架**: Rust 2024 Edition + Pingora 0.5.0 + Axum 0.8.4
+- **核心框架**: Rust 2024 Edition + Pingora 0.6.0 + Axum 0.8.4
 - **数据库**: SQLite + Sea-ORM 1.1.13 + Sea-ORM-Migration
 - **缓存**: Redis with connection manager
 - **认证**: JWT + API Key + RBAC (17种权限类型)
@@ -24,8 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 项目构建和运行
 ```bash
-# 初始化数据库（首次运行必需）
-cargo run --bin migration up
+# 首次运行会自动初始化数据库（无需手动迁移）
+cargo run
 
 # 开发模式运行双端口服务
 cargo run
@@ -45,6 +45,12 @@ cargo test proxy::tests
 
 # 运行单个测试函数
 cargo test test_auth_middleware -- --nocapture
+
+# 运行集成测试
+cargo test --test integration_test
+
+# 运行基准测试
+cargo bench
 ```
 
 ### 代码质量和维护
@@ -61,26 +67,16 @@ cargo audit
 # 依赖更新
 cargo update
 
-# 性能基准测试
-cargo bench
-
 # 检查未使用的依赖
 cargo machete
-```
 
-### 数据库操作
-```bash
-# 创建新的数据库迁移
-cd migration && sea-orm-cli migrate generate <migration_name>
-
-# 应用所有迁移
-cargo run --bin migration up
-
-# 回滚上一次迁移
-cargo run --bin migration down
-
-# 刷新数据库实体（当修改数据库结构后）
-cd entity && sea-orm-cli generate entity --database-url sqlite://./data/dev.db --output-dir src
+# 部署相关命令
+./deploy.sh install              # 完整安装部署
+./deploy.sh start                # 启动所有服务
+./deploy.sh stop                 # 停止所有服务
+./deploy.sh status               # 查看服务运行状态
+./deploy.sh logs [proxy|caddy]   # 查看服务日志
+./deploy.sh restart              # 重启服务
 ```
 
 ## 核心架构模式
@@ -158,9 +154,31 @@ AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamS
 ```
 api-proxy/
 ├── src/                    # 主应用代码
-├── entity/                 # 数据库实体定义 (Sea-ORM)
+│   ├── app/               # 应用配置和启动
+│   ├── auth/              # 认证授权系统
+│   │   ├── oauth_client/  # OAuth 2.0客户端管理
+│   │   └── strategies/    # 认证策略实现
+│   ├── cache/             # 缓存抽象层
+│   ├── config/            # 配置管理系统
+│   ├── dual_port_setup.rs # 双端口服务启动
+│   ├── error/             # 错误处理框架
+│   ├── logging.rs         # 日志系统
+│   ├── management/        # Axum管理服务
+│   │   ├── handlers/      # API处理器
+│   │   ├── middleware/    # 中间件
+│   │   └── server.rs      # 服务器配置
+│   ├── proxy/             # Pingora代理服务
+│   │   └── provider_strategy/ # AI服务适配器
+│   ├── scheduler/         # 后台任务调度
+│   ├── statistics/        # 统计分析模块
+│   ├── trace/             # 请求追踪系统
+│   └── utils/             # 工具函数
+├── entity/                # 数据库实体定义 (Sea-ORM)
 ├── migration/             # 数据库迁移脚本
 ├── web/                   # 前端应用 (React 18 + TypeScript)
+├── test/                  # 单元测试
+├── tests/                 # 集成测试
+├── deploy/                 # 部署脚本
 └── docs/                  # 完整架构文档
 ```
 
@@ -194,6 +212,7 @@ api-proxy/
 - 使用`tempfile`创建临时测试数据库
 - 使用`wiremock`模拟外部AI服务响应
 - 使用`serial_test`确保数据库测试的隔离性
+- 集成测试位于`tests/`目录，单元测试位于各模块的`tests/`子目录
 
 ## 故障诊断
 
@@ -231,3 +250,9 @@ curl http://127.0.0.1:9090/api/system/info
 - 使用进程管理工具(systemd/supervisor)管理服务
 
 数据库配置路径优先级: 命令行参数 > 环境变量 > 配置文件 > 默认值
+
+### 部署架构
+- **开发环境**: 直接运行`cargo run`启动双端口服务
+- **生产环境**: 使用`./deploy.sh install`一键部署，包含Docker容器化和Caddy反向代理
+- **TLS支持**: 支持自签名证书(开发)和Let's Encrypt证书(生产)
+- **健康检查**: 完整的服务健康状态监控和自动恢复机制
