@@ -304,11 +304,16 @@ pub async fn get_models_usage_rate(
     // 按模型统计使用次数和成本
     let mut model_stats: HashMap<String, (i64, f64)> = HashMap::new();
     for trace in traces {
-        let model_name = trace.model_used.unwrap_or_else(|| "Unknown".to_string());
-        let cost = trace.cost.unwrap_or(0.0);
-        let entry = model_stats.entry(model_name).or_insert((0, 0.0));
-        entry.0 += 1; // usage count
-        entry.1 += cost; // total cost
+        // 过滤空模型数据
+        if let Some(model_name) = &trace.model_used {
+            // 检查模型名称是否有效（非空、非空白字符）
+            if !model_name.trim().is_empty() {
+                let cost = trace.cost.unwrap_or(0.0);
+                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0));
+                entry.0 += 1; // usage count
+                entry.1 += cost; // total cost
+            }
+        }
     }
 
     // 按使用次数排序
@@ -381,16 +386,30 @@ pub async fn get_models_statistics(
         }
     };
 
-    let total_requests = traces.len() as i64;
+    // 计算有效请求总数（过滤空模型数据后）
+    let total_requests: i64 = traces.iter()
+        .filter(|t| {
+            if let Some(model_name) = &t.model_used {
+                !model_name.trim().is_empty()
+            } else {
+                false
+            }
+        })
+        .count() as i64;
 
     // 按模型统计详细数据（使用次数和费用）
     let mut model_stats: HashMap<String, (i64, f64)> = HashMap::new();
     for trace in traces {
-        let model_name = trace.model_used.unwrap_or_else(|| "Unknown".to_string());
-        let cost = trace.cost.unwrap_or(0.0);
-        let entry = model_stats.entry(model_name).or_insert((0, 0.0));
-        entry.0 += 1; // usage count
-        entry.1 += cost; // total cost
+        // 过滤空模型数据
+        if let Some(model_name) = &trace.model_used {
+            // 检查模型名称是否有效（非空、非空白字符）
+            if !model_name.trim().is_empty() {
+                let cost = trace.cost.unwrap_or(0.0);
+                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0));
+                entry.0 += 1; // usage count
+                entry.1 += cost; // total cost
+            }
+        }
     }
 
     // 转换为响应格式
