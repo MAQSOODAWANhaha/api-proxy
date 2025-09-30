@@ -15,7 +15,7 @@ use crate::auth::{
 };
 use crate::cache::CacheManager;
 use crate::error::ProxyError;
-use crate::logging::LogComponent;
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::{proxy_debug, proxy_info};

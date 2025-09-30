@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::error::ProxyError;
-use crate::logging::LogComponent;
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
 use crate::{proxy_debug, proxy_info, proxy_warn};

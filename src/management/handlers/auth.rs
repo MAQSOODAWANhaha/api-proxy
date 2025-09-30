@@ -119,7 +119,11 @@ pub async fn login(
                     tracing::info!("Updated last login time for user: {}", request.username);
                 }
                 Err(err) => {
-                    tracing::error!("Failed to update last login time for user {}: {}", request.username, err);
+                    tracing::error!(
+                        "Failed to update last login time for user {}: {}",
+                        request.username,
+                        err
+                    );
                     // 不中断登录流程，只记录错误
                 }
             }

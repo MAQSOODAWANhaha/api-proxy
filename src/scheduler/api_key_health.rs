@@ -173,7 +173,10 @@ impl ApiKeyHealthChecker {
         self.load_health_status_from_database().await?;
 
         *running = true;
-        info!("API key health checker started");
+        info!(
+            component = "api_key_health_checker",
+            "API key health checker started"
+        );
         Ok(())
     }
 
@@ -181,7 +184,10 @@ impl ApiKeyHealthChecker {
     pub async fn stop(&self) -> Result<()> {
         let mut running = self.is_running.write().await;
         *running = false;
-        info!("API key health checker stopped");
+        info!(
+            component = "api_key_health_checker",
+            "API key health checker stopped"
+        );
         Ok(())
     }
 
@@ -214,6 +220,7 @@ impl ApiKeyHealthChecker {
             })?;
 
         debug!(
+            component = "api_key_health_checker",
             key_id = key_model.id,
             provider = %provider_id,
             provider_name = %provider_info.name,
@@ -230,6 +237,7 @@ impl ApiKeyHealthChecker {
         let check_result = match result {
             Ok((status_code, success)) => {
                 debug!(
+                    component = "api_key_health_checker",
                     key_id = key_model.id,
                     provider_name = %provider_info.name,
                     status_code = status_code,
@@ -251,6 +259,7 @@ impl ApiKeyHealthChecker {
             Err(e) => {
                 let error_category = self.categorize_error(&e);
                 warn!(
+                    component = "api_key_health_checker",
                     key_id = key_model.id,
                     provider_name = %provider_info.name,
                     error = %e,
@@ -311,6 +320,7 @@ impl ApiKeyHealthChecker {
         };
 
         debug!(
+            component = "api_key_health_checker",
             provider_name = %provider_info.name,
             url = %url,
             "Performing API key health check"
@@ -369,6 +379,7 @@ impl ApiKeyHealthChecker {
         };
 
         debug!(
+            component = "api_key_health_checker",
             provider_name = %provider_info.name,
             status_code = status_code,
             success = success,
@@ -475,9 +486,14 @@ impl ApiKeyHealthChecker {
         // 记录状态变化
         if was_healthy != status.is_healthy {
             if status.is_healthy {
-                info!(key_id = key_id, "API key recovered (healthy)");
+                info!(
+                    component = "api_key_health_checker",
+                    key_id = key_id,
+                    "API key recovered (healthy)"
+                );
             } else {
                 warn!(
+                    component = "api_key_health_checker",
                     key_id = key_id,
                     consecutive_failures = status.consecutive_failures,
                     last_error = ?status.last_error,
@@ -570,6 +586,7 @@ impl ApiKeyHealthChecker {
         key.update(&*self.db).await?;
 
         debug!(
+            component = "api_key_health_checker",
             key_id = key_id,
             health_status = %db_health_status,
             health_score = status.health_score,
@@ -673,7 +690,7 @@ impl ApiKeyHealthChecker {
             // 同步到数据库
             self.mark_key_unhealthy_in_database(key_id, &reason).await?;
 
-            warn!(key_id = key_id, reason = %reason, "Manually marked API key as unhealthy");
+            warn!(component = "api_key_health_checker", key_id = key_id, reason = %reason, "Manually marked API key as unhealthy");
         }
 
         Ok(())
@@ -707,6 +724,7 @@ impl ApiKeyHealthChecker {
         key.update(&*self.db).await?;
 
         debug!(
+            component = "api_key_health_checker",
             key_id = key_id,
             reason = %reason,
             "API key manually marked as unhealthy in database"
@@ -762,6 +780,7 @@ impl ApiKeyHealthChecker {
             }
 
             debug!(
+                component = "api_key_health_checker",
                 key_id = key.id,
                 health_status = %key.health_status,
                 "Loaded health status from database"
@@ -769,6 +788,7 @@ impl ApiKeyHealthChecker {
         }
 
         info!(
+            component = "api_key_health_checker",
             "Loaded {} API keys health status from database",
             health_map.len()
         );
@@ -802,7 +822,7 @@ impl ApiKeyHealthChecker {
                     results.insert(key_id, check_result);
                 }
                 Err(e) => {
-                    error!(key_id = key_id, error = %e, "Failed to check API key");
+                    error!(component = "api_key_health_checker", key_id = key_id, error = %e, "Failed to check API key");
                     // 创建失败结果
                     results.insert(
                         key_id,
@@ -821,6 +841,7 @@ impl ApiKeyHealthChecker {
         }
 
         debug!(
+            component = "api_key_health_checker",
             checked_keys = results.len(),
             "Batch API key health check completed"
         );

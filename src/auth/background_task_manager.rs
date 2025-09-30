@@ -109,7 +109,10 @@ impl BackgroundTaskManager {
             },
         );
 
-        info!("OAuth cleanup task initialized");
+        info!(
+            component = "background_task_manager",
+            "OAuth cleanup task initialized"
+        );
         Ok(())
     }
 
@@ -120,7 +123,10 @@ impl BackgroundTaskManager {
         config: RefreshTaskConfig,
     ) -> Result<()> {
         if !config.enabled {
-            info!("OAuth token refresh task is disabled");
+            info!(
+                component = "background_task_manager",
+                "OAuth token refresh task is disabled"
+            );
             return Ok(());
         }
 
@@ -143,13 +149,19 @@ impl BackgroundTaskManager {
             },
         );
 
-        info!("OAuth token refresh task initialized");
+        info!(
+            component = "background_task_manager",
+            "OAuth token refresh task initialized"
+        );
         Ok(())
     }
 
     /// 启动所有任务
     pub async fn start_all_tasks(&self) -> Result<()> {
-        info!("Starting all background tasks");
+        info!(
+            component = "background_task_manager",
+            "Starting all background tasks"
+        );
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -185,7 +197,7 @@ impl BackgroundTaskManager {
                         if let Some(task_info) = info.get_mut(&BackgroundTaskType::OAuthCleanup) {
                             task_info.status = BackgroundTaskStatus::Stopped;
                         }
-                        info!("OAuth cleanup task stopped by shutdown signal");
+                        info!(component = "background_task_manager", "OAuth cleanup task stopped by shutdown signal");
                     }
                 }
             });
@@ -196,7 +208,10 @@ impl BackgroundTaskManager {
         // 启动 OAuth Token 刷新任务
         if let Some(token_refresh_task) = &self.oauth_token_refresh_task {
             if let Err(e) = token_refresh_task.start().await {
-                error!("Failed to start OAuth token refresh task: {:?}", e);
+                error!(
+                    component = "background_task_manager",
+                    "Failed to start OAuth token refresh task: {:?}", e
+                );
                 return Err(e);
             }
 
@@ -208,13 +223,19 @@ impl BackgroundTaskManager {
             }
         }
 
-        info!("All background tasks started successfully");
+        info!(
+            component = "background_task_manager",
+            "All background tasks started successfully"
+        );
         Ok(())
     }
 
     /// 停止所有任务
     pub async fn stop_all_tasks(&self) -> Result<()> {
-        info!("Stopping all background tasks");
+        info!(
+            component = "background_task_manager",
+            "Stopping all background tasks"
+        );
 
         // 发送停止信号给 OAuth 清理任务
         if let Some(shutdown_tx) = self.shutdown_tx.write().await.take() {
@@ -224,14 +245,20 @@ impl BackgroundTaskManager {
         // 等待 OAuth 清理任务停止
         if let Some(handle) = self.oauth_cleanup_handle.write().await.take() {
             if let Err(e) = handle.await {
-                error!("OAuth cleanup task handle error: {:?}", e);
+                error!(
+                    component = "background_task_manager",
+                    "OAuth cleanup task handle error: {:?}", e
+                );
             }
         }
 
         // 停止 OAuth Token 刷新任务
         if let Some(token_refresh_task) = &self.oauth_token_refresh_task {
             if let Err(e) = token_refresh_task.stop().await {
-                error!("Failed to stop OAuth token refresh task: {:?}", e);
+                error!(
+                    component = "background_task_manager",
+                    "Failed to stop OAuth token refresh task: {:?}", e
+                );
             }
         }
 
@@ -241,7 +268,10 @@ impl BackgroundTaskManager {
             info.status = BackgroundTaskStatus::Stopped;
         }
 
-        info!("All background tasks stopped");
+        info!(
+            component = "background_task_manager",
+            "All background tasks stopped"
+        );
         Ok(())
     }
 
@@ -286,7 +316,10 @@ impl BackgroundTaskManager {
                 info.last_run_at = Some(Utc::now());
             }
 
-            info!("Manual OAuth cleanup executed successfully");
+            info!(
+                component = "background_task_manager",
+                "Manual OAuth cleanup executed successfully"
+            );
             Ok(())
         } else {
             Err(ProxyError::business("OAuth cleanup task not initialized"))
@@ -297,7 +330,10 @@ impl BackgroundTaskManager {
     pub async fn execute_oauth_token_refresh_now(&self) -> Result<()> {
         if let Some(token_refresh_task) = &self.oauth_token_refresh_task {
             token_refresh_task.execute_now().await?;
-            info!("Manual OAuth token refresh triggered");
+            info!(
+                component = "background_task_manager",
+                "Manual OAuth token refresh triggered"
+            );
             Ok(())
         } else {
             Err(ProxyError::business(
@@ -311,7 +347,10 @@ impl BackgroundTaskManager {
         match task_type {
             BackgroundTaskType::OAuthCleanup => {
                 // OAuth 清理任务暂时不支持暂停，因为它是简单的定时器
-                warn!("OAuth cleanup task does not support pause operation");
+                warn!(
+                    component = "background_task_manager",
+                    "OAuth cleanup task does not support pause operation"
+                );
                 Ok(())
             }
             BackgroundTaskType::OAuthTokenRefresh => {
@@ -339,7 +378,10 @@ impl BackgroundTaskManager {
         match task_type {
             BackgroundTaskType::OAuthCleanup => {
                 // OAuth 清理任务暂时不支持恢复
-                warn!("OAuth cleanup task does not support resume operation");
+                warn!(
+                    component = "background_task_manager",
+                    "OAuth cleanup task does not support resume operation"
+                );
                 Ok(())
             }
             BackgroundTaskType::OAuthTokenRefresh => {

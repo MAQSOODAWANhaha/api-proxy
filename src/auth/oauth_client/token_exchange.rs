@@ -11,6 +11,7 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
+use tracing::info;
 
 /// 令牌响应结构（来自OAuth服务器的原始响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +91,7 @@ impl TokenExchangeClient {
         let actual_code = if authorization_code.contains('#') {
             let parts: Vec<&str> = authorization_code.split('#').collect();
             tracing::debug!(
+                component = "oauth_token_exchange",
                 "Authorization code contains fragment, using code part: {} -> {}",
                 authorization_code,
                 parts[0]
@@ -215,6 +217,7 @@ impl TokenExchangeClient {
             _ => {
                 // 对于不支持撤销的提供商，只是在本地标记为失效
                 tracing::debug!(
+                    component = "oauth_token_exchange",
                     "Provider {} does not support token revocation",
                     base_provider
                 );
@@ -292,7 +295,11 @@ impl TokenExchangeClient {
     ) -> OAuthResult<bool> {
         // 对于没有特定验证端点的提供商，默认认为令牌有效
         // 实际应用中可以根据需要实现更复杂的验证逻辑
-        tracing::debug!("Generic token validation for provider: {}", provider_name);
+        tracing::debug!(
+            component = "oauth_token_exchange",
+            "Generic token validation for provider: {}",
+            provider_name
+        );
         Ok(true)
     }
 
@@ -310,6 +317,7 @@ impl TokenExchangeClient {
         let response = if is_claude_token_url {
             // Claude使用JSON格式 - 根据Wei-Shaw项目实现
             tracing::debug!(
+                component = "oauth_token_exchange",
                 "🌟 发送Claude token exchange请求: url={}, params={:?}",
                 token_url,
                 form_params
@@ -342,10 +350,9 @@ impl TokenExchangeClient {
         if !status.is_success() {
             // 对于错误响应，先尝试解析为JSON，如果失败则获取文本内容
             let error_text = response.text().await?;
-            tracing::info!(
-                "🌟 Token exchange error response: status={}, body={}",
-                status,
-                error_text
+            info!(
+                component = "oauth_token_exchange",
+                "🌟 Token exchange error response: status={}, body={}", status, error_text
             );
 
             // 尝试解析错误响应
@@ -369,10 +376,9 @@ impl TokenExchangeClient {
             .map_err(|e| OAuthError::SerdeError(format!("Failed to read response text: {}", e)))?;
 
         // 打印完整的原始JSON响应（注意：生产环境中应该小心处理敏感信息）
-        tracing::info!(
-            "🌟 Token exchange complete: status={}, body={}",
-            status,
-            data
+        info!(
+            component = "oauth_token_exchange",
+            "🌟 Token exchange complete: status={}, body={}", status, data
         );
 
         // 解析为我们定义的TokenResponse结构体

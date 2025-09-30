@@ -2,34 +2,34 @@
 //!
 //! 企业级 AI 服务代理平台 - 基于 Pingora 的高性能代理服务
 
-use api_proxy::{config::ConfigManager, dual_port_setup};
-use tracing::info;
+use api_proxy::{config::ConfigManager, dual_port_setup, logging, ProxyError, Result};
+use tracing::{error, info};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     // 初始化日志系统
-    api_proxy::logging::init_optimized_logging(None);
+    logging::init_optimized_logging(None);
 
     // 初始化管理端系统启动时间（用于 /api/system/metrics uptime）
     // 确保在进程启动时即记录，而非在首次 API 调用时懒初始化
     api_proxy::management::handlers::system::init_start_time();
 
-    info!(
-        version = env!("CARGO_PKG_VERSION"),
-        flow = "service_boot",
-        "启动 AI Proxy 服务"
-    );
-
     // 执行数据初始化（数据库迁移等）
     run_data_initialization()
         .await
-        .map_err(anyhow::Error::from)?;
+        .map_err(|e| ProxyError::Database {
+            message: format!("数据初始化失败: {}", e),
+            source: Some(e),
+        })?;
 
-    // 启动双端口分离架构服务器
-    dual_port_setup::run_dual_port_servers()
-        .await
-        .map_err(anyhow::Error::from)?;
+    // 启动服务
+    info!(component = "main", "服务启动");
+    if let Err(e) = dual_port_setup::run_dual_port_servers().await {
+        error!(component = "main", "服务启动失败: {:?}", e);
+        std::process::exit(1);
+    }
 
+    info!(component = "main", "服务正常关闭");
     Ok(())
 }
 

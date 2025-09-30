@@ -83,6 +83,7 @@ macro_rules! proxy_info {
         {
             tracing::info!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
@@ -93,10 +94,36 @@ macro_rules! proxy_info {
         {
             tracing::info!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
-                $($field_key = $field_value),*
+                $($field_key = $field_value,)*
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::info!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $($field_key = $field_value,)*
+                $percent_field = %$percent_value,
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::info!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $percent_field = %$percent_value,
             );
         }
     };
@@ -109,6 +136,7 @@ macro_rules! proxy_debug {
         {
             tracing::debug!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
@@ -119,10 +147,36 @@ macro_rules! proxy_debug {
         {
             tracing::debug!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
-                $($field_key = $field_value),*
+                $($field_key = $field_value,)*
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::debug!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $($field_key = $field_value,)*
+                $percent_field = %$percent_value,
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::debug!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $percent_field = %$percent_value,
             );
         }
     };
@@ -135,6 +189,7 @@ macro_rules! proxy_warn {
         {
             tracing::warn!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
@@ -145,10 +200,36 @@ macro_rules! proxy_warn {
         {
             tracing::warn!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
-                $($field_key = $field_value),*
+                $($field_key = $field_value,)*
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::warn!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $($field_key = $field_value,)*
+                $percent_field = %$percent_value,
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::warn!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $percent_field = %$percent_value,
             );
         }
     };
@@ -161,6 +242,7 @@ macro_rules! proxy_error {
         {
             tracing::error!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
@@ -171,10 +253,36 @@ macro_rules! proxy_error {
         {
             tracing::error!(
                 request_id = %$request_id,
+                stage = $stage.as_str(),
                 operation = $operation,
                 component = $component.as_str(),
                 message = %$description,
-                $($field_key = $field_value),*
+                $($field_key = $field_value,)*
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::error!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $($field_key = $field_value,)*
+                $percent_field = %$percent_value,
+            );
+        }
+    };
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
+        {
+            tracing::error!(
+                request_id = %$request_id,
+                stage = $stage.as_str(),
+                operation = $operation,
+                component = $component.as_str(),
+                message = %$description,
+                $percent_field = %$percent_value,
             );
         }
     };
@@ -566,28 +674,28 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
     let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| filter_string);
 
     // 创建多层级订阅者
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::try_new(&log_filter).unwrap_or_else(|_| EnvFilter::default())
+    });
+
+    let fmt_layer = fmt::layer()
+        .with_target(true)
+        .with_level(true)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_filter(tracing_subscriber::filter::FilterFn::new(|metadata| {
+            // 过滤掉一些噪音日志
+            !metadata.target().starts_with("h2::client")
+                && !metadata.target().starts_with("hyper::")
+                && !metadata.target().starts_with("tokio::runtime")
+                && !metadata.target().starts_with("pingora::upstreams::peer")
+        }));
+
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::try_new(&log_filter).unwrap_or_else(|_| EnvFilter::default())
-        }))
-        .with(
-            fmt::layer()
-                .with_target(true)
-                .with_level(true)
-                .with_thread_ids(false)
-                .with_thread_names(false)
-                .with_file(false)
-                .with_line_number(false)
-                .compact()
-                .fmt_fields(fmt::format::DefaultFields::new())
-                .with_filter(tracing_subscriber::filter::FilterFn::new(|metadata| {
-                    // 过滤掉一些噪音日志
-                    !metadata.target().starts_with("h2::client")
-                        && !metadata.target().starts_with("hyper::")
-                        && !metadata.target().starts_with("tokio::runtime")
-                        && !metadata.target().starts_with("pingora::upstreams::peer")
-                })),
-        )
+        .with(env_filter)
+        .with(fmt_layer)
         .init();
 
     // 打印启动信息

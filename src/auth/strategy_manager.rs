@@ -45,7 +45,10 @@ impl AuthStrategyManager {
         let api_key_strategy = Box::new(ApiKeyStrategy::new("Authorization", "Bearer {key}"));
         self.register_strategy(api_key_strategy);
 
-        info!("Default auth strategies registered in AuthStrategyManager");
+        info!(
+            component = "auth_strategy_manager",
+            "Default auth strategies registered in AuthStrategyManager"
+        );
     }
 
     /// 注册认证策略

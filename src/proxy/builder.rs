@@ -6,7 +6,7 @@ use crate::auth::{AuthManager, AuthService};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
-use crate::logging::LogComponent;
+use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::{
     AuthenticationService, RequestTransformService, ResponseTransformService, StatisticsService,

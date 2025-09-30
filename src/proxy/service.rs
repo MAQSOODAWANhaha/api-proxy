@@ -11,14 +11,16 @@ use sea_orm::DatabaseConnection;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, info, warn};
+use tracing::warn;
 use uuid::Uuid;
 
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::{
     AuthenticationService, StatisticsService, TracingService, context::ProxyContext,
     provider_strategy, request_transform_service::RequestTransformService,
     response_transform_service::ResponseTransformService, upstream_service::UpstreamService,
 };
+use crate::{proxy_error, proxy_info};
 
 /// 核心AI代理服务 - 作为编排器
 pub struct ProxyService {
@@ -30,8 +32,6 @@ pub struct ProxyService {
     req_transform_service: Arc<RequestTransformService>,
     resp_transform_service: Arc<ResponseTransformService>,
 }
-
-const COMPONENT: &str = "proxy.service";
 
 impl ProxyService {
     /// 创建新的代理服务实例
@@ -73,13 +73,14 @@ impl ProxyHttp for ProxyService {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        info!(
-            event = "downstream_request_start",
-            component = COMPONENT,
-            request_id = %ctx.request_id,
+        proxy_info!(
+            &ctx.request_id,
+            LogStage::RequestStart,
+            LogComponent::Proxy,
+            "downstream_request_start",
+            "收到下游请求",
             method = session.req_header().method.as_str(),
-            path = session.req_header().uri.path(),
-            "收到下游请求"
+            path = session.req_header().uri.path()
         );
 
         if session.req_header().method == "OPTIONS" {
@@ -93,7 +94,14 @@ impl ProxyHttp for ProxyService {
             .await
         {
             Ok(auth_result) => {
-                info!(event = "auth_ok", component = COMPONENT, request_id = %ctx.request_id, user_service_api_id = auth_result.user_service_api.id, "认证授权成功");
+                proxy_info!(
+                    &ctx.request_id,
+                    LogStage::Authentication,
+                    LogComponent::AuthService,
+                    "auth_ok",
+                    "认证授权成功",
+                    user_service_api_id = auth_result.user_service_api.id
+                );
                 let timeout = auth_result
                     .user_service_api
                     .timeout_seconds
@@ -111,7 +119,14 @@ impl ProxyHttp for ProxyService {
                 }
             }
             Err(e) => {
-                error!(event = "auth_fail", component = COMPONENT, request_id = %ctx.request_id, error = %e, "认证授权失败");
+                proxy_error!(
+                    &ctx.request_id,
+                    LogStage::Authentication,
+                    LogComponent::AuthService,
+                    "auth_fail",
+                    "认证授权失败",
+                    error = %e
+                );
                 let _ = self
                     .trace_service
                     .complete_trace_with_error(&ctx.request_id, &e)
@@ -441,13 +456,14 @@ impl ProxyHttp for ProxyService {
                 .await;
         }
 
-        info!(
-            event = "request_complete",
-            component = COMPONENT,
-            request_id = %ctx.request_id,
+        proxy_info!(
+            &ctx.request_id,
+            LogStage::Response,
+            LogComponent::Proxy,
+            "request_complete",
+            "请求处理完成",
             status_code = status_code,
-            duration_ms = ctx.start_time.elapsed().as_millis(),
-            "请求处理完成"
+            duration_ms = ctx.start_time.elapsed().as_millis()
         );
     }
 }

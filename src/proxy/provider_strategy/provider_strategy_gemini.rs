@@ -5,7 +5,7 @@
 
 use super::ProviderStrategy;
 use crate::error::ProxyError;
-use crate::logging::{self, LogComponent};
+use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::proxy_info;
 use pingora_http::RequestHeader;

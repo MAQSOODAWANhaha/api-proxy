@@ -24,7 +24,10 @@ pub struct SharedServices {
 
 /// 双端口服务器启动函数
 pub async fn run_dual_port_servers() -> Result<()> {
-    info!("🚀 Starting dual-port architecture servers...");
+    info!(
+        component = "dual_port_setup",
+        "🚀 Starting dual-port architecture servers..."
+    );
 
     // 初始化共享资源
     let (config, db, shared_services, trace_system) = initialize_shared_services().await?;
@@ -52,10 +55,13 @@ pub async fn run_dual_port_servers() -> Result<()> {
     };
 
     info!(
+        component = "dual_port_setup",
         "📊 Management server will listen on {}:{}",
-        management_config.bind_address, management_config.port
+        management_config.bind_address,
+        management_config.port
     );
     info!(
+        component = "dual_port_setup",
         "🔗 Proxy server will listen on {}:{}",
         config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
         config.server.as_ref().map_or(8080, |s| s.port)
@@ -79,23 +85,35 @@ pub async fn run_dual_port_servers() -> Result<()> {
         PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
 
     // 启动OAuth token后台刷新任务
-    info!("🔄 Starting OAuth token refresh background task...");
+    info!(
+        component = "dual_port_setup",
+        "🔄 Starting OAuth token refresh background task..."
+    );
     if let Err(e) = shared_services.oauth_token_refresh_task.start().await {
-        error!("Failed to start OAuth token refresh task: {:?}", e);
+        error!(
+            component = "dual_port_setup",
+            "Failed to start OAuth token refresh task: {:?}", e
+        );
         return Err(ProxyError::server_init(format!(
             "OAuth token refresh task startup failed: {}",
             e
         )));
     }
-    info!("✅ OAuth token refresh background task started successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ OAuth token refresh background task started successfully"
+    );
 
-    info!("🎯 Starting both servers concurrently...");
+    info!(
+        component = "dual_port_setup",
+        "🎯 Starting both servers concurrently..."
+    );
 
     // 并发启动两个服务器
     tokio::select! {
         // 启动 Axum 管理服务器
         result = management_server.serve() => {
-            error!("Management server exited unexpectedly: {:?}", result);
+            error!(component = "dual_port_setup", "Management server exited unexpectedly: {:?}", result);
             Err(ProxyError::server_start("Management server failed"))
         }
         // 启动 Pingora 代理服务器
@@ -105,15 +123,15 @@ pub async fn run_dual_port_servers() -> Result<()> {
             match result {
                 Ok(proxy_result) => {
                     if let Err(e) = proxy_result {
-                        error!("Proxy server failed: {:?}", e);
+                        error!(component = "dual_port_setup", "Proxy server failed: {:?}", e);
                         Err(e)
                     } else {
-                        error!("Proxy server exited unexpectedly");
+                        error!(component = "dual_port_setup", "Proxy server exited unexpectedly");
                         Err(ProxyError::server_start("Proxy server failed"))
                     }
                 }
                 Err(e) => {
-                    error!("Failed to spawn proxy server task: {:?}", e);
+                    error!(component = "dual_port_setup", "Failed to spawn proxy server task: {:?}", e);
                     Err(ProxyError::server_start("Failed to spawn proxy server"))
                 }
             }
@@ -129,37 +147,61 @@ pub async fn initialize_shared_services() -> Result<(
     Arc<crate::trace::TraceSystem>,
 )> {
     // 加载配置
-    info!("📋 Loading configuration...");
+    info!(component = "dual_port_setup", "📋 Loading configuration...");
     let config_manager = ConfigManager::new().await?;
     let config = config_manager.get_config().await;
 
-    info!("✅ Configuration loaded successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ Configuration loaded successfully"
+    );
 
     // 初始化数据库连接
-    info!("🗄️  Initializing database connection...");
+    info!(
+        component = "dual_port_setup",
+        "🗄️  Initializing database connection..."
+    );
     let db = match crate::database::init_database(&config.database.url).await {
         Ok(db) => {
-            info!("✅ Database connection established");
+            info!(
+                component = "dual_port_setup",
+                "✅ Database connection established"
+            );
             Arc::new(db)
         }
         Err(e) => {
-            error!("❌ Database connection failed: {:?}", e);
+            error!(
+                component = "dual_port_setup",
+                "❌ Database connection failed: {:?}", e
+            );
             return Err(e.into());
         }
     };
 
     // 运行数据库迁移
-    info!("🔄 Running database migrations...");
+    info!(
+        component = "dual_port_setup",
+        "🔄 Running database migrations..."
+    );
     if let Err(e) = crate::database::run_migrations(&db).await {
-        error!("❌ Database migration failed: {:?}", e);
+        error!(
+            component = "dual_port_setup",
+            "❌ Database migration failed: {:?}", e
+        );
         return Err(e.into());
     }
-    info!("✅ Database migrations completed");
+    info!(
+        component = "dual_port_setup",
+        "✅ Database migrations completed"
+    );
 
     let config_arc = Arc::new(config);
 
     // 初始化所有共享服务
-    info!("🛠️  Initializing shared services...");
+    info!(
+        component = "dual_port_setup",
+        "🛠️  Initializing shared services..."
+    );
 
     // 初始化认证系统组件
     let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
@@ -180,7 +222,10 @@ pub async fn initialize_shared_services() -> Result<(
     );
 
     // 初始化服务商配置管理器
-    info!("🔧 Initializing provider configuration manager...");
+    info!(
+        component = "dual_port_setup",
+        "🔧 Initializing provider configuration manager..."
+    );
     let provider_config_manager = Arc::new(ProviderConfigManager::new(
         db.clone(),
         unified_cache_manager.clone(),
@@ -213,30 +258,51 @@ pub async fn initialize_shared_services() -> Result<(
     // 统计数据直接查 proxy_tracing 表，无需单独统计服务
 
     // 初始化统一追踪系统 - 这是关键的缺失组件!
-    info!("🔍 Initializing unified trace system...");
+    info!(
+        component = "dual_port_setup",
+        "🔍 Initializing unified trace system..."
+    );
     let tracer_config = crate::trace::immediate::ImmediateTracerConfig::default();
     let trace_system = Arc::new(crate::trace::TraceSystem::new_immediate(
         db.clone(),
         tracer_config,
     ));
-    info!("✅ Unified trace system initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ Unified trace system initialized successfully"
+    );
 
     // 初始化API密钥健康检查器
-    info!("🏥 Initializing API key health checker...");
+    info!(
+        component = "dual_port_setup",
+        "🏥 Initializing API key health checker..."
+    );
     let api_key_health_checker =
         Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
             db.clone(),
             None, // 使用默认配置
         ));
-    info!("✅ API key health checker initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ API key health checker initialized successfully"
+    );
 
     // 初始化OAuth客户端
-    info!("🔐 Initializing OAuth client...");
+    info!(
+        component = "dual_port_setup",
+        "🔐 Initializing OAuth client..."
+    );
     let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
-    info!("✅ OAuth client initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ OAuth client initialized successfully"
+    );
 
     // 初始化OAuth token刷新服务
-    info!("🔄 Initializing OAuth token refresh service...");
+    info!(
+        component = "dual_port_setup",
+        "🔄 Initializing OAuth token refresh service..."
+    );
     let oauth_refresh_service = Arc::new(
         crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService::new(
             db.clone(),
@@ -244,10 +310,16 @@ pub async fn initialize_shared_services() -> Result<(
             crate::auth::oauth_token_refresh_service::RefreshServiceConfig::default(),
         ),
     );
-    info!("✅ OAuth token refresh service initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ OAuth token refresh service initialized successfully"
+    );
 
     // 初始化智能API密钥提供者
-    info!("🧠 Initializing smart API key provider...");
+    info!(
+        component = "dual_port_setup",
+        "🧠 Initializing smart API key provider..."
+    );
     let smart_api_key_provider = Arc::new(
         crate::auth::smart_api_key_provider::SmartApiKeyProvider::new(
             db.clone(),
@@ -255,19 +327,31 @@ pub async fn initialize_shared_services() -> Result<(
             oauth_refresh_service.clone(),
         ),
     );
-    info!("✅ Smart API key provider initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ Smart API key provider initialized successfully"
+    );
 
     // 初始化OAuth token刷新任务
-    info!("⏰ Initializing OAuth token refresh task...");
+    info!(
+        component = "dual_port_setup",
+        "⏰ Initializing OAuth token refresh task..."
+    );
     let oauth_token_refresh_task = Arc::new(
         crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(
             oauth_refresh_service.clone(),
             crate::auth::oauth_token_refresh_task::RefreshTaskConfig::default(),
         ),
     );
-    info!("✅ OAuth token refresh task initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ OAuth token refresh task initialized successfully"
+    );
 
-    info!("✅ All shared services initialized successfully");
+    info!(
+        component = "dual_port_setup",
+        "✅ All shared services initialized successfully"
+    );
 
     let shared_services = SharedServices {
         auth_service,

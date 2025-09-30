@@ -10,7 +10,7 @@ use sea_orm::DatabaseConnection;
 
 use crate::auth::oauth_client::JWTParser;
 use crate::error::ProxyError;
-use crate::logging::{self, LogComponent};
+use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::proxy_info;
 

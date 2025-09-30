@@ -8,7 +8,7 @@ use std::time::Duration;
 use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 
 use crate::error::ProxyError;
-use crate::logging::LogComponent;
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
 use crate::proxy_info;
 use sea_orm::DatabaseConnection;

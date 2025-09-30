@@ -6,7 +6,7 @@ use super::builder::ProxyServerBuilder;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 // 使用 tracing 替代 log
-use crate::logging::LogComponent;
+use crate::logging::{LogComponent, LogStage};
 use crate::trace::TraceSystem;
 use crate::{proxy_info, proxy_warn};
 use pingora_core::server::{Server, configuration::Opt};

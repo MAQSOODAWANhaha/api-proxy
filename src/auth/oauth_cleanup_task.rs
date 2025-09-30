@@ -26,8 +26,10 @@ impl OAuthCleanupTask {
         // OAuth cleanup is always enabled - removed config.enabled check
 
         info!(
+            component = "oauth_cleanup_task",
             "Starting OAuth cleanup task, cleanup interval: {}s, pending expire: {}min",
-            self.config.cleanup_interval_seconds, self.config.pending_expire_minutes
+            self.config.cleanup_interval_seconds,
+            self.config.pending_expire_minutes
         );
 
         let mut interval =
@@ -37,7 +39,10 @@ impl OAuthCleanupTask {
             interval.tick().await;
 
             if let Err(e) = self.cleanup_expired_sessions().await {
-                error!("Failed to cleanup expired OAuth sessions: {}", e);
+                error!(
+                    component = "oauth_cleanup_task",
+                    "Failed to cleanup expired OAuth sessions: {}", e
+                );
             }
         }
     }
@@ -60,8 +65,8 @@ impl OAuthCleanupTask {
         if !expired_sessions.is_empty() {
             let cleanup_count = expired_sessions.len();
             info!(
-                "Found {} expired pending OAuth sessions to cleanup",
-                cleanup_count
+                component = "oauth_cleanup_task",
+                "Found {} expired pending OAuth sessions to cleanup", cleanup_count
             );
 
             // 批量更新状态为 expired，而不是直接删除
@@ -76,13 +81,16 @@ impl OAuthCleanupTask {
                 active_session.updated_at = Set(Utc::now().naive_utc());
 
                 if let Err(e) = active_session.update(&self.db).await {
-                    error!("Failed to update expired session status: {}", e);
+                    error!(
+                        component = "oauth_cleanup_task",
+                        "Failed to update expired session status: {}", e
+                    );
                 }
             }
 
             info!(
-                "Successfully marked {} expired pending OAuth sessions",
-                cleanup_count
+                component = "oauth_cleanup_task",
+                "Successfully marked {} expired pending OAuth sessions", cleanup_count
             );
         }
 
@@ -109,8 +117,8 @@ impl OAuthCleanupTask {
 
         if delete_result.rows_affected > 0 {
             info!(
-                "Deleted {} old expired OAuth session records",
-                delete_result.rows_affected
+                component = "oauth_cleanup_task",
+                "Deleted {} old expired OAuth session records", delete_result.rows_affected
             );
         }
 

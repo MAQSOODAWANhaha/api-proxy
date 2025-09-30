@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
-use chrono::{Utc, Datelike};
+use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::{Rng, distributions::Alphanumeric};
@@ -230,7 +230,12 @@ async fn get_user_statistics(user_id: i32, db: &DatabaseConnection) -> UserStats
 /// 获取用户本月请求数的辅助函数
 async fn get_user_monthly_requests(user_id: i32, db: &DatabaseConnection) -> i64 {
     let now = chrono::Utc::now().naive_utc();
-    let month_start = now.date().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+    let month_start = now
+        .date()
+        .with_day(1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
 
     let monthly_result = ProxyTracing::find()
         .select_only()
@@ -252,7 +257,10 @@ fn generate_avatar_url(email: &str) -> String {
     // 使用Gravatar生成头像，如果没有则使用默认头像
     let email_hash = md5::compute(email.to_lowercase());
     let hash_str = format!("{:x}", email_hash);
-    format!("https://www.gravatar.com/avatar/{}?d=identicon&s=200", hash_str)
+    format!(
+        "https://www.gravatar.com/avatar/{}?d=identicon&s=200",
+        hash_str
+    )
 }
 
 /// 列出用户
@@ -763,7 +771,8 @@ pub async fn update_user_profile(
         Ok(updated_user) => {
             // 获取更新后的统计数据
             let user_stats = get_user_statistics(user_id, state.database.as_ref()).await;
-            let monthly_requests = get_user_monthly_requests(user_id, state.database.as_ref()).await;
+            let monthly_requests =
+                get_user_monthly_requests(user_id, state.database.as_ref()).await;
 
             // 生成头像URL
             let avatar_url = generate_avatar_url(&updated_user.email);
