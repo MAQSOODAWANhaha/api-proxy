@@ -57,6 +57,22 @@ interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
   project_id?: string // Gemini OAuth extra project scope
 }
 
+interface ProviderKeyFormState {
+  provider: string
+  provider_type_id: number
+  keyName: string
+  keyValue: string
+  auth_type: string
+  weight: number
+  requestLimitPerMinute: number
+  tokenLimitPromptPerMinute: number
+  requestLimitPerDay: number
+  status: 'active' | 'disabled'
+  project_id?: string
+}
+
+type ProviderKeyEditFormState = ProviderKeyFormState & { id: number }
+
 // 健康状态显示文本映射
 const getHealthStatusDisplay = (backendStatus: string): { color: string; bg: string; ring: string; text: string } => {
   switch (backendStatus) {
@@ -352,7 +368,12 @@ const ProviderKeysPage: React.FC = () => {
         payload.project_id = projectId
       }
 
-      const response = await api.providerKeys.update(String(updatedKey.id), payload)
+      const keyId = updatedKey.id ?? selectedItem?.id
+      if (!keyId) {
+        throw new Error('当前密钥缺少ID，无法提交更新')
+      }
+
+      const response = await api.providerKeys.update(String(keyId), payload)
 
       if (response.success) {
         // 刷新数据
@@ -831,7 +852,7 @@ const AddDialog: React.FC<{
   onClose: () => void
   onSubmit: (item: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => void
 }> = ({ onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ProviderKeyFormState>({
     provider: '',
     provider_type_id: 0,
     keyName: '',
@@ -841,7 +862,7 @@ const AddDialog: React.FC<{
     requestLimitPerMinute: 0,
     tokenLimitPromptPerMinute: 0,
     requestLimitPerDay: 0,
-    status: 'active' as 'active' | 'disabled', // 保持为启用状态，不影响健康状态筛选
+    status: 'active', // 保持为启用状态，不影响健康状态筛选
     project_id: '', // 新增 Gemini 项目ID字段
   })
 
@@ -1333,11 +1354,19 @@ const EditDialog: React.FC<{
   onClose: () => void
   onSubmit: (item: LocalProviderKey) => void
 }> = ({ item, onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({ 
-    ...item, 
-    auth_type: item.auth_type || 'api_key',
+  const [formData, setFormData] = useState<ProviderKeyEditFormState>({
+    id: Number(item.id),
+    provider: item.provider,
     provider_type_id: item.provider_type_id || 0,
-    project_id: item.project_id || '' // 添加 project_id 字段
+    keyName: item.keyName,
+    keyValue: item.keyValue,
+    auth_type: item.auth_type || 'api_key',
+    weight: item.weight,
+    requestLimitPerMinute: item.requestLimitPerMinute,
+    tokenLimitPromptPerMinute: item.tokenLimitPromptPerMinute,
+    requestLimitPerDay: item.requestLimitPerDay,
+    status: item.status,
+    project_id: item.project_id || ''
   })
 
   // 服务商类型状态管理
@@ -1459,6 +1488,7 @@ const EditDialog: React.FC<{
       return
     }
     onSubmit({
+      id: formData.id,
       name: formData.keyName,
       api_key: formData.keyValue,
       provider: formData.provider,
