@@ -193,6 +193,10 @@ async fn test_layer2_batch_statistics_update() {
             Some(75),
             Some(225),
             Some("claude-3".to_string()),
+            None, // cache_create_tokens
+            None, // cache_read_tokens
+            None, // cost
+            None, // cost_currency
         )
         .await
         .expect("Failed to complete trace success");
@@ -336,6 +340,10 @@ async fn test_layered_update_performance() {
             Some(50),
             Some(150),
             Some("gpt-3.5-turbo".to_string()),
+            None, // cache_create_tokens
+            None, // cache_read_tokens
+            None, // cost
+            None, // cost_currency
         )
         .await
         .expect("Failed to complete trace success");

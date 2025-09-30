@@ -210,27 +210,39 @@ impl ProxyHttp for ProxyService {
             );
 
             // 确保有完整的 body 数据才进行 JSON 修改
+            let mut chunk_replaced = false;
             if !ctx.request_body.is_empty() && ctx.will_modify_body {
                 if let Some(strategy) = &ctx.strategy {
                     match serde_json::from_slice::<Value>(&ctx.request_body) {
                         Ok(mut json_value) => {
+                            tracing::info!(
+                                request_id = %ctx.request_id,
+                                body = json_value.to_string(),
+                                "请求体 JSON 解析成功，尝试应用策略修改"
+                            );
                             match strategy
                                 .modify_request_body_json(session, ctx, &mut json_value)
                                 .await
                             {
                                 Ok(true) => {
+                                    tracing::info!(
+                                        request_id = %ctx.request_id,
+                                        body = json_value.to_string(),
+                                        "策略选择修改请求体，正在序列化回字节"
+                                    );
                                     match serde_json::to_vec(&json_value) {
                                         Ok(serialized) => {
                                             tracing::info!(
                                                 request_id = %ctx.request_id,
                                                 original_size = ctx.request_body.len(),
                                                 modified_size = serialized.len(),
+                                                body = %String::from_utf8_lossy(&serialized),
                                                 "JSON 请求体修改成功"
                                             );
-
                                             // 更新 body 并重新设置到 chunk - 修复类型不匹配
                                             ctx.request_body = BytesMut::from(&serialized[..]);
                                             *body_chunk = Some(Bytes::from(serialized));
+                                            chunk_replaced = true;
                                         }
                                         Err(e) => {
                                             tracing::error!(
@@ -271,6 +283,12 @@ impl ProxyHttp for ProxyService {
                     request_id = %ctx.request_id,
                     "策略期望修改请求体，但请求体为空"
                 );
+            }
+
+            // 如果提前吞掉了分块但未能改写，请确保把原始数据再发送出去
+            if ctx.will_modify_body && !chunk_replaced {
+                let original_body = Bytes::copy_from_slice(ctx.request_body.as_ref());
+                *body_chunk = Some(original_body);
             }
         }
 
