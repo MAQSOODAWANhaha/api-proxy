@@ -181,7 +181,9 @@ impl ProxyHttp for ProxyService {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
+        // 处理当前分块数据（如果有）
         if let Some(chunk) = body_chunk.as_ref() {
+            // 缓存数据到上下文
             ctx.request_body.extend_from_slice(chunk);
 
             // 记录接收到的数据
@@ -192,14 +194,17 @@ impl ProxyHttp for ProxyService {
                 end_of_stream = end_of_stream,
                 "接收请求体数据块"
             );
+
+            // 如果需要修改请求体且不是流结束，按照 Pingora 官方示例清空分块
+            // 保持 HTTP 流式语义，避免原始与改写后的内容混合发送
+            if ctx.will_modify_body && !end_of_stream {
+                if let Some(chunk) = body_chunk {
+                    chunk.clear();
+                }
+            }
         }
 
-        // 如果后续要整体改写请求体，需要吞掉中间分块，避免原始与改写后的内容混合发送
-        if ctx.will_modify_body && !end_of_stream {
-            *body_chunk = None;
-        }
-
-        // 只在流结束时处理完整的 body
+        // 流结束处理：处理完整的请求体
         if end_of_stream {
             tracing::info!(
                 request_id = %ctx.request_id,
@@ -239,7 +244,7 @@ impl ProxyHttp for ProxyService {
                                                 body = %String::from_utf8_lossy(&serialized),
                                                 "JSON 请求体修改成功"
                                             );
-                                            // 更新 body 并重新设置到 chunk - 修复类型不匹配
+                                            // 更新 body 并重新设置到 chunk
                                             ctx.request_body = BytesMut::from(&serialized[..]);
                                             *body_chunk = Some(Bytes::from(serialized));
                                             chunk_replaced = true;
@@ -285,7 +290,7 @@ impl ProxyHttp for ProxyService {
                 );
             }
 
-            // 如果提前吞掉了分块但未能改写，请确保把原始数据再发送出去
+            // 如果提前吞掉了分块但未能改写，确保把原始数据再发送出去
             if ctx.will_modify_body && !chunk_replaced {
                 let original_body = Bytes::copy_from_slice(ctx.request_body.as_ref());
                 *body_chunk = Some(original_body);
