@@ -208,7 +208,8 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                                     + usage.completion_tokens.unwrap_or(0),
                             );
                             stats.usage.total_tokens = Some(
-                                stats.usage.total_tokens.unwrap_or(0) + usage.total_tokens.unwrap_or(0),
+                                stats.usage.total_tokens.unwrap_or(0)
+                                    + usage.total_tokens.unwrap_or(0),
                             );
                             stats.usage.cache_create_tokens = Some(
                                 stats.usage.cache_create_tokens.unwrap_or(0)

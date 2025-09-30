@@ -140,10 +140,14 @@ impl TracingService {
         tokens_completion: Option<u32>,
         tokens_total: Option<u32>,
         model_used: Option<String>,
+        cache_create_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        cost: Option<f64>,
+        cost_currency: Option<String>,
     ) -> Result<(), ProxyError> {
         if let Some(tracer) = &self.tracer {
             if let Err(e) = tracer
-                .complete_trace(
+                .complete_trace_with_stats(
                     request_id,
                     status_code,
                     true, // success
@@ -151,6 +155,10 @@ impl TracingService {
                     tokens_completion,
                     None, // no error type for success
                     None, // no error message for success
+                    cache_create_tokens,
+                    cache_read_tokens,
+                    cost,
+                    cost_currency.clone(),
                 )
                 .await
             {
@@ -178,6 +186,10 @@ impl TracingService {
                 tokens_prompt = tokens_prompt,
                 tokens_completion = tokens_completion,
                 tokens_total = tokens_total,
+                cache_create_tokens = cache_create_tokens,
+                cache_read_tokens = cache_read_tokens,
+                cost = cost,
+                cost_currency = cost_currency,
                 model_used = model_used
             );
         }
@@ -469,7 +481,11 @@ mod tests {
                     Some(10),
                     Some(20),
                     Some(30),
-                    Some("model".to_string())
+                    Some("model".to_string()),
+                    Some(1),
+                    Some(2),
+                    Some(0.5),
+                    Some("USD".to_string())
                 )
                 .await
                 .is_ok()

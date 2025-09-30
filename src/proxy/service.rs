@@ -120,19 +120,23 @@ impl ProxyHttp for ProxyService {
             }
         }
 
-        // 3. 启动追踪
+        // 3. 收集请求统计信息并启动追踪
+        let req_stats = self.stats_service.collect_request_stats(session);
+        ctx.request_details = self
+            .stats_service
+            .collect_request_details(session, &req_stats);
+
         if let Some(user_api) = &ctx.user_service_api {
-            let req_stats = self.stats_service.collect_request_stats(session);
             let _ = self
                 .trace_service
                 .start_trace(
                     &ctx.request_id,
                     user_api.id,
                     Some(user_api.user_id),
-                    session.req_header().method.as_str(),
-                    Some(session.req_header().uri.path().to_string()),
-                    Some(req_stats.client_ip),
-                    req_stats.user_agent,
+                    req_stats.method.as_str(),
+                    Some(req_stats.path.clone()),
+                    Some(req_stats.client_ip.clone()),
+                    req_stats.user_agent.clone(),
                 )
                 .await;
         }
@@ -190,6 +194,11 @@ impl ProxyHttp for ProxyService {
             );
         }
 
+        // 如果后续要整体改写请求体，需要吞掉中间分块，避免原始与改写后的内容混合发送
+        if ctx.will_modify_body && !end_of_stream {
+            *body_chunk = None;
+        }
+
         // 只在流结束时处理完整的 body
         if end_of_stream {
             tracing::info!(
@@ -201,6 +210,7 @@ impl ProxyHttp for ProxyService {
             );
 
             // 确保有完整的 body 数据才进行 JSON 修改
+            let mut chunk_replaced = false;
             if !ctx.request_body.is_empty() && ctx.will_modify_body {
                 if let Some(strategy) = &ctx.strategy {
                     match serde_json::from_slice::<Value>(&ctx.request_body) {
@@ -222,6 +232,7 @@ impl ProxyHttp for ProxyService {
                                             // 更新 body 并重新设置到 chunk - 修复类型不匹配
                                             ctx.request_body = BytesMut::from(&serialized[..]);
                                             *body_chunk = Some(Bytes::from(serialized));
+                                            chunk_replaced = true;
                                         }
                                         Err(e) => {
                                             tracing::error!(
@@ -263,6 +274,12 @@ impl ProxyHttp for ProxyService {
                     "策略期望修改请求体，但请求体为空"
                 );
             }
+
+            // 如果提前吞掉了分块但未能改写，请确保把原始数据再发送出去
+            if ctx.will_modify_body && !chunk_replaced {
+                let original_body = Bytes::copy_from_slice(ctx.request_body.as_ref());
+                *body_chunk = Some(original_body);
+            }
         }
 
         Ok(())
@@ -282,7 +299,14 @@ impl ProxyHttp for ProxyService {
                     .trace_service
                     .complete_trace_with_error(&ctx.request_id, &e);
                 crate::pingora_error!(e)
-            })
+            })?;
+
+        let resp_stats = self
+            .stats_service
+            .collect_response_details(upstream_response, ctx);
+        ctx.response_details.headers = resp_stats.headers;
+
+        Ok(())
     }
 
     fn response_body_filter(
@@ -334,7 +358,28 @@ impl ProxyHttp for ProxyService {
                 ctx.requested_model = Some(model_name);
             }
 
-            let _cost = if let (Some(model), Some(usage)) =
+            if let Some(model_used) = ctx.requested_model.clone() {
+                let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
+                let user_provider_key_id = ctx.selected_backend.as_ref().map(|k| k.id);
+                if let Err(err) = self
+                    .trace_service
+                    .update_trace_model_info(
+                        &ctx.request_id,
+                        provider_type_id,
+                        Some(model_used.clone()),
+                        user_provider_key_id,
+                    )
+                    .await
+                {
+                    warn!(
+                        request_id = %ctx.request_id,
+                        error = %err,
+                        "Failed to update trace model info"
+                    );
+                }
+            }
+
+            let (cost_value, cost_currency) = if let (Some(model), Some(usage)) =
                 (ctx.requested_model.as_ref(), ctx.usage_final.as_ref())
             {
                 if let Some(provider) = ctx.provider_type.as_ref() {
@@ -344,15 +389,19 @@ impl ProxyHttp for ProxyService {
                         cache_create_tokens: usage.cache_create_tokens,
                         cache_read_tokens: usage.cache_read_tokens,
                     };
-                    self.stats_service
+                    match self
+                        .stats_service
                         .calculate_cost_direct(model, provider.id, &pricing_usage, &ctx.request_id)
                         .await
-                        .ok()
+                    {
+                        Ok(cost_tuple) => cost_tuple,
+                        Err(_) => (None, None),
+                    }
                 } else {
-                    None
+                    (None, None)
                 }
             } else {
-                None
+                (None, None)
             };
 
             let _ = self
@@ -366,6 +415,10 @@ impl ProxyHttp for ProxyService {
                         .as_ref()
                         .and_then(|u| u.total_tokens.map(|t| t as u32)),
                     ctx.requested_model.clone(),
+                    ctx.usage_final.as_ref().and_then(|u| u.cache_create_tokens),
+                    ctx.usage_final.as_ref().and_then(|u| u.cache_read_tokens),
+                    cost_value,
+                    cost_currency,
                 )
                 .await;
         } else if let Some(err) = e {
