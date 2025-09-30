@@ -93,7 +93,6 @@ impl ProviderStrategy for GeminiStrategy {
             tracing::info!(
                 request_id = ctx.request_id,
                 request_headers = logging::headers_json_string_request(upstream_request),
-                request_body = String::from_utf8_lossy(&ctx.request_body).to_string(),
                 "Set correct Host header for Gemini provider"
             );
         }

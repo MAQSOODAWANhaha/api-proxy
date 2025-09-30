@@ -120,7 +120,6 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
 /// - Content-Type 决定解析方式：SSE（按事件）、NDJSON（按行）、普通 JSON（整体/窗口）。
 /// - 用量字段采用“累加”策略；模型名称取最后一次出现或整体 JSON 中的字段。
 pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
-    use crate::logging::log_complete_response_with_hashmap_headers;
     use crate::statistics::util::{decompress_for_stats, find_last_balanced_json};
     use bytes::BytesMut;
 
@@ -134,15 +133,6 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         .to_ascii_lowercase();
     let encoding = ctx.response_details.content_encoding.as_deref();
     let raw = ctx.response_body.clone();
-
-    // 使用 log_complete_response_with_hashmap_headers 记录完整的响应信息
-    log_complete_response_with_hashmap_headers(
-        &ctx.request_id,
-        &ctx.request_details.path, // 从 request_details 获取 path
-        &ctx.response_details.headers,
-        &raw,
-        ctx.response_details.status_code,
-    );
 
     // 无正文：置零并回退模型
     if raw.is_empty() {

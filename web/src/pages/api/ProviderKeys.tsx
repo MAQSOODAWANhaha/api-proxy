@@ -26,7 +26,7 @@ import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
 import AuthTypeSelector from '../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
-import { api, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType } from '../../lib/api'
+import { api, CreateProviderKeyRequest, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType, UpdateProviderKeyRequest } from '../../lib/api'
 import { toast } from 'sonner'
 import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency, safeTrendData } from '../../lib/dataValidation'
 
@@ -54,6 +54,7 @@ interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
   } // 使用完整的usage对象结构
   rateLimitRemainingSeconds?: number // 限流剩余时间（秒）
   provider_type_id?: number // 服务商类型ID
+  project_id?: string // Gemini OAuth extra project scope
 }
 
 // 健康状态显示文本映射
@@ -271,9 +272,10 @@ const ProviderKeysPage: React.FC = () => {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
       let providerTypeId = 1 // 默认值
+      let matchedType: ProviderType | undefined
       
       if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
-        const matchedType = providerTypesResponse.data.provider_types.find(
+        matchedType = providerTypesResponse.data.provider_types.find(
           type => type.display_name === newKey.provider
         )
         if (matchedType) {
@@ -281,7 +283,7 @@ const ProviderKeysPage: React.FC = () => {
         }
       }
 
-      const response = await api.providerKeys.create({
+      const payload: CreateProviderKeyRequest = {
         provider_type_id: providerTypeId,
         name: newKey.keyName,
         api_key: newKey.keyValue || generateApiKey(newKey.provider),
@@ -291,7 +293,14 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
         max_requests_per_day: newKey.requestLimitPerDay || 0,
         is_active: newKey.status === 'active',
-      })
+      }
+
+      const projectId = (newKey.project_id || '').trim()
+      if (projectId && matchedType?.name === 'gemini' && (newKey.auth_type || '').includes('oauth')) {
+        payload.project_id = projectId
+      }
+
+      const response = await api.providerKeys.create(payload)
 
       if (response.success) {
         // 刷新数据
@@ -315,9 +324,10 @@ const ProviderKeysPage: React.FC = () => {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
       let providerTypeId = 1 // 默认值
+      let matchedType: ProviderType | undefined
       
       if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
-        const matchedType = providerTypesResponse.data.provider_types.find(
+        matchedType = providerTypesResponse.data.provider_types.find(
           type => type.display_name === updatedKey.provider
         )
         if (matchedType) {
@@ -325,7 +335,7 @@ const ProviderKeysPage: React.FC = () => {
         }
       }
 
-      const response = await api.providerKeys.update(String(updatedKey.id), {
+      const payload: UpdateProviderKeyRequest = {
         provider_type_id: providerTypeId,
         name: updatedKey.keyName,
         api_key: updatedKey.keyValue,
@@ -335,7 +345,14 @@ const ProviderKeysPage: React.FC = () => {
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
         max_requests_per_day: updatedKey.requestLimitPerDay,
         is_active: updatedKey.status === 'active',
-      })
+      }
+
+      const projectId = (updatedKey.project_id || '').trim()
+      if (projectId && matchedType?.name === 'gemini' && (updatedKey.auth_type || '').includes('oauth')) {
+        payload.project_id = projectId
+      }
+
+      const response = await api.providerKeys.update(String(updatedKey.id), payload)
 
       if (response.success) {
         // 刷新数据
@@ -998,6 +1015,7 @@ const AddDialog: React.FC<{
       requestLimitPerDay: formData.requestLimitPerDay,
       status: formData.status,
       provider_type_id: formData.provider_type_id,
+      project_id: formData.project_id,
     } as any)
   }
 
@@ -1145,8 +1163,8 @@ const AddDialog: React.FC<{
             </label>
             <input
               type="text"
-              value={(formData as any).project_id || ''}
-              onChange={(e) => setFormData({ ...formData, project_id: e.target.value } as any)}
+              value={formData.project_id || ''}
+              onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
               placeholder="请输入 Google Cloud 项目ID"
               className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
             />
@@ -1319,7 +1337,7 @@ const EditDialog: React.FC<{
     ...item, 
     auth_type: item.auth_type || 'api_key',
     provider_type_id: item.provider_type_id || 0,
-    project_id: (item as any).project_id || '' // 添加 project_id 字段
+    project_id: item.project_id || '' // 添加 project_id 字段
   })
 
   // 服务商类型状态管理
@@ -1457,6 +1475,7 @@ const EditDialog: React.FC<{
       requestLimitPerDay: formData.requestLimitPerDay,
       status: formData.status,
       provider_type_id: formData.provider_type_id,
+      project_id: formData.project_id,
     } as any)
   }
 
@@ -1603,8 +1622,8 @@ const EditDialog: React.FC<{
             </label>
             <input
               type="text"
-              value={(formData as any).project_id || ''}
-              onChange={(e) => setFormData({ ...formData, project_id: e.target.value } as any)}
+              value={formData.project_id || ''}
+              onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
               placeholder="请输入 Google Cloud 项目ID"
               className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
             />

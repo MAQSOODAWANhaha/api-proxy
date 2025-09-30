@@ -244,6 +244,7 @@ export interface ProviderKey {
   max_tokens_prompt_per_minute: number
   max_requests_per_day: number
   is_active: boolean
+  project_id?: string
   usage: {
     total_requests: number
     successful_requests: number
@@ -288,6 +289,7 @@ export interface CreateProviderKeyRequest {
   max_tokens_prompt_per_minute?: number
   max_requests_per_day?: number
   is_active?: boolean
+  project_id?: string
 }
 
 export interface CreateProviderKeyResponse {
@@ -307,6 +309,7 @@ export interface UpdateProviderKeyRequest {
   max_tokens_prompt_per_minute?: number
   max_requests_per_day?: number
   is_active?: boolean
+  project_id?: string
 }
 
 export interface UpdateProviderKeyResponse {

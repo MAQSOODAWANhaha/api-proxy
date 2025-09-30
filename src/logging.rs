@@ -829,28 +829,6 @@ pub fn log_complete_response(
     );
 }
 
-/// 记录完整响应信息（使用HashMap headers）
-pub fn log_complete_response_with_hashmap_headers(
-    request_id: &str,
-    path: &str,
-    response_headers: &std::collections::HashMap<String, String>,
-    response_body: &[u8],
-    status_code: Option<u16>,
-) {
-    // 读取响应体
-    let body_str = String::from_utf8_lossy(response_body);
-
-    tracing::info!(
-        request_id = %request_id,
-        route = path,
-        status_code = %status_code.unwrap_or(0),
-        response_headers = %serde_json::to_string_pretty(response_headers).unwrap_or_else(|_| "Failed to serialize response headers".to_string()),
-        response_body = %body_str,
-        operation = "complete_response",
-        "=== COMPLETE RESPONSE ==="
-    );
-}
-
 /// 记录错误响应信息（状态码 >= 400）
 pub fn log_error_response(request_id: &str, path: &str, status_code: u16, response_body: &[u8]) {
     tracing::info!(
