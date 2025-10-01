@@ -8,17 +8,24 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, interval};
+use tokio_stream::StreamExt;
+use tokio_util::time::{DelayQueue, delay_queue::Key};
 use tracing::{debug, error, info, warn};
 
 use crate::auth::oauth_token_refresh_service::{
-    OAuthTokenRefreshService, RefreshStats, TokenRefreshResult,
+    OAuthTokenRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
 };
 use crate::error::{ProxyError, Result};
+
+const FALLBACK_RESCAN_INTERVAL_SECS: u64 = 600;
+const COMMAND_CHANNEL_CAPACITY: usize = 128;
+const MAX_ERROR_RETRIES: u32 = 3;
+const ERROR_RETRY_INTERVAL_SECS: u64 = 60;
 
 /// OAuth Token刷新后台任务
 ///
@@ -29,58 +36,17 @@ use crate::error::{ProxyError, Result};
 /// 4. 错误处理：任务失败时的重试和告警机制
 pub struct OAuthTokenRefreshTask {
     refresh_service: Arc<OAuthTokenRefreshService>,
-    config: RefreshTaskConfig,
-
     /// 任务状态
     task_state: Arc<RwLock<TaskState>>,
-
-    /// 任务统计信息
-    task_stats: Arc<RwLock<TaskStats>>,
 
     /// 控制信号发送器
     control_sender: broadcast::Sender<TaskControl>,
 
+    /// 调度命令通道
+    command_sender: Arc<RwLock<Option<mpsc::Sender<RefreshCommand>>>>,
+
     /// 任务句柄
     task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-}
-
-/// 刷新任务配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RefreshTaskConfig {
-    /// 任务执行间隔（秒）
-    pub interval_seconds: u64,
-
-    /// 是否启用任务
-    pub enabled: bool,
-
-    /// 最大并发刷新数量
-    pub max_concurrent_refreshes: usize,
-
-    /// 任务超时时间（秒）
-    pub task_timeout_seconds: u64,
-
-    /// 错误重试次数
-    pub max_error_retries: u32,
-
-    /// 错误重试间隔（秒）
-    pub error_retry_interval_seconds: u64,
-
-    /// 静默时间段（不执行任务的时间段，格式：HH:MM-HH:MM）
-    pub quiet_hours: Option<String>,
-}
-
-impl Default for RefreshTaskConfig {
-    fn default() -> Self {
-        Self {
-            interval_seconds: 600, // 默认10分钟执行一次
-            enabled: true,
-            max_concurrent_refreshes: 10,     // 最多同时刷新10个token
-            task_timeout_seconds: 300,        // 任务超时5分钟
-            max_error_retries: 3,             // 最多重试3次
-            error_retry_interval_seconds: 60, // 重试间隔1分钟
-            quiet_hours: None,                // 无静默时间
-        }
-    }
 }
 
 /// 任务状态
@@ -113,71 +79,32 @@ pub enum TaskControl {
     Resume,
     /// 立即执行一次刷新
     ExecuteNow,
-    /// 重新加载配置
-    ReloadConfig(RefreshTaskConfig),
 }
 
-/// 任务统计信息
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TaskStats {
-    /// 任务启动时间
-    pub started_at: Option<DateTime<Utc>>,
+#[derive(Debug, Clone)]
+enum RefreshQueueItem {
+    Session(String),
+    Rescan,
+}
 
-    /// 最后执行时间
-    pub last_execution_time: Option<DateTime<Utc>>,
-
-    /// 下次执行时间
-    pub next_execution_time: Option<DateTime<Utc>>,
-
-    /// 总执行次数
-    pub total_executions: u64,
-
-    /// 成功执行次数
-    pub successful_executions: u64,
-
-    /// 失败执行次数
-    pub failed_executions: u64,
-
-    /// 总刷新token数量
-    pub total_tokens_refreshed: u64,
-
-    /// 成功刷新token数量
-    pub successful_token_refreshes: u64,
-
-    /// 失败刷新token数量
-    pub failed_token_refreshes: u64,
-
-    /// 平均执行时长（毫秒）
-    pub average_execution_duration_ms: f64,
-
-    /// 最后一次错误
-    pub last_error: Option<String>,
-
-    /// 最后一次错误时间
-    pub last_error_time: Option<DateTime<Utc>>,
-
-    /// 连续错误次数
-    pub consecutive_errors: u32,
+#[derive(Debug, Clone)]
+enum RefreshCommand {
+    Add(ScheduledTokenRefresh),
+    Remove(String),
 }
 
 impl OAuthTokenRefreshTask {
     /// 创建新的OAuth Token刷新后台任务
-    pub fn new(refresh_service: Arc<OAuthTokenRefreshService>, config: RefreshTaskConfig) -> Self {
+    pub fn new(refresh_service: Arc<OAuthTokenRefreshService>) -> Self {
         let (control_sender, _) = broadcast::channel(10);
 
         Self {
             refresh_service,
-            config,
             task_state: Arc::new(RwLock::new(TaskState::NotStarted)),
-            task_stats: Arc::new(RwLock::new(TaskStats::default())),
             control_sender,
+            command_sender: Arc::new(RwLock::new(None)),
             task_handle: Arc::new(RwLock::new(None)),
         }
-    }
-
-    /// 使用默认配置创建任务
-    pub fn new_with_defaults(refresh_service: Arc<OAuthTokenRefreshService>) -> Self {
-        Self::new(refresh_service, RefreshTaskConfig::default())
     }
 
     /// 启动后台任务
@@ -188,28 +115,27 @@ impl OAuthTokenRefreshTask {
             return Err(ProxyError::business("Task is already running"));
         }
 
-        if !self.config.enabled {
-            return Err(ProxyError::config("Task is disabled in config"));
-        }
+        // 启动前执行一次全局扫描
+        let initial_schedule = match self.refresh_service.initialize_refresh_schedule().await {
+            Ok(entries) => entries,
+            Err(e) => {
+                error!("Failed to initialize OAuth token refresh schedule: {:?}", e);
+                Vec::new()
+            }
+        };
 
         // 启动任务
         *state = TaskState::Running;
 
-        // 更新统计信息
-        let mut stats = self.task_stats.write().await;
-        stats.started_at = Some(Utc::now());
-        stats.next_execution_time =
-            Some(Utc::now() + Duration::seconds(self.config.interval_seconds as i64));
-        drop(stats);
-
         // 启动任务循环
-        let task_handle = self.spawn_task_loop().await;
+        let (command_sender, command_receiver) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+        let task_handle = self
+            .spawn_task_loop(initial_schedule, command_receiver)
+            .await;
+        *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
-        info!(
-            "OAuth Token refresh task started with interval {} seconds",
-            self.config.interval_seconds
-        );
+        info!("OAuth Token refresh task started");
         Ok(())
     }
 
@@ -230,6 +156,7 @@ impl OAuthTokenRefreshTask {
             let _ = handle.await;
         }
 
+        *self.command_sender.write().await = None;
         *state = TaskState::Stopped;
         info!("OAuth Token refresh task stopped");
         Ok(())
@@ -272,23 +199,54 @@ impl OAuthTokenRefreshTask {
         Ok(())
     }
 
-    /// 重新加载配置
-    pub async fn reload_config(&self, new_config: RefreshTaskConfig) -> Result<()> {
-        let _ = self
-            .control_sender
-            .send(TaskControl::ReloadConfig(new_config));
-        info!("OAuth Token refresh task config reload requested");
-        Ok(())
+    /// 预计算会话的刷新计划，不立即入队
+    pub async fn prepare_schedule(&self, session_id: &str) -> Result<ScheduledTokenRefresh> {
+        self.refresh_service
+            .register_session_for_refresh(session_id)
+            .await
+    }
+
+    /// 将计算好的刷新计划推送给调度器
+    pub async fn enqueue_schedule(&self, schedule: ScheduledTokenRefresh) -> Result<()> {
+        let sender = {
+            let guard = self.command_sender.read().await;
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| ProxyError::business("Refresh task is not running"))?
+        };
+
+        sender
+            .send(RefreshCommand::Add(schedule))
+            .await
+            .map_err(|e| ProxyError::internal(format!("Failed to enqueue refresh schedule: {}", e)))
+    }
+
+    /// 注册会话刷新（计算计划并入队）
+    pub async fn register_session(&self, session_id: &str) -> Result<()> {
+        let schedule = self.prepare_schedule(session_id).await?;
+        self.enqueue_schedule(schedule).await
+    }
+
+    /// 从调度器中移除会话
+    pub async fn remove_session(&self, session_id: &str) -> Result<()> {
+        let sender = {
+            let guard = self.command_sender.read().await;
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| ProxyError::business("Refresh task is not running"))?
+        };
+
+        sender
+            .send(RefreshCommand::Remove(session_id.to_string()))
+            .await
+            .map_err(|e| ProxyError::internal(format!("Failed to remove refresh schedule: {}", e)))
     }
 
     /// 获取任务状态
     pub async fn get_state(&self) -> TaskState {
         self.task_state.read().await.clone()
-    }
-
-    /// 获取任务统计信息
-    pub async fn get_stats(&self) -> TaskStats {
-        self.task_stats.read().await.clone()
     }
 
     /// 获取刷新服务统计信息
@@ -297,116 +255,180 @@ impl OAuthTokenRefreshTask {
     }
 
     /// 生成任务循环
-    async fn spawn_task_loop(&self) -> JoinHandle<()> {
+    async fn spawn_task_loop(
+        &self,
+        initial_schedule: Vec<ScheduledTokenRefresh>,
+        command_receiver: mpsc::Receiver<RefreshCommand>,
+    ) -> JoinHandle<()> {
         let refresh_service = Arc::clone(&self.refresh_service);
         let task_state = Arc::clone(&self.task_state);
-        let task_stats = Arc::clone(&self.task_stats);
         let mut control_receiver = self.control_sender.subscribe();
-        let mut config = self.config.clone();
 
         tokio::spawn(async move {
-            let mut ticker = interval(StdDuration::from_secs(config.interval_seconds));
+            let mut command_receiver = command_receiver;
+            let mut queue: DelayQueue<RefreshQueueItem> = DelayQueue::new();
+            let mut session_keys: HashMap<String, Key> = HashMap::new();
+            let mut session_schedules: HashMap<String, ScheduledTokenRefresh> = HashMap::new();
+            let mut rescan_key: Option<Key> = None;
+
+            for entry in initial_schedule {
+                Self::insert_or_update_entry(
+                    &mut queue,
+                    &mut session_keys,
+                    &mut session_schedules,
+                    entry,
+                );
+            }
+
+            Self::schedule_rescan(&mut queue, &mut rescan_key);
+
             let mut consecutive_errors = 0u32;
 
             info!("OAuth Token refresh task loop started");
 
             loop {
-                // 检查控制信号
                 tokio::select! {
-                    // 定时器触发
-                    _ = ticker.tick() => {
-                        // 检查任务状态
-                        let current_state = { task_state.read().await.clone() };
-                        match current_state {
-                            TaskState::Running => {
-                                // 执行刷新任务
-                                let execution_start = Instant::now();
-                                let execution_result: Result<Vec<TokenRefreshResult>> = Self::execute_refresh_task(&refresh_service).await;
-                                let execution_duration = execution_start.elapsed();
+                    maybe_expired = queue.next() => {
+                        let Some(expired) = maybe_expired else {
+                            break;
+                        };
 
-                                // 更新统计信息
-                                Self::update_task_stats(
-                                    &task_stats,
-                                    &execution_result,
-                                    execution_duration,
-                                    &mut consecutive_errors
-                                ).await;
-
-                                // 更新下次执行时间
-                                {
-                                    let mut stats = task_stats.write().await;
-                                    stats.next_execution_time = Some(Utc::now() + Duration::seconds(config.interval_seconds as i64));
-                                }
-
-                                match execution_result {
-                                    Ok(refresh_results) => {
-                                        debug!("OAuth Token refresh task executed successfully, processed {} tokens",
-                                               refresh_results.len());
-                                        consecutive_errors = 0;
-                                    },
-                                    Err(e) => {
-                                        error!("OAuth Token refresh task execution failed: {:?}", e);
-                                        consecutive_errors += 1;
-
-                                        // 如果连续错误次数超过阈值，暂停任务
-                                        if consecutive_errors >= config.max_error_retries {
-                                            warn!("Too many consecutive errors, pausing task");
-                                            *task_state.write().await = TaskState::Error(format!("Too many consecutive errors: {}", e));
-                                        }
+                        match expired.into_inner() {
+                            RefreshQueueItem::Session(session_id) => {
+                                let current_state = { task_state.read().await.clone() };
+                                if !matches!(current_state, TaskState::Running) {
+                                    if let Some(schedule) = session_schedules.get(&session_id).cloned() {
+                                        Self::insert_or_update_entry(
+                                            &mut queue,
+                                            &mut session_keys,
+                                            &mut session_schedules,
+                                            schedule,
+                                        );
                                     }
+                                    continue;
                                 }
-                            },
-                            TaskState::Paused => {
-                                // 暂停状态，跳过这次执行
-                                debug!("OAuth Token refresh task is paused, skipping execution");
-                            },
-                            TaskState::Stopping => {
-                                // 收到停止信号，退出循环
-                                info!("OAuth Token refresh task stopping");
-                                break;
-                            },
-                            _ => {
-                                // 其他状态，等待
-                                debug!("OAuth Token refresh task in state: {:?}, waiting", current_state);
+
+                                let Some(schedule) = session_schedules.get(&session_id).cloned() else {
+                                    session_keys.remove(&session_id);
+                                    continue;
+                                };
+
+                                let results = Self::process_session_entry(
+                                    &refresh_service,
+                                    schedule,
+                                    &mut queue,
+                                    &mut session_keys,
+                                    &mut session_schedules,
+                                )
+                                .await;
+                                let had_error = results.iter().any(|r| !r.success);
+                                if had_error {
+                                    consecutive_errors = consecutive_errors.saturating_add(1);
+                                } else {
+                                    consecutive_errors = 0;
+                                }
+
+                                if had_error
+                                    && MAX_ERROR_RETRIES > 0
+                                    && consecutive_errors >= MAX_ERROR_RETRIES
+                                {
+                                    warn!("Too many consecutive errors, pausing task");
+                                    *task_state.write().await =
+                                        TaskState::Error(format!(
+                                            "Too many consecutive errors: {}",
+                                            consecutive_errors
+                                        ));
+                                }
+                            }
+                            RefreshQueueItem::Rescan => {
+                                rescan_key = None;
+                                let rescan_result =
+                                    Self::resync_schedule(
+                                        &refresh_service,
+                                        &mut queue,
+                                        &mut session_keys,
+                                        &mut session_schedules,
+                                    )
+                                    .await;
+                                let had_error = rescan_result.is_err();
+                                if let Err(e) = rescan_result {
+                                    error!("Failed to resync OAuth refresh schedule: {:?}", e);
+                                }
+
+                                Self::schedule_rescan(&mut queue, &mut rescan_key);
+
+                                if had_error {
+                                    consecutive_errors = consecutive_errors.saturating_add(1);
+                                } else {
+                                    consecutive_errors = 0;
+                                }
+
+                                if had_error
+                                    && MAX_ERROR_RETRIES > 0
+                                    && consecutive_errors >= MAX_ERROR_RETRIES
+                                {
+                                    warn!("Too many consecutive errors, pausing task");
+                                    *task_state.write().await =
+                                        TaskState::Error(format!(
+                                            "Too many consecutive errors: {}",
+                                            consecutive_errors
+                                        ));
+                                }
                             }
                         }
-                    },
-
-                    // 控制信号
+                    }
+                    command = command_receiver.recv() => {
+                        match command {
+                            Some(RefreshCommand::Add(schedule)) => {
+                                let session_id = schedule.session_id.clone();
+                                Self::insert_or_update_entry(
+                                    &mut queue,
+                                    &mut session_keys,
+                                    &mut session_schedules,
+                                    schedule,
+                                );
+                                debug!("Scheduled OAuth session {} for refresh", session_id);
+                            }
+                            Some(RefreshCommand::Remove(session_id)) => {
+                                if let Some(key) = session_keys.remove(&session_id) {
+                                    let _ = queue.remove(&key);
+                                }
+                                session_schedules.remove(&session_id);
+                                debug!("Removed OAuth session {} from refresh queue", session_id);
+                            }
+                            None => {
+                                // 命令通道已关闭，继续处理现有队列
+                            }
+                        }
+                    }
                     Ok(control) = control_receiver.recv() => {
                         match control {
                             TaskControl::Stop => {
                                 info!("Received stop signal, exiting task loop");
                                 break;
-                            },
+                            }
                             TaskControl::Pause => {
                                 debug!("Received pause signal");
-                                // 状态已在外部更新
-                            },
+                            }
                             TaskControl::Resume => {
                                 debug!("Received resume signal");
-                                // 状态已在外部更新
-                            },
+                                consecutive_errors = 0;
+                            }
                             TaskControl::ExecuteNow => {
-                                info!("Received execute now signal, running immediate refresh");
-                                let execution_result = Self::execute_refresh_task(&refresh_service).await;
-                                match execution_result {
-                                    Ok(refresh_results) => {
-                                        info!("Immediate OAuth Token refresh completed, processed {} tokens",
-                                              refresh_results.len());
-                                    },
-                                    Err(e) => {
-                                        error!("Immediate OAuth Token refresh failed: {:?}", e);
-                                    }
+                                info!("Received execute now signal, triggering immediate rescan");
+                                if let Err(e) = Self::resync_schedule(
+                                    &refresh_service,
+                                    &mut queue,
+                                    &mut session_keys,
+                                    &mut session_schedules,
+                                )
+                                .await {
+                                    error!("Immediate rescan failed: {:?}", e);
                                 }
-                            },
-                            TaskControl::ReloadConfig(new_config) => {
-                                info!("Reloading task configuration");
-                                config = new_config;
-                                ticker = interval(StdDuration::from_secs(config.interval_seconds));
-                            },
+                                Self::schedule_rescan(&mut queue, &mut rescan_key);
+                                consecutive_errors = 0;
+                            }
                             TaskControl::Start => {
-                                // 启动信号，通常不在这里处理
                                 debug!("Received start signal in task loop");
                             }
                         }
@@ -418,153 +440,187 @@ impl OAuthTokenRefreshTask {
         })
     }
 
-    /// 执行刷新任务
-    async fn execute_refresh_task(
+    fn duration_until(target: DateTime<Utc>) -> StdDuration {
+        let now = Utc::now();
+        if target <= now {
+            StdDuration::from_secs(0)
+        } else {
+            (target - now)
+                .to_std()
+                .unwrap_or_else(|_| StdDuration::from_secs(0))
+        }
+    }
+
+    fn schedule_rescan(queue: &mut DelayQueue<RefreshQueueItem>, rescan_key: &mut Option<Key>) {
+        let next_rescan_at = Utc::now() + Duration::seconds(FALLBACK_RESCAN_INTERVAL_SECS as i64);
+        let delay = Self::duration_until(next_rescan_at);
+        if let Some(key) = rescan_key.as_ref() {
+            queue.reset(key, delay);
+        } else {
+            let key = queue.insert(RefreshQueueItem::Rescan, delay);
+            *rescan_key = Some(key);
+        }
+    }
+
+    fn insert_or_update_entry(
+        queue: &mut DelayQueue<RefreshQueueItem>,
+        session_keys: &mut HashMap<String, Key>,
+        session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
+        entry: ScheduledTokenRefresh,
+    ) {
+        let delay = Self::duration_until(entry.next_refresh_at);
+        let session_id = entry.session_id.clone();
+        session_schedules.insert(session_id.clone(), entry.clone());
+        if let Some(existing_key) = session_keys.get(&session_id).cloned() {
+            queue.reset(&existing_key, delay);
+            session_keys.insert(session_id, existing_key);
+        } else {
+            let key = queue.insert(RefreshQueueItem::Session(session_id.clone()), delay);
+            session_keys.insert(session_id, key);
+        }
+    }
+
+    async fn resync_schedule(
         refresh_service: &Arc<OAuthTokenRefreshService>,
-    ) -> Result<Vec<TokenRefreshResult>> {
-        debug!("Executing OAuth Token refresh task");
+        queue: &mut DelayQueue<RefreshQueueItem>,
+        session_keys: &mut HashMap<String, Key>,
+        session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
+    ) -> Result<()> {
+        if let Err(err) = refresh_service.cleanup_stale_sessions().await {
+            warn!("Failed to cleanup stale OAuth sessions: {:?}", err);
+        }
 
-        let start_time = Instant::now();
-        let result = refresh_service.active_refresh_expiring_tokens().await;
-        let duration = start_time.elapsed();
+        let sessions = refresh_service.list_authorized_sessions().await?;
+        let mut active_ids = HashSet::new();
 
-        match &result {
-            Ok(refresh_results) => {
-                let successful_count = refresh_results.iter().filter(|r| r.success).count();
-                let failed_count = refresh_results.len() - successful_count;
-
-                info!(
-                    "OAuth Token refresh task completed in {:?}: {} successful, {} failed",
-                    duration, successful_count, failed_count
-                );
+        for session in sessions {
+            let session_id = session.session_id.clone();
+            active_ids.insert(session_id.clone());
+            if let Some(schedule) = refresh_service.build_schedule_for_session(&session) {
+                Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+            } else if let Some(key) = session_keys.remove(&session_id) {
+                queue.remove(&key);
+                session_schedules.remove(&session_id);
             }
+        }
+
+        let obsolete: Vec<String> = session_keys
+            .keys()
+            .filter(|id| !active_ids.contains(*id))
+            .cloned()
+            .collect();
+        for session_id in obsolete {
+            if let Some(key) = session_keys.remove(&session_id) {
+                queue.remove(&key);
+            }
+            session_schedules.remove(&session_id);
+        }
+
+        Ok(())
+    }
+
+    async fn process_session_entry(
+        refresh_service: &Arc<OAuthTokenRefreshService>,
+        entry: ScheduledTokenRefresh,
+        queue: &mut DelayQueue<RefreshQueueItem>,
+        session_keys: &mut HashMap<String, Key>,
+        session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
+    ) -> Vec<TokenRefreshResult> {
+        let session_id = entry.session_id.clone();
+        session_keys.remove(&session_id);
+        session_schedules.remove(&session_id);
+
+        let mut results = Vec::new();
+
+        let result = match refresh_service
+            .refresh_session(&session_id, RefreshType::Active)
+            .await
+        {
+            Ok(result) => result,
             Err(e) => {
                 error!(
-                    "OAuth Token refresh task failed after {:?}: {:?}",
-                    duration, e
+                    "Failed to refresh token for session {}: {:?}",
+                    session_id, e
                 );
+                let failure = TokenRefreshResult {
+                    success: false,
+                    new_access_token: None,
+                    new_expires_at: None,
+                    error_message: Some(e.to_string()),
+                    should_retry: true,
+                    refresh_type: RefreshType::Active,
+                };
+                Self::schedule_next_for_result(
+                    refresh_service,
+                    &session_id,
+                    &failure,
+                    queue,
+                    session_keys,
+                    session_schedules,
+                )
+                .await;
+                results.push(failure);
+                return results;
             }
-        }
+        };
 
-        result
+        Self::schedule_next_for_result(
+            refresh_service,
+            &session_id,
+            &result,
+            queue,
+            session_keys,
+            session_schedules,
+        )
+        .await;
+
+        results.push(result);
+        results
     }
 
-    /// 更新任务统计信息
-    async fn update_task_stats(
-        task_stats: &Arc<RwLock<TaskStats>>,
-        execution_result: &Result<Vec<TokenRefreshResult>>,
-        execution_duration: StdDuration,
-        consecutive_errors: &mut u32,
+    async fn schedule_next_for_result(
+        refresh_service: &Arc<OAuthTokenRefreshService>,
+        session_id: &str,
+        result: &TokenRefreshResult,
+        queue: &mut DelayQueue<RefreshQueueItem>,
+        session_keys: &mut HashMap<String, Key>,
+        session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
     ) {
-        let mut stats = task_stats.write().await;
-
-        stats.last_execution_time = Some(Utc::now());
-        stats.total_executions += 1;
-
-        // 更新平均执行时长
-        let duration_ms = execution_duration.as_millis() as f64;
-        if stats.total_executions == 1 {
-            stats.average_execution_duration_ms = duration_ms;
-        } else {
-            stats.average_execution_duration_ms = (stats.average_execution_duration_ms
-                * (stats.total_executions - 1) as f64
-                + duration_ms)
-                / stats.total_executions as f64;
-        }
-
-        match execution_result {
-            Ok(refresh_results) => {
-                stats.successful_executions += 1;
-
-                // 统计刷新结果
-                let successful_refreshes =
-                    refresh_results.iter().filter(|r| r.success).count() as u64;
-                let failed_refreshes = refresh_results.len() as u64 - successful_refreshes;
-
-                stats.total_tokens_refreshed += refresh_results.len() as u64;
-                stats.successful_token_refreshes += successful_refreshes;
-                stats.failed_token_refreshes += failed_refreshes;
+        match refresh_service
+            .determine_next_refresh_after(session_id, result)
+            .await
+        {
+            Ok(Some(schedule)) => {
+                Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+            }
+            Ok(None) => {
+                session_keys.remove(session_id);
+                session_schedules.remove(session_id);
             }
             Err(e) => {
-                stats.failed_executions += 1;
-                stats.last_error = Some(e.to_string());
-                stats.last_error_time = Some(Utc::now());
-                stats.consecutive_errors = *consecutive_errors;
+                warn!(
+                    "Failed to determine next refresh for session {}: {:?}",
+                    session_id, e
+                );
+                if result.should_retry {
+                    let retry_at = Utc::now()
+                        + Duration::seconds(refresh_service.retry_interval_seconds() as i64);
+                    let schedule = ScheduledTokenRefresh {
+                        session_id: session_id.to_string(),
+                        next_refresh_at: retry_at,
+                        expires_at: retry_at,
+                    };
+                    Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                } else {
+                    let retry_at = Utc::now() + Duration::seconds(ERROR_RETRY_INTERVAL_SECS as i64);
+                    let schedule = ScheduledTokenRefresh {
+                        session_id: session_id.to_string(),
+                        next_refresh_at: retry_at,
+                        expires_at: retry_at,
+                    };
+                    Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                }
             }
         }
-    }
-
-    /// 检查是否在静默时间段内
-    fn is_in_quiet_hours(&self) -> bool {
-        // TODO: 实现静默时间段检查逻辑
-        // 解析 config.quiet_hours (格式: "22:00-06:00") 并检查当前时间
-        false
-    }
-}
-
-/// 任务构建器
-pub struct OAuthTokenRefreshTaskBuilder {
-    config: RefreshTaskConfig,
-}
-
-impl OAuthTokenRefreshTaskBuilder {
-    /// 创建新的构建器
-    pub fn new() -> Self {
-        Self {
-            config: RefreshTaskConfig::default(),
-        }
-    }
-
-    /// 设置执行间隔
-    pub fn interval_seconds(mut self, seconds: u64) -> Self {
-        self.config.interval_seconds = seconds;
-        self
-    }
-
-    /// 设置是否启用
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.config.enabled = enabled;
-        self
-    }
-
-    /// 设置最大并发数
-    pub fn max_concurrent_refreshes(mut self, max: usize) -> Self {
-        self.config.max_concurrent_refreshes = max;
-        self
-    }
-
-    /// 设置任务超时时间
-    pub fn task_timeout_seconds(mut self, seconds: u64) -> Self {
-        self.config.task_timeout_seconds = seconds;
-        self
-    }
-
-    /// 设置最大重试次数
-    pub fn max_error_retries(mut self, retries: u32) -> Self {
-        self.config.max_error_retries = retries;
-        self
-    }
-
-    /// 设置重试间隔
-    pub fn error_retry_interval_seconds(mut self, seconds: u64) -> Self {
-        self.config.error_retry_interval_seconds = seconds;
-        self
-    }
-
-    /// 设置静默时间
-    pub fn quiet_hours(mut self, hours: Option<String>) -> Self {
-        self.config.quiet_hours = hours;
-        self
-    }
-
-    /// 构建任务
-    pub fn build(self, refresh_service: Arc<OAuthTokenRefreshService>) -> OAuthTokenRefreshTask {
-        OAuthTokenRefreshTask::new(refresh_service, self.config)
-    }
-}
-
-impl Default for OAuthTokenRefreshTaskBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }

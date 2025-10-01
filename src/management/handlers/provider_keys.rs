@@ -4,7 +4,8 @@
 
 use crate::auth::{
     extract_user_id_from_headers, gemini_code_assist_client::GeminiCodeAssistClient,
-    types::AuthStatus,
+    oauth_token_refresh_service::ScheduledTokenRefresh,
+    oauth_token_refresh_task::OAuthTokenRefreshTask, types::AuthStatus,
 };
 use crate::scheduler::types::ApiKeyHealthStatus;
 use axum::response::IntoResponse;
@@ -26,7 +27,44 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use tracing::info;
+use std::sync::Arc;
+use tracing::{error, info, warn};
+
+use crate::error::ProxyError;
+
+async fn prepare_oauth_schedule(
+    task: Option<&Arc<OAuthTokenRefreshTask>>,
+    session_id: Option<&String>,
+    user_id: i32,
+    key_id: Option<i32>,
+) -> Result<Option<ScheduledTokenRefresh>, ProxyError> {
+    let Some(task) = task else {
+        warn!(
+            user_id = user_id,
+            key_id = key_id,
+            "OAuth refresh task unavailable, skip scheduling"
+        );
+        return Ok(None);
+    };
+
+    let Some(session_id) = session_id.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+
+    match task.prepare_schedule(session_id).await {
+        Ok(schedule) => Ok(Some(schedule)),
+        Err(err) => {
+            error!(
+                user_id = user_id,
+                key_id = key_id,
+                session_id = session_id.as_str(),
+                "Failed to prepare OAuth refresh schedule: {}",
+                err
+            );
+            Err(err)
+        }
+    }
+}
 
 /// 获取提供商密钥列表
 pub async fn get_provider_keys_list(
@@ -225,7 +263,7 @@ pub async fn create_provider_key(
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
-
+    let refresh_task = state.oauth_token_refresh_task.clone();
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
         Ok(id) => id,
@@ -439,12 +477,28 @@ pub async fn create_provider_key(
         }
     }
 
+    let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
+        match prepare_oauth_schedule(
+            refresh_task.as_ref(),
+            payload.api_key.as_ref(),
+            user_id,
+            None,
+        )
+        .await
+        {
+            Ok(schedule) => schedule,
+            Err(err) => return crate::manage_error!(err),
+        }
+    } else {
+        None
+    };
+
     // 创建新密钥
     let new_provider_key = user_provider_keys::ActiveModel {
         user_id: Set(user_id),
         provider_type_id: Set(payload.provider_type_id),
         name: Set(payload.name),
-        api_key: Set(payload.api_key.unwrap_or_else(|| "".to_string())),
+        api_key: Set(payload.api_key.clone().unwrap_or_else(|| "".to_string())),
         auth_type: Set(payload.auth_type),
         auth_status: Set(Some(AuthStatus::Authorized.to_string())),
         weight: Set(payload.weight),
@@ -469,6 +523,37 @@ pub async fn create_provider_key(
             ));
         }
     };
+
+    if let Some(schedule) = pending_schedule {
+        if let Some(task) = refresh_task.as_ref() {
+            if let Err(err) = task.enqueue_schedule(schedule).await {
+                error!(
+                    user_id = user_id,
+                    key_id = result.id,
+                    "Failed to enqueue OAuth refresh schedule: {}",
+                    err
+                );
+                if let Err(delete_err) = user_provider_keys::Entity::delete_by_id(result.id)
+                    .exec(db)
+                    .await
+                {
+                    error!(
+                        user_id = user_id,
+                        key_id = result.id,
+                        "Failed to rollback provider key after enqueue error: {}",
+                        delete_err
+                    );
+                }
+                return crate::manage_error!(err);
+            }
+        } else {
+            warn!(
+                user_id = user_id,
+                key_id = result.id,
+                "OAuth refresh task unavailable, schedule not enqueued"
+            );
+        }
+    }
 
     // 启动异步任务处理Gemini OAuth
     if needs_auto_get_project_id_async {
@@ -688,6 +773,7 @@ pub async fn update_provider_key(
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
+    let refresh_task = state.oauth_token_refresh_task.clone();
 
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
@@ -719,6 +805,14 @@ pub async fn update_provider_key(
             ));
         }
     };
+
+    let original_key = existing_key.clone();
+    let old_session_id =
+        if existing_key.auth_type == OAUTH_AUTH_TYPE && !existing_key.api_key.is_empty() {
+            Some(existing_key.api_key.clone())
+        } else {
+            None
+        };
 
     // 检查名称是否与其他密钥冲突
     if existing_key.name != payload.name {
@@ -828,11 +922,27 @@ pub async fn update_provider_key(
         }
     }
 
+    let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
+        match prepare_oauth_schedule(
+            refresh_task.as_ref(),
+            payload.api_key.as_ref(),
+            user_id,
+            Some(key_id),
+        )
+        .await
+        {
+            Ok(schedule) => schedule,
+            Err(err) => return crate::manage_error!(err),
+        }
+    } else {
+        None
+    };
+
     // 更新密钥
     let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
     active_model.provider_type_id = Set(payload.provider_type_id);
     active_model.name = Set(payload.name);
-    active_model.api_key = Set(payload.api_key.unwrap_or_else(|| "".to_string()));
+    active_model.api_key = Set(payload.api_key.clone().unwrap_or_else(|| "".to_string()));
     active_model.auth_type = Set(payload.auth_type);
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
@@ -855,6 +965,58 @@ pub async fn update_provider_key(
         }
     };
 
+    if let Some(schedule) = pending_schedule {
+        if let Some(task) = refresh_task.as_ref() {
+            if let Err(err) = task.enqueue_schedule(schedule).await {
+                error!(
+                    user_id = user_id,
+                    key_id = key_id,
+                    "Failed to enqueue OAuth refresh schedule during update: {}",
+                    err
+                );
+                let revert_model: user_provider_keys::ActiveModel = original_key.into();
+                if let Err(revert_err) = revert_model.update(db).await {
+                    error!(
+                        user_id = user_id,
+                        key_id = key_id,
+                        "Failed to rollback provider key after enqueue error: {}",
+                        revert_err
+                    );
+                }
+                return crate::manage_error!(err);
+            }
+        } else {
+            warn!(
+                user_id = user_id,
+                key_id = key_id,
+                "OAuth refresh task unavailable, schedule not enqueued"
+            );
+        }
+    }
+
+    if let Some(old_id) = old_session_id {
+        let updated_session_id =
+            if updated_key.auth_type == OAUTH_AUTH_TYPE && !updated_key.api_key.is_empty() {
+                Some(updated_key.api_key.clone())
+            } else {
+                None
+            };
+
+        if updated_session_id.as_deref() != Some(old_id.as_str()) {
+            if let Some(task) = refresh_task.as_ref() {
+                if let Err(err) = task.remove_session(&old_id).await {
+                    warn!(
+                        user_id = user_id,
+                        key_id = key_id,
+                        session_id = old_id.as_str(),
+                        "Failed to remove old OAuth session from refresh queue: {}",
+                        err
+                    );
+                }
+            }
+        }
+    }
+
     let data = json!({
         "id": updated_key.id,
         "name": updated_key.name,
@@ -875,6 +1037,7 @@ pub async fn delete_provider_key(
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
+    let refresh_task = state.oauth_token_refresh_task.clone();
 
     // 从JWT token中提取用户ID
     let user_id = match extract_user_id_from_headers(&headers) {
@@ -907,6 +1070,13 @@ pub async fn delete_provider_key(
         }
     };
 
+    let session_to_remove =
+        if existing_key.auth_type == OAUTH_AUTH_TYPE && !existing_key.api_key.is_empty() {
+            Some(existing_key.api_key.clone())
+        } else {
+            None
+        };
+
     // 删除密钥
     let active_model: user_provider_keys::ActiveModel = existing_key.into();
     match active_model.delete(db).await {
@@ -920,6 +1090,20 @@ pub async fn delete_provider_key(
             ));
         }
     };
+
+    if let Some(session_id) = session_to_remove {
+        if let Some(task) = refresh_task.as_ref() {
+            if let Err(err) = task.remove_session(&session_id).await {
+                warn!(
+                    user_id = user_id,
+                    key_id = key_id,
+                    session_id = session_id.as_str(),
+                    "Failed to remove OAuth session from refresh queue after delete: {}",
+                    err
+                );
+            }
+        }
+    }
 
     let data = json!({
         "id": key_id,

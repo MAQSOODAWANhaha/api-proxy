@@ -18,6 +18,8 @@ pub struct SharedServices {
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
     pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
+    pub oauth_refresh_service:
+        Arc<crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService>,
     pub smart_api_key_provider: Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>,
     pub oauth_token_refresh_task: Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>,
 }
@@ -77,6 +79,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         Some(shared_services.api_key_health_checker.clone()),
         Some(shared_services.oauth_client.clone()),
         Some(shared_services.smart_api_key_provider.clone()),
+        Some(shared_services.oauth_token_refresh_task.clone()),
     )
     .map_err(|e| ProxyError::server_init(format!("Failed to create management server: {}", e)))?;
 
@@ -307,7 +310,6 @@ pub async fn initialize_shared_services() -> Result<(
         crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService::new(
             db.clone(),
             oauth_client.clone(),
-            crate::auth::oauth_token_refresh_service::RefreshServiceConfig::default(),
         ),
     );
     info!(
@@ -340,7 +342,6 @@ pub async fn initialize_shared_services() -> Result<(
     let oauth_token_refresh_task = Arc::new(
         crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(
             oauth_refresh_service.clone(),
-            crate::auth::oauth_token_refresh_task::RefreshTaskConfig::default(),
         ),
     );
     info!(
@@ -359,6 +360,7 @@ pub async fn initialize_shared_services() -> Result<(
         provider_config_manager,
         api_key_health_checker,
         oauth_client,
+        oauth_refresh_service: oauth_refresh_service.clone(),
         smart_api_key_provider,
         oauth_token_refresh_task,
     };

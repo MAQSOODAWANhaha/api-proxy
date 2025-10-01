@@ -79,6 +79,9 @@ pub struct AppState {
     /// 智能API密钥提供者
     pub smart_api_key_provider:
         Option<Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>>,
+    /// OAuth token 刷新任务
+    pub oauth_token_refresh_task:
+        Option<Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>>,
 }
 
 /// 管理服务器
@@ -105,6 +108,9 @@ impl ManagementServer {
         smart_api_key_provider: Option<
             Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>,
         >,
+        oauth_token_refresh_task: Option<
+            Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>,
+        >,
     ) -> Result<Self> {
         let state = AppState {
             config: app_config,
@@ -114,6 +120,7 @@ impl ManagementServer {
             api_key_health_checker,
             oauth_client,
             smart_api_key_provider,
+            oauth_token_refresh_task,
         };
 
         let router = Self::create_router(state.clone(), &config)?;

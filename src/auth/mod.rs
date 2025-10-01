@@ -3,7 +3,6 @@
 //! 提供完整的身份验证和权限控制功能
 
 pub mod api_key;
-pub mod background_task_manager; // 后台任务管理器
 pub mod cache_strategy; // 统一缓存策略
 pub mod dual_auth_boundary; // 双认证机制边界控制
 pub mod gemini_code_assist_client; // Gemini Code Assist API客户端
@@ -11,7 +10,6 @@ pub mod header_parser;
 pub mod jwt;
 pub mod management;
 // pub mod oauth; // 已删除，使用oauth_client替代
-pub mod oauth_cleanup_task; // OAuth 会话清理任务
 pub mod oauth_client; // 新的OAuth客户端模块
 pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
 pub mod oauth_token_refresh_task; // OAuth token刷新后台任务
@@ -27,23 +25,15 @@ pub mod auth_manager; // 统一认证管理器实现（原RefactoredUnified重�
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
-pub use background_task_manager::{
-    BackgroundTaskInfo, BackgroundTaskManager, BackgroundTaskStatus, BackgroundTaskType,
-};
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
 pub use management::{Claims, check_is_admin_from_headers, extract_user_id_from_headers};
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
-pub use oauth_cleanup_task::{OAuthCleanupStats, OAuthCleanupTask};
 pub use oauth_token_refresh_service::{
-    OAuthTokenRefreshService, OAuthTokenRefreshServiceBuilder, RefreshServiceConfig, RefreshStats,
-    RefreshType, TokenRefreshResult,
+    OAuthTokenRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
 };
-pub use oauth_token_refresh_task::{
-    OAuthTokenRefreshTask, OAuthTokenRefreshTaskBuilder, RefreshTaskConfig, TaskControl, TaskState,
-    TaskStats,
-};
+pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
 pub use permissions::{Permission, Role};
 pub use service::AuthService;
 pub use smart_api_key_provider::{

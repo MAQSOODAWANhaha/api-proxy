@@ -240,6 +240,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "tokio-util",
  "toml",
@@ -5083,6 +5084,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project-lite",
+ "slab",
  "tokio",
 ]
 

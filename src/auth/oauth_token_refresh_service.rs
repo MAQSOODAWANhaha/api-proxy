@@ -5,8 +5,8 @@
 //! - 主动刷新：后台定期检查即将过期的token并提前刷新
 
 use chrono::{DateTime, Duration, Utc};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
-use std::collections::HashMap;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
@@ -14,7 +14,13 @@ use tracing::{debug, error, info, warn};
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::types::AuthStatus;
 use crate::error::{ProxyError, Result};
-use entity::oauth_client_sessions;
+use entity::{oauth_client_sessions, user_provider_keys};
+
+const REFRESH_BUFFER_MINUTES: i64 = 5;
+const RETRY_INTERVAL_SECONDS: u64 = 30;
+const PENDING_EXPIRE_MINUTES: i64 = 30;
+const EXPIRED_RETENTION_DAYS: i64 = 7;
+const ORPHAN_RETENTION_HOURS: i64 = 24;
 
 /// OAuth Token智能刷新服务
 ///
@@ -32,40 +38,6 @@ pub struct OAuthTokenRefreshService {
 
     /// 刷新统计信息
     refresh_stats: Arc<RwLock<RefreshStats>>,
-
-    /// 配置
-    config: RefreshServiceConfig,
-}
-
-/// 刷新服务配置
-#[derive(Debug, Clone)]
-pub struct RefreshServiceConfig {
-    /// 提前刷新时间（分钟），在token过期前多久开始刷新
-    pub refresh_buffer_minutes: i64,
-
-    /// 主动刷新检查间隔（分钟）
-    pub active_refresh_interval_minutes: i64,
-
-    /// 最大重试次数
-    pub max_retry_attempts: u32,
-
-    /// 重试间隔（秒）
-    pub retry_interval_seconds: u64,
-
-    /// 失败token的冷却时间（分钟），失败后多久再次尝试刷新
-    pub failure_cooldown_minutes: i64,
-}
-
-impl Default for RefreshServiceConfig {
-    fn default() -> Self {
-        Self {
-            refresh_buffer_minutes: 5,           // 提前5分钟刷新
-            active_refresh_interval_minutes: 10, // 每10分钟检查一次
-            max_retry_attempts: 3,               // 最多重试3次
-            retry_interval_seconds: 30,          // 重试间隔30秒
-            failure_cooldown_minutes: 30,        // 失败后冷却30分钟
-        }
-    }
 }
 
 /// 刷新统计信息
@@ -94,6 +66,17 @@ pub struct RefreshStats {
 
     /// 当前正在刷新的token数量
     pub refreshing_tokens: u32,
+}
+
+/// 计划中的 Token 刷新任务
+#[derive(Debug, Clone)]
+pub struct ScheduledTokenRefresh {
+    /// 要刷新的会话 ID
+    pub session_id: String,
+    /// 下一次刷新的时间
+    pub next_refresh_at: DateTime<Utc>,
+    /// 当前已知的过期时间
+    pub expires_at: DateTime<Utc>,
 }
 
 /// Token刷新结果
@@ -129,23 +112,391 @@ pub enum RefreshType {
 
 impl OAuthTokenRefreshService {
     /// 创建新的OAuth Token智能刷新服务
-    pub fn new(
-        db: Arc<DatabaseConnection>,
-        oauth_client: Arc<OAuthClient>,
-        config: RefreshServiceConfig,
-    ) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>, oauth_client: Arc<OAuthClient>) -> Self {
         Self {
             db,
             oauth_client,
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             refresh_stats: Arc::new(RwLock::new(RefreshStats::default())),
-            config,
         }
     }
 
-    /// 使用默认配置创建刷新服务
-    pub fn new_with_defaults(db: Arc<DatabaseConnection>, oauth_client: Arc<OAuthClient>) -> Self {
-        Self::new(db, oauth_client, RefreshServiceConfig::default())
+    /// 列出所有授权且具备刷新条件的会话
+    pub async fn list_authorized_sessions(&self) -> Result<Vec<oauth_client_sessions::Model>> {
+        oauth_client_sessions::Entity::find()
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
+            .filter(oauth_client_sessions::Column::RefreshToken.is_not_null())
+            .filter(oauth_client_sessions::Column::AccessToken.is_not_null())
+            .all(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source(
+                    format!("Failed to list authorized OAuth sessions: {:?}", e),
+                    e,
+                )
+            })
+    }
+
+    /// 清理过期或孤立的 OAuth 会话记录
+    pub async fn cleanup_stale_sessions(&self) -> Result<()> {
+        // 删除超时 pending 会话
+        let pending_cutoff = Utc::now() - chrono::Duration::minutes(PENDING_EXPIRE_MINUTES);
+        let delete_pending = oauth_client_sessions::Entity::delete_many()
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Pending.to_string()))
+            .filter(oauth_client_sessions::Column::CreatedAt.lt(pending_cutoff.naive_utc()))
+            .exec(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source(
+                    "Failed to delete expired pending OAuth sessions",
+                    e,
+                )
+            })?;
+
+        if delete_pending.rows_affected > 0 {
+            info!(
+                "Deleted {} expired pending OAuth sessions",
+                delete_pending.rows_affected
+            );
+        }
+
+        // 删除长时间保留的 expired 会话
+        let expired_cutoff = Utc::now() - chrono::Duration::days(EXPIRED_RETENTION_DAYS);
+        let delete_expired = oauth_client_sessions::Entity::delete_many()
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Expired.to_string()))
+            .filter(oauth_client_sessions::Column::UpdatedAt.lt(expired_cutoff.naive_utc()))
+            .exec(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source("Failed to delete old expired OAuth sessions", e)
+            })?;
+
+        if delete_expired.rows_affected > 0 {
+            info!(
+                "Deleted {} old expired OAuth sessions",
+                delete_expired.rows_affected
+            );
+        }
+
+        // 删除孤立会话：未被任何 user_provider_keys (OAuth) 引用
+        let linked_session_ids: HashSet<String> = user_provider_keys::Entity::find()
+            .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+            .select_only()
+            .column(user_provider_keys::Column::ApiKey)
+            .into_tuple::<String>()
+            .all(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source(
+                    "Failed to load OAuth provider keys for cleanup",
+                    e,
+                )
+            })?
+            .into_iter()
+            .collect();
+
+        let orphan_sessions = oauth_client_sessions::Entity::find()
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
+            .all(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source("Failed to query authorized OAuth sessions", e)
+            })?;
+
+        let orphan_cutoff = Utc::now() - chrono::Duration::hours(ORPHAN_RETENTION_HOURS);
+        let linked_ids = linked_session_ids;
+        let orphan_ids: Vec<String> = orphan_sessions
+            .into_iter()
+            .filter(|session| {
+                let is_linked = linked_ids.contains(&session.session_id);
+                let too_old = session.updated_at < orphan_cutoff.naive_utc();
+                !is_linked && too_old
+            })
+            .map(|session| session.session_id)
+            .collect();
+
+        if !orphan_ids.is_empty() {
+            let deleted = oauth_client_sessions::Entity::delete_many()
+                .filter(oauth_client_sessions::Column::SessionId.is_in(orphan_ids))
+                .exec(&*self.db)
+                .await
+                .map_err(|e| {
+                    ProxyError::database_with_source("Failed to delete orphan OAuth sessions", e)
+                })?;
+            info!(
+                "Deleted {} orphan OAuth sessions (no linked provider keys)",
+                deleted.rows_affected
+            );
+        }
+
+        Ok(())
+    }
+
+    /// 从数据库加载指定会话
+    pub async fn load_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<oauth_client_sessions::Model>> {
+        oauth_client_sessions::Entity::find()
+            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+            .one(&*self.db)
+            .await
+            .map_err(|e| {
+                ProxyError::database_with_source(
+                    format!("Failed to load OAuth session: {:?}", e),
+                    e,
+                )
+            })
+    }
+
+    fn should_refresh_session(
+        &self,
+        session: &oauth_client_sessions::Model,
+        now: DateTime<Utc>,
+    ) -> bool {
+        if session.access_token.is_none() || session.refresh_token.is_none() {
+            return false;
+        }
+
+        let buffer = Duration::minutes(REFRESH_BUFFER_MINUTES);
+        let expires_at = DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc);
+        now + buffer >= expires_at
+    }
+
+    fn compute_next_from_expiry(
+        &self,
+        expires_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> DateTime<Utc> {
+        let buffer = Duration::minutes(REFRESH_BUFFER_MINUTES);
+        let remaining = expires_at - now;
+
+        let mut target = if remaining <= buffer {
+            now
+        } else if remaining <= buffer * 2 {
+            expires_at - buffer
+        } else if remaining <= buffer * 4 {
+            expires_at - buffer * 2
+        } else {
+            expires_at - buffer * 3
+        };
+
+        if target <= now {
+            target = now + Duration::seconds(1);
+        }
+
+        target
+    }
+
+    fn compute_next_refresh_at(
+        &self,
+        session: &oauth_client_sessions::Model,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        if session.refresh_token.is_none() || session.access_token.is_none() {
+            return None;
+        }
+
+        let expires_at = DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc);
+        Some(self.compute_next_from_expiry(expires_at, now))
+    }
+
+    /// 基于会话构建下一次刷新计划
+    pub fn build_schedule_for_session(
+        &self,
+        session: &oauth_client_sessions::Model,
+    ) -> Option<ScheduledTokenRefresh> {
+        let now = Utc::now();
+        self.compute_next_refresh_at(session, now)
+            .map(|next| ScheduledTokenRefresh {
+                session_id: session.session_id.clone(),
+                next_refresh_at: next,
+                expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+            })
+    }
+
+    /// 构建启动时的刷新计划，并针对需要立即刷新的会话进行刷新
+    pub async fn initialize_refresh_schedule(&self) -> Result<Vec<ScheduledTokenRefresh>> {
+        if let Err(e) = self.cleanup_stale_sessions().await {
+            warn!(
+                "Failed to cleanup OAuth sessions before scheduling: {:?}",
+                e
+            );
+        }
+
+        let sessions = self.list_authorized_sessions().await?;
+        let mut schedule = Vec::new();
+
+        for mut session in sessions {
+            let now = Utc::now();
+
+            if self.should_refresh_session(&session, now) {
+                match self
+                    .refresh_token_with_lock(&session.session_id, RefreshType::Active)
+                    .await
+                {
+                    Ok(result) => {
+                        if let Some(expires_at) = result.new_expires_at {
+                            session.expires_at = expires_at.naive_utc();
+                            if let Some(access_token) = result.new_access_token {
+                                session.access_token = Some(access_token);
+                            }
+                        } else if let Some(updated) = self.load_session(&session.session_id).await?
+                        {
+                            session = updated;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to eagerly refresh session {}: {:?}",
+                            session.session_id, e
+                        );
+                        let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+                        schedule.push(ScheduledTokenRefresh {
+                            session_id: session.session_id.clone(),
+                            next_refresh_at: retry_at,
+                            expires_at: DateTime::<Utc>::from_naive_utc_and_offset(
+                                session.expires_at,
+                                Utc,
+                            ),
+                        });
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(next) = self.compute_next_refresh_at(&session, now) {
+                schedule.push(ScheduledTokenRefresh {
+                    session_id: session.session_id.clone(),
+                    next_refresh_at: next,
+                    expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+                });
+            }
+        }
+
+        Ok(schedule)
+    }
+
+    /// 单独注册会话到刷新计划
+    pub async fn register_session_for_refresh(
+        &self,
+        session_id: &str,
+    ) -> Result<ScheduledTokenRefresh> {
+        let mut session = self.load_session(session_id).await?.ok_or_else(|| {
+            ProxyError::authentication(format!("OAuth session not found: {}", session_id))
+        })?;
+
+        if session.status != AuthStatus::Authorized.to_string() {
+            return Err(ProxyError::authentication(format!(
+                "OAuth session {} is not authorized",
+                session_id
+            )));
+        }
+
+        if session.refresh_token.is_none() || session.access_token.is_none() {
+            return Err(ProxyError::authentication(format!(
+                "OAuth session {} missing refresh credentials",
+                session_id
+            )));
+        }
+
+        let now = Utc::now();
+
+        if self.should_refresh_session(&session, now) {
+            match self
+                .refresh_token_with_lock(&session.session_id, RefreshType::Active)
+                .await
+            {
+                Ok(result) => {
+                    if let Some(expires_at) = result.new_expires_at {
+                        session.expires_at = expires_at.naive_utc();
+                        if let Some(access_token) = result.new_access_token {
+                            session.access_token = Some(access_token);
+                        }
+                    } else if let Some(updated) = self.load_session(&session.session_id).await? {
+                        session = updated;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to eagerly refresh session {}: {:?}",
+                        session.session_id, e
+                    );
+                    let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+                    return Ok(ScheduledTokenRefresh {
+                        session_id: session.session_id.clone(),
+                        next_refresh_at: retry_at,
+                        expires_at: DateTime::<Utc>::from_naive_utc_and_offset(
+                            session.expires_at,
+                            Utc,
+                        ),
+                    });
+                }
+            }
+        }
+
+        if let Some(next) = self.compute_next_refresh_at(&session, now) {
+            Ok(ScheduledTokenRefresh {
+                session_id: session.session_id.clone(),
+                next_refresh_at: next,
+                expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+            })
+        } else {
+            Err(ProxyError::business(format!(
+                "Unable to compute refresh schedule for session {}",
+                session_id
+            )))
+        }
+    }
+
+    /// 根据刷新结果确定下一次刷新计划
+    pub async fn determine_next_refresh_after(
+        &self,
+        session_id: &str,
+        result: &TokenRefreshResult,
+    ) -> Result<Option<ScheduledTokenRefresh>> {
+        let now = Utc::now();
+
+        if result.success {
+            if let Some(expires_at) = result.new_expires_at {
+                let next = self.compute_next_from_expiry(expires_at, now);
+                return Ok(Some(ScheduledTokenRefresh {
+                    session_id: session_id.to_string(),
+                    next_refresh_at: next,
+                    expires_at,
+                }));
+            }
+        }
+
+        if let Some(session) = self.load_session(session_id).await? {
+            if let Some(next) = self.compute_next_refresh_at(&session, now) {
+                return Ok(Some(ScheduledTokenRefresh {
+                    session_id: session.session_id.clone(),
+                    next_refresh_at: next,
+                    expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+                }));
+            }
+        }
+
+        if !result.success && result.should_retry {
+            let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+            return Ok(Some(ScheduledTokenRefresh {
+                session_id: session_id.to_string(),
+                next_refresh_at: retry_at,
+                expires_at: retry_at,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    /// 对外暴露刷新的包装方法
+    pub async fn refresh_session(
+        &self,
+        session_id: &str,
+        refresh_type: RefreshType,
+    ) -> Result<TokenRefreshResult> {
+        self.refresh_token_with_lock(session_id, refresh_type).await
     }
 
     /// 被动刷新：检查token是否需要刷新，如果需要则刷新
@@ -172,62 +523,6 @@ impl OAuthTokenRefreshService {
             .await
     }
 
-    /// 主动刷新：后台任务调用，刷新所有即将过期的token
-    pub async fn active_refresh_expiring_tokens(&self) -> Result<Vec<TokenRefreshResult>> {
-        info!("Starting active refresh for expiring tokens");
-
-        // 查询即将过期的OAuth sessions
-        let expiring_sessions = self.find_expiring_oauth_sessions().await?;
-        info!("Found {} expiring OAuth sessions", expiring_sessions.len());
-
-        let mut results = Vec::new();
-
-        for session in expiring_sessions {
-            debug!("Processing expiring session: {}", session.session_id);
-
-            // 执行主动刷新
-            match self
-                .refresh_token_with_lock(&session.session_id, RefreshType::Active)
-                .await
-            {
-                Ok(result) => {
-                    if result.success {
-                        info!(
-                            "Successfully refreshed token for session: {}",
-                            session.session_id
-                        );
-                    } else {
-                        warn!(
-                            "Failed to refresh token for session: {}, error: {:?}",
-                            session.session_id, result.error_message
-                        );
-                    }
-                    results.push(result);
-                }
-                Err(e) => {
-                    error!(
-                        "Error refreshing token for session {}: {:?}",
-                        session.session_id, e
-                    );
-                    results.push(TokenRefreshResult {
-                        success: false,
-                        new_access_token: None,
-                        new_expires_at: None,
-                        error_message: Some(format!("Refresh error: {:?}", e)),
-                        should_retry: true,
-                        refresh_type: RefreshType::Active,
-                    });
-                }
-            }
-        }
-
-        info!(
-            "Active refresh completed, processed {} sessions",
-            results.len()
-        );
-        Ok(results)
-    }
-
     /// 检查token是否需要刷新
     async fn should_refresh_token(&self, session_id: &str) -> Result<bool> {
         let session = oauth_client_sessions::Entity::find()
@@ -251,11 +546,8 @@ impl OAuthTokenRefreshService {
             return Ok(false); // 没有token，无需刷新
         }
 
-        // 检查过期时间
         let now = Utc::now();
-        let buffer = Duration::minutes(self.config.refresh_buffer_minutes);
-        let expires_at_utc = DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc);
-        let should_refresh = now + buffer >= expires_at_utc;
+        let should_refresh = self.should_refresh_session(&session, now);
 
         debug!(
             "Session {} expires at {:?}, should refresh: {}",
@@ -359,32 +651,11 @@ impl OAuthTokenRefreshService {
                     new_access_token: None,
                     new_expires_at: None,
                     error_message: Some(format!("OAuth client error: {:?}", e)),
-                    should_retry: self.should_retry_refresh(&e),
+                    should_retry: true,
                     refresh_type,
                 })
             }
         }
-    }
-
-    /// 查找即将过期的OAuth sessions
-    async fn find_expiring_oauth_sessions(&self) -> Result<Vec<oauth_client_sessions::Model>> {
-        let now = Utc::now();
-        let buffer = Duration::minutes(self.config.refresh_buffer_minutes);
-        let expiry_threshold = now + buffer;
-
-        oauth_client_sessions::Entity::find()
-            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
-            .filter(oauth_client_sessions::Column::ExpiresAt.lte(expiry_threshold))
-            .filter(oauth_client_sessions::Column::AccessToken.is_not_null())
-            .filter(oauth_client_sessions::Column::RefreshToken.is_not_null())
-            .all(&*self.db)
-            .await
-            .map_err(|e| {
-                ProxyError::database_with_source(
-                    format!("Failed to find expiring OAuth sessions: {:?}", e),
-                    e,
-                )
-            })
     }
 
     /// 获取token的过期时间
@@ -403,12 +674,6 @@ impl OAuthTokenRefreshService {
     }
 
     /// 判断是否应该重试刷新
-    fn should_retry_refresh(&self, _error: &crate::auth::oauth_client::OAuthError) -> bool {
-        // 根据错误类型判断是否应该重试
-        // TODO: 根据实际的OAuthError类型来判断
-        true // 暂时总是重试
-    }
-
     /// 获取刷新锁
     async fn get_refresh_lock(&self, session_id: &str) -> Arc<Mutex<()>> {
         let mut locks = self.refresh_locks.write().await;
@@ -457,82 +722,7 @@ impl OAuthTokenRefreshService {
         self.refresh_stats.read().await.clone()
     }
 
-    /// 清理过期的刷新锁
-    pub async fn cleanup_expired_locks(&self) {
-        let mut locks = self.refresh_locks.write().await;
-
-        // 清理长时间未使用的锁（简单策略：清理所有锁）
-        // 在生产环境中可以实现更复杂的清理策略
-        if locks.len() > 1000 {
-            // 避免锁过多
-            locks.clear();
-            debug!("Cleaned up expired refresh locks");
-        }
-    }
-
-    /// 强制刷新指定session的token
-    pub async fn force_refresh_token(&self, session_id: &str) -> Result<TokenRefreshResult> {
-        info!("Force refreshing token for session: {}", session_id);
-        self.refresh_token_with_lock(session_id, RefreshType::Passive)
-            .await
-    }
-}
-
-/// 刷新服务构建器
-pub struct OAuthTokenRefreshServiceBuilder {
-    config: RefreshServiceConfig,
-}
-
-impl OAuthTokenRefreshServiceBuilder {
-    /// 创建新的构建器
-    pub fn new() -> Self {
-        Self {
-            config: RefreshServiceConfig::default(),
-        }
-    }
-
-    /// 设置提前刷新时间
-    pub fn refresh_buffer_minutes(mut self, minutes: i64) -> Self {
-        self.config.refresh_buffer_minutes = minutes;
-        self
-    }
-
-    /// 设置主动刷新检查间隔
-    pub fn active_refresh_interval_minutes(mut self, minutes: i64) -> Self {
-        self.config.active_refresh_interval_minutes = minutes;
-        self
-    }
-
-    /// 设置最大重试次数
-    pub fn max_retry_attempts(mut self, attempts: u32) -> Self {
-        self.config.max_retry_attempts = attempts;
-        self
-    }
-
-    /// 设置重试间隔
-    pub fn retry_interval_seconds(mut self, seconds: u64) -> Self {
-        self.config.retry_interval_seconds = seconds;
-        self
-    }
-
-    /// 设置失败冷却时间
-    pub fn failure_cooldown_minutes(mut self, minutes: i64) -> Self {
-        self.config.failure_cooldown_minutes = minutes;
-        self
-    }
-
-    /// 构建刷新服务
-    pub fn build(
-        self,
-        db: Arc<DatabaseConnection>,
-        oauth_client: Arc<OAuthClient>,
-    ) -> OAuthTokenRefreshService {
-        OAuthTokenRefreshService::new(db, oauth_client, self.config)
-    }
-}
-
-impl Default for OAuthTokenRefreshServiceBuilder {
-    fn default() -> Self {
-        Self::new()
+    pub fn retry_interval_seconds(&self) -> u64 {
+        RETRY_INTERVAL_SECONDS
     }
 }
