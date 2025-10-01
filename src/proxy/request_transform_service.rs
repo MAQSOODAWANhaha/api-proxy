@@ -8,7 +8,6 @@ use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
 
-use crate::auth::oauth_client::JWTParser;
 use crate::error::ProxyError;
 use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
@@ -65,12 +64,6 @@ impl RequestTransformService {
         Ok(())
     }
 
-    /// 从OpenAI access_token中解析chatgpt-account-id
-    fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
-        let jwt_parser = JWTParser::new().ok()?;
-        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
-    }
-
     /// 构建并注入上游认证头
     fn build_and_inject_auth_headers(
         &self,
@@ -104,22 +97,6 @@ impl RequestTransformService {
                     .map_err(|e| {
                         ProxyError::internal(format!("Failed to set OAuth header: {}", e))
                     })?;
-
-                if let Some(provider_type) = ctx.provider_type.as_ref() {
-                    if provider_type.name.to_lowercase().contains("openai") {
-                        if let Some(account_id) = self.extract_chatgpt_account_id(token) {
-                            ctx.account_id = Some(account_id.clone());
-                            upstream_request
-                                .insert_header("chatgpt-account-id", &account_id)
-                                .map_err(|e| {
-                                    ProxyError::internal(format!(
-                                        "Failed to set chatgpt-account-id: {}",
-                                        e
-                                    ))
-                                })?;
-                        }
-                    }
-                }
             }
         }
 

@@ -53,19 +53,6 @@ pub struct Authorization {
     pub location: String,
 }
 
-/// 完整的认证结果，将放入ProxyContext
-#[derive(Debug, Clone)]
-pub struct AuthResult {
-    /// 用户对外API配置
-    pub user_service_api: user_service_apis::Model,
-    /// 选择的后端API密钥
-    pub selected_backend: user_provider_keys::Model,
-    /// 提供商类型配置
-    pub provider_type: provider_types::Model,
-    /// 解析后的最终凭证
-    pub resolved_credential: ResolvedCredential,
-}
-
 /// 代理端认证服务
 ///
 /// 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
@@ -96,44 +83,38 @@ impl AuthenticationService {
         self.db.clone()
     }
 
-    /// 执行完整的认证和授权流程
+    /// 执行完整的认证和授权流程, 直接填充 ProxyContext
     pub async fn authenticate_and_authorize(
         &self,
         session: &mut Session,
         ctx: &mut ProxyContext,
-    ) -> Result<AuthResult, ProxyError> {
+    ) -> Result<(), ProxyError> {
         // 1. 认证入口API Key
         let user_api = self
             .authenticate_entry_api(session, &ctx.request_id)
             .await?;
-        ctx.user_service_api = Some(user_api.clone());
 
         // 2. 检查速率限制和配额
         self.check_limits(&user_api, &ctx.request_id).await?;
 
         // 3. 获取提供商配置
         let provider_type = self.get_provider_type(user_api.provider_type_id).await?;
-        ctx.provider_type = Some(provider_type.clone());
 
         // 4. 选择后端密钥
         let selected_backend = self.select_api_key(&user_api, &ctx.request_id).await?;
-        ctx.selected_backend = Some(selected_backend.clone());
 
         // 5. 解析最终凭证
         let resolved_credential = self
             .resolve_credential(&selected_backend, &ctx.request_id)
             .await?;
-        ctx.resolved_credential = Some(resolved_credential.clone());
 
-        // 6. 构造完整的认证结果
-        let auth_result = AuthResult {
-            user_service_api: user_api,
-            selected_backend,
-            provider_type,
-            resolved_credential,
-        };
+        // 6. 填充上下文
+        ctx.user_service_api = Some(user_api);
+        ctx.provider_type = Some(provider_type);
+        ctx.selected_backend = Some(selected_backend);
+        ctx.resolved_credential = Some(resolved_credential);
 
-        Ok(auth_result)
+        Ok(())
     }
 
     /// 1. 仅进行入口 API Key 认证

@@ -67,7 +67,7 @@ pub mod upstream_service;
 pub use crate::statistics::service::StatisticsService;
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
-pub use context::{AuthContext, ProxyContext};
+pub use context::ProxyContext;
 pub use pingora_proxy::PingoraProxyServer;
 pub use request_transform_service::RequestTransformService;
 pub use response_transform_service::ResponseTransformService;
@@ -79,7 +79,7 @@ pub use upstream_service::UpstreamService;
 /// 统一导入集合（建议上层使用）
 pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
-    pub use super::context::{AuthContext, ProxyContext};
+    pub use super::context::ProxyContext;
     pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
     pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};

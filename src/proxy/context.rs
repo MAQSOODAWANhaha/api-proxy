@@ -20,32 +20,6 @@ pub enum ResolvedCredential {
     OAuthAccessToken(String),
 }
 
-/// 认证结果上下文（可选的完整认证状态容器）
-#[derive(Debug, Clone)]
-pub struct AuthContext {
-    /// 用户对外API配置
-    pub user_service_api: user_service_apis::Model,
-    /// 选择的后端API密钥
-    pub selected_backend: user_provider_keys::Model,
-    /// 提供商类型配置
-    pub provider_type: provider_types::Model,
-}
-
-impl AuthContext {
-    /// 创建新的认证上下文
-    pub fn new(
-        user_service_api: user_service_apis::Model,
-        selected_backend: user_provider_keys::Model,
-        provider_type: provider_types::Model,
-    ) -> Self {
-        Self {
-            user_service_api,
-            selected_backend,
-            provider_type,
-        }
-    }
-}
-
 /// 请求上下文
 // #[derive(Debug, Clone)]
 pub struct ProxyContext {

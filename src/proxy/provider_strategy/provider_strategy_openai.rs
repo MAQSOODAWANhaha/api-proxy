@@ -2,7 +2,9 @@
 //!
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
+use crate::auth::oauth_client::JWTParser;
 use crate::error::{ErrorContext, Result};
+use crate::proxy::context::ResolvedCredential;
 use crate::proxy::ProxyContext;
 use crate::proxy_err;
 use chrono::Utc;
@@ -43,6 +45,12 @@ impl Default for OpenAIStrategy {
 impl OpenAIStrategy {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 从OpenAI access_token中解析chatgpt-account-id
+    fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
+        let jwt_parser = JWTParser::new().ok()?;
+        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
 
     /// 异步处理429错误
@@ -135,6 +143,20 @@ impl ProviderStrategy for OpenAIStrategy {
                     .with_network_context(|| {
                         format!("设置OpenAI host头失败, request_id: {}", ctx.request_id)
                     })?;
+
+                if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential {
+                    if let Some(account_id) = self.extract_chatgpt_account_id(token) {
+                        ctx.account_id = Some(account_id.clone());
+                        upstream_request
+                            .insert_header("chatgpt-account-id", &account_id)
+                            .with_network_context(|| {
+                                format!(
+                                    "设置OpenAI chatgpt-account-id头失败, request_id: {}",
+                                    ctx.request_id
+                                )
+                            })?;
+                    }
+                }
             }
         }
         Ok(())

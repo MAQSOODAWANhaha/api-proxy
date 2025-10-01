@@ -88,50 +88,52 @@ impl ProxyHttp for ProxyService {
         }
 
         // 1. 执行完整的认证和授权流程
-        match self
+        if let Err(e) = self
             .auth_service
             .authenticate_and_authorize(session, ctx)
             .await
         {
-            Ok(auth_result) => {
-                proxy_info!(
-                    &ctx.request_id,
-                    LogStage::Authentication,
-                    LogComponent::AuthService,
-                    "auth_ok",
-                    "认证授权成功",
-                    user_service_api_id = auth_result.user_service_api.id
-                );
-                let timeout = auth_result
-                    .user_service_api
-                    .timeout_seconds
-                    .or(auth_result.provider_type.timeout_seconds)
-                    .unwrap_or(30) as u64;
-                ctx.timeout_seconds = Some(timeout as i32);
-                session.set_read_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
-                session.set_write_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
+            proxy_error!(
+                &ctx.request_id,
+                LogStage::Authentication,
+                LogComponent::AuthService,
+                "auth_fail",
+                "认证授权失败",
+                error = %e
+            );
+            let _ = self
+                .trace_service
+                .complete_trace_with_error(&ctx.request_id, &e)
+                .await;
+            return Err(crate::pingora_error!(e));
+        }
 
-                // 2. 立即确定并存储ProviderStrategy
-                if let Some(name) =
-                    provider_strategy::ProviderRegistry::match_name(&auth_result.provider_type.name)
-                {
-                    ctx.strategy = provider_strategy::make_strategy(name, Some(self.db.clone()));
-                }
-            }
-            Err(e) => {
-                proxy_error!(
-                    &ctx.request_id,
-                    LogStage::Authentication,
-                    LogComponent::AuthService,
-                    "auth_fail",
-                    "认证授权失败",
-                    error = %e
-                );
-                let _ = self
-                    .trace_service
-                    .complete_trace_with_error(&ctx.request_id, &e)
-                    .await;
-                return Err(crate::pingora_error!(e));
+        proxy_info!(
+            &ctx.request_id,
+            LogStage::Authentication,
+            LogComponent::AuthService,
+            "auth_ok",
+            "认证授权成功",
+            user_service_api_id = ctx.user_service_api.as_ref().map(|u| u.id)
+        );
+
+        // 2. 设置超时和ProviderStrategy
+        if let (Some(user_api), Some(provider_type)) = (
+            ctx.user_service_api.as_ref(),
+            ctx.provider_type.as_ref(),
+        ) {
+            let timeout = user_api
+                .timeout_seconds
+                .or(provider_type.timeout_seconds)
+                .unwrap_or(30) as u64;
+            ctx.timeout_seconds = Some(timeout as i32);
+            session.set_read_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
+            session.set_write_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
+
+            if let Some(name) =
+                provider_strategy::ProviderRegistry::match_name(&provider_type.name)
+            {
+                ctx.strategy = provider_strategy::make_strategy(name, Some(self.db.clone()));
             }
         }
 
