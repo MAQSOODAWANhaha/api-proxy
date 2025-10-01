@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use tracing::info;
 
 use crate::auth::{
-    AuthError,
     strategies::{
         ApiKeyStrategy,
         traits::{AuthStrategy, OAuthTokenResult},
@@ -74,11 +73,12 @@ impl AuthStrategyManager {
 
     /// 验证配置
     pub fn validate_config(&self, auth_type: &AuthType, config: &Value) -> Result<()> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy.validate_config(config).map_err(Into::into)
+        strategy.validate_config(config)
     }
 
     /// 多认证接口 - 使用集成的认证策略系统
@@ -87,11 +87,12 @@ impl AuthStrategyManager {
         auth_type: &AuthType,
         credentials: &Value,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy.authenticate(credentials).await.map_err(Into::into)
+        strategy.authenticate(credentials).await
     }
 
     /// 刷新认证凭据
@@ -100,20 +101,22 @@ impl AuthStrategyManager {
         auth_type: &AuthType,
         refresh_token: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy.refresh(refresh_token).await.map_err(Into::into)
+        strategy.refresh(refresh_token).await
     }
 
     /// 撤销认证凭据
     pub async fn revoke_multi_auth(&self, auth_type: &AuthType, token: &str) -> Result<()> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy.revoke(token).await.map_err(Into::into)
+        strategy.revoke(token).await
     }
 
     /// 获取OAuth认证URL
@@ -123,14 +126,12 @@ impl AuthStrategyManager {
         state: &str,
         redirect_uri: &str,
     ) -> Result<String> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy
-            .get_auth_url(state, redirect_uri)
-            .await
-            .map_err(Into::into)
+        strategy.get_auth_url(state, redirect_uri).await
     }
 
     /// 处理OAuth回调
@@ -140,14 +141,12 @@ impl AuthStrategyManager {
         code: &str,
         state: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
-            AuthError::InvalidAuthType(format!("不支持的认证类型: {:?}", auth_type))
-        })?;
+        let strategy = self
+            .strategies
+            .get(auth_type)
+            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
 
-        strategy
-            .handle_callback(code, state)
-            .await
-            .map_err(Into::into)
+        strategy.handle_callback(code, state).await
     }
 }
 

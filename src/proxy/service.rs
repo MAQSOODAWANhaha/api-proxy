@@ -177,10 +177,8 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        self.upstream_service
-            .select_peer(ctx)
-            .await
-            .map_err(|e| crate::pingora_error!(e))
+        let peer = crate::pingora_try!(self.upstream_service.select_peer(ctx).await);
+        Ok(peer)
     }
 
     async fn upstream_request_filter(
@@ -189,10 +187,12 @@ impl ProxyHttp for ProxyService {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.req_transform_service
-            .filter_request(session, upstream_request, ctx)
-            .await
-            .map_err(|e| crate::pingora_error!(e))
+        crate::pingora_try!(
+            self.req_transform_service
+                .filter_request(session, upstream_request, ctx)
+                .await
+        );
+        Ok(())
     }
 
     async fn request_body_filter(
@@ -310,10 +310,11 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.resp_transform_service
-            .filter_response(session, upstream_response, ctx)
-            .await
-            .map_err(|e| crate::pingora_error!(e))?;
+        crate::pingora_try!(
+            self.resp_transform_service
+                .filter_response(session, upstream_response, ctx)
+                .await
+        );
 
         let resp_stats = self
             .stats_service

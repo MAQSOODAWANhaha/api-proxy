@@ -8,42 +8,9 @@ use jsonwebtoken::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use thiserror::Error;
 
-use crate::auth::types::{AuthConfig, AuthError, JwtClaims};
+use crate::auth::types::{AuthConfig, JwtClaims};
 use crate::error::Result;
-
-/// JWT manager error types
-#[derive(Debug, Error)]
-pub enum JwtError {
-    #[error("Token generation failed: {0}")]
-    /// Token生成失败
-    TokenGeneration(String),
-    #[error("Token validation failed: {0}")]
-    /// Token验证失败
-    TokenValidation(String),
-    #[error("Token expired")]
-    /// Token已过期
-    TokenExpired,
-    #[error("Invalid token format")]
-    /// Token格式无效
-    InvalidFormat,
-    #[error("Missing claims")]
-    /// 缺少声明信息
-    MissingClaims,
-}
-
-impl From<JwtError> for AuthError {
-    fn from(jwt_error: JwtError) -> Self {
-        match jwt_error {
-            JwtError::TokenExpired => AuthError::TokenExpired,
-            JwtError::TokenValidation(_) | JwtError::InvalidFormat | JwtError::MissingClaims => {
-                AuthError::InvalidToken
-            }
-            JwtError::TokenGeneration(msg) => AuthError::InternalError(msg),
-        }
-    }
-}
 
 /// JWT token manager
 pub struct JwtManager {
@@ -97,7 +64,7 @@ impl JwtManager {
         let header = Header::new(Algorithm::HS256);
 
         encode(&header, &claims, &self.encoding_key)
-            .map_err(|e| JwtError::TokenGeneration(e.to_string()).into())
+            .map_err(|e| crate::proxy_err!(internal, "Token generation failed: {}", e))
     }
 
     /// Generate refresh token
@@ -113,22 +80,24 @@ impl JwtManager {
         let header = Header::new(Algorithm::HS256);
 
         encode(&header, &claims, &self.encoding_key)
-            .map_err(|e| JwtError::TokenGeneration(e.to_string()).into())
+            .map_err(|e| crate::proxy_err!(internal, "Token generation failed: {}", e))
     }
 
     /// Validate and parse token
     pub fn validate_token(&self, token: &str) -> Result<JwtClaims> {
         let token_data: TokenData<JwtClaims> = decode(token, &self.decoding_key, &self.validation)
             .map_err(|e| match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => JwtError::TokenExpired,
-                _ => JwtError::TokenValidation(e.to_string()),
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                    crate::proxy_err!(auth, "认证令牌已过期")
+                }
+                _ => crate::proxy_err!(auth, "Token validation failed: {}", e),
             })?;
 
         let claims = token_data.claims;
 
         // Additional check for token expiration
         if claims.is_expired() {
-            return Err(JwtError::TokenExpired.into());
+            return Err(crate::proxy_err!(auth, "认证令牌已过期"));
         }
 
         Ok(claims)
@@ -145,7 +114,7 @@ impl JwtManager {
         let claims = self.validate_token(refresh_token)?;
 
         // Check if user ID is valid
-        let user_id = claims.user_id().map_err(|_| JwtError::MissingClaims)?;
+        let user_id = claims.user_id()?;
 
         // Generate new access token
         self.generate_access_token(user_id, claims.username, is_admin, permissions)
@@ -188,7 +157,7 @@ impl JwtManager {
             // Return JTI for blacklist storage
             Ok(claims.jti)
         } else {
-            Err(JwtError::InvalidFormat.into())
+            Err(crate::proxy_err!(auth, "认证令牌格式无效"))
         }
     }
 

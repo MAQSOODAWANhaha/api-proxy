@@ -986,35 +986,6 @@ impl From<sea_orm::error::DbErr> for ProxyError {
     }
 }
 
-// 认证相关错误转换（删除重复实现，使用下面的详细匹配实现）
-
-impl From<crate::auth::jwt::JwtError> for ProxyError {
-    fn from(err: crate::auth::jwt::JwtError) -> Self {
-        Self::Authentication {
-            message: err.to_string(),
-            source: Some(anyhow::Error::new(err)),
-        }
-    }
-}
-
-impl From<crate::auth::api_key::ApiKeyError> for ProxyError {
-    fn from(err: crate::auth::api_key::ApiKeyError) -> Self {
-        Self::Authentication {
-            message: err.to_string(),
-            source: Some(anyhow::Error::new(err)),
-        }
-    }
-}
-
-impl From<crate::auth::service::AuthServiceError> for ProxyError {
-    fn from(err: crate::auth::service::AuthServiceError) -> Self {
-        Self::Authentication {
-            message: err.to_string(),
-            source: Some(anyhow::Error::new(err)),
-        }
-    }
-}
-
 // Redis错误转换
 impl From<redis::RedisError> for ProxyError {
     fn from(err: redis::RedisError) -> Self {
@@ -1047,80 +1018,6 @@ impl From<jsonwebtoken::errors::Error> for ProxyError {
 impl From<pingora_core::Error> for ProxyError {
     fn from(err: pingora_core::Error) -> Self {
         Self::network_with_source("Pingora操作失败", err)
-    }
-}
-
-// AuthError错误转换
-impl From<crate::auth::types::AuthError> for ProxyError {
-    fn from(err: crate::auth::types::AuthError) -> Self {
-        match err {
-            crate::auth::types::AuthError::InvalidToken => {
-                Self::authentication("无效的认证令牌".to_string())
-            }
-            crate::auth::types::AuthError::TokenExpired => {
-                Self::authentication("认证令牌已过期".to_string())
-            }
-            crate::auth::types::AuthError::Expired => {
-                Self::authentication("认证已过期".to_string())
-            }
-            crate::auth::types::AuthError::TokenRevoked => {
-                Self::authentication("认证令牌已被撤销".to_string())
-            }
-            crate::auth::types::AuthError::Revoked => {
-                Self::authentication("认证已撤销".to_string())
-            }
-            crate::auth::types::AuthError::InsufficientPermissions => {
-                Self::authentication("权限不足".to_string())
-            }
-            crate::auth::types::AuthError::UserNotFound => {
-                Self::authentication("用户不存在".to_string())
-            }
-            crate::auth::types::AuthError::InvalidPassword => {
-                Self::authentication("密码错误".to_string())
-            }
-            crate::auth::types::AuthError::AccountLocked => {
-                Self::authentication("账户已被锁定".to_string())
-            }
-            crate::auth::types::AuthError::AccountInactive => {
-                Self::authentication("账户未激活".to_string())
-            }
-            crate::auth::types::AuthError::RateLimitExceeded => {
-                Self::rate_limit("请求频率超出限制".to_string())
-            }
-            crate::auth::types::AuthError::MissingCredentials => {
-                Self::authentication("缺少认证凭据".to_string())
-            }
-            crate::auth::types::AuthError::InvalidCredentials => {
-                Self::authentication("无效的认证凭据".to_string())
-            }
-            crate::auth::types::AuthError::TokenBlacklisted => {
-                Self::authentication("令牌已被加入黑名单".to_string())
-            }
-            crate::auth::types::AuthError::InvalidAuthType(msg) => {
-                Self::authentication(format!("无效认证类型: {}", msg))
-            }
-            crate::auth::types::AuthError::ConfigError(msg) => {
-                Self::config(format!("认证配置错误: {}", msg))
-            }
-            crate::auth::types::AuthError::OAuth2Error(msg) => {
-                Self::authentication(format!("OAuth2错误: {}", msg))
-            }
-            crate::auth::types::AuthError::NetworkError(msg) => {
-                Self::network(format!("网络错误: {}", msg))
-            }
-            crate::auth::types::AuthError::JsonError(e) => {
-                Self::internal_with_source("JSON解析错误", e)
-            }
-            crate::auth::types::AuthError::InternalError(msg) => {
-                Self::internal(format!("内部错误: {}", msg))
-            }
-            crate::auth::types::AuthError::AuthMethodNotSupported { method, port } => {
-                Self::authentication(&format!("端口 {} 不支持认证方法: {}", port, method))
-            }
-            crate::auth::types::AuthError::InvalidAuthFormat(msg) => {
-                Self::authentication(&format!("无效的认证格式: {}", msg))
-            }
-        }
     }
 }
 

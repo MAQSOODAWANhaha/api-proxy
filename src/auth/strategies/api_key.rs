@@ -4,10 +4,8 @@
 //! 集成共享的ApiKeyManager进行数据库验证
 
 use super::traits::{AuthStrategy, OAuthTokenResult};
-use crate::auth::{
-    ApiKeyManager,
-    types::{AuthError, AuthType},
-};
+use crate::auth::{ApiKeyManager, types::AuthType};
+use crate::error::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -59,7 +57,7 @@ impl ApiKeyStrategy {
     }
 
     /// 从配置创建策略
-    pub fn from_config(config: &serde_json::Value) -> Result<Self, AuthError> {
+    pub fn from_config(config: &serde_json::Value) -> Result<Self> {
         let header_name = config
             .get("header_name")
             .and_then(|v| v.as_str())
@@ -113,17 +111,14 @@ impl AuthStrategy for ApiKeyStrategy {
         AuthType::ApiKey
     }
 
-    async fn authenticate(
-        &self,
-        credentials: &serde_json::Value,
-    ) -> Result<OAuthTokenResult, AuthError> {
+    async fn authenticate(&self, credentials: &serde_json::Value) -> Result<OAuthTokenResult> {
         let api_key = credentials
             .get("api_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AuthError::ConfigError("缺少api_key参数".to_string()))?;
+            .ok_or_else(|| crate::proxy_err!(config, "缺少api_key参数"))?;
 
         if api_key.is_empty() {
-            return Err(AuthError::ConfigError("API密钥不能为空".to_string()));
+            return Err(crate::proxy_err!(config, "API密钥不能为空"));
         }
 
         // 如果有API密钥管理器，使用它进行实际验证
@@ -155,18 +150,13 @@ impl AuthStrategy for ApiKeyStrategy {
                     })
                 }
                 Err(e) => {
+                    let error_message = e.to_string();
                     tracing::warn!(
                         api_key_preview = %&api_key[..std::cmp::min(8, api_key.len())],
-                        error = %e,
+                        error = %error_message,
                         "API key validation failed in management strategy"
                     );
-                    // 转换ProxyError为AuthError
-                    match e {
-                        crate::error::ProxyError::Authentication { .. } => {
-                            Err(AuthError::InvalidToken)
-                        }
-                        _ => Err(AuthError::InternalError(e.to_string())),
-                    }
+                    Err(e)
                 }
             }
         } else {
@@ -175,7 +165,7 @@ impl AuthStrategy for ApiKeyStrategy {
 
             // 基础格式检查
             if !api_key.starts_with("sk-") || api_key.len() < 20 {
-                return Err(AuthError::InvalidToken);
+                return Err(crate::proxy_err!(auth, "API密钥格式错误"));
             }
 
             // 返回基础结果（仅用于开发/测试）
@@ -190,27 +180,24 @@ impl AuthStrategy for ApiKeyStrategy {
         }
     }
 
-    fn validate_config(&self, config: &serde_json::Value) -> Result<(), AuthError> {
+    fn validate_config(&self, config: &serde_json::Value) -> Result<()> {
         // 验证必需的配置字段
         if let Some(header_name) = config.get("header_name") {
             if !header_name.is_string() {
-                return Err(AuthError::ConfigError(
-                    "header_name必须是字符串".to_string(),
-                ));
+                return Err(crate::proxy_err!(config, "header_name必须是字符串"));
             }
         }
 
         if let Some(value_format) = config.get("value_format") {
             if !value_format.is_string() {
-                return Err(AuthError::ConfigError(
-                    "value_format必须是字符串".to_string(),
-                ));
+                return Err(crate::proxy_err!(config, "value_format必须是字符串"));
             }
 
             let format_str = value_format.as_str().unwrap();
             if !format_str.contains("{key}") {
-                return Err(AuthError::ConfigError(
-                    "value_format必须包含{key}占位符".to_string(),
+                return Err(crate::proxy_err!(
+                    config,
+                    "value_format必须包含{{key}}占位符"
                 ));
             }
         }

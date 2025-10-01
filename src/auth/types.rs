@@ -112,8 +112,10 @@ impl JwtClaims {
     }
 
     /// 获取用户ID
-    pub fn user_id(&self) -> Result<i32, std::num::ParseIntError> {
-        self.sub.parse()
+    pub fn user_id(&self) -> crate::error::Result<i32> {
+        self.sub.parse().map_err(|err| {
+            crate::error::ProxyError::authentication_with_source("JWT sub 字段解析失败", err)
+        })
     }
 }
 
@@ -281,79 +283,6 @@ impl Default for AuthConfig {
         }
     }
 }
-
-/// 统一认证错误类型
-#[derive(Debug, thiserror::Error)]
-pub enum AuthError {
-    /// 无效令牌
-    #[error("无效的认证令牌")]
-    InvalidToken,
-    /// 令牌过期
-    #[error("认证令牌已过期")]
-    TokenExpired,
-    /// 认证过期（别名，用于兼容）
-    #[error("认证已过期")]
-    Expired,
-    /// 令牌已被撤销
-    #[error("认证令牌已被撤销")]
-    TokenRevoked,
-    /// 认证被撤销（别名，用于兼容）
-    #[error("认证被撤销")]
-    Revoked,
-    /// 权限不足
-    #[error("权限不足")]
-    InsufficientPermissions,
-    /// 用户未找到
-    #[error("用户不存在")]
-    UserNotFound,
-    /// 密码错误
-    #[error("密码错误")]
-    InvalidPassword,
-    /// 账户被锁定
-    #[error("账户已被锁定")]
-    AccountLocked,
-    /// 账户未激活
-    #[error("账户未激活")]
-    AccountInactive,
-    /// 速率限制超出
-    #[error("请求频率超出限制")]
-    RateLimitExceeded,
-    /// 缺少认证凭据
-    #[error("缺少认证凭据")]
-    MissingCredentials,
-    /// 无效的认证凭据
-    #[error("无效的认证凭据")]
-    InvalidCredentials,
-    /// 令牌已被加入黑名单
-    #[error("令牌已被加入黑名单")]
-    TokenBlacklisted,
-    /// 无效的认证类型
-    #[error("无效的认证类型: {0}")]
-    InvalidAuthType(String),
-    /// 认证配置错误
-    #[error("认证配置错误: {0}")]
-    ConfigError(String),
-    /// OAuth2错误
-    #[error("OAuth2错误: {0}")]
-    OAuth2Error(String),
-    /// 网络请求失败
-    #[error("网络请求失败: {0}")]
-    NetworkError(String),
-    /// JSON解析错误
-    #[error("JSON解析错误: {0}")]
-    JsonError(#[from] serde_json::Error),
-    /// 内部错误
-    #[error("内部错误: {0}")]
-    InternalError(String),
-    /// 不支持的认证方法
-    #[error("端口 {port} 不支持认证方法: {method}")]
-    AuthMethodNotSupported { method: String, port: String },
-    /// 无效的认证格式
-    #[error("无效的认证格式: {0}")]
-    InvalidAuthFormat(String),
-}
-
-// Display和Error trait现在由thiserror自动实现
 
 /// 支持的认证类型 - 表示具体的认证策略类型（配置输入）
 ///

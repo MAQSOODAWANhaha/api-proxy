@@ -159,10 +159,11 @@ impl SmartApiKeyProvider {
 
             auth_type => {
                 error!("Unsupported auth_type: {}", auth_type);
-                Err(ProxyError::authentication(format!(
+                Err(crate::proxy_err!(
+                    auth,
                     "Unsupported auth_type: {}",
                     auth_type
-                )))
+                ))
             }
         }
     }
@@ -322,8 +323,9 @@ impl SmartApiKeyProvider {
                 refreshed: false,
             })
         } else {
-            Err(ProxyError::authentication(
-                "OAuth token refresh failed and no fallback API key available".to_string(),
+            Err(crate::proxy_err!(
+                auth,
+                "OAuth token refresh failed and no fallback API key available"
             ))
         }
     }
@@ -382,10 +384,11 @@ impl SmartApiKeyProvider {
                 ProxyError::database_with_source(format!("Failed to load provider key: {:?}", e), e)
             })?
             .ok_or_else(|| {
-                ProxyError::authentication(format!(
+                crate::proxy_err!(
+                    auth,
                     "Provider key not found or inactive: {}",
                     provider_key_id
-                ))
+                )
             })
     }
 

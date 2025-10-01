@@ -8,48 +8,11 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Qu
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use thiserror::Error;
 
 use crate::auth::permissions::{Permission, PermissionChecker, Role};
-use crate::auth::types::{ApiKeyInfo, AuthConfig, AuthError};
+use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::error::Result;
 use entity::user_provider_keys;
-
-/// API key manager error types
-#[derive(Debug, Error)]
-pub enum ApiKeyError {
-    #[error("API key not found")]
-    /// API密钥未找到
-    NotFound,
-    #[error("API key is inactive")]
-    /// API密钥未激活
-    Inactive,
-    #[error("API key has expired")]
-    /// API密钥已过期
-    Expired,
-    #[error("Rate limit exceeded")]
-    /// 速率限制超出
-    RateLimitExceeded,
-    #[error("Database error: {0}")]
-    /// 数据库错误
-    Database(String),
-    #[error("Invalid API key format")]
-    /// API密钥格式无效
-    InvalidFormat,
-}
-
-impl From<ApiKeyError> for AuthError {
-    fn from(api_key_error: ApiKeyError) -> Self {
-        match api_key_error {
-            ApiKeyError::NotFound => AuthError::InvalidToken,
-            ApiKeyError::Inactive => AuthError::AccountInactive,
-            ApiKeyError::Expired => AuthError::TokenExpired,
-            ApiKeyError::RateLimitExceeded => AuthError::RateLimitExceeded,
-            ApiKeyError::Database(msg) => AuthError::InternalError(msg),
-            ApiKeyError::InvalidFormat => AuthError::InvalidToken,
-        }
-    }
-}
 
 /// API key validation result
 #[derive(Debug, Clone)]
@@ -202,7 +165,7 @@ impl ApiKeyManager {
     pub async fn validate_api_key(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
         // Check API key format
         if !self.is_valid_api_key_format(api_key) {
-            return Err(ApiKeyError::InvalidFormat.into());
+            return Err(crate::proxy_err!(auth, "API 密钥格式无效"));
         }
 
         // Check cache first
@@ -231,12 +194,12 @@ impl ApiKeyManager {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ApiKeyError::Database(e.to_string()))?
-            .ok_or(ApiKeyError::NotFound)?;
+            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
+            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
 
         // Check if key is active
         if !api_key_model.is_active {
-            return Err(ApiKeyError::Inactive.into());
+            return Err(crate::proxy_err!(auth, "API 密钥未激活"));
         }
 
         // Convert to ApiKeyInfo
@@ -442,8 +405,8 @@ impl ApiKeyManager {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ApiKeyError::Database(e.to_string()))?
-            .ok_or(ApiKeyError::NotFound)?;
+            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
+            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
 
         let mut rate_limits = self.rate_limits.write().await;
         let tracker = rate_limits
@@ -490,8 +453,8 @@ impl ApiKeyManager {
             .filter(user_provider_keys::Column::ApiKey.eq(api_key))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ApiKeyError::Database(e.to_string()))?
-            .ok_or(ApiKeyError::NotFound)?;
+            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
+            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
 
         let mut active_model: user_provider_keys::ActiveModel = api_key_model.into();
 
@@ -501,7 +464,7 @@ impl ApiKeyManager {
         active_model
             .update(self.db.as_ref())
             .await
-            .map_err(|e| ApiKeyError::Database(e.to_string()))?;
+            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
 
         // Update in-memory rate limiter
         let mut rate_limits = self.rate_limits.write().await;
@@ -583,7 +546,7 @@ impl ApiKeyManager {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ApiKeyError::Database(e.to_string()).into())
+            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))
     }
 
     /// 验证API密钥格式（共享方法）
@@ -639,7 +602,7 @@ impl ApiKeyManager {
     /// 只验证密钥存在性和激活状态，不包含权限检查
     pub async fn validate_for_proxy(&self, api_key: &str) -> Result<ApiKeyInfo> {
         if !self.is_valid_api_key_format(api_key) {
-            return Err(ApiKeyError::InvalidFormat.into());
+            return Err(crate::proxy_err!(auth, "API 密钥格式无效"));
         }
 
         match self.get_api_key_info(api_key).await? {
@@ -647,10 +610,10 @@ impl ApiKeyManager {
                 if info.is_active {
                     Ok(info)
                 } else {
-                    Err(ApiKeyError::Inactive.into())
+                    Err(crate::proxy_err!(auth, "API 密钥未激活"))
                 }
             }
-            None => Err(ApiKeyError::NotFound.into()),
+            None => Err(crate::proxy_err!(auth, "API 密钥不存在")),
         }
     }
 

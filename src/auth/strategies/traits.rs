@@ -5,7 +5,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::types::{AuthError, AuthType};
+use crate::auth::types::AuthType;
+use crate::error::Result;
 
 /// OAuth认证返回结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,35 +32,28 @@ pub trait AuthStrategy: Send + Sync {
     fn auth_type(&self) -> AuthType;
 
     /// 验证认证凭据
-    async fn authenticate(
-        &self,
-        credentials: &serde_json::Value,
-    ) -> Result<OAuthTokenResult, AuthError>;
+    async fn authenticate(&self, credentials: &serde_json::Value) -> Result<OAuthTokenResult>;
 
     /// 刷新认证凭据（如果支持）
-    async fn refresh(&self, _refresh_token: &str) -> Result<OAuthTokenResult, AuthError> {
-        Err(AuthError::ConfigError("刷新操作不支持".to_string()))
+    async fn refresh(&self, _refresh_token: &str) -> Result<OAuthTokenResult> {
+        Err(crate::proxy_err!(config, "刷新操作不支持"))
     }
 
     /// 撤销认证（如果支持）
-    async fn revoke(&self, _token: &str) -> Result<(), AuthError> {
-        Err(AuthError::ConfigError("撤销操作不支持".to_string()))
+    async fn revoke(&self, _token: &str) -> Result<()> {
+        Err(crate::proxy_err!(config, "撤销操作不支持"))
     }
 
     /// 验证配置是否有效
-    fn validate_config(&self, config: &serde_json::Value) -> Result<(), AuthError>;
+    fn validate_config(&self, config: &serde_json::Value) -> Result<()>;
 
     /// 获取认证URL（用于OAuth流程）
-    async fn get_auth_url(&self, _state: &str, _redirect_uri: &str) -> Result<String, AuthError> {
-        Err(AuthError::ConfigError("不支持授权URL生成".to_string()))
+    async fn get_auth_url(&self, _state: &str, _redirect_uri: &str) -> Result<String> {
+        Err(crate::proxy_err!(config, "不支持授权URL生成"))
     }
 
     /// 处理回调（用于OAuth流程）
-    async fn handle_callback(
-        &self,
-        _code: &str,
-        _state: &str,
-    ) -> Result<OAuthTokenResult, AuthError> {
-        Err(AuthError::ConfigError("不支持回调处理".to_string()))
+    async fn handle_callback(&self, _code: &str, _state: &str) -> Result<OAuthTokenResult> {
+        Err(crate::proxy_err!(config, "不支持回调处理"))
     }
 }
