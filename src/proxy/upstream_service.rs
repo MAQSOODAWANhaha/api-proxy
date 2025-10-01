@@ -2,12 +2,13 @@
 //!
 //! 负责所有与上游节点（Peer）相关的逻辑，包括根据服务商策略选择地址和配置连接参数。
 
+use crate::error::Result;
+use crate::proxy_err;
 use std::sync::Arc;
 use std::time::Duration;
 
 use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 
-use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
 use crate::proxy_info;
@@ -25,11 +26,11 @@ impl UpstreamService {
     }
 
     /// 选择上游对等体
-    pub async fn select_peer(&self, ctx: &ProxyContext) -> Result<Box<HttpPeer>, ProxyError> {
+    pub async fn select_peer(&self, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
         let provider_type = ctx
             .provider_type
             .as_ref()
-            .ok_or_else(|| ProxyError::internal("Provider type not set in context"))?;
+            .ok_or_else(|| proxy_err!(internal, "Provider type not set in context"))?;
 
         // 优先由 ProviderStrategy 决定上游地址
         let mut upstream_addr: Option<String> = None;

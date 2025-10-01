@@ -14,7 +14,7 @@ use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
 
-use crate::error::ProxyError;
+use crate::error::Result;
 use crate::proxy::ProxyContext;
 use entity::user_provider_keys;
 
@@ -27,10 +27,7 @@ pub trait ProviderStrategy: Send + Sync {
     fn set_db_connection(&mut self, _db: Option<Arc<DatabaseConnection>>) {}
 
     /// 可选：根据上下文选择上游主机（host:port）。返回 None 表示使用默认逻辑
-    async fn select_upstream_host(
-        &self,
-        _ctx: &ProxyContext,
-    ) -> Result<Option<String>, ProxyError> {
+    async fn select_upstream_host(&self, _ctx: &ProxyContext) -> Result<Option<String>> {
         Ok(None)
     }
 
@@ -40,7 +37,7 @@ pub trait ProviderStrategy: Send + Sync {
         _session: &Session,
         _upstream_request: &mut RequestHeader,
         _ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -50,7 +47,7 @@ pub trait ProviderStrategy: Send + Sync {
         _session: &Session,
         _ctx: &ProxyContext,
         _json_value: &mut serde_json::Value,
-    ) -> Result<bool, ProxyError> {
+    ) -> Result<bool> {
         Ok(false)
     }
 
@@ -61,12 +58,12 @@ pub trait ProviderStrategy: Send + Sync {
         _ctx: &ProxyContext,
         _status_code: u16,
         _body: &[u8],
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         Ok(())
     }
 
     /// 可选：检查密钥是否应该重试使用
-    async fn should_retry_key(&self, _key: &user_provider_keys::Model) -> Result<bool, ProxyError> {
+    async fn should_retry_key(&self, _key: &user_provider_keys::Model) -> Result<bool> {
         Ok(true)
     }
 

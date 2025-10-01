@@ -2,7 +2,8 @@
 //!
 //! 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 
-use anyhow::Result;
+use crate::error::Result;
+use crate::{proxy_err, proxy_info};
 use pingora_proxy::Session;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
@@ -14,11 +15,11 @@ use crate::auth::{
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
-use crate::error::ProxyError;
+
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
+use crate::proxy_debug;
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
-use crate::{proxy_debug, proxy_info};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
@@ -88,7 +89,7 @@ impl AuthenticationService {
         &self,
         session: &mut Session,
         ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         // 1. 认证入口API Key
         let user_api = self
             .authenticate_entry_api(session, &ctx.request_id)
@@ -122,7 +123,7 @@ impl AuthenticationService {
         &self,
         session: &mut Session,
         request_id: &str,
-    ) -> Result<user_service_apis::Model, ProxyError> {
+    ) -> Result<user_service_apis::Model> {
         let user_auth = self.detect_user_auth_from_request(session)?;
         let proxy_auth_result = self
             .auth_manager
@@ -143,10 +144,7 @@ impl AuthenticationService {
     }
 
     /// 从请求中检测用户认证信息
-    fn detect_user_auth_from_request(
-        &self,
-        session: &Session,
-    ) -> Result<Authorization, ProxyError> {
+    fn detect_user_auth_from_request(&self, session: &Session) -> Result<Authorization> {
         let req_header = session.req_header();
 
         if let Some(query) = req_header.uri.query() {
@@ -157,10 +155,12 @@ impl AuthenticationService {
                             return Ok(Authorization {
                                 auth_value: urlencoding::decode(value)
                                     .map_err(|e| {
-                                        ProxyError::authentication(format!(
+                                        proxy_err!(
+                                            auth,
                                             "Failed to decode query parameter '{}': {}",
-                                            key, e
-                                        ))
+                                            key,
+                                            e
+                                        )
                                     })?
                                     .to_string(),
                                 source: AuthSource::Query,
@@ -202,9 +202,7 @@ impl AuthenticationService {
             }
         }
 
-        Err(ProxyError::authentication(
-            "No authentication information found",
-        ))
+        Err(proxy_err!(auth, "No authentication information found"))
     }
 
     /// 2. 检查所有限制
@@ -212,10 +210,10 @@ impl AuthenticationService {
         &self,
         user_api: &user_service_apis::Model,
         _request_id: &str,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         if let Some(expires_at) = &user_api.expires_at {
             if chrono::Utc::now().naive_utc() > *expires_at {
-                return Err(ProxyError::rate_limit("API has expired".to_string()));
+                return Err(proxy_err!(rate_limit, "API has expired"));
             }
         }
 
@@ -223,32 +221,34 @@ impl AuthenticationService {
         let endpoint_key = format!("service_api:{}", user_api.id);
 
         if let Some(rate_limit) = user_api.max_request_per_min {
-            if rate_limit > 0
-                && !rl
+            if rate_limit > 0 {
+                let outcome = rl
                     .check_per_minute(user_api.user_id, &endpoint_key, rate_limit as i64)
                     .await
-                    .map_err(|e| ProxyError::internal(format!("Rate limiter error: {}", e)))?
-                    .allowed
-            {
-                return Err(ProxyError::rate_limit(format!(
-                    "Rate limit exceeded: {} requests per minute",
-                    rate_limit
-                )));
+                    .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+                if !outcome.allowed {
+                    return Err(proxy_err!(
+                        rate_limit,
+                        "Rate limit exceeded: {} requests per minute",
+                        rate_limit
+                    ));
+                }
             }
         }
 
         if let Some(daily_limit) = user_api.max_requests_per_day {
-            if daily_limit > 0
-                && !rl
+            if daily_limit > 0 {
+                let outcome = rl
                     .check_per_day(user_api.user_id, &endpoint_key, daily_limit as i64)
                     .await
-                    .map_err(|e| ProxyError::internal(format!("Rate limiter error: {}", e)))?
-                    .allowed
-            {
-                return Err(ProxyError::rate_limit(format!(
-                    "Daily request limit exceeded: {} requests per day",
-                    daily_limit
-                )));
+                    .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+                if !outcome.allowed {
+                    return Err(proxy_err!(
+                        rate_limit,
+                        "Daily request limit exceeded: {} requests per day",
+                        daily_limit
+                    ));
+                }
             }
         }
 
@@ -256,10 +256,7 @@ impl AuthenticationService {
     }
 
     /// 3. 获取提供商类型配置
-    async fn get_provider_type(
-        &self,
-        provider_type_id: i32,
-    ) -> Result<provider_types::Model, ProxyError> {
+    async fn get_provider_type(&self, provider_type_id: i32) -> Result<provider_types::Model> {
         let cache_key = format!("provider_type:{}", provider_type_id);
         if let Ok(Some(provider_type)) = self
             .cache
@@ -272,7 +269,7 @@ impl AuthenticationService {
         let provider_type = ProviderTypes::find_by_id(provider_type_id)
             .one(&*self.db)
             .await?
-            .ok_or_else(|| ProxyError::internal("Provider type not found"))?;
+            .ok_or_else(|| proxy_err!(internal, "Provider type not found"))?;
         let _ = self
             .cache
             .provider()
@@ -286,7 +283,7 @@ impl AuthenticationService {
         &self,
         user_service_api: &user_service_apis::Model,
         request_id: &str,
-    ) -> Result<user_provider_keys::Model, ProxyError> {
+    ) -> Result<user_provider_keys::Model> {
         let context = SelectionContext::new(
             request_id.to_string(),
             user_service_api.user_id,
@@ -314,7 +311,7 @@ impl AuthenticationService {
         &self,
         selected_backend: &user_provider_keys::Model,
         request_id: &str,
-    ) -> Result<ResolvedCredential, ProxyError> {
+    ) -> Result<ResolvedCredential> {
         match AuthType::from(selected_backend.auth_type.as_str()) {
             Some(AuthType::ApiKey) => {
                 Ok(ResolvedCredential::ApiKey(selected_backend.api_key.clone()))
@@ -325,10 +322,11 @@ impl AuthenticationService {
                     .await?;
                 Ok(ResolvedCredential::OAuthAccessToken(token))
             }
-            _ => Err(ProxyError::internal(format!(
+            _ => Err(proxy_err!(
+                internal,
                 "Unsupported auth type: {}",
                 selected_backend.auth_type
-            ))),
+            )),
         }
     }
 
@@ -337,26 +335,25 @@ impl AuthenticationService {
         &self,
         session_id: &str,
         _request_id: &str,
-    ) -> Result<String, ProxyError> {
+    ) -> Result<String> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
             .await?
-            .ok_or_else(|| {
-                ProxyError::authentication(format!("OAuth session not found: {}", session_id))
-            })?;
+            .ok_or_else(|| proxy_err!(auth, "OAuth session not found: {}", session_id))?;
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(ProxyError::authentication(format!(
+            return Err(proxy_err!(
+                auth,
                 "OAuth session {} is not authorized",
                 session_id
-            )));
+            ));
         }
         let token = session
             .access_token
             .clone()
-            .ok_or_else(|| ProxyError::authentication("OAuth session has no access_token"))?;
+            .ok_or_else(|| proxy_err!(auth, "OAuth session has no access_token"))?;
         if session.expires_at <= chrono::Utc::now().naive_utc() {
-            return Err(ProxyError::authentication("OAuth access token expired"));
+            return Err(proxy_err!(auth, "OAuth access token expired"));
         }
         Ok(token)
     }

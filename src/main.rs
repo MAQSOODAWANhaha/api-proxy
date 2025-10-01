@@ -2,7 +2,7 @@
 //!
 //! 企业级 AI 服务代理平台 - 基于 Pingora 的高性能代理服务
 
-use api_proxy::{config::ConfigManager, dual_port_setup, logging, ProxyError, Result};
+use api_proxy::{ProxyError, Result, config::ConfigManager, dual_port_setup, logging};
 use tracing::{error, info};
 
 #[tokio::main]

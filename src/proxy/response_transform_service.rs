@@ -2,10 +2,11 @@
 //!
 //! 负责修改从上游返回的响应头，例如添加CORS头、移除敏感信息等。
 
+use crate::error::Result;
+use crate::proxy_err;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 
-use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
 use crate::proxy_info;
@@ -25,7 +26,7 @@ impl ResponseTransformService {
         _session: &Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         // 1. 将上游响应的关键信息记录到上下文中
         ctx.response_details.status_code = Some(upstream_response.status.as_u16());
         if let Some(ct) = upstream_response
@@ -62,7 +63,7 @@ impl ResponseTransformService {
     }
 
     /// 添加CORS头部
-    fn add_cors_headers(&self, upstream_response: &mut ResponseHeader) -> Result<(), ProxyError> {
+    fn add_cors_headers(&self, upstream_response: &mut ResponseHeader) -> Result<()> {
         if upstream_response
             .headers
             .get("access-control-allow-origin")
@@ -70,7 +71,7 @@ impl ResponseTransformService {
         {
             upstream_response
                 .insert_header("access-control-allow-origin", "*")
-                .map_err(|e| ProxyError::internal(format!("Failed to set CORS header: {}", e)))?;
+                .map_err(|e| proxy_err!(internal, "Failed to set CORS header: {}", e))?;
         }
         if upstream_response
             .headers
@@ -82,7 +83,7 @@ impl ResponseTransformService {
                     "access-control-allow-methods",
                     "GET, POST, PUT, DELETE, OPTIONS",
                 )
-                .map_err(|e| ProxyError::internal(format!("Failed to set CORS header: {}", e)))?;
+                .map_err(|e| proxy_err!(internal, "Failed to set CORS header: {}", e))?;
         }
         if upstream_response
             .headers
@@ -94,7 +95,7 @@ impl ResponseTransformService {
                     "access-control-allow-headers",
                     "Content-Type, Authorization",
                 )
-                .map_err(|e| ProxyError::internal(format!("Failed to set CORS header: {}", e)))?;
+                .map_err(|e| proxy_err!(internal, "Failed to set CORS header: {}", e))?;
         }
         Ok(())
     }

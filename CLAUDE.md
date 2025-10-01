@@ -20,6 +20,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **认证**: JWT + API Key + RBAC (17种权限类型)
 - **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 
+## 规范标准
+- **代码风格**: 使用 `cargo fmt` 进行代码格式化，遵循 Rust 官方编码规范
+- **Linting**: 使用 `cargo clippy` 进行静态代码分析，启用严格的 lint 规则
+- **返回值**: 统一使用use crate::error::Result<T>作为函数返回类型
+- **错误处理**: 使用自定义的 ProxyError 枚举进行错误分类和处理
+- **日志记录**: 使用 `tracing` 进行结构化日志记录
+
 ## 常用开发命令
 
 ### 项目构建和运行

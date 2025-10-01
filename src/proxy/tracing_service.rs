@@ -3,14 +3,15 @@
 //! 从RequestHandler中提取的追踪相关逻辑，专门负责处理代理端的请求追踪需求
 //! 包括请求追踪开始、完成、错误处理和扩展信息更新等功能
 
-use anyhow::Result;
+use crate::error::Result;
+use crate::{proxy_err, proxy_warn};
 use std::sync::Arc;
 
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
-use crate::{proxy_debug, proxy_info, proxy_warn};
+use crate::{proxy_debug, proxy_info};
 
 /// 代理端追踪服务
 ///
@@ -39,9 +40,9 @@ impl TracingService {
         path: Option<String>,
         client_ip: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            if let Err(e) = tracer
+            tracer
                 .start_trace(
                     request_id.to_string(),
                     user_service_api_id,
@@ -52,20 +53,17 @@ impl TracingService {
                     user_agent,
                 )
                 .await
-            {
-                proxy_warn!(
-                    request_id,
-                    LogStage::Error,
-                    LogComponent::TracingService,
-                    "trace_start_failed",
-                    "即时追踪启动失败",
-                    error = format!("{:?}", e)
-                );
-                return Err(ProxyError::internal(format!(
-                    "Failed to start trace: {}",
-                    e
-                )));
-            }
+                .map_err(|e| {
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Error,
+                        LogComponent::TracingService,
+                        "trace_start_failed",
+                        "即时追踪启动失败",
+                        error = format!("{:?}", e)
+                    );
+                    proxy_err!(tracing, "Failed to start trace: {}", e)
+                })?;
 
             proxy_debug!(
                 request_id,
@@ -89,9 +87,9 @@ impl TracingService {
         provider_type_id: Option<i32>,
         model_used: Option<String>,
         user_provider_key_id: Option<i32>,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            if let Err(e) = tracer
+            tracer
                 .update_trace_model_info(
                     request_id,
                     provider_type_id,
@@ -99,20 +97,17 @@ impl TracingService {
                     user_provider_key_id,
                 )
                 .await
-            {
-                proxy_warn!(
-                    request_id,
-                    LogStage::Error,
-                    LogComponent::TracingService,
-                    "model_info_update_failed",
-                    "模型信息更新失败（第一层）",
-                    error = format!("{:?}", e)
-                );
-                return Err(ProxyError::internal(format!(
-                    "Failed to update model info: {}",
-                    e
-                )));
-            }
+                .map_err(|e| {
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Error,
+                        LogComponent::TracingService,
+                        "model_info_update_failed",
+                        "模型信息更新失败（第一层）",
+                        error = format!("{:?}", e)
+                    );
+                    proxy_err!(tracing, "Failed to update model info: {}", e)
+                })?;
 
             proxy_info!(
                 request_id,
@@ -144,9 +139,9 @@ impl TracingService {
         cache_read_tokens: Option<u32>,
         cost: Option<f64>,
         cost_currency: Option<String>,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            if let Err(e) = tracer
+            tracer
                 .complete_trace_with_stats(
                     request_id,
                     status_code,
@@ -161,20 +156,17 @@ impl TracingService {
                     cost_currency.clone(),
                 )
                 .await
-            {
-                proxy_warn!(
-                    request_id,
-                    LogStage::Error,
-                    LogComponent::TracingService,
-                    "success_trace_complete_failed",
-                    "成功请求追踪完成失败（第二层）",
-                    error = format!("{:?}", e)
-                );
-                return Err(ProxyError::internal(format!(
-                    "Failed to complete trace: {}",
-                    e
-                )));
-            }
+                .map_err(|e| {
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Error,
+                        LogComponent::TracingService,
+                        "success_trace_complete_failed",
+                        "成功请求追踪完成失败（第二层）",
+                        error = format!("{:?}", e)
+                    );
+                    proxy_err!(tracing, "Failed to complete trace: {}", e)
+                })?;
 
             proxy_info!(
                 request_id,
@@ -206,9 +198,9 @@ impl TracingService {
         status_code: u16,
         error_type: Option<String>,
         error_message: Option<String>,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            if let Err(e) = tracer
+            tracer
                 .complete_trace(
                     request_id,
                     status_code,
@@ -219,20 +211,17 @@ impl TracingService {
                     error_message.clone(),
                 )
                 .await
-            {
-                proxy_warn!(
-                    request_id,
-                    LogStage::Error,
-                    LogComponent::TracingService,
-                    "failure_trace_complete_failed",
-                    "失败请求追踪完成失败（第二层）",
-                    error = format!("{:?}", e)
-                );
-                return Err(ProxyError::internal(format!(
-                    "Failed to complete trace: {}",
-                    e
-                )));
-            }
+                .map_err(|e| {
+                    proxy_warn!(
+                        request_id,
+                        LogStage::Error,
+                        LogComponent::TracingService,
+                        "failure_trace_complete_failed",
+                        "失败请求追踪完成失败（第二层）",
+                        error = format!("{:?}", e)
+                    );
+                    proxy_err!(tracing, "Failed to complete trace: {}", e)
+                })?;
 
             proxy_info!(
                 request_id,
@@ -256,7 +245,7 @@ impl TracingService {
         &self,
         request_id: &str,
         error: &ProxyError,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         let (status_code, error_type, error_message) = match error {
             ProxyError::Authentication { message, .. } => (
                 401,
@@ -308,11 +297,7 @@ impl TracingService {
     }
 
     /// 完成认证失败的追踪
-    pub async fn complete_trace_auth_failure(
-        &self,
-        request_id: &str,
-        message: &str,
-    ) -> Result<(), ProxyError> {
+    pub async fn complete_trace_auth_failure(&self, request_id: &str, message: &str) -> Result<()> {
         self.complete_trace_failure(
             request_id,
             401,
@@ -323,11 +308,7 @@ impl TracingService {
     }
 
     /// 完成速率限制失败的追踪
-    pub async fn complete_trace_rate_limit(
-        &self,
-        request_id: &str,
-        message: &str,
-    ) -> Result<(), ProxyError> {
+    pub async fn complete_trace_rate_limit(&self, request_id: &str, message: &str) -> Result<()> {
         self.complete_trace_failure(
             request_id,
             429,
@@ -338,11 +319,7 @@ impl TracingService {
     }
 
     /// 完成配置错误的追踪
-    pub async fn complete_trace_config_error(
-        &self,
-        request_id: &str,
-        message: &str,
-    ) -> Result<(), ProxyError> {
+    pub async fn complete_trace_config_error(&self, request_id: &str, message: &str) -> Result<()> {
         self.complete_trace_failure(
             request_id,
             500,
@@ -357,7 +334,7 @@ impl TracingService {
         &self,
         request_id: &str,
         message: &str,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         self.complete_trace_failure(
             request_id,
             503,
@@ -372,7 +349,7 @@ impl TracingService {
         &self,
         request_id: &str,
         message: &str,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         self.complete_trace_failure(
             request_id,
             502,

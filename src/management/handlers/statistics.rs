@@ -387,7 +387,8 @@ pub async fn get_models_statistics(
     };
 
     // 计算有效请求总数（过滤空模型数据后）
-    let total_requests: i64 = traces.iter()
+    let total_requests: i64 = traces
+        .iter()
         .filter(|t| {
             if let Some(model_name) = &t.model_used {
                 !model_name.trim().is_empty()

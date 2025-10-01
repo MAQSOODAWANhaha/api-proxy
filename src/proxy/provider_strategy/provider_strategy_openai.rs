@@ -4,8 +4,8 @@
 
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{ErrorContext, Result};
-use crate::proxy::context::ResolvedCredential;
 use crate::proxy::ProxyContext;
+use crate::proxy::context::ResolvedCredential;
 use crate::proxy_err;
 use chrono::Utc;
 use entity::user_provider_keys;
@@ -144,7 +144,8 @@ impl ProviderStrategy for OpenAIStrategy {
                         format!("设置OpenAI host头失败, request_id: {}", ctx.request_id)
                     })?;
 
-                if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential {
+                if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
+                {
                     if let Some(account_id) = self.extract_chatgpt_account_id(token) {
                         ctx.account_id = Some(account_id.clone());
                         upstream_request

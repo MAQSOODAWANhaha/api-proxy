@@ -4,10 +4,10 @@
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
 use super::ProviderStrategy;
-use crate::error::ProxyError;
+use crate::error::Result;
 use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::ProxyContext;
-use crate::proxy_info;
+use crate::{proxy_err, proxy_info};
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
@@ -53,7 +53,7 @@ impl ProviderStrategy for GeminiStrategy {
     async fn select_upstream_host(
         &self,
         ctx: &crate::proxy::ProxyContext,
-    ) -> Result<Option<String>, ProxyError> {
+    ) -> Result<Option<String>> {
         let Some(backend) = &ctx.selected_backend else {
             return Ok(None);
         };
@@ -80,14 +80,15 @@ impl ProviderStrategy for GeminiStrategy {
         session: &Session,
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         // 设置正确的Host头 - 复用 select_upstream_host 的逻辑
         if let Ok(Some(host)) = self.select_upstream_host(ctx).await {
             if let Err(e) = upstream_request.insert_header("host", &host) {
-                return Err(ProxyError::internal(format!(
+                return Err(proxy_err!(
+                    internal,
                     "Failed to set host header for Gemini: {}",
                     e
-                )));
+                ));
             }
 
             tracing::info!(
@@ -118,7 +119,7 @@ impl ProviderStrategy for GeminiStrategy {
         session: &Session,
         ctx: &ProxyContext,
         json_value: &mut serde_json::Value,
-    ) -> Result<bool, ProxyError> {
+    ) -> Result<bool> {
         let Some(backend) = &ctx.selected_backend else {
             return Ok(false);
         };
@@ -287,9 +288,8 @@ mod tests {
         ctx.selected_backend = Some(backend);
 
         // 测试JSON数据
-        let mut json_value = serde_json::json!({
-            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
-        });
+        let mut json_value =
+            serde_json::json!({ "contents": [{"role": "user", "parts": [{"text": "Hello"}]}] });
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
@@ -317,9 +317,8 @@ mod tests {
         ctx.selected_backend = Some(backend);
 
         // 测试JSON数据
-        let mut json_value = serde_json::json!({
-            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
-        });
+        let mut json_value =
+            serde_json::json!({ "contents": [{"role": "user", "parts": [{"text": "Hello"}]}] });
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
@@ -346,9 +345,8 @@ mod tests {
         ctx.selected_backend = Some(backend);
 
         // 测试JSON数据
-        let mut json_value = serde_json::json!({
-            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
-        });
+        let mut json_value =
+            serde_json::json!({ "contents": [{"role": "user", "parts": [{"text": "Hello"}]}] });
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx

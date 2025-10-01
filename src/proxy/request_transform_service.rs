@@ -2,13 +2,14 @@
 //!
 //! 负责在请求发往上游前对其进行修改，包括注入认证头、改写路径/请求体、清理代理痕迹等。
 
+use crate::error::Result;
+use crate::proxy_err;
 use std::sync::Arc;
 
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
 
-use crate::error::ProxyError;
 use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::proxy_info;
@@ -30,7 +31,7 @@ impl RequestTransformService {
         session: &Session,
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         // 1. 应用 ProviderStrategy 进行早期修改
         if let Some(strategy) = ctx.strategy.clone() {
             strategy
@@ -69,11 +70,11 @@ impl RequestTransformService {
         &self,
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
+    ) -> Result<()> {
         let credential = ctx
             .resolved_credential
             .as_ref()
-            .ok_or_else(|| ProxyError::internal("Resolved credential not set"))?;
+            .ok_or_else(|| proxy_err!(internal, "Resolved credential not set"))?;
 
         self.clear_auth_headers(upstream_request);
 
@@ -86,17 +87,15 @@ impl RequestTransformService {
                 };
 
                 for (name, value) in auth_headers {
-                    upstream_request.insert_header(name, &value).map_err(|e| {
-                        ProxyError::internal(format!("Failed to set auth header: {}", e))
-                    })?;
+                    upstream_request
+                        .insert_header(name, &value)
+                        .map_err(|e| proxy_err!(internal, "Failed to set auth header: {}", e))?;
                 }
             }
             ResolvedCredential::OAuthAccessToken(token) => {
                 upstream_request
                     .insert_header("Authorization", &format!("Bearer {}", token))
-                    .map_err(|e| {
-                        ProxyError::internal(format!("Failed to set OAuth header: {}", e))
-                    })?;
+                    .map_err(|e| proxy_err!(internal, "Failed to set OAuth header: {}", e))?;
             }
         }
 

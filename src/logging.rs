@@ -6,6 +6,7 @@
 //! - 日志系统初始化和配置
 
 use crate::proxy::ProxyContext;
+use pingora_core::{Error, ErrorType};
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use serde_json;
@@ -876,6 +877,51 @@ impl LogFormatValidator {
 }
 
 // ================ Gemini Provider 日志工具 ================
+
+/// 记录详细的代理失败信息
+pub fn log_proxy_failure_details(
+    request_id: &str,
+    status_code: u16,
+    error: Option<&Error>,
+    ctx: &ProxyContext,
+) {
+    // Safely get request body
+    let request_body = String::from_utf8_lossy(&ctx.request_body);
+    let request_body_preview = request_body.as_ref();
+
+    // Safely get response body
+    let response_body = String::from_utf8_lossy(&ctx.response_body);
+    let response_body_preview = response_body.as_ref();
+
+    let (error_message, error_details) = match error {
+        Some(e) => {
+            let message = match e.etype {
+                ErrorType::HTTPStatus(code) => format!("Pingora HTTP status error: {}", code),
+                ErrorType::CustomCode(_, code) => format!("Pingora custom status error: {}", code),
+                _ => format!("Pingora proxy error: {:?}", e.etype),
+            };
+            (message, e.to_string())
+        }
+        None => (
+            format!("HTTP {} response returned with error", status_code),
+            response_body_preview.to_string(),
+        ),
+    };
+
+    tracing::error!(
+        target: "proxy_error",
+        request_id = %request_id,
+        status_code = status_code,
+        error_message = %error_message,
+        error_details = %error_details,
+        path = %ctx.request_details.path,
+        method = %ctx.request_details.method,
+        client_ip = %ctx.request_details.client_ip,
+        request_body_preview = %request_body_preview,
+        response_body_preview = %response_body_preview,
+        "Proxy request failed"
+    );
+}
 
 /// 记录 Gemini 完整请求信息
 pub async fn log_complete_request(

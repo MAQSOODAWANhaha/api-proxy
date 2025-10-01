@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use pingora_core::ErrorType;
 use pingora_core::prelude::*;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
@@ -54,6 +55,22 @@ impl ProxyService {
             resp_transform_service,
         })
     }
+
+    fn resolve_status_code(ctx: &ProxyContext, error: Option<&Error>) -> u16 {
+        if let Some(status) = ctx.response_details.status_code {
+            return status;
+        }
+
+        if let Some(err) = error {
+            match err.etype {
+                ErrorType::HTTPStatus(code) => return code,
+                ErrorType::CustomCode(_, code) => return code,
+                _ => {}
+            }
+        }
+
+        if error.is_some() { 500 } else { 200 }
+    }
 }
 
 #[async_trait]
@@ -101,10 +118,6 @@ impl ProxyHttp for ProxyService {
                 "认证授权失败",
                 error = %e
             );
-            let _ = self
-                .trace_service
-                .complete_trace_with_error(&ctx.request_id, &e)
-                .await;
             return Err(crate::pingora_error!(e));
         }
 
@@ -118,10 +131,9 @@ impl ProxyHttp for ProxyService {
         );
 
         // 2. 设置超时和ProviderStrategy
-        if let (Some(user_api), Some(provider_type)) = (
-            ctx.user_service_api.as_ref(),
-            ctx.provider_type.as_ref(),
-        ) {
+        if let (Some(user_api), Some(provider_type)) =
+            (ctx.user_service_api.as_ref(), ctx.provider_type.as_ref())
+        {
             let timeout = user_api
                 .timeout_seconds
                 .or(provider_type.timeout_seconds)
@@ -130,8 +142,7 @@ impl ProxyHttp for ProxyService {
             session.set_read_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
             session.set_write_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
 
-            if let Some(name) =
-                provider_strategy::ProviderRegistry::match_name(&provider_type.name)
+            if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
             {
                 ctx.strategy = provider_strategy::make_strategy(name, Some(self.db.clone()));
             }
@@ -166,12 +177,10 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        self.upstream_service.select_peer(ctx).await.map_err(|e| {
-            let _ = self
-                .trace_service
-                .complete_trace_with_error(&ctx.request_id, &e);
-            crate::pingora_error!(e)
-        })
+        self.upstream_service
+            .select_peer(ctx)
+            .await
+            .map_err(|e| crate::pingora_error!(e))
     }
 
     async fn upstream_request_filter(
@@ -183,12 +192,7 @@ impl ProxyHttp for ProxyService {
         self.req_transform_service
             .filter_request(session, upstream_request, ctx)
             .await
-            .map_err(|e| {
-                let _ = self
-                    .trace_service
-                    .complete_trace_with_error(&ctx.request_id, &e);
-                crate::pingora_error!(e)
-            })
+            .map_err(|e| crate::pingora_error!(e))
     }
 
     async fn request_body_filter(
@@ -202,16 +206,6 @@ impl ProxyHttp for ProxyService {
         if let Some(chunk) = body_chunk.as_ref() {
             // 缓存数据到上下文
             ctx.request_body.extend_from_slice(chunk);
-
-            // 记录接收到的数据
-            tracing::info!(
-                request_id = %ctx.request_id,
-                chunk_size = chunk.len(),
-                total_size = ctx.request_body.len(),
-                end_of_stream = end_of_stream,
-                "接收请求体数据块"
-            );
-
             // 如果需要修改请求体且不是流结束，按照 Pingora 官方示例清空分块
             // 保持 HTTP 流式语义，避免原始与改写后的内容混合发送
             if ctx.will_modify_body && !end_of_stream {
@@ -319,12 +313,7 @@ impl ProxyHttp for ProxyService {
         self.resp_transform_service
             .filter_response(session, upstream_response, ctx)
             .await
-            .map_err(|e| {
-                let _ = self
-                    .trace_service
-                    .complete_trace_with_error(&ctx.request_id, &e);
-                crate::pingora_error!(e)
-            })?;
+            .map_err(|e| crate::pingora_error!(e))?;
 
         let resp_stats = self
             .stats_service
@@ -344,28 +333,19 @@ impl ProxyHttp for ProxyService {
         if let Some(chunk) = body.as_ref() {
             ctx.response_body.extend_from_slice(chunk);
         }
-
         if end_of_stream {
-            if let Some(status_code) = ctx.response_details.status_code {
-                if status_code >= 400 {
-                    crate::logging::log_error_response(
-                        &ctx.request_id,
-                        &ctx.request_details.path,
-                        status_code,
-                        &ctx.response_body,
-                    );
-                }
-            }
+            tracing::info!(
+                request_id = %ctx.request_id,
+                body_size = ctx.response_body.len(),
+                "响应体接收完成"
+            );
         }
         Ok(None)
     }
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
-        let status_code =
-            ctx.response_details
-                .status_code
-                .unwrap_or(if e.is_some() { 500 } else { 200 });
-        let success = e.is_none() && status_code < 400;
+        let status_code = Self::resolve_status_code(ctx, e);
+        let success = status_code < 400;
 
         if let Some(strategy) = &ctx.strategy {
             if let Err(e) = strategy
@@ -446,15 +426,22 @@ impl ProxyHttp for ProxyService {
                     cost_currency,
                 )
                 .await;
-        } else if let Some(err) = e {
+        } else {
+            // Log detailed error information
+            crate::logging::log_proxy_failure_details(&ctx.request_id, status_code, e, ctx);
+
+            let (error_type, error_message) = if let Some(err) = e {
+                (Some(format!("{:?}", err.etype)), Some(err.to_string()))
+            } else {
+                (
+                    Some(format!("HTTP {}", status_code)),
+                    Some(String::from_utf8_lossy(&ctx.response_body).to_string()),
+                )
+            };
+
             let _ = self
                 .trace_service
-                .complete_trace_failure(
-                    &ctx.request_id,
-                    status_code,
-                    Some(format!("{:?}", err.etype)),
-                    Some(err.to_string()),
-                )
+                .complete_trace_failure(&ctx.request_id, status_code, error_type, error_message)
                 .await;
         }
 
