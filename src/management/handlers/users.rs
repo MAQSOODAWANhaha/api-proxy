@@ -2,17 +2,16 @@
 
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use axum::extract::{Path, Query, State, Extension};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
-use std::sync::Arc;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use rand::{Rng, distributions::Alphanumeric};
 use sea_orm::{DatabaseConnection, entity::*, query::*};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 // Removed unused serde_json imports
-
 
 /// 用户查询参数
 #[derive(Debug, Deserialize)]

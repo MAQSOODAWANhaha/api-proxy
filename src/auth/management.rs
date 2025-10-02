@@ -2,8 +2,8 @@
 //!
 //! 提供管理端专用的认证工具函数，使用共享的AuthUtils基础组件
 
-use crate::auth::jwt::JwtManager;
 use crate::auth::AuthUtils;
+use crate::auth::jwt::JwtManager;
 use axum::http::HeaderMap;
 
 /// 从请求头中检查用户是否为管理员
@@ -78,9 +78,6 @@ pub fn extract_user_id_from_headers(
     // 从claims中安全地获取user_id
     claims.user_id().map_err(|err| {
         tracing::error!("Failed to parse user ID from JWT token: {}", err);
-        crate::manage_error!(crate::proxy_err!(
-            internal,
-            "Invalid user ID in token"
-        ))
+        crate::manage_error!(crate::proxy_err!(internal, "Invalid user ID in token"))
     })
 }

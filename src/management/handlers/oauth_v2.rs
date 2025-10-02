@@ -4,18 +4,18 @@
 //! 支持公共OAuth凭据和PKCE安全机制
 
 use crate::auth::oauth_client::session_manager::SessionStatistics;
-use crate::management::middleware::auth::AuthContext;
-use std::sync::Arc;
 use crate::auth::oauth_client::{
     AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo,
     OAuthTokenResponse,
 };
+use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
 use axum::Json;
-use axum::extract::{Path, Query, State, Extension};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
 
 /// OAuth v2授权请求
 #[derive(Debug, Deserialize)]

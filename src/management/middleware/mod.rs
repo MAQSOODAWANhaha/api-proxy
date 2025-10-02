@@ -5,5 +5,5 @@
 pub mod auth;
 pub mod ip_filter;
 
-pub use auth::{auth, AuthContext};
+pub use auth::{AuthContext, auth};
 pub use ip_filter::{IpFilterConfig, get_real_client_ip, ip_filter_middleware};

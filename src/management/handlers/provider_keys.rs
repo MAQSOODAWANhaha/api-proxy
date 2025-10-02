@@ -18,7 +18,7 @@ const GEMINI_PROVIDER_NAME: &str = "gemini";
 const OAUTH_AUTH_TYPE: &str = "oauth";
 
 use crate::management::{response, server::AppState};
-use axum::extract::{Path, Query, State, Extension};
+use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
 use chrono::Utc;
 use sea_orm::{

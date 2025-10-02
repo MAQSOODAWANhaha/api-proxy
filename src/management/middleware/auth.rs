@@ -21,7 +21,11 @@ pub struct AuthContext {
 }
 
 /// Axum认证中间件
-pub async fn auth(State(state): State<AppState>, mut request: Request, next: Next) -> Result<Response, StatusCode> {
+pub async fn auth(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
     // 从请求头中提取 `Authorization`
     let auth_header = request
         .headers()
@@ -46,7 +50,9 @@ pub async fn auth(State(state): State<AppState>, mut request: Request, next: Nex
     match state.auth_service.jwt_manager.validate_token(&token) {
         Ok(claims) => {
             // Token有效，将用户信息注入到请求扩展中
-            let user_id = claims.user_id().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let user_id = claims
+                .user_id()
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let auth_context = Arc::new(AuthContext {
                 user_id,
                 is_admin: claims.is_admin,

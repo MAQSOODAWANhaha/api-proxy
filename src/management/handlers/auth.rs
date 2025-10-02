@@ -1,14 +1,14 @@
 //! # 认证管理处理器
 
+use crate::auth::types::UserInfo as AuthUserInfo;
 use crate::management::{response, server::AppState};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use bcrypt;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use entity::users::Entity as Users;
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use sea_orm::{entity::*, query::*};
+use jsonwebtoken::{DecodingKey, Validation, decode};
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 // remove unused Value
 
@@ -71,121 +71,63 @@ pub async fn login(
         ));
     }
 
-    // 从数据库查找用户
-    use entity::users::{Column as UserColumn, Entity as Users};
-    let user = match Users::find()
-        .filter(UserColumn::Username.eq(&request.username))
-        .filter(UserColumn::IsActive.eq(true))
-        .one(state.database.as_ref())
+    let token_pair = match state
+        .auth_service
+        .login(&request.username, &request.password)
         .await
     {
+        Ok(pair) => pair,
+        Err(err) => {
+            tracing::warn!("Login failed for user {}: {}", request.username, err);
+            return crate::manage_error!(err);
+        }
+    };
+
+    let claims = match state
+        .auth_service
+        .jwt_manager
+        .validate_token(&token_pair.access_token)
+    {
+        Ok(claims) => claims,
+        Err(err) => {
+            tracing::error!(
+                "Generated access token failed validation for user {}: {}",
+                request.username,
+                err
+            );
+            return crate::manage_error!(err);
+        }
+    };
+
+    let user_id = match claims.user_id() {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::error!("Failed to parse user id from access token: {}", err);
+            return crate::manage_error!(err);
+        }
+    };
+
+    let auth_user: AuthUserInfo = match state.auth_service.get_user_info(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            tracing::warn!(
-                "Login attempt with non-existent or inactive user: {}",
-                request.username
-            );
+            tracing::error!("User {} not found after successful login", user_id);
             return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
         }
         Err(err) => {
-            tracing::error!("Database error during login: {}", err);
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Database error during login: {}",
-                err
-            ));
-        }
-    };
-
-    // 验证密码
-    match bcrypt::verify(&request.password, &user.password_hash) {
-        Ok(true) => {
-            tracing::info!("Successful login for user: {}", request.username);
-
-            // 更新用户最后登录时间
-            let user_id = user.id;
-            let now = Utc::now().naive_utc();
-            match Users::update_many()
-                .set(entity::users::ActiveModel {
-                    id: Set(user_id),
-                    last_login: Set(Some(now)),
-                    ..Default::default()
-                })
-                .filter(entity::users::Column::Id.eq(user_id))
-                .exec(state.database.as_ref())
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Updated last login time for user: {}", request.username);
-                }
-                Err(err) => {
-                    tracing::error!(
-                        "Failed to update last login time for user {}: {}",
-                        request.username,
-                        err
-                    );
-                    // 不中断登录流程，只记录错误
-                }
-            }
-        }
-        Ok(false) => {
-            tracing::warn!(
-                "Failed login attempt - invalid password for user: {}",
-                request.username
-            );
-            return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
-        }
-        Err(err) => {
-            tracing::error!("Password verification error: {}", err);
-            return crate::manage_error!(crate::proxy_err!(
-                internal,
-                "Password verification error: {}",
-                err
-            ));
-        }
-    }
-
-    // 创建JWT token
-    let now = Utc::now();
-    let exp = now + Duration::hours(24);
-
-    let claims = Claims {
-        sub: user.id.to_string(),
-        username: user.username.clone(),
-        is_admin: user.is_admin,
-        exp: exp.timestamp() as usize,
-        iat: now.timestamp() as usize,
-    };
-
-    // 从环境变量或配置获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    let token = match encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(jwt_secret.as_ref()),
-    ) {
-        Ok(token) => token,
-        Err(err) => {
-            tracing::error!("JWT encoding error: {}", err);
-            return crate::manage_error!(crate::proxy_err!(
-                internal,
-                "JWT token generation failed: {}",
-                err
-            ));
+            tracing::error!("Failed to load user info for {}: {}", user_id, err);
+            return crate::manage_error!(err);
         }
     };
 
     tracing::info!("User {} logged in successfully", request.username);
 
     let response = LoginResponse {
-        token,
+        token: token_pair.access_token,
         user: UserInfo {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            is_admin: user.is_admin,
+            id: auth_user.id,
+            username: auth_user.username,
+            email: auth_user.email,
+            is_admin: auth_user.is_admin,
         },
     };
 

@@ -1,11 +1,11 @@
 use crate::management::middleware::auth::AuthContext;
-use std::sync::Arc;
 use crate::management::{response, server::AppState};
 use crate::scheduler::types::SchedulingStrategy;
-use axum::extract::{State, Extension};
+use axum::extract::{Extension, State};
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{entity::*, query::*};
 use serde_json::json;
+use std::sync::Arc;
 
 /// 获取服务提供商类型列表
 pub async fn list_provider_types(State(state): State<AppState>) -> axum::response::Response {
@@ -71,7 +71,6 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
 pub async fn get_scheduling_strategies(
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-
     // 使用枚举动态生成调度策略列表
     let scheduling_strategies: Vec<serde_json::Value> = [
         (

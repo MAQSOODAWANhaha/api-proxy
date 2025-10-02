@@ -5,17 +5,17 @@
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
-use std::sync::Arc;
 use ::entity::proxy_tracing;
 use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
 use axum::{
-    extract::{Path, Query, State, Extension},
+    extract::{Extension, Path, Query, State},
     response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
 use sea_orm::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 日志仪表板统计响应
 #[derive(Debug, Serialize)]
@@ -153,7 +153,6 @@ pub async fn get_dashboard_stats(
     State(state): State<AppState>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-
     match calculate_dashboard_stats(&state.database).await {
         Ok(stats) => ApiResponse::Success(stats).into_response(),
         Err(e) => {
@@ -240,11 +239,19 @@ pub async fn get_traces_list(
     Query(query): Query<LogsListQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20).min(100); // 限制最大每页100条
 
-    match fetch_traces_list(&state.database, &query, page, limit, auth_context.user_id, auth_context.is_admin).await {
+    match fetch_traces_list(
+        &state.database,
+        &query,
+        page,
+        limit,
+        auth_context.user_id,
+        auth_context.is_admin,
+    )
+    .await
+    {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志列表失败: {}", e);
@@ -405,7 +412,6 @@ pub async fn get_trace_detail(
     Path(id): Path<i32>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-
     match fetch_trace_detail(&state.database, id).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
         Ok(None) => crate::management::response::app_error(crate::proxy_err!(
@@ -495,7 +501,6 @@ pub async fn get_logs_analytics(
     Query(query): Query<LogsAnalyticsQuery>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-
     let time_range = query.time_range.as_deref().unwrap_or("24h");
     let group_by = query.group_by.as_deref().unwrap_or("hour");
 
