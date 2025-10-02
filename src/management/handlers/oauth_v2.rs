@@ -3,16 +3,16 @@
 //! 提供基于客户端轮询的新OAuth管理API，替代传统的服务器回调方式
 //! 支持公共OAuth凭据和PKCE安全机制
 
-use crate::auth::extract_user_id_from_headers;
 use crate::auth::oauth_client::session_manager::SessionStatistics;
+use crate::management::middleware::auth::AuthContext;
+use std::sync::Arc;
 use crate::auth::oauth_client::{
     AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo,
     OAuthTokenResponse,
 };
 use crate::management::{response, server::AppState};
 use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::extract::{Path, Query, State, Extension};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -65,16 +65,11 @@ pub enum OAuthV2Response {
 /// 开始OAuth授权流程
 pub async fn start_authorization(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2AuthorizeRequest>,
 ) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -106,16 +101,11 @@ pub async fn start_authorization(
 /// 轮询OAuth会话状态
 pub async fn poll_session(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Query(query): Query<OAuthV2PollQuery>,
 ) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -150,16 +140,11 @@ pub async fn poll_session(
 /// 交换授权码获取令牌
 pub async fn exchange_token(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2ExchangeRequest>,
 ) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -216,14 +201,12 @@ pub async fn exchange_token(
 }
 
 /// 获取用户的OAuth会话列表
-pub async fn list_sessions(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
+) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -245,16 +228,11 @@ pub async fn list_sessions(State(state): State<AppState>, headers: HeaderMap) ->
 /// 删除OAuth会话
 pub async fn delete_session(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -281,16 +259,11 @@ pub async fn delete_session(
 /// 刷新OAuth令牌
 pub async fn refresh_token(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
     // 提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -328,15 +301,10 @@ pub async fn refresh_token(
 /// 获取OAuth统计信息
 pub async fn get_statistics(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     // 提取用户ID（管理员权限检查可选）
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => Some(id),
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let user_id = Some(auth_context.user_id);
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -358,15 +326,10 @@ pub async fn get_statistics(
 /// 清理过期会话（管理员接口）
 pub async fn cleanup_expired_sessions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     // 提取用户ID并检查管理员权限
-    let _user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Unauthorized access"));
-        }
-    };
+    let _user_id = auth_context.user_id;
 
     // TODO: 添加管理员权限检查
     // if !is_admin(user_id) { return forbidden; }

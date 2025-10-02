@@ -1,8 +1,8 @@
-use crate::auth::extract_user_id_from_headers;
+use crate::management::middleware::auth::AuthContext;
+use std::sync::Arc;
 use crate::management::{response, server::AppState};
 use crate::scheduler::types::SchedulingStrategy;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{State, Extension};
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{entity::*, query::*};
 use serde_json::json;
@@ -68,12 +68,9 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
     response::success(data)
 }
 
-pub async fn get_scheduling_strategies(headers: HeaderMap) -> axum::response::Response {
-    // 从JWT token中提取用户ID进行身份验证
-    let _user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+pub async fn get_scheduling_strategies(
+    Extension(_auth_context): Extension<Arc<AuthContext>>,
+) -> axum::response::Response {
 
     // 使用枚举动态生成调度策略列表
     let scheduling_strategies: Vec<serde_json::Value> = [

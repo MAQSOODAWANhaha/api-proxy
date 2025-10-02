@@ -3,10 +3,11 @@
 //! 处理上游AI服务商的API密钥管理相关请求
 
 use crate::auth::{
-    extract_user_id_from_headers, gemini_code_assist_client::GeminiCodeAssistClient,
+    gemini_code_assist_client::GeminiCodeAssistClient,
     oauth_token_refresh_service::ScheduledTokenRefresh,
     oauth_token_refresh_task::OAuthTokenRefreshTask, types::AuthStatus,
 };
+use crate::management::middleware::auth::AuthContext;
 use crate::scheduler::types::ApiKeyHealthStatus;
 use axum::response::IntoResponse;
 
@@ -17,8 +18,7 @@ const GEMINI_PROVIDER_NAME: &str = "gemini";
 const OAUTH_AUTH_TYPE: &str = "oauth";
 
 use crate::management::{response, server::AppState};
-use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::extract::{Path, Query, State, Extension};
 use axum::response::Json;
 use chrono::Utc;
 use sea_orm::{
@@ -70,7 +70,7 @@ async fn prepare_oauth_schedule(
 pub async fn get_provider_keys_list(
     State(state): State<AppState>,
     Query(query): Query<ProviderKeysListQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
@@ -78,11 +78,7 @@ pub async fn get_provider_keys_list(
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 构建查询条件
     let mut select = UserProviderKey::find().filter(user_provider_keys::Column::UserId.eq(user_id));
@@ -257,18 +253,14 @@ pub async fn get_provider_keys_list(
 /// 创建提供商密钥
 pub async fn create_provider_key(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(payload): Json<CreateProviderKeyRequest>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
     let refresh_task = state.oauth_token_refresh_task.clone();
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 检查同名密钥是否已存在
     let existing = UserProviderKey::find()
@@ -620,18 +612,14 @@ pub async fn create_provider_key(
 pub async fn get_provider_key_detail(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查找密钥详情
     let provider_key = match UserProviderKey::find()
@@ -767,7 +755,7 @@ pub async fn get_provider_key_detail(
 pub async fn update_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(payload): Json<UpdateProviderKeyRequest>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
@@ -775,11 +763,7 @@ pub async fn update_provider_key(
     let db = state.database.as_ref();
     let refresh_task = state.oauth_token_refresh_task.clone();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查找要更新的密钥
     let existing_key = match UserProviderKey::find()
@@ -1032,18 +1016,14 @@ pub async fn update_provider_key(
 pub async fn delete_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
     let refresh_task = state.oauth_token_refresh_task.clone();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查找要删除的密钥
     let existing_key = match UserProviderKey::find()
@@ -1117,18 +1097,14 @@ pub async fn delete_provider_key(
 pub async fn get_provider_key_stats(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查找密钥详情
     let provider_key = match UserProviderKey::find()
@@ -1207,17 +1183,13 @@ pub async fn get_provider_key_stats(
 /// 获取提供商密钥卡片统计数据
 pub async fn get_provider_keys_dashboard_stats(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查询总密钥数
     let total_keys = match UserProviderKey::find()
@@ -1314,18 +1286,14 @@ pub async fn get_provider_keys_dashboard_stats(
 pub async fn get_simple_provider_keys_list(
     State(state): State<AppState>,
     Query(query): Query<UserProviderKeyQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 构建查询条件
     let mut select = UserProviderKey::find().filter(user_provider_keys::Column::UserId.eq(user_id));
@@ -1392,17 +1360,13 @@ pub async fn get_simple_provider_keys_list(
 pub async fn health_check_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查找要检查的密钥
     let existing_key = match UserProviderKey::find()
@@ -1643,17 +1607,13 @@ pub async fn get_provider_key_trends(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Query(query): Query<TrendQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证密钥存在且属于当前用户
     match UserProviderKey::find()
@@ -1721,17 +1681,13 @@ pub async fn get_user_service_api_trends(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
     Query(query): Query<TrendQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API存在且属于当前用户
     match UserServiceApi::find()

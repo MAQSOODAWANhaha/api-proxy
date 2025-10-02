@@ -1,71 +1,18 @@
 //! # 用户管理处理器
 
-use crate::auth::{check_is_admin_from_headers, extract_user_id_from_headers};
+use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{Path, Query, State, Extension};
 use axum::response::Json;
+use std::sync::Arc;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
-use jsonwebtoken::{DecodingKey, Validation, decode};
 use rand::{Rng, distributions::Alphanumeric};
 use sea_orm::{DatabaseConnection, entity::*, query::*};
 use serde::{Deserialize, Serialize};
 // Removed unused serde_json imports
 
-/// JWT Claims (与auth.rs保持一致)
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    /// 用户ID
-    pub sub: String,
-    /// 用户名
-    pub username: String,
-    /// 是否为管理员
-    pub is_admin: bool,
-    /// 过期时间
-    pub exp: usize,
-    /// 签发时间
-    pub iat: usize,
-}
-
-/// 从Authorization头中提取JWT用户信息
-fn extract_user_from_jwt(headers: &HeaderMap) -> Result<Claims, StatusCode> {
-    // 从Authorization头中提取token
-    let auth_header = headers
-        .get("Authorization")
-        .ok_or(StatusCode::UNAUTHORIZED)?
-        .to_str()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // 检查Bearer前缀
-    if !auth_header.starts_with("Bearer ") {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    let token = &auth_header[7..]; // 移除"Bearer "前缀
-
-    // 从环境变量或配置获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    // 验证JWT token
-    let validation = Validation::default();
-    let token_data = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_ref()),
-        &validation,
-    )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
-
-    // 检查token是否过期
-    let now = chrono::Utc::now().timestamp() as usize;
-    if token_data.claims.exp < now {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    Ok(token_data.claims)
-}
 
 /// 用户查询参数
 #[derive(Debug, Deserialize)]
@@ -267,19 +214,10 @@ fn generate_avatar_url(email: &str) -> String {
 pub async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    // 验证用户认证
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(user_id) => user_id,
-        Err(response) => return response,
-    };
-
-    // 检查是否为管理员
-    let is_admin = match check_is_admin_from_headers(&headers) {
-        Ok(is_admin) => is_admin,
-        Err(response) => return response,
-    };
+    let user_id = auth_context.user_id;
+    let is_admin = auth_context.is_admin;
 
     // 权限控制：非管理员只能查看自己的用户信息
     if !is_admin {
@@ -436,8 +374,14 @@ pub async fn list_users(
 /// 创建用户
 pub async fn create_user(
     State(state): State<AppState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<CreateUserRequest>,
 ) -> axum::response::Response {
+    // 权限检查：只有管理员可以创建用户
+    if !auth_context.is_admin {
+        return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
+    }
+
     // 验证输入
     if request.username.len() < 3 || request.username.len() > 50 {
         return crate::manage_error!(crate::proxy_err!(
@@ -579,7 +523,13 @@ pub async fn create_user(
 pub async fn get_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
+    // 权限检查：非管理员只能获取自己的信息
+    if !auth_context.is_admin && auth_context.user_id != user_id {
+        return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
+    }
+
     if user_id <= 0 {
         return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID"));
     }
@@ -642,21 +592,9 @@ pub struct ChangePasswordRequest {
 /// 获取用户档案
 pub async fn get_user_profile(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    // 从JWT token中获取用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
-        }
-    };
-    let user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     let user = match Users::find_by_id(user_id)
         .one(state.database.as_ref())
@@ -713,22 +651,10 @@ pub async fn get_user_profile(
 /// 更新用户档案
 pub async fn update_user_profile(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateProfileRequest>,
 ) -> axum::response::Response {
-    // 从JWT token中获取用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
-        }
-    };
-    let user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 验证邮箱格式
     if let Some(ref email) = request.email {
@@ -816,22 +742,10 @@ pub async fn update_user_profile(
 /// 修改密码
 pub async fn change_password(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ChangePasswordRequest>,
 ) -> axum::response::Response {
-    // 从JWT token中获取用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "Invalid or expired token"));
-        }
-    };
-    let user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "Invalid user ID in token"));
-        }
-    };
+    let user_id = auth_context.user_id;
 
     // 验证新密码强度
     if request.new_password.len() < 6 {
@@ -918,32 +832,16 @@ pub async fn change_password(
 pub async fn update_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateUserRequest>,
 ) -> axum::response::Response {
-    // 从JWT token中获取当前用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
-        }
-    };
-
-    let current_user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "无效的用户ID"));
-        }
-    };
-
-    // 权限检查：只有管理员可以更新其他用户，用户只能更新自己的部分信息
-    let is_self = current_user_id == user_id;
-    if !is_self && !claims.is_admin {
+    // 权限检查：只有管理员可以更新其他用户
+    if !auth_context.is_admin {
         return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
     }
 
     // 如果不是管理员，不能修改is_admin字段
-    if !claims.is_admin && request.is_admin.is_some() {
+    if !auth_context.is_admin && request.is_admin.is_some() {
         return crate::manage_error!(crate::proxy_err!(auth, "只有管理员可以修改权限"));
     }
 
@@ -1075,27 +973,14 @@ pub async fn update_user(
 pub async fn delete_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    // 从JWT token中获取当前用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
-        }
-    };
-
     // 权限检查：只有管理员可以删除用户
-    if !claims.is_admin {
+    if !auth_context.is_admin {
         return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
     }
 
-    let current_user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "无效的用户ID"));
-        }
-    };
+    let current_user_id = auth_context.user_id;
 
     // 不能删除自己
     if current_user_id == user_id {
@@ -1137,28 +1022,15 @@ pub async fn delete_user(
 /// 批量删除用户
 pub async fn batch_delete_users(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<BatchDeleteRequest>,
 ) -> axum::response::Response {
-    // 从JWT token中获取当前用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
-        }
-    };
-
     // 权限检查：只有管理员可以删除用户
-    if !claims.is_admin {
+    if !auth_context.is_admin {
         return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
     }
 
-    let current_user_id: i32 = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            return crate::manage_error!(crate::proxy_err!(business, "无效的用户ID"));
-        }
-    };
+    let current_user_id = auth_context.user_id;
 
     if request.ids.is_empty() {
         return crate::manage_error!(crate::proxy_err!(business, "用户ID列表不能为空"));
@@ -1190,18 +1062,10 @@ pub async fn batch_delete_users(
 pub async fn toggle_user_status(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    // 从JWT token中获取当前用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
-        }
-    };
-
     // 权限检查：只有管理员可以切换用户状态
-    if !claims.is_admin {
+    if !auth_context.is_admin {
         return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
     }
 
@@ -1247,19 +1111,11 @@ pub async fn toggle_user_status(
 pub async fn reset_user_password(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ResetPasswordRequest>,
 ) -> axum::response::Response {
-    // 从JWT token中获取当前用户信息
-    let claims = match extract_user_from_jwt(&headers) {
-        Ok(claims) => claims,
-        Err(_status_code) => {
-            return crate::manage_error!(crate::proxy_err!(auth, "认证失败"));
-        }
-    };
-
     // 权限检查：只有管理员可以重置密码
-    if !claims.is_admin {
+    if !auth_context.is_admin {
         return crate::manage_error!(crate::proxy_err!(auth, "权限不足"));
     }
 

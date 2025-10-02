@@ -27,7 +27,7 @@ pub mod utils;
 pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
-pub use management::{Claims, check_is_admin_from_headers, extract_user_id_from_headers};
+pub use management::{check_is_admin_from_headers, extract_user_id_from_headers};
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
 pub use oauth_token_refresh_service::{

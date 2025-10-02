@@ -212,17 +212,19 @@ pub async fn initialize_shared_services() -> Result<(
         crate::auth::jwt::JwtManager::new(auth_config.clone())
             .map_err(|e| ProxyError::server_init(format!("JWT manager init failed: {}", e)))?,
     );
-    let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
-        db.clone(),
-        auth_config.clone(),
-    ));
-    // 注意：认证服务在后续会统一创建一次
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
         crate::cache::abstract_cache::CacheManager::new(&config_arc.cache, &config_arc.redis.url)
             .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
     );
+
+    let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
+        db.clone(),
+        auth_config.clone(),
+        unified_cache_manager.clone(),
+    ));
+    // 注意：认证服务在后续会统一创建一次
 
     // 初始化服务商配置管理器
     info!(

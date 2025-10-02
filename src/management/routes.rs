@@ -2,30 +2,50 @@
 //!
 //! 定义所有API路由和路由组织
 
+use crate::management::middleware::auth::auth;
 use crate::management::server::AppState;
 use axum::Router;
+use axum::middleware;
 use axum::routing::{get, post};
 
 /// 创建所有路由
 pub fn create_routes(state: AppState) -> Router {
-    Router::new()
-        // 健康检查路由
+    let public_routes = Router::new()
+        .route(
+            "/ping",
+            get(crate::management::handlers::system::ping_handler),
+        )
+        .route(
+            "/users/auth/login",
+            post(crate::management::handlers::auth::login),
+        )
+        .with_state(state.clone());
+
+    let protected_routes = Router::new()
+        // 健康检查路由（需要认证）
         .nest("/health", health_routes())
-        // 系统信息路由
+        // 系统信息路由（需要认证）
         .nest("/system", system_routes())
-        // 统计查询路由
+        // 统计查询路由（需要认证）
         .nest("/statistics", statistics_routes())
+        // 用户服务API路由（需要认证）
         .nest("/user-service", user_service_routes())
-        // 用户管理路由
+        // 用户管理路由（需要认证，但不包含login）
         .nest("/users", user_routes())
-        // Provider密钥管理路由
+        // Provider密钥管理路由（需要认证）
         .nest("/provider-keys", provider_api_keys_routes())
-        // Provider类型管理路由
+        // Provider类型管理路由（需要认证）
         .nest("/provider-types", provider_type_routes())
-        // 日志管理路由
+        // 日志管理路由（需要认证）
         .nest("/logs", logs_routes())
-        // OAuth认证路由（新版本）
+        // OAuth认证路由（需要认证）
         .nest("/oauth", oauth_v2_routes())
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state.clone(), auth));
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(state)
 }
 
@@ -162,11 +182,7 @@ fn user_routes() -> Router<AppState> {
             "/password",
             post(crate::management::handlers::users::change_password),
         )
-        // 认证相关接口
-        .route(
-            "/auth/login",
-            post(crate::management::handlers::auth::login),
-        )
+        // 认证相关接口（需要认证，但不包括login）
         .route(
             "/auth/logout",
             post(crate::management::handlers::auth::logout),

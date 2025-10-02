@@ -23,7 +23,7 @@ use crate::error::Result;
 /// Authentication service
 pub struct AuthService {
     /// JWT manager
-    jwt_manager: Arc<JwtManager>,
+    pub jwt_manager: Arc<JwtManager>,
     /// API key manager
     api_key_manager: Arc<ApiKeyManager>,
     /// Database connection
@@ -494,9 +494,8 @@ impl AuthService {
         };
         status.insert("database".to_string(), db_status.to_string());
 
-        // Check cache stats
-        let cache_stats = self.api_key_manager.get_cache_stats().await;
-        status.insert("cache_keys".to_string(), cache_stats.total_keys.to_string());
+        // The concept of ApiKeyManager's own cache stats is removed.
+        // Centralized cache stats would be retrieved from the CacheManager if needed.
 
         // Check audit log cache
         let audit_count = self.audit_cache.read().await.len();
@@ -507,8 +506,8 @@ impl AuthService {
 
     /// Cleanup expired resources
     pub async fn cleanup(&self) {
-        // Cleanup API key cache
-        self.api_key_manager.cleanup_expired_cache().await;
+        // Cleanup for ApiKeyManager's internal cache is no longer needed
+        // as the central CacheManager handles TTL-based expiration.
 
         // Cleanup old audit logs
         let mut cache = self.audit_cache.write().await;

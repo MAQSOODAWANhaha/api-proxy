@@ -2,14 +2,14 @@
 //!
 //! 基于 proxy_tracing 表的日志查询、统计和分析功能
 
-use crate::auth::{check_is_admin_from_headers, extract_user_id_from_headers};
+use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
+use std::sync::Arc;
 use ::entity::proxy_tracing;
 use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
 use axum::{
-    extract::{Path, Query, State},
-    http::HeaderMap,
+    extract::{Path, Query, State, Extension},
     response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
@@ -151,13 +151,8 @@ pub struct LogsAnalyticsQuery {
 #[allow(clippy::similar_names)]
 pub async fn get_dashboard_stats(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-    // 验证用户认证
-    let _user_id = match extract_user_id_from_headers(&headers) {
-        Ok(user_id) => user_id,
-        Err(response) => return response,
-    };
 
     match calculate_dashboard_stats(&state.database).await {
         Ok(stats) => ApiResponse::Success(stats).into_response(),
@@ -243,24 +238,13 @@ async fn calculate_dashboard_stats(
 pub async fn get_traces_list(
     State(state): State<AppState>,
     Query(query): Query<LogsListQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-    // 验证用户认证
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(user_id) => user_id,
-        Err(response) => return response,
-    };
-
-    // 检查是否为管理员
-    let is_admin = match check_is_admin_from_headers(&headers) {
-        Ok(is_admin) => is_admin,
-        Err(response) => return response,
-    };
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20).min(100); // 限制最大每页100条
 
-    match fetch_traces_list(&state.database, &query, page, limit, user_id, is_admin).await {
+    match fetch_traces_list(&state.database, &query, page, limit, auth_context.user_id, auth_context.is_admin).await {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             tracing::error!("获取日志列表失败: {}", e);
@@ -419,13 +403,8 @@ async fn fetch_traces_list(
 pub async fn get_trace_detail(
     State(state): State<AppState>,
     Path(id): Path<i32>,
-    headers: HeaderMap,
+    Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-    // 验证用户认证
-    let _user_id = match extract_user_id_from_headers(&headers) {
-        Ok(user_id) => user_id,
-        Err(response) => return response,
-    };
 
     match fetch_trace_detail(&state.database, id).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
@@ -514,13 +493,8 @@ async fn fetch_trace_detail(
 pub async fn get_logs_analytics(
     State(state): State<AppState>,
     Query(query): Query<LogsAnalyticsQuery>,
-    headers: HeaderMap,
+    Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
-    // 验证用户认证
-    let _user_id = match extract_user_id_from_headers(&headers) {
-        Ok(user_id) => user_id,
-        Err(response) => return response,
-    };
 
     let time_range = query.time_range.as_deref().unwrap_or("24h");
     let group_by = query.group_by.as_deref().unwrap_or("hour");

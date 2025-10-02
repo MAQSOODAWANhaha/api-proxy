@@ -134,7 +134,7 @@ impl ManagementServer {
 
     /// 创建路由器
     fn create_router(state: AppState, config: &ManagementConfig) -> Result<Router> {
-        // 使用统一的路由配置
+        // 使用统一的路由配置，现在认证中间件已在 routes.rs 中应用
         let api_routes = super::routes::create_routes(state.clone());
 
         // 静态文件服务配置
@@ -151,10 +151,12 @@ impl ManagementServer {
             None
         };
 
-        let mut app = Router::new().nest(&config.api_prefix, api_routes).route(
-            "/ping",
-            get(crate::management::handlers::system::ping_handler),
-        );
+        let mut app = Router::new()
+            .nest(&config.api_prefix, api_routes) // 将所有API路由嵌套在/api下
+            .route(
+                "/ping",
+                get(crate::management::handlers::system::ping_handler),
+            );
 
         // 添加静态文件服务（如果可用）
         if let Some(service) = static_service {

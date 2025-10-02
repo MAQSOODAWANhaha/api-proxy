@@ -118,6 +118,7 @@ impl ProxyServerBuilder {
         let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(
             db.clone(),
             auth_config.clone(),
+            cache.clone(),
         ));
         let auth_service = Arc::new(AuthService::new(
             jwt_manager,

@@ -2,11 +2,11 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
-use crate::auth::extract_user_id_from_headers;
+use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
 use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::extract::{Path, Query, State, Extension};
+use std::sync::Arc;
 use chrono::{DateTime, NaiveDate, Utc};
 use sea_orm::QueryOrder; // for order_by()
 use sea_orm::prelude::Decimal;
@@ -189,7 +189,7 @@ pub struct UserServiceKeyDetailResponse {
 /// 1. 用户API Keys卡片展示
 pub async fn get_user_service_cards(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -197,11 +197,7 @@ pub async fn get_user_service_cards(
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 获取总API Key数量
     let total_api_keys = match UserServiceApi::find()
@@ -268,7 +264,7 @@ pub async fn get_user_service_cards(
 pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
@@ -279,11 +275,7 @@ pub async fn list_user_service_keys(
     let limit = query.limit.unwrap_or(10);
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 构建基础查询
     let mut select = UserServiceApi::find().filter(user_service_apis::Column::UserId.eq(user_id));
@@ -468,7 +460,7 @@ pub async fn list_user_service_keys(
 /// 3. 新增API Key
 pub async fn create_user_service_key(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<CreateUserServiceKeyRequest>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
@@ -483,11 +475,7 @@ pub async fn create_user_service_key(
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证provider_type_id是否存在
     let provider_type = match ProviderType::find_by_id(request.provider_type_id)
@@ -611,7 +599,7 @@ pub async fn create_user_service_key(
 pub async fn get_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -623,11 +611,7 @@ pub async fn get_user_service_key(
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 查询API Key（确保属于当前用户）
     let api = match UserServiceApi::find_by_id(api_id)
@@ -717,7 +701,7 @@ pub async fn get_user_service_key(
 pub async fn update_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateUserServiceKeyRequest>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -729,11 +713,7 @@ pub async fn update_user_service_key(
 
     let db = state.database.as_ref();
 
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API Key存在且属于当前用户
     let _existing_api = match UserServiceApi::find_by_id(api_id)
@@ -852,7 +832,7 @@ pub async fn update_user_service_key(
 pub async fn delete_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -862,11 +842,7 @@ pub async fn delete_user_service_key(
     }
 
     let db = state.database.as_ref();
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API Key存在且属于当前用户
     let _existing_api = match UserServiceApi::find_by_id(api_id)
@@ -917,7 +893,7 @@ pub async fn get_user_service_key_usage(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
     Query(query): Query<UsageStatsQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -928,11 +904,7 @@ pub async fn get_user_service_key_usage(
     }
 
     let db = state.database.as_ref();
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API Key存在且属于当前用户
     let _existing_api = match UserServiceApi::find_by_id(api_id)
@@ -1101,7 +1073,7 @@ pub async fn get_user_service_key_usage(
 pub async fn regenerate_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
@@ -1111,11 +1083,7 @@ pub async fn regenerate_user_service_key(
     }
 
     let db = state.database.as_ref();
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API Key存在且属于当前用户
     let _existing_api = match UserServiceApi::find_by_id(api_id)
@@ -1177,7 +1145,7 @@ pub async fn regenerate_user_service_key(
 pub async fn update_user_service_key_status(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateStatusRequest>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -1188,11 +1156,7 @@ pub async fn update_user_service_key_status(
     }
 
     let db = state.database.as_ref();
-    // 从JWT token中提取用户ID
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 验证API Key存在且属于当前用户
     let _existing_api = match UserServiceApi::find_by_id(api_id)

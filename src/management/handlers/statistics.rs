@@ -1,11 +1,11 @@
 //! # 统一统计信息处理器
 //!
 //! 基于proxy_tracing表的统一统计查询API
-use crate::auth::extract_user_id_from_headers;
+use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
-use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::extract::{Query, State, Extension};
+use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use sea_orm::{entity::*, query::*};
@@ -141,12 +141,9 @@ pub struct UserApiKeysTokenTrendResponse {
 /// 1. 今日仪表板卡片API: /api/statistics/today/cards
 pub async fn get_today_dashboard_cards(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     let now = Utc::now();
     let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
@@ -271,12 +268,9 @@ pub async fn get_today_dashboard_cards(
 pub async fn get_models_usage_rate(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     let (start_time, _end_time) = match parse_time_range(&query) {
         Ok(times) => times,
@@ -356,12 +350,9 @@ pub async fn get_models_usage_rate(
 pub async fn get_models_statistics(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     let (start_time, _end_time) = match parse_time_range(&query) {
         Ok(times) => times,
@@ -441,12 +432,9 @@ pub async fn get_models_statistics(
 /// 4. Token使用趋势API: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 固定获取最近30天的数据
     let start_time = Utc::now() - Duration::days(30);
@@ -554,12 +542,9 @@ pub async fn get_tokens_trend(
 /// 5. 用户API Keys请求趋势API: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 固定获取最近30天的数据
     let start_time = Utc::now() - Duration::days(30);
@@ -645,12 +630,9 @@ pub async fn get_user_api_keys_request_trend(
 /// 6. 用户API Keys Token趋势API: /api/statistics/user-service-api-keys/token
 pub async fn get_user_api_keys_token_trend(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let user_id = match extract_user_id_from_headers(&headers) {
-        Ok(id) => id,
-        Err(error_response) => return error_response,
-    };
+    let user_id = auth_context.user_id;
 
     // 固定获取最近30天的数据
     let start_time = Utc::now() - Duration::days(30);

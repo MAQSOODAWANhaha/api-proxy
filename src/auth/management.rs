@@ -2,29 +2,16 @@
 //!
 //! 提供管理端专用的认证工具函数，使用共享的AuthUtils基础组件
 
+use crate::auth::jwt::JwtManager;
 use crate::auth::AuthUtils;
 use axum::http::HeaderMap;
-use jsonwebtoken::{DecodingKey, Validation, decode};
-use serde::{Deserialize, Serialize};
-
-/// JWT Claims 结构体
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    /// 用户ID
-    pub sub: String,
-    /// 用户名
-    pub username: String,
-    /// 是否为管理员
-    pub is_admin: bool,
-    /// 过期时间
-    pub exp: usize,
-    /// 签发时间
-    pub iat: usize,
-}
 
 /// 从请求头中检查用户是否为管理员
 /// 基于已有的JWT token解析逻辑，返回管理员状态
-pub fn check_is_admin_from_headers(headers: &HeaderMap) -> Result<bool, axum::response::Response> {
+pub fn check_is_admin_from_headers(
+    headers: &HeaderMap,
+    jwt_manager: &JwtManager,
+) -> Result<bool, axum::response::Response> {
     // 使用共享的AuthUtils提取Authorization头
     let auth_header = match AuthUtils::extract_authorization_header(headers) {
         Some(header) => header,
@@ -37,27 +24,21 @@ pub fn check_is_admin_from_headers(headers: &HeaderMap) -> Result<bool, axum::re
         None => return Ok(false), // token格式错误，默认非管理员
     };
 
-    // 从环境变量获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    // 验证并解码JWT token
-    let validation = Validation::default();
-    let token_data = match decode::<Claims>(
-        &token,
-        &DecodingKey::from_secret(jwt_secret.as_ref()),
-        &validation,
-    ) {
-        Ok(data) => data,
+    // 使用JwtManager进行验证
+    let claims = match jwt_manager.validate_token(&token) {
+        Ok(claims) => claims,
         Err(_) => return Ok(false), // token无效，默认非管理员
     };
 
-    Ok(token_data.claims.is_admin)
+    Ok(claims.is_admin)
 }
 
 /// 从请求头中提取用户ID
 /// 解析JWT token并返回当前认证用户的ID
-pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::response::Response> {
+pub fn extract_user_id_from_headers(
+    headers: &HeaderMap,
+    jwt_manager: &JwtManager,
+) -> Result<i32, axum::response::Response> {
     // 使用共享的AuthUtils提取Authorization头
     let auth_header = match AuthUtils::extract_authorization_header(headers) {
         Some(header) => header,
@@ -82,18 +63,9 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         }
     };
 
-    // 从环境变量获取JWT密钥
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
-
-    // 验证并解码JWT token
-    let validation = Validation::default();
-    let token_data = match decode::<Claims>(
-        &token,
-        &DecodingKey::from_secret(jwt_secret.as_ref()),
-        &validation,
-    ) {
-        Ok(data) => data,
+    // 使用JwtManager进行验证
+    let claims = match jwt_manager.validate_token(&token) {
+        Ok(claims) => claims,
         Err(err) => {
             tracing::warn!("JWT token validation failed: {}", err);
             return Err(crate::manage_error!(crate::proxy_err!(
@@ -103,20 +75,12 @@ pub fn extract_user_id_from_headers(headers: &HeaderMap) -> Result<i32, axum::re
         }
     };
 
-    // 解析用户ID
-    let user_id: i32 = match token_data.claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => {
-            tracing::error!(
-                "Failed to parse user ID from JWT token: {}",
-                token_data.claims.sub
-            );
-            return Err(crate::manage_error!(crate::proxy_err!(
-                internal,
-                "Invalid user ID in token"
-            )));
-        }
-    };
-
-    Ok(user_id)
+    // 从claims中安全地获取user_id
+    claims.user_id().map_err(|err| {
+        tracing::error!("Failed to parse user ID from JWT token: {}", err);
+        crate::manage_error!(crate::proxy_err!(
+            internal,
+            "Invalid user ID in token"
+        ))
+    })
 }
