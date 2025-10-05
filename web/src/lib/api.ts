@@ -15,7 +15,7 @@ import { useAuthStore } from '../store/auth'
 const handle401Unauthorized = async () => {
   // 获取auth store实例并清除认证状态
   const authStore = useAuthStore.getState()
-  await authStore.logout()
+  await authStore.logout(false)
   
   // 跳转到登录页面
   if (typeof window !== 'undefined') {

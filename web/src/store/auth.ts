@@ -31,7 +31,7 @@ export interface AuthState {
   /** 登录方法 */
   login: (credentials: LoginRequest) => Promise<boolean>
   /** 登出方法 */
-  logout: () => Promise<void>
+  logout: (callApi?: boolean) => Promise<void>
   /** 验证token */
   validateToken: () => Promise<boolean>
   /** 清除错误 */
@@ -106,15 +106,17 @@ export const useAuthStore = create<AuthState>()(
       /**
        * 用户登出
        */
-      logout: async (): Promise<void> => {
+      logout: async (callApi = true): Promise<void> => {
         set({ isLoading: true })
         
-        try {
-          // 调用后端登出API
-          await api.logout()
-        } catch (error) {
-          console.error('Logout API error:', error)
-          // 即使API调用失败，也要清除本地状态
+        if (callApi) {
+          try {
+            // 调用后端登出API
+            await api.logout()
+          } catch (error) {
+            console.error('Logout API error:', error)
+            // 即使API调用失败，也要清除本地状态
+          }
         }
         
         // 清除所有认证状态
