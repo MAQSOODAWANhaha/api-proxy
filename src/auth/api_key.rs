@@ -3,6 +3,8 @@
 //! 提供统一的API密钥数据库查询、缓存管理和格式验证功能
 //! 供代理端认证和管理端认证共同使用
 
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lwarn};
 use chrono::{DateTime, Timelike, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
@@ -10,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
+use crate::auth::cache_strategy::{hash_token, AuthCacheKey, UnifiedAuthCacheManager};
 use crate::auth::permissions::{Permission, PermissionChecker, Role};
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
@@ -146,7 +148,7 @@ impl ApiKeyManager {
         };
         // Use a reasonable TTL for API key info, e.g., 5 minutes
         if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
-            tracing::warn!("Failed to cache API key info: {}", e);
+            lwarn!("system", LogStage::Cache, LogComponent::ApiKey, "cache_fail", &format!("Failed to cache API key info: {}", e));
         }
 
         Ok(ApiKeyValidationResult {
@@ -348,10 +350,12 @@ impl ApiKeyManager {
             }
         }
 
-        tracing::debug!(
-            "Recorded usage for API key: {}, tokens: {}",
-            self.sanitize_api_key(api_key),
-            tokens_used
+        ldebug!(
+            "system",
+            LogStage::Internal,
+            LogComponent::ApiKey,
+            "usage_recorded",
+            &format!("Recorded usage for API key: {}, tokens: {}", self.sanitize_api_key(api_key), tokens_used)
         );
 
         Ok(())
@@ -461,7 +465,7 @@ impl ApiKeyManager {
                 permissions,
             };
             if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
-                tracing::warn!("Failed to cache API key info: {}", e);
+                lwarn!("system", LogStage::Cache, LogComponent::ApiKey, "cache_fail", &format!("Failed to cache API key info: {}", e));
             }
 
             Ok(Some(api_key_info))

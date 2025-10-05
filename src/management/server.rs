@@ -2,14 +2,16 @@
 //!
 //! Axum HTTP服务器，提供管理和监控API
 
-use super::middleware::{IpFilterConfig, ip_filter_middleware};
+use super::middleware::{ip_filter_middleware, IpFilterConfig};
 use crate::auth::service::AuthService;
 use crate::config::{AppConfig, ProviderConfigManager};
+use crate::logging::{LogComponent, LogStage};
+use crate::{linfo, lwarn};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
 use anyhow::Result;
+use axum::routing::get;
 use axum::Router;
 // use axum::http::StatusCode; // not needed with manage_error!
-use axum::routing::get;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -19,7 +21,6 @@ use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
 
 /// 管理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,14 +141,26 @@ impl ManagementServer {
         // 静态文件服务配置
         let static_dir = std::path::Path::new("/app/static");
         let static_service = if static_dir.exists() {
-            info!("Enabling static file service from /app/static");
+            linfo!(
+                "system",
+                LogStage::Startup,
+                LogComponent::ServerSetup,
+                "static_service_enabled",
+                "Enabling static file service from /app/static"
+            );
             // 创建静态文件服务，支持SPA应用的fallback
             Some(
                 ServeDir::new(static_dir)
                     .not_found_service(ServeFile::new("/app/static/index.html")),
             )
         } else {
-            warn!("Static directory /app/static not found, static files will not be served");
+            lwarn!(
+                "system",
+                LogStage::Startup,
+                LogComponent::ServerSetup,
+                "static_dir_not_found",
+                "Static directory /app/static not found, static files will not be served"
+            );
             None
         };
 
@@ -168,16 +181,20 @@ impl ManagementServer {
         }
 
         // 创建IP过滤配置
-        let ip_filter_config =
-            IpFilterConfig::from_strings(&config.allowed_ips, &config.denied_ips).unwrap_or_else(
-                |e| {
-                    warn!("Failed to create IP filter config: {}, using default", e);
-                    IpFilterConfig {
-                        allowed_ips: vec![],
-                        denied_ips: vec![],
-                    }
-                },
-            );
+        let ip_filter_config = IpFilterConfig::from_strings(&config.allowed_ips, &config.denied_ips)
+            .unwrap_or_else(|e| {
+                lwarn!(
+                    "system",
+                    LogStage::Startup,
+                    LogComponent::ServerSetup,
+                    "ip_filter_config_fail",
+                    &format!("Failed to create IP filter config: {}, using default", e)
+                );
+                IpFilterConfig {
+                    allowed_ips: vec![],
+                    denied_ips: vec![],
+                }
+            });
 
         // 添加中间件
         let service_builder = ServiceBuilder::new().layer(TraceLayer::new_for_http());
@@ -215,9 +232,12 @@ impl ManagementServer {
                         cors_layer = cors_layer.allow_origin(origins);
                     }
                     Err(e) => {
-                        warn!(
-                            "Invalid CORS origin configuration: {}, falling back to allow any",
-                            e
+                        lwarn!(
+                            "system",
+                            LogStage::Startup,
+                            LogComponent::ServerSetup,
+                            "cors_config_fail",
+                            &format!("Invalid CORS origin configuration: {}, falling back to allow any", e)
                         );
                         cors_layer = cors_layer.allow_origin(Any);
                     }
@@ -243,7 +263,13 @@ impl ManagementServer {
     pub async fn serve(self) -> Result<()> {
         let addr = SocketAddr::new(self.config.bind_address.parse()?, self.config.port);
 
-        info!("Starting management server on {}", addr);
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "server_start",
+            &format!("Starting management server on {}", addr)
+        );
 
         let listener = TcpListener::bind(&addr).await?;
 

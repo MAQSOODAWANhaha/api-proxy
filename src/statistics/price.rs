@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::{lwarn, logging::{LogComponent, LogStage}};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
 use crate::statistics::types::TokenUsageMetrics;
@@ -30,7 +31,7 @@ pub async fn calculate(
     {
         Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
         Err(e) => {
-            tracing::warn!(component = "statistics.price", request_id = %request_id, error = %e, "Failed to calculate cost");
+            lwarn!(request_id, LogStage::Internal, LogComponent::Statistics, "cost_calculation_fail", &format!("Failed to calculate cost: {}", e));
             Ok((None, None))
         }
     }

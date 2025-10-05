@@ -2,26 +2,25 @@
 //!
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use pingora_core::ErrorType;
 use pingora_core::prelude::*;
+use pingora_core::ErrorType;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sea_orm::DatabaseConnection;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::warn;
 use uuid::Uuid;
 
-use crate::logging::{LogComponent, LogStage};
 use crate::proxy::{
     AuthenticationService, StatisticsService, TracingService, context::ProxyContext,
     provider_strategy, request_transform_service::RequestTransformService,
     response_transform_service::ResponseTransformService, upstream_service::UpstreamService,
 };
-use crate::{proxy_error, proxy_info};
 
 /// 核心AI代理服务 - 作为编排器
 pub struct ProxyService {
@@ -90,7 +89,7 @@ impl ProxyHttp for ProxyService {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::RequestStart,
             LogComponent::Proxy,
@@ -110,10 +109,10 @@ impl ProxyHttp for ProxyService {
             .authenticate_and_authorize(session, ctx)
             .await
         {
-            proxy_error!(
+            lerror!(
                 &ctx.request_id,
                 LogStage::Authentication,
-                LogComponent::AuthService,
+                LogComponent::Auth,
                 "auth_fail",
                 "认证授权失败",
                 error = %e
@@ -121,10 +120,10 @@ impl ProxyHttp for ProxyService {
             return Err(crate::pingora_error!(e));
         }
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::Authentication,
-            LogComponent::AuthService,
+            LogComponent::Auth,
             "auth_ok",
             "认证授权成功",
             user_service_api_id = ctx.user_service_api.as_ref().map(|u| u.id)
@@ -217,12 +216,15 @@ impl ProxyHttp for ProxyService {
 
         // 流结束处理：处理完整的请求体
         if end_of_stream {
-            tracing::info!(
-                request_id = %ctx.request_id,
+            linfo!(
+                &ctx.request_id,
+                LogStage::RequestModify,
+                LogComponent::Proxy,
+                "request_body_eom",
+                "请求体接收完成，准备处理",
                 body_size = ctx.request_body.len(),
                 has_strategy = ctx.strategy.is_some(),
-                will_modify = ctx.will_modify_body,
-                "请求体接收完成，准备处理"
+                will_modify = ctx.will_modify_body
             );
 
             // 确保有完整的 body 数据才进行 JSON 修改
@@ -231,20 +233,26 @@ impl ProxyHttp for ProxyService {
                 if let Some(strategy) = &ctx.strategy {
                     match serde_json::from_slice::<Value>(&ctx.request_body) {
                         Ok(mut json_value) => {
-                            tracing::debug!(
-                                request_id = %ctx.request_id,
-                                body = json_value.to_string(),
-                                "请求体 JSON 解析成功，尝试应用策略修改"
+                            ldebug!(
+                                &ctx.request_id,
+                                LogStage::RequestModify,
+                                LogComponent::Proxy,
+                                "request_body_parse_ok",
+                                "请求体 JSON 解析成功，尝试应用策略修改",
+                                body = json_value.to_string()
                             );
                             match strategy
                                 .modify_request_body_json(session, ctx, &mut json_value)
                                 .await
                             {
                                 Ok(true) => {
-                                    tracing::debug!(
-                                        request_id = %ctx.request_id,
-                                        body = json_value.to_string(),
-                                        "策略选择修改请求体，正在序列化回字节"
+                                    ldebug!(
+                                        &ctx.request_id,
+                                        LogStage::RequestModify,
+                                        LogComponent::Proxy,
+                                        "request_body_modified",
+                                        "策略选择修改请求体，正在序列化回字节",
+                                        body = json_value.to_string()
                                     );
                                     match serde_json::to_vec(&json_value) {
                                         Ok(serialized) => {
@@ -254,42 +262,54 @@ impl ProxyHttp for ProxyService {
                                             chunk_replaced = true;
                                         }
                                         Err(e) => {
-                                            tracing::error!(
-                                                request_id = %ctx.request_id,
-                                                error = %e,
-                                                "序列化修改后的 JSON 失败"
+                                            lerror!(
+                                                &ctx.request_id,
+                                                LogStage::RequestModify,
+                                                LogComponent::Proxy,
+                                                "request_body_serialize_fail",
+                                                &format!("序列化修改后的 JSON 失败: {}", e)
                                             );
                                         }
                                     }
                                 }
                                 Ok(false) => {
-                                    tracing::info!(
-                                        request_id = %ctx.request_id,
+                                    linfo!(
+                                        &ctx.request_id,
+                                        LogStage::RequestModify,
+                                        LogComponent::Proxy,
+                                        "request_body_not_modified",
                                         "策略选择不修改请求体"
                                     );
                                 }
                                 Err(e) => {
-                                    tracing::error!(
-                                        request_id = %ctx.request_id,
-                                        error = %e,
-                                        "执行请求体修改策略失败"
+                                    lerror!(
+                                        &ctx.request_id,
+                                        LogStage::RequestModify,
+                                        LogComponent::Proxy,
+                                        "request_body_modify_fail",
+                                        &format!("执行请求体修改策略失败: {}", e)
                                     );
                                 }
                             }
                         }
                         Err(e) => {
-                            tracing::error!(
-                                request_id = %ctx.request_id,
-                                error = %e,
-                                body_preview = %String::from_utf8_lossy(&ctx.request_body[..std::cmp::min(500, ctx.request_body.len())]),
-                                "解析请求体 JSON 失败"
+                            lerror!(
+                                &ctx.request_id,
+                                LogStage::RequestModify,
+                                LogComponent::Proxy,
+                                "request_body_parse_fail",
+                                &format!("解析请求体 JSON 失败: {}", e),
+                                body_preview = %String::from_utf8_lossy(&ctx.request_body[..std::cmp::min(500, ctx.request_body.len())])
                             );
                         }
                     }
                 }
             } else if ctx.request_body.is_empty() && ctx.will_modify_body {
-                tracing::warn!(
-                    request_id = %ctx.request_id,
+                lwarn!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::Proxy,
+                    "request_body_empty_for_modify",
                     "策略期望修改请求体，但请求体为空"
                 );
             }
@@ -335,10 +355,13 @@ impl ProxyHttp for ProxyService {
             ctx.response_body.extend_from_slice(chunk);
         }
         if end_of_stream {
-            tracing::info!(
-                request_id = %ctx.request_id,
-                body_size = ctx.response_body.len(),
-                "响应体接收完成"
+            linfo!(
+                &ctx.request_id,
+                LogStage::Response,
+                LogComponent::Proxy,
+                "response_body_eom",
+                "响应体接收完成",
+                body_size = ctx.response_body.len()
             );
         }
         Ok(None)
@@ -353,7 +376,7 @@ impl ProxyHttp for ProxyService {
                 .handle_response_body(session, ctx, status_code, &ctx.response_body)
                 .await
             {
-                warn!(request_id = %ctx.request_id, error = %e, "Provider strategy handle_response_body failed");
+                lwarn!(&ctx.request_id, LogStage::Response, LogComponent::Proxy, "strategy_response_fail", &format!("Provider strategy handle_response_body failed: {}", e));
             }
         }
 
@@ -377,10 +400,12 @@ impl ProxyHttp for ProxyService {
                     )
                     .await
                 {
-                    warn!(
-                        request_id = %ctx.request_id,
-                        error = %err,
-                        "Failed to update trace model info"
+                    lwarn!(
+                        &ctx.request_id,
+                        LogStage::Error,
+                        LogComponent::Tracing,
+                        "update_trace_model_info_failed",
+                        &format!("Failed to update trace model info: {}", err)
                     );
                 }
             }
@@ -446,7 +471,7 @@ impl ProxyHttp for ProxyService {
                 .await;
         }
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::Response,
             LogComponent::Proxy,

@@ -3,6 +3,8 @@
 //! 数据库连接和迁移管理
 
 use crate::error::ProxyError;
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use entity::{model_pricing, model_pricing_tiers, provider_types};
 use sea_orm::{
     ColumnTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
@@ -13,17 +15,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
 
 /// 初始化数据库连接
 pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbErr> {
-    info!(
-        "正在连接数据库: {}",
-        if database_url.starts_with("sqlite:") {
-            &database_url[..std::cmp::min(database_url.len(), 50)]
-        } else {
-            database_url
-        }
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "db_connect",
+        &format!(
+            "正在连接数据库: {}",
+            if database_url.starts_with("sqlite:") {
+                &database_url[..std::cmp::min(database_url.len(), 50)]
+            } else {
+                database_url
+            }
+        )
     );
 
     // 对于SQLite数据库，确保数据库文件的目录和文件存在
@@ -36,7 +43,7 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
         // 确保父目录存在
         if let Some(parent_dir) = db_file_path.parent() {
             if !parent_dir.exists() {
-                debug!("创建数据库目录: {}", parent_dir.display());
+                ldebug!("system", LogStage::Startup, LogComponent::Database, "create_db_dir", &format!("创建数据库目录: {}", parent_dir.display()));
                 std::fs::create_dir_all(parent_dir).map_err(|e| {
                     DbErr::Custom(format!(
                         "无法创建数据库目录 {}: {}",
@@ -44,15 +51,15 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                         e
                     ))
                 })?;
-                info!("数据库目录创建成功: {}", parent_dir.display());
+                linfo!("system", LogStage::Startup, LogComponent::Database, "create_db_dir_ok", &format!("数据库目录创建成功: {}", parent_dir.display()));
             } else {
-                debug!("数据库目录已存在: {}", parent_dir.display());
+                ldebug!("system", LogStage::Startup, LogComponent::Database, "db_dir_exists", &format!("数据库目录已存在: {}", parent_dir.display()));
             }
         }
 
         // 确保数据库文件存在（如果不存在则创建空文件）
         if !db_file_path.exists() {
-            debug!("创建数据库文件: {}", db_file_path.display());
+            ldebug!("system", LogStage::Startup, LogComponent::Database, "create_db_file", &format!("创建数据库文件: {}", db_file_path.display()));
             std::fs::File::create(db_file_path).map_err(|e| {
                 DbErr::Custom(format!(
                     "无法创建数据库文件 {}: {}",
@@ -60,29 +67,29 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                     e
                 ))
             })?;
-            info!("数据库文件创建成功: {}", db_file_path.display());
+            linfo!("system", LogStage::Startup, LogComponent::Database, "create_db_file_ok", &format!("数据库文件创建成功: {}", db_file_path.display()));
         } else {
-            debug!("数据库文件已存在: {}", db_file_path.display());
+            ldebug!("system", LogStage::Startup, LogComponent::Database, "db_file_exists", &format!("数据库文件已存在: {}", db_file_path.display()));
         }
     }
 
     let db = Database::connect(database_url).await?;
 
-    info!("数据库连接成功");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "db_connect_ok", "数据库连接成功");
     Ok(db)
 }
 
 /// 运行数据库迁移
 pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
-    info!("开始运行数据库迁移...");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "migration_start", "开始运行数据库迁移...");
 
     match ::migration::Migrator::up(db, None).await {
         Ok(_) => {
-            info!("数据库迁移完成");
+            linfo!("system", LogStage::Startup, LogComponent::Database, "migration_ok", "数据库迁移完成");
             Ok(())
         }
         Err(e) => {
-            error!("数据库迁移失败: {}", e);
+            lerror!("system", LogStage::Startup, LogComponent::Database, "migration_fail", &format!("数据库迁移失败: {}", e));
             Err(e)
         }
     }
@@ -90,14 +97,14 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
 
 /// 检查数据库状态
 pub async fn check_database_status(db: &DatabaseConnection) -> Result<(), DbErr> {
-    info!("检查数据库状态...");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "check_db_status", "检查数据库状态...");
 
     let status = ::migration::Migrator::get_pending_migrations(db).await?;
 
     if status.is_empty() {
-        info!("所有迁移都已应用");
+        linfo!("system", LogStage::Startup, LogComponent::Database, "migrations_applied", "所有迁移都已应用");
     } else {
-        warn!("有 {} 个待应用的迁移", status.len());
+        lwarn!("system", LogStage::Startup, LogComponent::Database, "pending_migrations", &format!("有 {} 个待应用的迁移", status.len()));
     }
 
     Ok(())
@@ -157,7 +164,7 @@ struct FilteredModel {
 /// 确保模型定价数据的完整性（启动时初始化一次，远程优先，增量更新）
 /// 始终尝试拉取并增量更新，失败时使用本地文件回退；如果都失败且已有数据，则保留现状。
 pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), ProxyError> {
-    info!("🔍 检查模型定价数据完整性...");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "ensure_pricing_data", "🔍 检查模型定价数据完整性...");
     // 始终尝试远程优先的增量更新
     match initialize_model_pricing_from_remote_or_local(db).await {
         Ok(()) => Ok(()),
@@ -168,10 +175,13 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), Pr
                 .await
                 .map_err(|err| ProxyError::database(format!("查询模型定价数据失败: {}", err)))?;
             if pricing_count > 0 {
-                error!(
-                    component = "database.pricing",
-                    error = %e,
-                    "远程与本地初始化均失败，保留现有定价数据"
+                lerror!(
+                    "system",
+                    LogStage::Startup,
+                    LogComponent::Database,
+                    "pricing_init_fail",
+                    "远程与本地初始化均失败，保留现有定价数据",
+                    error = %e
                 );
                 Ok(())
             } else {
@@ -185,7 +195,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), Pr
 pub async fn force_initialize_model_pricing_data(
     db: &DatabaseConnection,
 ) -> Result<(), ProxyError> {
-    info!("🔄 强制重新初始化模型定价数据...");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "force_init_pricing", "🔄 强制重新初始化模型定价数据...");
 
     // 清理现有数据
     model_pricing_tiers::Entity::delete_many()
@@ -206,19 +216,19 @@ pub async fn force_initialize_model_pricing_data(
 
 /// 从 JSON 文件初始化数据（完全数据驱动，旧逻辑，仅在空表或强制清理后使用）
 async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(), ProxyError> {
-    info!("📂 从JSON文件读取模型定价数据...");
+    linfo!("system", LogStage::Startup, LogComponent::Database, "load_pricing_from_json", "📂 从JSON文件读取模型定价数据...");
 
     // 1. 读取并解析JSON文件
     let json_data = load_json_data().await?;
-    info!("✅ 成功解析了 {} 个模型的定价数据", json_data.len());
+    linfo!("system", LogStage::Startup, LogComponent::Database, "parse_pricing_ok", &format!("✅ 成功解析了 {} 个模型的定价数据", json_data.len()));
 
     // 2. 应用数据驱动的模型过滤
     let filtered_models = filter_target_models(&json_data);
-    info!("🎯 根据过滤规则选择了 {} 个目标模型", filtered_models.len());
+    linfo!("system", LogStage::Startup, LogComponent::Database, "filter_models_ok", &format!("🎯 根据过滤规则选择了 {} 个目标模型", filtered_models.len()));
 
     // 3. 动态获取所需的provider映射
     let provider_mappings = get_provider_mappings(db, &filtered_models).await?;
-    info!("🗺️  构建了 {} 个provider映射", provider_mappings.len());
+    linfo!("system", LogStage::Startup, LogComponent::Database, "provider_mapping_ok", &format!("🗺️  构建了 {} 个provider映射", provider_mappings.len()));
 
     // 4. 批量插入模型定价数据
     let mut success_count = 0;
@@ -227,18 +237,22 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
             match insert_model_with_pricing(db, &model, provider_id).await {
                 Ok(_) => success_count += 1,
                 Err(e) => {
-                    error!("插入模型 {} 失败: {}", model.name, e);
+                    lerror!("system", LogStage::Startup, LogComponent::Database, "insert_model_pricing_fail", &format!("插入模型 {} 失败: {}", model.name, e));
                 }
             }
         } else {
-            warn!(
-                "⚠️  跳过模型: {} - provider '{}' 在数据库中不存在",
-                model.name, model.provider_name
+            lwarn!(
+                "system",
+                LogStage::Startup,
+                LogComponent::Database,
+                "skip_model_no_provider",
+                &format!("⚠️  跳过模型: {} - provider '{}' 在数据库中不存在",
+                model.name, model.provider_name)
             );
         }
     }
 
-    info!("✅ 数据初始化完成! 成功处理了 {} 个模型", success_count);
+    linfo!("system", LogStage::Startup, LogComponent::Database, "init_pricing_ok", &format!("✅ 数据初始化完成! 成功处理了 {} 个模型", success_count));
     Ok(())
 }
 
@@ -246,33 +260,45 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
 async fn initialize_model_pricing_from_remote_or_local(
     db: &DatabaseConnection,
 ) -> Result<(), ProxyError> {
-    info!(
-        component = "database.pricing",
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "remote_pricing_fetch",
         "尝试从远程获取最新模型定价（失败则回退本地）..."
     );
 
     // 读取远程或本地 JSON
     let json_data = load_json_data_remote_or_local().await?;
-    info!(
-        component = "database.pricing",
-        models = json_data.len(),
-        "已获取模型定价原始数据"
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "remote_pricing_fetched",
+        "已获取模型定价原始数据",
+        models = json_data.len()
     );
 
     // 过滤并标准化
     let filtered_models = filter_target_models(&json_data);
-    info!(
-        component = "database.pricing",
-        count = filtered_models.len(),
-        "根据规则筛选目标模型"
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "filter_models",
+        "根据规则筛选目标模型",
+        count = filtered_models.len()
     );
 
     // provider 映射
     let provider_mappings = get_provider_mappings(db, &filtered_models).await?;
-    info!(
-        component = "database.pricing",
-        mappings = provider_mappings.len(),
-        "构建 provider 映射完成"
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "provider_mapping_complete",
+        "构建 provider 映射完成",
+        mappings = provider_mappings.len()
     );
 
     // 事务内增量 upsert
@@ -337,11 +363,14 @@ async fn initialize_model_pricing_from_remote_or_local(
                 inserted += 1;
             }
         } else {
-            warn!(
-                component = "database.pricing",
+            lwarn!(
+                "system",
+                LogStage::Startup,
+                LogComponent::Database,
+                "skip_model_no_provider",
+                "跳过：provider 在数据库中不存在",
                 provider = %model.provider_name,
-                model = %model.name,
-                "跳过：provider 在数据库中不存在"
+                model = %model.name
             );
         }
     }
@@ -350,12 +379,15 @@ async fn initialize_model_pricing_from_remote_or_local(
         .await
         .map_err(|e| ProxyError::database(format!("提交模型定价事务失败: {}", e)))?;
 
-    info!(
-        component = "database.pricing",
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "pricing_upsert_complete",
+        "模型定价增量更新完成",
         inserted = inserted,
         updated = updated,
-        tiers_written = tiers_written,
-        "模型定价增量更新完成"
+        tiers_written = tiers_written
     );
 
     Ok(())
@@ -365,15 +397,18 @@ async fn initialize_model_pricing_from_remote_or_local(
 async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
     match fetch_remote_json().await {
         Ok(map) => {
-            info!(
-                component = "database.pricing",
-                source = "remote",
-                "使用远程模型定价数据"
+            linfo!(
+                "system",
+                LogStage::Startup,
+                LogComponent::Database,
+                "use_remote_pricing",
+                "使用远程模型定价数据",
+                source = "remote"
             );
             Ok(map)
         }
         Err(e) => {
-            warn!(component = "database.pricing", error = %e, "远程获取失败，回退到本地JSON");
+            lwarn!("system", LogStage::Startup, LogComponent::Database, "remote_pricing_fail", "远程获取失败，回退到本地JSON", error = %e);
             load_json_data().await
         }
     }
@@ -480,18 +515,26 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
                     price_info: price_info.clone(),
                 });
 
-                info!(
-                    "🎯 选择模型: {} -> {} (litellm_provider: {} -> db_provider: {})",
-                    model_name, normalized_model_name, litellm_provider, db_provider_name
+                linfo!(
+                    "system",
+                    LogStage::Startup,
+                    LogComponent::Database,
+                    "select_model",
+                    &format!("🎯 选择模型: {} -> {} (litellm_provider: {} -> db_provider: {})",
+                    model_name, normalized_model_name, litellm_provider, db_provider_name)
                 );
             }
         }
     }
 
-    info!(
-        "📊 过滤结果: 从 {} 个模型中选择了 {} 个目标模型",
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "filter_models_result",
+        &format!("📊 过滤结果: 从 {} 个模型中选择了 {} 个目标模型",
         json_data.len(),
-        filtered_models.len()
+        filtered_models.len())
     );
 
     filtered_models
@@ -514,17 +557,25 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
         let normalized = model_name
             .strip_prefix(&provider_prefix)
             .unwrap_or(model_name);
-        debug!(
-            "标准化模型名称: {} -> {} (移除前缀: {} 基于litellm_provider: {})",
-            model_name, normalized, provider_prefix, litellm_provider
+        ldebug!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Database,
+            "normalize_model_name",
+            &format!("标准化模型名称: {} -> {} (移除前缀: {} 基于litellm_provider: {})",
+            model_name, normalized, provider_prefix, litellm_provider)
         );
         return normalized.to_string();
     }
 
     // 无匹配前缀，保持原名称
-    debug!(
-        "模型名称无需标准化: {} (litellm_provider: {})",
-        model_name, litellm_provider
+    ldebug!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "normalize_model_name_skip",
+        &format!("模型名称无需标准化: {} (litellm_provider: {})",
+        model_name, litellm_provider)
     );
     model_name.to_string()
 }
@@ -539,7 +590,7 @@ async fn get_provider_mappings(
     let required_providers: HashSet<String> =
         models.iter().map(|m| m.provider_name.clone()).collect();
 
-    info!("📋 需要查询的providers: {:?}", required_providers);
+    linfo!("system", LogStage::Startup, LogComponent::Database, "query_providers", &format!("📋 需要查询的providers: {:?}", required_providers));
 
     // 查询数据库中所有活跃的provider
     let providers = provider_types::Entity::find()
@@ -553,14 +604,14 @@ async fn get_provider_mappings(
     for provider in providers {
         if required_providers.contains(&provider.name) {
             mappings.insert(provider.name.clone(), provider.id);
-            info!("🔗 Provider映射: {} -> {}", provider.name, provider.id);
+            linfo!("system", LogStage::Startup, LogComponent::Database, "provider_mapping", &format!("🔗 Provider映射: {} -> {}", provider.name, provider.id));
         }
     }
 
     // 检查是否有缺失的provider
     for required in &required_providers {
         if !mappings.contains_key(required) {
-            warn!("⚠️  Provider '{}' 在数据库中不存在", required);
+            lwarn!("system", LogStage::Startup, LogComponent::Database, "provider_not_found", &format!("⚠️  Provider '{}' 在数据库中不存在", required));
         }
     }
 
@@ -573,9 +624,13 @@ async fn insert_model_with_pricing(
     model: &FilteredModel,
     provider_id: i32,
 ) -> Result<(), ProxyError> {
-    info!(
-        "💰 插入模型定价: {} (provider_id: {})",
-        model.name, provider_id
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "insert_model_pricing",
+        &format!("💰 插入模型定价: {} (provider_id: {})",
+        model.name, provider_id)
     );
 
     // 1. 插入model_pricing记录
@@ -596,10 +651,14 @@ async fn insert_model_with_pricing(
 
     // 2. 解析并插入定价层级
     let pricing_tiers = parse_pricing_tiers(&model.price_info);
-    info!(
-        "🎯 为模型 {} 解析出 {} 个定价层级",
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "parse_pricing_tiers",
+        &format!("🎯 为模型 {} 解析出 {} 个定价层级",
         model.name,
-        pricing_tiers.len()
+        pricing_tiers.len())
     );
 
     for tier in pricing_tiers {
@@ -627,9 +686,13 @@ async fn insert_model_with_pricing_txn(
     model: &FilteredModel,
     provider_id: i32,
 ) -> Result<(), ProxyError> {
-    info!(
-        "💰 插入模型定价: {} (provider_id: {})",
-        model.name, provider_id
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Database,
+        "insert_model_pricing",
+        &format!("💰 插入模型定价: {} (provider_id: {})",
+        model.name, provider_id)
     );
 
     let pricing_model = model_pricing::ActiveModel {

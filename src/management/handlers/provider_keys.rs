@@ -7,19 +7,15 @@ use crate::auth::{
     oauth_token_refresh_service::ScheduledTokenRefresh,
     oauth_token_refresh_task::OAuthTokenRefreshTask, types::AuthStatus,
 };
+use crate::error::ProxyError;
+use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
-use crate::scheduler::types::ApiKeyHealthStatus;
-use axum::response::IntoResponse;
-
-/// Gemini提供商名称常量
-const GEMINI_PROVIDER_NAME: &str = "gemini";
-
-/// OAuth认证类型常量
-const OAUTH_AUTH_TYPE: &str = "oauth";
-
 use crate::management::{response, server::AppState};
+use crate::scheduler::types::ApiKeyHealthStatus;
+use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
+use axum::response::IntoResponse;
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
@@ -28,9 +24,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
 
-use crate::error::ProxyError;
+/// Gemini提供商名称常量
+const GEMINI_PROVIDER_NAME: &str = "gemini";
+
+/// OAuth认证类型常量
+const OAUTH_AUTH_TYPE: &str = "oauth";
 
 async fn prepare_oauth_schedule(
     task: Option<&Arc<OAuthTokenRefreshTask>>,
@@ -39,10 +38,14 @@ async fn prepare_oauth_schedule(
     key_id: Option<i32>,
 ) -> Result<Option<ScheduledTokenRefresh>, ProxyError> {
     let Some(task) = task else {
-        warn!(
+        lwarn!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::OAuth,
+            "task_unavailable",
+            "OAuth refresh task unavailable, skip scheduling",
             user_id = user_id,
             key_id = key_id,
-            "OAuth refresh task unavailable, skip scheduling"
         );
         return Ok(None);
     };
@@ -54,12 +57,15 @@ async fn prepare_oauth_schedule(
     match task.prepare_schedule(session_id).await {
         Ok(schedule) => Ok(Some(schedule)),
         Err(err) => {
-            error!(
+            lerror!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::OAuth,
+                "prepare_schedule_fail",
+                &format!("Failed to prepare OAuth refresh schedule: {}", err),
                 user_id = user_id,
                 key_id = key_id,
                 session_id = session_id.as_str(),
-                "Failed to prepare OAuth refresh schedule: {}",
-                err
             );
             Err(err)
         }
@@ -123,7 +129,7 @@ pub async fn get_provider_keys_list(
     let total = match select.clone().count(db).await {
         Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count provider keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "count_fail", &format!("Failed to count provider keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count provider keys"
@@ -142,7 +148,7 @@ pub async fn get_provider_keys_list(
     {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch provider keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_fail", &format!("Failed to fetch provider keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider keys"
@@ -279,7 +285,7 @@ pub async fn create_provider_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to check existing provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "check_exist_fail", &format!("Failed to check existing provider key: {}", err));
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to check existing provider key",
                 err,
@@ -335,7 +341,7 @@ pub async fn create_provider_key(
                             ));
                         }
                         Err(err) => {
-                            tracing::error!("Failed to check OAuth session usage: {}", err);
+                            lerror!("system", LogStage::Db, LogComponent::OAuth, "check_session_usage_fail", &format!("Failed to check OAuth session usage: {}", err));
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
                                     "Failed to check OAuth session usage",
@@ -353,7 +359,7 @@ pub async fn create_provider_key(
                     ));
                 }
                 Err(err) => {
-                    tracing::error!("Failed to validate OAuth session: {}", err);
+                    lerror!("system", LogStage::Db, LogComponent::OAuth, "validate_session_fail", &format!("Failed to validate OAuth session: {}", err));
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
                         err,
@@ -396,10 +402,14 @@ pub async fn create_provider_key(
 
                         // 如果用户传递了 project_id, 直接带 project_id 调用 loadCodeAssist
                         if let Some(provided_pid) = final_project_id.clone() {
-                            tracing::info!(
+                            linfo!(
+                                "system",
+                                LogStage::Authentication,
+                                LogComponent::OAuth,
+                                "gemini_load_assist_with_project",
+                                "Gemini OAuth: Using user-provided project_id to call loadCodeAssist",
                                 user_id = user_id,
                                 project_id = %provided_pid,
-                                "Gemini OAuth: 使用用户提供的 project_id 调用 loadCodeAssist"
                             );
                             match gemini_client
                                 .load_code_assist(access_token, Some(&provided_pid), None)
@@ -412,10 +422,14 @@ pub async fn create_provider_key(
                                     } else {
                                         // 没有返回 cloudaicompanionProject，说明用户提供的 project_id 无效或不存在
                                         // 需要走自动获取流程来获取正确的 project_id
-                                        tracing::info!(
+                                        linfo!(
+                                            "system",
+                                            LogStage::Authentication,
+                                            LogComponent::OAuth,
+                                            "gemini_invalid_project_id",
+                                            "loadCodeAssist did not return cloudaicompanionProject, user-provided project_id is invalid",
                                             user_id = user_id,
                                             provided_project_id = %provided_pid,
-                                            "loadCodeAssist 未返回 cloudaicompanionProject，用户提供的 project_id 无效"
                                         );
 
                                         // 设置为不健康状态，用户提供的project_id无效，需要自动获取
@@ -423,45 +437,65 @@ pub async fn create_provider_key(
                                         needs_auto_get_project_id_async = true;
                                         final_project_id = None; // 清空无效的project_id
 
-                                        tracing::info!(
+                                        linfo!(
+                                            "system",
+                                            LogStage::Authentication,
+                                            LogComponent::OAuth,
+                                            "gemini_auto_get_project_id",
+                                            "Gemini OAuth: User-provided project_id is invalid, will auto-get project_id",
                                             user_id = user_id,
                                             provided_project_id = %provided_pid,
-                                            "Gemini OAuth: 用户提供的 project_id 无效，将自动获取 project_id"
                                         );
                                     }
                                 }
                                 Err(e) => {
                                     health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                                    tracing::error!(user_id = user_id, error = %e, "Gemini OAuth: loadCodeAssist 调用失败（带 project_id）");
+                                    lerror!("system", LogStage::Authentication, LogComponent::OAuth, "gemini_load_assist_fail", "Gemini OAuth: loadCodeAssist call failed (with project_id)", user_id = user_id, error = %e);
                                 }
                             }
                         } else {
                             // 未提供 project_id: 走自动流程（loadCodeAssist -> 若无则 onboardUser）
-                            tracing::info!(
+                            linfo!(
+                                "system",
+                                LogStage::Authentication,
+                                LogComponent::OAuth,
+                                "gemini_auto_get_project_id_async",
+                                "Gemini OAuth: No project_id provided, will auto-get asynchronously (loadCodeAssist / onboardUser)",
                                 user_id = user_id,
-                                "Gemini OAuth: 未提供 project_id, 将异步自动获取 (loadCodeAssist / onboardUser)"
                             );
 
                             // 设置为不健康状态，标记需要异步执行自动获取 project_id
                             health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                             needs_auto_get_project_id_async = true;
 
-                            tracing::info!(
+                            linfo!(
+                                "system",
+                                LogStage::Authentication,
+                                LogComponent::OAuth,
+                                "gemini_mark_unhealthy_for_auto_get",
+                                "Gemini OAuth: Marked as unhealthy for async auto-get of project_id",
                                 user_id = user_id,
-                                "Gemini OAuth: 标记需要异步执行自动获取 project_id，key创建为不健康状态"
                             );
                         }
                     } else {
-                        tracing::error!(
+                        lerror!(
+                            "system",
+                            LogStage::Authentication,
+                            LogComponent::OAuth,
+                            "gemini_no_auth_session",
+                            "Gemini OAuth: Authorized OAuth session not found, cannot validate project_id",
                             user_id = user_id,
-                            "Gemini OAuth: 未找到授权的 OAuth 会话, 无法校验 project_id"
                         );
                         health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                     }
                 } else {
-                    tracing::error!(
+                    lerror!(
+                        "system",
+                        LogStage::Authentication,
+                        LogComponent::OAuth,
+                        "gemini_missing_session_id",
+                        "Gemini OAuth: Missing session_id (api_key field), cannot complete validation",
                         user_id = user_id,
-                        "Gemini OAuth: 缺少 session_id(api_key 字段) 无法完成验证流程"
                     );
                     health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                 }
@@ -508,7 +542,7 @@ pub async fn create_provider_key(
     let result = match new_provider_key.insert(db).await {
         Ok(model) => model,
         Err(err) => {
-            tracing::error!("Failed to create provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "create_key_fail", &format!("Failed to create provider key: {}", err));
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to create provider key",
                 err,
@@ -519,30 +553,40 @@ pub async fn create_provider_key(
     if let Some(schedule) = pending_schedule {
         if let Some(task) = refresh_task.as_ref() {
             if let Err(err) = task.enqueue_schedule(schedule).await {
-                error!(
+                lerror!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::OAuth,
+                    "enqueue_schedule_fail",
+                    &format!("Failed to enqueue OAuth refresh schedule: {}", err),
                     user_id = user_id,
                     key_id = result.id,
-                    "Failed to enqueue OAuth refresh schedule: {}",
-                    err
                 );
                 if let Err(delete_err) = user_provider_keys::Entity::delete_by_id(result.id)
                     .exec(db)
                     .await
                 {
-                    error!(
+                    lerror!(
+                        "system",
+                        LogStage::Db,
+                        LogComponent::Database,
+                        "rollback_key_fail",
+                        &format!("Failed to rollback provider key after enqueue error: {}", delete_err),
                         user_id = user_id,
                         key_id = result.id,
-                        "Failed to rollback provider key after enqueue error: {}",
-                        delete_err
                     );
                 }
                 return crate::manage_error!(err);
             }
         } else {
-            warn!(
+            lwarn!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::OAuth,
+                "task_unavailable_no_enqueue",
+                "OAuth refresh task unavailable, schedule not enqueued",
                 user_id = user_id,
                 key_id = result.id,
-                "OAuth refresh task unavailable, schedule not enqueued"
             );
         }
     }
@@ -554,20 +598,28 @@ pub async fn create_provider_key(
         let db_clone = db.clone();
 
         tokio::spawn(async move {
-            tracing::info!(
+            linfo!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "start_auto_get_project_id_task",
+                "Starting async auto-get project_id task",
                 user_id = user_id_for_task,
                 key_id = %key_id,
-                "启动异步自动获取 project_id 任务"
             );
 
             if let Err(e) =
                 execute_auto_get_project_id_async(&db_clone, key_id, &user_id_for_task).await
             {
-                tracing::error!(
+                lerror!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "auto_get_project_id_task_fail",
+                    "Async auto-get project_id task failed",
                     user_id = user_id_for_task,
                     key_id = %key_id,
                     error = %e,
-                    "异步自动获取 project_id 任务执行失败"
                 );
             }
         });
@@ -638,7 +690,7 @@ pub async fn get_provider_key_detail(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch provider key detail: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key detail: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key detail: {}",
@@ -674,38 +726,54 @@ pub async fn get_provider_key_detail(
     let rate_limit_remaining_seconds = if let Some(resets_at) = provider_key.0.rate_limit_resets_at
     {
         let now = Utc::now().naive_utc();
-        info!(
+        linfo!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "calc_rate_limit_remaining",
+            "Calculating rate limit remaining time - reset time found in DB",
             key_id = provider_key.0.id,
             rate_limit_resets_at = ?resets_at,
             current_time = ?now,
-            "计算限流剩余时间 - 数据库中有重置时间"
         );
 
         if resets_at > now {
             let duration = resets_at.signed_duration_since(now);
             let seconds = duration.num_seconds();
             let remaining_seconds = seconds.max(0) as u64;
-            info!(
+            linfo!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "rate_limit_not_lifted",
+                "Rate limit not lifted, calculating remaining seconds",
                 key_id = provider_key.0.id,
                 remaining_seconds = remaining_seconds,
                 duration_seconds = duration.num_seconds(),
-                "限流尚未解除，计算剩余秒数"
             );
             Some(remaining_seconds)
         } else {
-            info!(
+            linfo!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "rate_limit_expired",
+                "Rate limit expired, returning None",
                 key_id = provider_key.0.id,
                 rate_limit_resets_at = ?resets_at,
                 current_time = ?now,
-                "限流已过期，返回None"
             );
             None
         }
     } else {
-        info!(
+        linfo!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "no_rate_limit_reset_time",
+            "No rate limit reset time in DB, returning None",
             key_id = provider_key.0.id,
             health_status = %provider_key.0.health_status,
-            "数据库中无限流重置时间，返回None"
         );
         None
     };
@@ -781,7 +849,7 @@ pub async fn update_provider_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to find provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -817,7 +885,7 @@ pub async fn update_provider_key(
                 ));
             }
             Err(err) => {
-                tracing::error!("Failed to check duplicate name: {}", err);
+                lerror!("system", LogStage::Db, LogComponent::Database, "check_duplicate_fail", &format!("Failed to check duplicate name: {}", err));
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to check duplicate name: {}",
@@ -878,7 +946,7 @@ pub async fn update_provider_key(
                             ));
                         }
                         Err(err) => {
-                            tracing::error!("Failed to check OAuth session usage: {}", err);
+                            lerror!("system", LogStage::Db, LogComponent::OAuth, "check_session_usage_fail", &format!("Failed to check OAuth session usage: {}", err));
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
                                     "Failed to check OAuth session usage",
@@ -896,7 +964,7 @@ pub async fn update_provider_key(
                     ));
                 }
                 Err(err) => {
-                    tracing::error!("Failed to validate OAuth session: {}", err);
+                    lerror!("system", LogStage::Db, LogComponent::OAuth, "validate_session_fail", &format!("Failed to validate OAuth session: {}", err));
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
                         err,
@@ -940,7 +1008,7 @@ pub async fn update_provider_key(
     let updated_key = match active_model.update(db).await {
         Ok(model) => model,
         Err(err) => {
-            tracing::error!("Failed to update provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "update_key_fail", &format!("Failed to update provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update provider key: {}",
@@ -952,28 +1020,38 @@ pub async fn update_provider_key(
     if let Some(schedule) = pending_schedule {
         if let Some(task) = refresh_task.as_ref() {
             if let Err(err) = task.enqueue_schedule(schedule).await {
-                error!(
+                lerror!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::OAuth,
+                    "enqueue_schedule_update_fail",
+                    &format!("Failed to enqueue OAuth refresh schedule during update: {}", err),
                     user_id = user_id,
                     key_id = key_id,
-                    "Failed to enqueue OAuth refresh schedule during update: {}",
-                    err
                 );
                 let revert_model: user_provider_keys::ActiveModel = original_key.into();
                 if let Err(revert_err) = revert_model.update(db).await {
-                    error!(
+                    lerror!(
+                        "system",
+                        LogStage::Db,
+                        LogComponent::Database,
+                        "rollback_key_update_fail",
+                        &format!("Failed to rollback provider key after enqueue error: {}", revert_err),
                         user_id = user_id,
                         key_id = key_id,
-                        "Failed to rollback provider key after enqueue error: {}",
-                        revert_err
                     );
                 }
                 return crate::manage_error!(err);
             }
         } else {
-            warn!(
+            lwarn!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::OAuth,
+                "task_unavailable_no_enqueue",
+                "OAuth refresh task unavailable, schedule not enqueued",
                 user_id = user_id,
                 key_id = key_id,
-                "OAuth refresh task unavailable, schedule not enqueued"
             );
         }
     }
@@ -989,12 +1067,15 @@ pub async fn update_provider_key(
         if updated_session_id.as_deref() != Some(old_id.as_str()) {
             if let Some(task) = refresh_task.as_ref() {
                 if let Err(err) = task.remove_session(&old_id).await {
-                    warn!(
+                    lwarn!(
+                        "system",
+                        LogStage::Scheduling,
+                        LogComponent::OAuth,
+                        "remove_old_session_fail",
+                        &format!("Failed to remove old OAuth session from refresh queue: {}", err),
                         user_id = user_id,
                         key_id = key_id,
                         session_id = old_id.as_str(),
-                        "Failed to remove old OAuth session from refresh queue: {}",
-                        err
                     );
                 }
             }
@@ -1041,7 +1122,7 @@ pub async fn delete_provider_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to find provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -1062,7 +1143,7 @@ pub async fn delete_provider_key(
     match active_model.delete(db).await {
         Ok(_) => {}
         Err(err) => {
-            tracing::error!("Failed to delete provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "delete_key_fail", &format!("Failed to delete provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to delete provider key: {}",
@@ -1074,12 +1155,15 @@ pub async fn delete_provider_key(
     if let Some(session_id) = session_to_remove {
         if let Some(task) = refresh_task.as_ref() {
             if let Err(err) = task.remove_session(&session_id).await {
-                warn!(
+                lwarn!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::OAuth,
+                    "remove_session_after_delete_fail",
+                    &format!("Failed to remove OAuth session from refresh queue after delete: {}", err),
                     user_id = user_id,
                     key_id = key_id,
                     session_id = session_id.as_str(),
-                    "Failed to remove OAuth session from refresh queue after delete: {}",
-                    err
                 );
             }
         }
@@ -1123,7 +1207,7 @@ pub async fn get_provider_key_stats(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key: {}",
@@ -1144,7 +1228,7 @@ pub async fn get_provider_key_stats(
     let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
         Ok(trends) => trends,
         Err(err) => {
-            tracing::error!("Failed to fetch provider key trends: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_trends_fail", &format!("Failed to fetch provider key trends: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch trends data: {}",
@@ -1199,7 +1283,7 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count total keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "count_total_keys_fail", &format!("Failed to count total keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count total keys: {}",
@@ -1217,7 +1301,7 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count active keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "count_active_keys_fail", &format!("Failed to count active keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count active keys: {}",
@@ -1235,7 +1319,7 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(keys) => keys.iter().map(|k| k.id).collect(),
         Err(err) => {
-            tracing::error!("Failed to fetch user provider keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_keys_fail", &format!("Failed to fetch user provider keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user provider keys: {}",
@@ -1262,7 +1346,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 (usage_count, cost_sum)
             }
             Err(err) => {
-                tracing::error!("Failed to fetch proxy tracing records: {}", err);
+                lerror!("system", LogStage::Db, LogComponent::Database, "fetch_tracing_fail", &format!("Failed to fetch proxy tracing records: {}", err));
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to fetch usage statistics: {}",
@@ -1317,7 +1401,7 @@ pub async fn get_simple_provider_keys_list(
     {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch simple provider keys: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_simple_keys_fail", &format!("Failed to fetch simple provider keys: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider keys: {}",
@@ -1384,7 +1468,7 @@ pub async fn health_check_provider_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to find provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -1406,7 +1490,7 @@ pub async fn health_check_provider_key(
     match active_model.update(db).await {
         Ok(_) => {}
         Err(err) => {
-            tracing::error!("Failed to update health status: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::HealthChecker, "update_health_fail", &format!("Failed to update health status: {}", err));
             // 不返回错误，继续返回检查结果
         }
     };
@@ -1531,7 +1615,7 @@ async fn fetch_provider_keys_usage_stats(
     {
         Ok(records) => records,
         Err(err) => {
-            tracing::error!("Failed to fetch proxy tracing records: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_tracing_fail", &format!("Failed to fetch proxy tracing records: {}", err));
             return stats_map;
         }
     };
@@ -1633,7 +1717,7 @@ pub async fn get_provider_key_trends(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch provider key: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key: {}",
@@ -1651,7 +1735,7 @@ pub async fn get_provider_key_trends(
     let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
         Ok(trends) => trends,
         Err(err) => {
-            tracing::error!("Failed to fetch provider key trends: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_trends_fail", &format!("Failed to fetch provider key trends: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch trends data: {}",
@@ -1707,7 +1791,7 @@ pub async fn get_user_service_api_trends(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service api: {}", err);
+            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_service_api_fail", &format!("Failed to fetch user service api: {}", err));
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user service api: {}",
@@ -1726,7 +1810,7 @@ pub async fn get_user_service_api_trends(
         match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
             Ok(trends) => trends,
             Err(err) => {
-                tracing::error!("Failed to fetch user service api trends: {}", err);
+                lerror!("system", LogStage::Db, LogComponent::Database, "fetch_service_api_trends_fail", &format!("Failed to fetch user service api trends: {}", err));
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to fetch trends data: {}",
@@ -1933,11 +2017,15 @@ async fn execute_auto_get_project_id_async(
     let access_token = match get_access_token_for_key(db, key_id, user_id).await {
         Ok(token) => token,
         Err(e) => {
-            tracing::error!(
+            lerror!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "get_access_token_fail",
+                "Cannot get access token to execute auto-get project_id",
                 user_id = user_id,
                 key_id = %key_id,
                 error = %e,
-                "无法获取access token执行自动获取project_id"
             );
             return Err(e);
         }
@@ -1950,11 +2038,15 @@ async fn execute_auto_get_project_id_async(
     {
         Ok(pid_opt) => {
             if let Some(pid) = pid_opt {
-                tracing::info!(
+                linfo!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "auto_get_project_id_success",
+                    "Async auto-get project_id success",
                     user_id = user_id,
                     key_id = %key_id,
                     project_id = %pid,
-                    "异步自动获取 project_id 成功"
                 );
 
                 // 更新数据库记录
@@ -1966,28 +2058,40 @@ async fn execute_auto_get_project_id_async(
                     active_key.updated_at = Set(Utc::now().naive_utc());
 
                     active_key.update(db).await?;
-                    tracing::info!(
+                    linfo!(
+                        "system",
+                        LogStage::BackgroundTask,
+                        LogComponent::OAuth,
+                        "update_project_id_success",
+                        "Async update of auto-get project_id success",
                         user_id = user_id,
                         key_id = %key_id,
                         project_id = %pid,
-                        "异步更新自动获取的 project_id 成功"
                     );
                 }
             } else {
-                tracing::warn!(
+                lwarn!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "auto_get_project_id_empty",
+                    "Async auto-get project_id returned empty",
                     user_id = user_id,
                     key_id = %key_id,
-                    "异步自动获取 project_id 返回为空"
                 );
             }
             Ok(())
         }
         Err(e) => {
-            tracing::error!(
+            lerror!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "auto_get_project_id_retry_fail",
+                "Async auto-get project_id retry failed",
                 user_id = user_id,
                 key_id = %key_id,
                 error = %e,
-                "异步自动获取 project_id 重试失败"
             );
             Err(e)
         }
@@ -2060,11 +2164,15 @@ async fn get_access_token_for_key(
     // 检查access_token是否存在
     if let Some(ref access_token) = oauth_session.access_token {
         if !access_token.is_empty() {
-            tracing::debug!(
+            ldebug!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "get_access_token_success",
+                "Successfully got access token",
                 user_id = user_id,
                 key_id = %key_id,
                 session_id = %session_id,
-                "成功获取access_token"
             );
             Ok(access_token.clone())
         } else {

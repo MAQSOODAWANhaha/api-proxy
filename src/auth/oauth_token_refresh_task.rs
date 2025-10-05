@@ -6,21 +6,21 @@
 //! - 监控和统计刷新任务的执行情况
 //! - 提供任务控制接口（启动、停止、暂停）
 
+use crate::auth::oauth_token_refresh_service::{
+    OAuthTokenRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
+};
+use crate::error::{ProxyError, Result};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
-use tokio_util::time::{DelayQueue, delay_queue::Key};
-use tracing::{debug, error, info, warn};
-
-use crate::auth::oauth_token_refresh_service::{
-    OAuthTokenRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
-};
-use crate::error::{ProxyError, Result};
+use tokio_util::time::{delay_queue::Key, DelayQueue};
 
 const FALLBACK_RESCAN_INTERVAL_SECS: u64 = 600;
 const COMMAND_CHANNEL_CAPACITY: usize = 128;
@@ -119,7 +119,7 @@ impl OAuthTokenRefreshTask {
         let initial_schedule = match self.refresh_service.initialize_refresh_schedule().await {
             Ok(entries) => entries,
             Err(e) => {
-                error!("Failed to initialize OAuth token refresh schedule: {:?}", e);
+                lerror!("system", LogStage::Startup, LogComponent::OAuth, "init_schedule_fail", &format!("Failed to initialize OAuth token refresh schedule: {:?}", e));
                 Vec::new()
             }
         };
@@ -135,7 +135,7 @@ impl OAuthTokenRefreshTask {
         *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
-        info!("OAuth Token refresh task started");
+        linfo!("system", LogStage::Startup, LogComponent::OAuth, "task_started", "OAuth Token refresh task started");
         Ok(())
     }
 
@@ -158,7 +158,7 @@ impl OAuthTokenRefreshTask {
 
         *self.command_sender.write().await = None;
         *state = TaskState::Stopped;
-        info!("OAuth Token refresh task stopped");
+        linfo!("system", LogStage::Shutdown, LogComponent::OAuth, "task_stopped", "OAuth Token refresh task stopped");
         Ok(())
     }
 
@@ -173,7 +173,7 @@ impl OAuthTokenRefreshTask {
         *state = TaskState::Paused;
         let _ = self.control_sender.send(TaskControl::Pause);
 
-        info!("OAuth Token refresh task paused");
+        linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "task_paused", "OAuth Token refresh task paused");
         Ok(())
     }
 
@@ -188,14 +188,14 @@ impl OAuthTokenRefreshTask {
         *state = TaskState::Running;
         let _ = self.control_sender.send(TaskControl::Resume);
 
-        info!("OAuth Token refresh task resumed");
+        linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "task_resumed", "OAuth Token refresh task resumed");
         Ok(())
     }
 
     /// 立即执行一次刷新
     pub async fn execute_now(&self) -> Result<()> {
         let _ = self.control_sender.send(TaskControl::ExecuteNow);
-        info!("OAuth Token refresh task triggered for immediate execution");
+        linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "task_triggered", "OAuth Token refresh task triggered for immediate execution");
         Ok(())
     }
 
@@ -284,7 +284,7 @@ impl OAuthTokenRefreshTask {
 
             let mut consecutive_errors = 0u32;
 
-            info!("OAuth Token refresh task loop started");
+            linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "task_loop_started", "OAuth Token refresh task loop started");
 
             loop {
                 tokio::select! {
@@ -332,7 +332,7 @@ impl OAuthTokenRefreshTask {
                                     && MAX_ERROR_RETRIES > 0
                                     && consecutive_errors >= MAX_ERROR_RETRIES
                                 {
-                                    warn!("Too many consecutive errors, pausing task");
+                                    lwarn!("system", LogStage::BackgroundTask, LogComponent::OAuth, "too_many_errors", "Too many consecutive errors, pausing task");
                                     *task_state.write().await =
                                         TaskState::Error(format!(
                                             "Too many consecutive errors: {}",
@@ -352,7 +352,7 @@ impl OAuthTokenRefreshTask {
                                     .await;
                                 let had_error = rescan_result.is_err();
                                 if let Err(e) = rescan_result {
-                                    error!("Failed to resync OAuth refresh schedule: {:?}", e);
+                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "resync_failed", &format!("Failed to resync OAuth refresh schedule: {:?}", e));
                                 }
 
                                 Self::schedule_rescan(&mut queue, &mut rescan_key);
@@ -367,7 +367,7 @@ impl OAuthTokenRefreshTask {
                                     && MAX_ERROR_RETRIES > 0
                                     && consecutive_errors >= MAX_ERROR_RETRIES
                                 {
-                                    warn!("Too many consecutive errors, pausing task");
+                                    lwarn!("system", LogStage::BackgroundTask, LogComponent::OAuth, "too_many_errors", "Too many consecutive errors, pausing task");
                                     *task_state.write().await =
                                         TaskState::Error(format!(
                                             "Too many consecutive errors: {}",
@@ -387,14 +387,14 @@ impl OAuthTokenRefreshTask {
                                     &mut session_schedules,
                                     schedule,
                                 );
-                                debug!("Scheduled OAuth session {} for refresh", session_id);
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_scheduled", &format!("Scheduled OAuth session {} for refresh", session_id));
                             }
                             Some(RefreshCommand::Remove(session_id)) => {
                                 if let Some(key) = session_keys.remove(&session_id) {
                                     let _ = queue.remove(&key);
                                 }
                                 session_schedules.remove(&session_id);
-                                debug!("Removed OAuth session {} from refresh queue", session_id);
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_removed", &format!("Removed OAuth session {} from refresh queue", session_id));
                             }
                             None => {
                                 // 命令通道已关闭，继续处理现有队列
@@ -404,18 +404,18 @@ impl OAuthTokenRefreshTask {
                     Ok(control) = control_receiver.recv() => {
                         match control {
                             TaskControl::Stop => {
-                                info!("Received stop signal, exiting task loop");
+                                linfo!("system", LogStage::Shutdown, LogComponent::OAuth, "stop_signal", "Received stop signal, exiting task loop");
                                 break;
                             }
                             TaskControl::Pause => {
-                                debug!("Received pause signal");
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "pause_signal", "Received pause signal");
                             }
                             TaskControl::Resume => {
-                                debug!("Received resume signal");
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "resume_signal", "Received resume signal");
                                 consecutive_errors = 0;
                             }
                             TaskControl::ExecuteNow => {
-                                info!("Received execute now signal, triggering immediate rescan");
+                                linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "execute_now_signal", "Received execute now signal, triggering immediate rescan");
                                 if let Err(e) = Self::resync_schedule(
                                     &refresh_service,
                                     &mut queue,
@@ -423,20 +423,20 @@ impl OAuthTokenRefreshTask {
                                     &mut session_schedules,
                                 )
                                 .await {
-                                    error!("Immediate rescan failed: {:?}", e);
+                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "rescan_failed", &format!("Immediate rescan failed: {:?}", e));
                                 }
                                 Self::schedule_rescan(&mut queue, &mut rescan_key);
                                 consecutive_errors = 0;
                             }
                             TaskControl::Start => {
-                                debug!("Received start signal in task loop");
+                                ldebug!("system", LogStage::Startup, LogComponent::OAuth, "start_signal", "Received start signal in task loop");
                             }
                         }
                     }
                 }
             }
 
-            info!("OAuth Token refresh task loop ended");
+            linfo!("system", LogStage::Shutdown, LogComponent::OAuth, "task_loop_ended", "OAuth Token refresh task loop ended");
         })
     }
 
@@ -487,7 +487,7 @@ impl OAuthTokenRefreshTask {
         session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
     ) -> Result<()> {
         if let Err(err) = refresh_service.cleanup_stale_sessions().await {
-            warn!("Failed to cleanup stale OAuth sessions: {:?}", err);
+            lwarn!("system", LogStage::BackgroundTask, LogComponent::OAuth, "cleanup_failed", &format!("Failed to cleanup stale OAuth sessions: {:?}", err));
         }
 
         let sessions = refresh_service.list_authorized_sessions().await?;
@@ -538,9 +538,12 @@ impl OAuthTokenRefreshTask {
         {
             Ok(result) => result,
             Err(e) => {
-                error!(
-                    "Failed to refresh token for session {}: {:?}",
-                    session_id, e
+                lerror!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "refresh_failed",
+                    &format!("Failed to refresh token for session {}: {:?}", session_id, e)
                 );
                 let failure = TokenRefreshResult {
                     success: false,
@@ -598,9 +601,12 @@ impl OAuthTokenRefreshTask {
                 session_schedules.remove(session_id);
             }
             Err(e) => {
-                warn!(
-                    "Failed to determine next refresh for session {}: {:?}",
-                    session_id, e
+                lwarn!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "next_refresh_fail",
+                    &format!("Failed to determine next refresh for session {}: {:?}", session_id, e)
                 );
                 if result.should_retry {
                     let retry_at = Utc::now()

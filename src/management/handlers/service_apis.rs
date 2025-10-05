@@ -2,13 +2,15 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
+use crate::logging::{LogComponent, LogStage};
+use crate::lerror;
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
+use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
-use sea_orm::QueryOrder; // for order_by()
 use sea_orm::prelude::Decimal;
+use sea_orm::QueryOrder; // for order_by()
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -207,7 +209,13 @@ pub async fn get_user_service_cards(
     {
         Ok(count) => count as i32,
         Err(err) => {
-            tracing::error!("Failed to count user service APIs: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_service_apis_fail",
+                &format!("Failed to count user service APIs: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count user service APIs: {}",
@@ -225,7 +233,13 @@ pub async fn get_user_service_cards(
     {
         Ok(count) => count as i32,
         Err(err) => {
-            tracing::error!("Failed to count active user service APIs: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_active_service_apis_fail",
+                &format!("Failed to count active user service APIs: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count active user service APIs: {}",
@@ -242,7 +256,13 @@ pub async fn get_user_service_cards(
     {
         Ok(count) => count as i64,
         Err(err) => {
-            tracing::error!("Failed to count user requests: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_user_requests_fail",
+                &format!("Failed to count user requests: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count user requests: {}",
@@ -302,7 +322,13 @@ pub async fn list_user_service_keys(
     let total = match select.clone().count(db).await {
         Ok(count) => count,
         Err(err) => {
-            tracing::error!("Failed to count user service APIs: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_service_apis_fail",
+                &format!("Failed to count user service APIs: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count user service APIs: {}",
@@ -334,7 +360,13 @@ pub async fn list_user_service_keys(
     {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch user service APIs: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service APIs: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user service APIs: {}",
@@ -487,7 +519,13 @@ pub async fn create_user_service_key(
             return crate::manage_error!(crate::proxy_err!(business, "无效的服务商类型"));
         }
         Err(err) => {
-            tracing::error!("Failed to query provider type: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "query_provider_type_fail",
+                &format!("Failed to query provider type: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to query provider type: {}",
@@ -506,7 +544,13 @@ pub async fn create_user_service_key(
     {
         Ok(keys) => keys,
         Err(err) => {
-            tracing::error!("Failed to query provider keys: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "query_provider_keys_fail",
+                &format!("Failed to query provider keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to query provider keys: {}",
@@ -550,7 +594,13 @@ pub async fn create_user_service_key(
         description: Set(request.description.clone()),
         user_provider_keys_ids: Set(serde_json::to_value(&request.user_provider_keys_ids)
             .map_err(|e| {
-                tracing::error!("Failed to serialize user_provider_keys_ids: {}", e);
+                lerror!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Database,
+                    "serialize_ids_fail",
+                    &format!("Failed to serialize user_provider_keys_ids: {}", e)
+                );
                 e
             })
             .unwrap_or(serde_json::Value::Array(vec![]))),
@@ -572,7 +622,13 @@ pub async fn create_user_service_key(
     let inserted_api = match new_service_api.insert(db).await {
         Ok(data) => data,
         Err(e) => {
-            tracing::error!("Failed to insert user service API: {}", e);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "insert_service_api_fail",
+                &format!("Failed to insert user service API: {}", e)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to create API Key: {}",
@@ -628,7 +684,13 @@ pub async fn get_user_service_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -648,7 +710,13 @@ pub async fn get_user_service_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch provider type: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "query_provider_type_fail",
+                &format!("Failed to fetch provider type: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider type: {}",
@@ -730,7 +798,13 @@ pub async fn update_user_service_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -809,7 +883,13 @@ pub async fn update_user_service_key(
     let updated_api = match update_model.update(db).await {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to update user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_service_api_fail",
+                &format!("Failed to update user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update API Key: {}",
@@ -859,7 +939,13 @@ pub async fn delete_user_service_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -872,7 +958,13 @@ pub async fn delete_user_service_key(
     let delete_result = match UserServiceApi::delete_by_id(api_id).exec(db).await {
         Ok(result) => result,
         Err(err) => {
-            tracing::error!("Failed to delete user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "delete_service_api_fail",
+                &format!("Failed to delete user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to delete API Key: {}",
@@ -921,7 +1013,13 @@ pub async fn get_user_service_key_usage(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -991,7 +1089,13 @@ pub async fn get_user_service_key_usage(
     {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch proxy tracings: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Tracing,
+                "fetch_tracings_fail",
+                &format!("Failed to fetch proxy tracings: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch usage statistics: {}",
@@ -1100,7 +1204,13 @@ pub async fn regenerate_user_service_key(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -1123,7 +1233,13 @@ pub async fn regenerate_user_service_key(
     let updated_api = match update_model.update(db).await {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to regenerate API key: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "regenerate_key_fail",
+                &format!("Failed to regenerate API key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to regenerate API key: {}",
@@ -1173,7 +1289,13 @@ pub async fn update_user_service_key_status(
             ));
         }
         Err(err) => {
-            tracing::error!("Failed to fetch user service API: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_apis_fail",
+                &format!("Failed to fetch user service API: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch API Key: {}",
@@ -1193,7 +1315,13 @@ pub async fn update_user_service_key_status(
     let updated_api = match update_model.update(db).await {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to update API key status: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_key_status_fail",
+                &format!("Failed to update API key status: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update API key status: {}",

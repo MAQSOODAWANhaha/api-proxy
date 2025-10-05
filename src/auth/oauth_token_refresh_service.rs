@@ -4,17 +4,17 @@
 //! - 被动刷新：在获取token时检查过期状态并自动刷新
 //! - 主动刷新：后台定期检查即将过期的token并提前刷新
 
+use crate::auth::oauth_client::OAuthClient;
+use crate::auth::types::AuthStatus;
+use crate::error::{ProxyError, Result};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{DateTime, Duration, Utc};
+use entity::{oauth_client_sessions, user_provider_keys};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info, warn};
-
-use crate::auth::oauth_client::OAuthClient;
-use crate::auth::types::AuthStatus;
-use crate::error::{ProxyError, Result};
-use entity::{oauth_client_sessions, user_provider_keys};
 
 const REFRESH_BUFFER_MINUTES: i64 = 5;
 const RETRY_INTERVAL_SECONDS: u64 = 30;
@@ -154,9 +154,12 @@ impl OAuthTokenRefreshService {
             })?;
 
         if delete_pending.rows_affected > 0 {
-            info!(
-                "Deleted {} expired pending OAuth sessions",
-                delete_pending.rows_affected
+            linfo!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "cleanup_pending_sessions",
+                &format!("Deleted {} expired pending OAuth sessions", delete_pending.rows_affected)
             );
         }
 
@@ -172,9 +175,12 @@ impl OAuthTokenRefreshService {
             })?;
 
         if delete_expired.rows_affected > 0 {
-            info!(
-                "Deleted {} old expired OAuth sessions",
-                delete_expired.rows_affected
+            linfo!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "cleanup_expired_sessions",
+                &format!("Deleted {} old expired OAuth sessions", delete_expired.rows_affected)
             );
         }
 
@@ -223,9 +229,12 @@ impl OAuthTokenRefreshService {
                 .map_err(|e| {
                     ProxyError::database_with_source("Failed to delete orphan OAuth sessions", e)
                 })?;
-            info!(
-                "Deleted {} orphan OAuth sessions (no linked provider keys)",
-                deleted.rows_affected
+            linfo!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "cleanup_orphan_sessions",
+                &format!("Deleted {} orphan OAuth sessions (no linked provider keys)", deleted.rows_affected)
             );
         }
 
@@ -318,9 +327,12 @@ impl OAuthTokenRefreshService {
     /// 构建启动时的刷新计划，并针对需要立即刷新的会话进行刷新
     pub async fn initialize_refresh_schedule(&self) -> Result<Vec<ScheduledTokenRefresh>> {
         if let Err(e) = self.cleanup_stale_sessions().await {
-            warn!(
-                "Failed to cleanup OAuth sessions before scheduling: {:?}",
-                e
+            lwarn!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "cleanup_failed",
+                &format!("Failed to cleanup OAuth sessions before scheduling: {:?}", e)
             );
         }
 
@@ -347,9 +359,12 @@ impl OAuthTokenRefreshService {
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to eagerly refresh session {}: {:?}",
-                            session.session_id, e
+                        lwarn!(
+                            "system",
+                            LogStage::BackgroundTask,
+                            LogComponent::OAuth,
+                            "eager_refresh_failed",
+                            &format!("Failed to eagerly refresh session {}: {:?}", session.session_id, e)
                         );
                         let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
                         schedule.push(ScheduledTokenRefresh {
@@ -418,9 +433,12 @@ impl OAuthTokenRefreshService {
                     }
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to eagerly refresh session {}: {:?}",
-                        session.session_id, e
+                    lwarn!(
+                        "system",
+                        LogStage::BackgroundTask,
+                        LogComponent::OAuth,
+                        "eager_refresh_failed",
+                        &format!("Failed to eagerly refresh session {}: {:?}", session.session_id, e)
                     );
                     let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
                     return Ok(ScheduledTokenRefresh {
@@ -503,11 +521,11 @@ impl OAuthTokenRefreshService {
     ///
     /// 这个方法通常在SmartApiKeyProvider中使用时调用
     pub async fn passive_refresh_if_needed(&self, session_id: &str) -> Result<TokenRefreshResult> {
-        debug!("Checking passive refresh for session_id: {}", session_id);
+        ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "passive_refresh_check", &format!("Checking passive refresh for session_id: {}", session_id));
 
         // 检查是否需要刷新
         if !self.should_refresh_token(session_id).await? {
-            debug!("Token for session_id {} does not need refresh", session_id);
+            ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "passive_refresh_not_needed", &format!("Token for session_id {} does not need refresh", session_id));
             return Ok(TokenRefreshResult {
                 success: true,
                 new_access_token: None,
@@ -542,16 +560,19 @@ impl OAuthTokenRefreshService {
 
         // 检查是否有有效的访问token
         if session.access_token.is_none() {
-            debug!("Session {} has no access token", session_id);
+            ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "no_access_token", &format!("Session {} has no access token", session_id));
             return Ok(false); // 没有token，无需刷新
         }
 
         let now = Utc::now();
         let should_refresh = self.should_refresh_session(&session, now);
 
-        debug!(
-            "Session {} expires at {:?}, should refresh: {}",
-            session_id, session.expires_at, should_refresh
+        ldebug!(
+            "system",
+            LogStage::BackgroundTask,
+            LogComponent::OAuth,
+            "should_refresh_check",
+            &format!("Session {} expires at {:?}, should refresh: {}", session_id, session.expires_at, should_refresh)
         );
 
         Ok(should_refresh)
@@ -569,9 +590,12 @@ impl OAuthTokenRefreshService {
 
         // 获得锁后再次检查是否需要刷新（可能其他线程已经刷新了）
         if refresh_type == RefreshType::Passive && !self.should_refresh_token(session_id).await? {
-            debug!(
-                "Token already refreshed by another thread for session: {}",
-                session_id
+            ldebug!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "already_refreshed",
+                &format!("Token already refreshed by another thread for session: {}", session_id)
             );
             return Ok(TokenRefreshResult {
                 success: true,
@@ -606,15 +630,24 @@ impl OAuthTokenRefreshService {
         session_id: &str,
         refresh_type: RefreshType,
     ) -> Result<TokenRefreshResult> {
-        debug!(
-            "Performing token refresh for session: {}, type: {:?}",
-            session_id, refresh_type
+        ldebug!(
+            "system",
+            LogStage::BackgroundTask,
+            LogComponent::OAuth,
+            "perform_token_refresh",
+            &format!("Performing token refresh for session: {}, type: {:?}", session_id, refresh_type)
         );
 
         // 使用OAuth client进行token刷新
         match self.oauth_client.get_valid_access_token(session_id).await {
             Ok(Some(new_access_token)) => {
-                info!("Successfully refreshed token for session: {}", session_id);
+                linfo!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "token_refresh_ok",
+                    &format!("Successfully refreshed token for session: {}", session_id)
+                );
 
                 // 获取新的过期时间
                 let new_expires_at = self.get_token_expires_at(session_id).await;
@@ -630,7 +663,13 @@ impl OAuthTokenRefreshService {
             }
 
             Ok(None) => {
-                warn!("No valid access token returned for session: {}", session_id);
+                lwarn!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "no_valid_token_after_refresh",
+                    &format!("No valid access token returned for session: {}", session_id)
+                );
                 Ok(TokenRefreshResult {
                     success: false,
                     new_access_token: None,
@@ -642,9 +681,12 @@ impl OAuthTokenRefreshService {
             }
 
             Err(e) => {
-                error!(
-                    "Failed to refresh token for session {}: {:?}",
-                    session_id, e
+                lerror!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "token_refresh_fail",
+                    &format!("Failed to refresh token for session {}: {:?}", session_id, e)
                 );
                 Ok(TokenRefreshResult {
                     success: false,

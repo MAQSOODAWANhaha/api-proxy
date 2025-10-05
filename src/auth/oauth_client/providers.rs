@@ -4,8 +4,10 @@
 //! 实现动态配置加载、授权URL生成和PKCE参数管理
 
 use super::{OAuthError, OAuthProviderConfig, OAuthResult};
+use crate::logging::{LogComponent, LogStage};
+use crate::ldebug;
 // use crate::auth::oauth_client::pkce::PkceChallenge; // 未使用
-use entity::{ProviderTypes, provider_types};
+use entity::{provider_types, ProviderTypes};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 // use serde_json; // 未使用
 use std::collections::HashMap;
@@ -29,20 +31,26 @@ impl OAuthProviderManager {
 
     /// 获取提供商配置
     pub async fn get_config(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
-        tracing::debug!("🔍 [OAuth] 获取提供商配置: provider_name={}", provider_name);
+        ldebug!("system", LogStage::Configuration, LogComponent::OAuth, "get_provider_config", &format!("🔍 [OAuth] 获取提供商配置: provider_name={}", provider_name));
 
         // 先检查缓存
         if let Some(config) = self.get_from_cache(provider_name) {
-            tracing::debug!(
-                "✅ [OAuth] 从缓存获取配置成功: provider_name={}",
-                provider_name
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::OAuth,
+                "get_provider_config_cache_hit",
+                &format!("✅ [OAuth] 从缓存获取配置成功: provider_name={}", provider_name)
             );
             return Ok(config);
         }
 
-        tracing::debug!(
-            "📡 [OAuth] 从数据库加载配置: provider_name={}",
-            provider_name
+        ldebug!(
+            "system",
+            LogStage::Db,
+            LogComponent::OAuth,
+            "load_provider_config_from_db",
+            &format!("📡 [OAuth] 从数据库加载配置: provider_name={}", provider_name)
         );
 
         // 从数据库加载
@@ -51,11 +59,15 @@ impl OAuthProviderManager {
         // 更新缓存
         self.update_cache(provider_name.to_string(), config.clone());
 
-        tracing::debug!(
-            "💾 [OAuth] 配置加载完成并缓存: provider_name={}, client_id={}, authorize_url={}",
+        ldebug!(
+            "system",
+            LogStage::Configuration,
+            LogComponent::OAuth,
+            "provider_config_cached",
+            &format!("💾 [OAuth] 配置加载完成并缓存: provider_name={}, client_id={}, authorize_url={}",
             provider_name,
             config.client_id,
-            config.authorize_url
+            config.authorize_url)
         );
 
         Ok(config)
@@ -89,10 +101,14 @@ impl OAuthProviderManager {
         config: &OAuthProviderConfig,
         session: &entity::oauth_client_sessions::Model,
     ) -> OAuthResult<String> {
-        tracing::debug!(
-            "🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "build_auth_url",
+            &format!("🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
             config.provider_name,
-            session.session_id
+            session.session_id)
         );
 
         let mut url = Url::parse(&config.authorize_url)
@@ -115,19 +131,23 @@ impl OAuthProviderManager {
             .unwrap_or("code");
         params.push(("response_type", response_type));
 
-        tracing::debug!(
-            "⚙️ [OAuth] 基础参数: client_id={}, redirect_uri={}, response_type={}, scopes={}",
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "auth_url_base_params",
+            &format!("⚙️ [OAuth] 基础参数: client_id={}, redirect_uri={}, response_type={}, scopes={}",
             config.client_id,
             config.redirect_uri,
             response_type,
-            scope
+            scope)
         );
 
         // PKCE参数
         if config.pkce_required {
             params.push(("code_challenge", &session.code_challenge));
             params.push(("code_challenge_method", "S256"));
-            tracing::debug!("🔐 [OAuth] PKCE参数已添加: code_challenge_method=S256");
+            ldebug!("system", LogStage::Authentication, LogComponent::OAuth, "auth_url_pkce_added", "🔐 [OAuth] PKCE参数已添加: code_challenge_method=S256");
         }
 
         // 额外参数（排除已经添加的参数）
@@ -143,7 +163,7 @@ impl OAuthProviderManager {
             .collect();
 
         if !extra_params.is_empty() {
-            tracing::debug!("📋 [OAuth] 额外参数: {:?}", extra_params);
+            ldebug!("system", LogStage::Authentication, LogComponent::OAuth, "auth_url_extra_params", &format!("📋 [OAuth] 额外参数: {:?}", extra_params));
             params.extend(extra_params);
         }
 
@@ -151,10 +171,14 @@ impl OAuthProviderManager {
         url.query_pairs_mut().extend_pairs(params);
 
         let final_url = url.to_string();
-        tracing::debug!(
-            "🌐 [OAuth] 授权URL构建完成: session_id={}, url_length={}",
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "auth_url_build_complete",
+            &format!("🌐 [OAuth] 授权URL构建完成: session_id={}, url_length={}",
             session.session_id,
-            final_url.len()
+            final_url.len())
         );
 
         Ok(final_url)
@@ -267,13 +291,17 @@ impl OAuthProviderManager {
         // 直接使用数据库配置的extra_params，包含所有需要的参数
         if let Some(ref config_extra_params) = oauth_config.extra_params {
             extra_params.extend(config_extra_params.clone());
-            tracing::debug!(
-                "📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
+            ldebug!(
+                "system",
+                LogStage::Db,
+                LogComponent::OAuth,
+                "load_extra_params",
+                &format!("📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
                 extra_params.len(),
-                extra_params.keys().collect::<Vec<_>>()
+                extra_params.keys().collect::<Vec<_>>())
             );
         } else {
-            tracing::debug!("📊 [OAuth] 数据库中没有配置extra_params");
+            ldebug!("system", LogStage::Db, LogComponent::OAuth, "no_extra_params", "📊 [OAuth] 数据库中没有配置extra_params");
         }
 
         // 创建最终配置对象

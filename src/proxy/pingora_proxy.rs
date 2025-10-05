@@ -5,10 +5,9 @@
 use super::builder::ProxyServerBuilder;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
-// 使用 tracing 替代 log
 use crate::logging::{LogComponent, LogStage};
 use crate::trace::TraceSystem;
-use crate::{proxy_info, proxy_warn};
+use crate::{linfo, lwarn};
 use pingora_core::server::{Server, configuration::Opt};
 use pingora_proxy::http_proxy_service;
 use std::sync::Arc;
@@ -57,10 +56,10 @@ impl PingoraProxyServer {
     fn create_pingora_options(&self) -> Result<Opt> {
         let opt = Opt::default();
 
-        proxy_info!(
-            "server_init",
-            LogStage::RequestStart,
-            LogComponent::UpstreamService,
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
             "creating_pingora_options",
             "创建Pingora基础配置选项",
         );
@@ -77,10 +76,10 @@ impl PingoraProxyServer {
         // env_logger::init();
 
         // 创建服务器配置
-        proxy_info!(
-            "server_init",
-            LogStage::RequestStart,
-            LogComponent::UpstreamService,
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
             "creating_server_config",
             "创建Pingora服务器配置"
         );
@@ -89,19 +88,19 @@ impl PingoraProxyServer {
             ProxyError::server_init(format!("Failed to create Pingora server: {}", e))
         })?;
 
-        proxy_info!(
-            "server_init",
-            LogStage::RequestStart,
-            LogComponent::UpstreamService,
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
             "bootstrapping_server",
             "启动Pingora服务器引导"
         );
         server.bootstrap();
 
-        proxy_info!(
-            "server_init",
-            LogStage::RequestStart,
-            LogComponent::UpstreamService,
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
             "timeout_config_dynamic",
             "超时配置现在从数据库动态获取"
         );
@@ -117,18 +116,18 @@ impl PingoraProxyServer {
         // 关键修复：如果有trace_system，传递给builder
         if let Some(trace_system) = &self.trace_system {
             builder = builder.with_trace_system(trace_system.clone());
-            proxy_info!(
-                "server_init",
-                LogStage::RequestStart,
-                LogComponent::UpstreamService,
+            linfo!(
+                "system",
+                LogStage::Startup,
+                LogComponent::ServerSetup,
                 "using_trace_system",
                 "在Pingora代理构建器中使用提供的追踪系统"
             );
         } else {
-            proxy_warn!(
-                "server_init",
-                LogStage::RequestStart,
-                LogComponent::UpstreamService,
+            lwarn!(
+                "system",
+                LogStage::Startup,
+                LogComponent::ServerSetup,
                 "no_trace_system",
                 "未提供追踪系统给Pingora代理 - 追踪将被禁用"
             );
@@ -145,10 +144,10 @@ impl PingoraProxyServer {
         // 注册服务并启动
         server.add_service(proxy_service);
 
-        proxy_info!(
-            "server_init",
-            LogStage::RequestStart,
-            LogComponent::UpstreamService,
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
             "starting_server",
             "启动Pingora代理服务器",
             address = builder.get_server_address()

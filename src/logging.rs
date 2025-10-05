@@ -26,6 +26,18 @@ pub enum LogStage {
     Response,
     ResponseFailure,
     Error,
+    // New stages for non-request contexts
+    Startup,
+    Shutdown,
+    Configuration,
+    HealthCheck,
+    BackgroundTask,
+    Scheduling,
+    Cache,
+    ExternalApi,
+    Internal,
+    Db,
+    Codec,
 }
 
 impl LogStage {
@@ -38,6 +50,17 @@ impl LogStage {
             LogStage::Response => "response",
             LogStage::ResponseFailure => "response_failure",
             LogStage::Error => "error",
+            LogStage::Startup => "startup",
+            LogStage::Shutdown => "shutdown",
+            LogStage::Configuration => "configuration",
+            LogStage::HealthCheck => "health_check",
+            LogStage::BackgroundTask => "background_task",
+            LogStage::Scheduling => "scheduling",
+            LogStage::Cache => "cache",
+            LogStage::ExternalApi => "external_api",
+            LogStage::Internal => "internal",
+            LogStage::Db => "db",
+            LogStage::Codec => "codec",
         }
     }
 }
@@ -45,247 +68,160 @@ impl LogStage {
 /// 组件枚举
 #[derive(Debug, Clone, Copy)]
 pub enum LogComponent {
-    AuthService,
+    // --- System Components ---
+    Main,
+    ServerSetup,
+    Config,
     Database,
+    Cache,
+    // --- Proxy Core Components ---
     Proxy,
-    // 以下为新增的服务组件
-    UpstreamService,
-    RequestTransformService,
-    ResponseTransformService,
-    StatisticsService,
+    Builder,
+    // --- Proxy Services ---
+    Auth,
+    ApiKey,
+    OAuth,
+    Upstream,
+    RequestTransform,
+    ResponseTransform,
+    Statistics,
+    Tracing,
     TracingService,
+    // --- Business Logic Components ---
+    Scheduler,
+    HealthChecker,
+    SmartApiKeyProvider,
+    // --- External Clients ---
+    GeminiClient,
+    // --- Provider Strategies ---
     GeminiStrategy,
     OpenAIStrategy,
-    Builder,
+    Sse,
 }
 
 impl LogComponent {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LogComponent::Proxy => "proxy",
-            LogComponent::AuthService => "auth_service",
+            LogComponent::Main => "main",
+            LogComponent::ServerSetup => "server_setup",
+            LogComponent::Config => "config",
             LogComponent::Database => "database",
-            LogComponent::UpstreamService => "upstream_service",
-            LogComponent::RequestTransformService => "request_transform_service",
-            LogComponent::ResponseTransformService => "response_transform_service",
-            LogComponent::StatisticsService => "statistics_service",
+            LogComponent::Cache => "cache",
+            LogComponent::Proxy => "proxy",
+            LogComponent::Builder => "builder",
+            LogComponent::Auth => "auth",
+            LogComponent::ApiKey => "api_key",
+            LogComponent::OAuth => "oauth",
+            LogComponent::Upstream => "upstream",
+            LogComponent::RequestTransform => "request_transform",
+            LogComponent::ResponseTransform => "response_transform",
+            LogComponent::Statistics => "statistics",
+            LogComponent::Tracing => "tracing",
             LogComponent::TracingService => "tracing_service",
+            LogComponent::Scheduler => "scheduler",
+            LogComponent::HealthChecker => "health_checker",
+            LogComponent::SmartApiKeyProvider => "smart_api_key_provider",
+            LogComponent::GeminiClient => "gemini_client",
             LogComponent::GeminiStrategy => "gemini_strategy",
             LogComponent::OpenAIStrategy => "openai_strategy",
-            LogComponent::Builder => "builder",
+            LogComponent::Sse => "sse",
         }
     }
 }
 
 /// 标准日志宏 - 信息级别
 #[macro_export]
-macro_rules! proxy_info {
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr $(,)?) => {
-        {
-            tracing::info!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-            );
-        }
+macro_rules! linfo {
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($rest:tt)*) => {
+        tracing::info!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+            $($rest)*
+        )
     };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),* $(,)?) => {
-        {
-            tracing::info!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::info!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-                $percent_field = %$percent_value,
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::info!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $percent_field = %$percent_value,
-            );
-        }
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr) => {
+        tracing::info!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+        )
     };
 }
 
 /// 标准日志宏 - 调试级别
 #[macro_export]
-macro_rules! proxy_debug {
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr $(,)?) => {
-        {
-            tracing::debug!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-            );
-        }
+macro_rules! ldebug {
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($rest:tt)*) => {
+        tracing::debug!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+            $($rest)*
+        )
     };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),* $(,)?) => {
-        {
-            tracing::debug!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::debug!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-                $percent_field = %$percent_value,
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::debug!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $percent_field = %$percent_value,
-            );
-        }
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr) => {
+        tracing::debug!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+        )
     };
 }
 
 /// 标准日志宏 - 警告级别
 #[macro_export]
-macro_rules! proxy_warn {
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr $(,)?) => {
-        {
-            tracing::warn!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-            );
-        }
+macro_rules! lwarn {
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($rest:tt)*) => {
+        tracing::warn!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+            $($rest)*
+        )
     };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),* $(,)?) => {
-        {
-            tracing::warn!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::warn!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-                $percent_field = %$percent_value,
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::warn!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $percent_field = %$percent_value,
-            );
-        }
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr) => {
+        tracing::warn!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+        )
     };
 }
 
 /// 标准日志宏 - 错误级别
 #[macro_export]
-macro_rules! proxy_error {
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr $(,)?) => {
-        {
-            tracing::error!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-            );
-        }
+macro_rules! lerror {
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($rest:tt)*) => {
+        tracing::error!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+            $($rest)*
+        )
     };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),* $(,)?) => {
-        {
-            tracing::error!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $($field_key:ident = $field_value:expr),*, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::error!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $($field_key = $field_value,)*
-                $percent_field = %$percent_value,
-            );
-        }
-    };
-    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr, $percent_field:ident = % $percent_value:expr $(,)?) => {
-        {
-            tracing::error!(
-                request_id = %$request_id,
-                stage = $stage.as_str(),
-                operation = $operation,
-                component = $component.as_str(),
-                message = %$description,
-                $percent_field = %$percent_value,
-            );
-        }
+    ($request_id:expr, $stage:expr, $component:expr, $operation:expr, $description:expr) => {
+        tracing::error!(
+            request_id = %$request_id,
+            stage = $stage.as_str(),
+            operation = $operation,
+            component = $component.as_str(),
+            message = %$description,
+        )
     };
 }
 
@@ -320,7 +256,10 @@ pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
         };
         formatted.push(masked);
     }
-    formatted.join("\n  ")
+    formatted.join(
+        "
+  ",
+    )
 }
 
 /// 格式化响应头为人类可读的字符串
@@ -373,7 +312,10 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
         };
         formatted.push(masked);
     }
-    formatted.join("\n  ")
+    formatted.join(
+        "
+  ",
+    )
 }
 
 /// 将请求头转为 JSON 映射（键小写，按字母序）
@@ -433,7 +375,10 @@ pub fn build_details_string(details: &[(&str, String)]) -> String {
         .iter()
         .map(|(key, value)| format!("  {}: {}", key, value))
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(
+            "
+",
+        )
 }
 
 /// 构建请求信息的详细信息
@@ -708,25 +653,35 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
     let db_enabled = matches!(config.db_query_level.as_str(), "info" | "debug" | "trace");
 
     if db_enabled {
-        tracing::info!(
-            "🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {}",
-            actual_filter
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Main,
+            "log_init",
+            &format!("🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {}", actual_filter)
         );
     } else {
-        tracing::info!(
-            "📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {}",
-            actual_filter
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Main,
+            "log_init",
+            &format!("📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {}", actual_filter)
         );
     }
 
     // 打印配置信息（仅在调试级别）
-    tracing::debug!(
+    ldebug!(
+        "system",
+        LogStage::Startup,
+        LogComponent::Main,
+        "log_config",
+        "日志配置详情",
         default_level = %config.default_level,
         app_level = %config.app_level,
         db_query_level = %config.db_query_level,
         sea_orm_level = %config.sea_orm_level,
-        sqlx_level = %config.sqlx_level,
-        "日志配置详情"
+        sqlx_level = %config.sqlx_level
     );
 }
 
@@ -757,19 +712,19 @@ impl LogFormatValidator {
     ) -> bool {
         // 检查 request_id 非空
         if request_id.is_empty() {
-            tracing::error!("日志格式验证失败: request_id 不能为空");
+            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: request_id 不能为空");
             return false;
         }
 
         // 检查 operation 非空
         if operation.is_empty() {
-            tracing::error!("日志格式验证失败: operation 不能为空");
+            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: operation 不能为空");
             return false;
         }
 
         // 检查 description 非空
         if description.is_empty() {
-            tracing::error!("日志格式验证失败: description 不能为空");
+            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: description 不能为空");
             return false;
         }
 
@@ -782,13 +737,14 @@ impl LogFormatValidator {
             | LogStage::Response
             | LogStage::ResponseFailure
             | LogStage::Error => {}
+            _ => {}
         }
 
         match component {
             LogComponent::Proxy
-            | LogComponent::AuthService
-            | LogComponent::TracingService
-            | LogComponent::UpstreamService
+            | LogComponent::Auth
+            | LogComponent::Tracing
+            | LogComponent::Upstream
             | LogComponent::Builder
             | LogComponent::GeminiStrategy
             | LogComponent::Database => {}
@@ -817,20 +773,20 @@ impl LogFormatValidator {
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            tracing::info!(
-                request_id = %request_id,
-                stage = %stage.as_str(),
-                component = %component.as_str(),
-                operation = %operation,
-                %field_str,
-                "=== {} ===",
-                description
+            linfo!(
+                request_id,
+                stage,
+                component,
+                operation,
+                &format!("=== {} ===, {}", description, field_str)
             );
         } else {
-            tracing::warn!(
-                "日志格式验证失败，跳过记录: request_id={}, operation={}",
-                request_id,
-                operation
+            lwarn!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Config,
+                "log_validation_fail",
+                &format!("日志格式验证失败，跳过记录: request_id={}, operation={}", request_id, operation)
             );
         }
     }
@@ -840,7 +796,11 @@ impl LogFormatValidator {
     /// 返回当前系统中各种日志格式的使用情况
     pub fn get_format_stats() -> String {
         format!(
-            "📊 日志格式统计:\n  - 统一日志宏: proxy_info!, proxy_debug!, proxy_warn!, proxy_error!\n  - 日志阶段: 7种 (RequestStart, Authentication, RequestModify, UpstreamRequest, Response, ResponseFailure, Error)\n  - 组件类型: 8种 (Proxy, AuthService, RequestHandler, TracingService, Upstream, Builder, GeminiStrategy, Database)\n  - 优化文件: 6个 (authentication_service.rs, request_handler.rs, tracing_service.rs, builder.rs, pingora_proxy.rs, provider_strategy_gemini.rs)"
+            "📊 日志格式统计:
+  - 统一日志宏: proxy_info!, proxy_debug!, proxy_warn!, proxy_error!
+  - 日志阶段: 7种 (RequestStart, Authentication, RequestModify, UpstreamRequest, Response, ResponseFailure, Error)
+  - 组件类型: 8种 (Proxy, AuthService, RequestHandler, TracingService, Upstream, Builder, GeminiStrategy, Database)
+  - 优化文件: 6个 (authentication_service.rs, request_handler.rs, tracing_service.rs, builder.rs, pingora_proxy.rs, provider_strategy_gemini.rs)"
         )
     }
 
@@ -908,9 +868,12 @@ pub fn log_proxy_failure_details(
         ),
     };
 
-    tracing::error!(
-        target: "proxy_error",
-        request_id = %request_id,
+    lerror!(
+        request_id,
+        LogStage::ResponseFailure,
+        LogComponent::Proxy,
+        "proxy_request_failed",
+        "Proxy request failed",
         status_code = status_code,
         error_message = %error_message,
         error_details = %error_details,
@@ -918,8 +881,7 @@ pub fn log_proxy_failure_details(
         method = %ctx.request_details.method,
         client_ip = %ctx.request_details.client_ip,
         request_body_preview = %request_body_preview,
-        response_body_preview = %response_body_preview,
-        "Proxy request failed"
+        response_body_preview = %response_body_preview
     );
 }
 
@@ -947,15 +909,17 @@ pub async fn log_complete_request(
     // 记录请求头
     let headers = headers_json_map_request(session.req_header());
 
-    tracing::info!(
-        request_id = %request_id,
+    linfo!(
+        request_id,
+        LogStage::UpstreamRequest,
+        LogComponent::GeminiStrategy,
+        "gemini_complete_request",
+        "=== GEMINI COMPLETE REQUEST ===",
         route = path,
         method = %session.req_header().method,
         uri = %session.req_header().uri,
         request_headers = %serde_json::to_string_pretty(&headers).unwrap_or_else(|_| "Failed to serialize headers".to_string()),
-        request_body = %filtered_body,
-        operation = "gemini_complete_request",
-        "=== GEMINI COMPLETE REQUEST ==="
+        request_body = %filtered_body
     );
 }
 
@@ -972,27 +936,31 @@ pub fn log_complete_response(
     // 读取响应体
     let body_str = String::from_utf8_lossy(response_body);
 
-    tracing::info!(
-        request_id = %request_id,
+    linfo!(
+        request_id,
+        LogStage::Response,
+        LogComponent::GeminiStrategy,
+        "gemini_complete_response",
+        "=== GEMINI COMPLETE RESPONSE ===",
         route = path,
         status_code = %response_header.status,
         response_headers = %serde_json::to_string_pretty(&response_headers).unwrap_or_else(|_| "Failed to serialize response headers".to_string()),
-        response_body = %body_str,
-        operation = "gemini_complete_response",
-        "=== GEMINI COMPLETE RESPONSE ==="
+        response_body = %body_str
     );
 }
 
 /// 记录错误响应信息（状态码 >= 400）
 pub fn log_error_response(request_id: &str, path: &str, status_code: u16, response_body: &[u8]) {
-    tracing::info!(
-        target: "error_response",
-        request_id = %request_id,
+    linfo!(
+        request_id,
+        LogStage::ResponseFailure,
+        LogComponent::Proxy,
+        "error_response",
+        "=== ERROR RESPONSE ===",
+        target = "error_response",
         path = %path,
         status_code = %status_code,
-        response_body = %String::from_utf8_lossy(response_body),
-        operation = "error_response",
-        "=== ERROR RESPONSE ==="
+        response_body = %String::from_utf8_lossy(response_body)
     );
 }
 

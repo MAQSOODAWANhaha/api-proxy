@@ -1,17 +1,16 @@
 //! API密钥健康检查相关处理器
 
+use crate::{lerror, lwarn, logging::{LogComponent, LogStage}};
 use crate::manage_error;
 use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use axum::extract::{Path, State};
 use entity::{provider_types, user_provider_keys};
-use tracing::warn;
 // use pingora_http::StatusCode; // no longer needed with manage_error!
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::error;
 
 /// API密钥健康检查信息
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,7 +76,7 @@ pub async fn health_check(State(state): State<AppState>) -> axum::response::Resp
             "timestamp": chrono::Utc::now().to_rfc3339()
         })),
         Err(e) => {
-            warn!("Database ping failed: {}", e);
+            lwarn!("system", LogStage::HealthCheck, LogComponent::Database, "db_ping_fail", &format!("Database ping failed: {}", e));
             manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
         }
     }
@@ -106,7 +105,7 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
     let database_status = match state.database.ping().await {
         Ok(_) => "connected".to_string(),
         Err(e) => {
-            warn!("Database ping failed: {}", e);
+            lwarn!("system", LogStage::HealthCheck, LogComponent::Database, "db_ping_fail", &format!("Database ping failed: {}", e));
             "disconnected".to_string()
         }
     };
@@ -176,7 +175,7 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
     match get_api_keys_health_internal(&state).await {
         Ok(health_infos) => response::success(health_infos),
         Err(err) => {
-            error!(error = %err, "Failed to get API keys health status");
+            lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "get_api_keys_health_fail", &format!("Failed to get API keys health status: {}", err));
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to retrieve API keys health status: {}",
@@ -192,7 +191,7 @@ pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::
     match get_health_stats_internal(&state).await {
         Ok(stats) => response::success(stats),
         Err(err) => {
-            error!(error = %err, "Failed to get health statistics");
+            lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "get_health_stats_fail", &format!("Failed to get health statistics: {}", err));
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to retrieve health statistics: {}",
@@ -210,7 +209,7 @@ pub async fn trigger_key_health_check(
     match trigger_key_health_check_internal(&state, key_id).await {
         Ok(check_result) => response::success(check_result),
         Err(err) => {
-            error!(key_id = key_id, error = %err, "Failed to trigger health check");
+            lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "trigger_health_check_fail", &format!("Failed to trigger health check for key {}: {}", key_id, err));
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to trigger health check for key {}: {}",
@@ -230,7 +229,7 @@ pub async fn mark_key_unhealthy(
     match mark_key_unhealthy_internal(&state, key_id, reason).await {
         Ok(_) => response::success("API key marked as unhealthy"),
         Err(err) => {
-            error!(key_id = key_id, error = %err, "Failed to mark key unhealthy");
+            lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "mark_key_unhealthy_fail", &format!("Failed to mark key {} as unhealthy: {}", key_id, err));
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to mark key {} as unhealthy: {}",

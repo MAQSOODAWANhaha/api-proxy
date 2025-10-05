@@ -2,6 +2,7 @@
 //!
 //! 负责检测和管理API密钥的可用性状态，通过真实API调用验证密钥健康度
 
+use crate::{ldebug, lerror, linfo, lwarn, logging::{LogComponent, LogStage}};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -12,7 +13,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
 
 use super::types::ApiKeyHealthStatus;
 use crate::proxy::types::ProviderId;
@@ -173,8 +173,11 @@ impl ApiKeyHealthChecker {
         self.load_health_status_from_database().await?;
 
         *running = true;
-        info!(
-            component = "api_key_health_checker",
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "service_started",
             "API key health checker started"
         );
         Ok(())
@@ -184,8 +187,11 @@ impl ApiKeyHealthChecker {
     pub async fn stop(&self) -> Result<()> {
         let mut running = self.is_running.write().await;
         *running = false;
-        info!(
-            component = "api_key_health_checker",
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "service_stopped",
             "API key health checker stopped"
         );
         Ok(())
@@ -219,12 +225,15 @@ impl ApiKeyHealthChecker {
                 anyhow::anyhow!("Provider type not found: {}", key_model.provider_type_id)
             })?;
 
-        debug!(
-            component = "api_key_health_checker",
+        ldebug!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "start_check",
+            "Starting API key health check",
             key_id = key_model.id,
             provider = %provider_id,
-            provider_name = %provider_info.name,
-            "Starting API key health check"
+            provider_name = %provider_info.name
         );
 
         // 使用数据库配置的健康检查逻辑
@@ -236,14 +245,17 @@ impl ApiKeyHealthChecker {
 
         let check_result = match result {
             Ok((status_code, success)) => {
-                debug!(
-                    component = "api_key_health_checker",
+                ldebug!(
+                    "system",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "check_complete",
+                    "API key health check completed",
                     key_id = key_model.id,
                     provider_name = %provider_info.name,
                     status_code = status_code,
                     response_time = response_time_ms,
-                    success = success,
-                    "API key health check completed"
+                    success = success
                 );
 
                 ApiKeyCheckResult {
@@ -258,13 +270,16 @@ impl ApiKeyHealthChecker {
             }
             Err(e) => {
                 let error_category = self.categorize_error(&e);
-                warn!(
-                    component = "api_key_health_checker",
+                lwarn!(
+                    "system",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "check_failed",
+                    "API key health check failed",
                     key_id = key_model.id,
                     provider_name = %provider_info.name,
                     error = %e,
-                    category = ?error_category,
-                    "API key health check failed"
+                    category = ?error_category
                 );
 
                 ApiKeyCheckResult {
@@ -319,11 +334,14 @@ impl ApiKeyHealthChecker {
             format!("{}{}", base_url, health_check_path)
         };
 
-        debug!(
-            component = "api_key_health_checker",
+        ldebug!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "performing_check",
+            "Performing API key health check",
             provider_name = %provider_info.name,
-            url = %url,
-            "Performing API key health check"
+            url = %url
         );
 
         // 构建请求
@@ -378,12 +396,15 @@ impl ApiKeyHealthChecker {
             _ => status_code < 500, // 4xx可能是配置问题，5xx是服务器问题
         };
 
-        debug!(
-            component = "api_key_health_checker",
+        ldebug!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "check_complete",
+            "API key health check completed",
             provider_name = %provider_info.name,
             status_code = status_code,
-            success = success,
-            "API key health check completed"
+            success = success
         );
 
         Ok((status_code, success))
@@ -486,18 +507,24 @@ impl ApiKeyHealthChecker {
         // 记录状态变化
         if was_healthy != status.is_healthy {
             if status.is_healthy {
-                info!(
-                    component = "api_key_health_checker",
-                    key_id = key_id,
-                    "API key recovered (healthy)"
+                linfo!(
+                    "system",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "key_recovered",
+                    "API key recovered (healthy)",
+                    key_id = key_id
                 );
             } else {
-                warn!(
-                    component = "api_key_health_checker",
+                lwarn!(
+                    "system",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "key_unhealthy",
+                    "API key marked as unhealthy",
                     key_id = key_id,
                     consecutive_failures = status.consecutive_failures,
-                    last_error = ?status.last_error,
-                    "API key marked as unhealthy"
+                    last_error = ?status.last_error
                 );
             }
         }
@@ -585,12 +612,15 @@ impl ApiKeyHealthChecker {
 
         key.update(&*self.db).await?;
 
-        debug!(
-            component = "api_key_health_checker",
+        ldebug!(
+            "system",
+            LogStage::Db,
+            LogComponent::HealthChecker,
+            "sync_to_db",
+            "API key health status synced to database",
             key_id = key_id,
             health_status = %db_health_status,
-            health_score = status.health_score,
-            "API key health status synced to database"
+            health_score = status.health_score
         );
 
         Ok(())
@@ -690,7 +720,7 @@ impl ApiKeyHealthChecker {
             // 同步到数据库
             self.mark_key_unhealthy_in_database(key_id, &reason).await?;
 
-            warn!(component = "api_key_health_checker", key_id = key_id, reason = %reason, "Manually marked API key as unhealthy");
+            lwarn!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "mark_unhealthy", "Manually marked API key as unhealthy", key_id = key_id, reason = %reason);
         }
 
         Ok(())
@@ -723,11 +753,14 @@ impl ApiKeyHealthChecker {
 
         key.update(&*self.db).await?;
 
-        debug!(
-            component = "api_key_health_checker",
+        ldebug!(
+            "system",
+            LogStage::Db,
+            LogComponent::HealthChecker,
+            "mark_unhealthy_in_db",
+            "API key manually marked as unhealthy in database",
             key_id = key_id,
-            reason = %reason,
-            "API key manually marked as unhealthy in database"
+            reason = %reason
         );
 
         Ok(())
@@ -779,18 +812,23 @@ impl ApiKeyHealthChecker {
                 }
             }
 
-            debug!(
-                component = "api_key_health_checker",
+            ldebug!(
+                "system",
+                LogStage::Db,
+                LogComponent::HealthChecker,
+                "load_status_from_db",
+                "Loaded health status from database",
                 key_id = key.id,
-                health_status = %key.health_status,
-                "Loaded health status from database"
+                health_status = %key.health_status
             );
         }
 
-        info!(
-            component = "api_key_health_checker",
-            "Loaded {} API keys health status from database",
-            health_map.len()
+        linfo!(
+            "system",
+            LogStage::Db,
+            LogComponent::HealthChecker,
+            "load_status_from_db",
+            &format!("Loaded {} API keys health status from database", health_map.len())
         );
         Ok(())
     }
@@ -822,7 +860,7 @@ impl ApiKeyHealthChecker {
                     results.insert(key_id, check_result);
                 }
                 Err(e) => {
-                    error!(component = "api_key_health_checker", key_id = key_id, error = %e, "Failed to check API key");
+                    lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "check_api_key_fail", "Failed to check API key", key_id = key_id, error = %e);
                     // 创建失败结果
                     results.insert(
                         key_id,
@@ -840,10 +878,13 @@ impl ApiKeyHealthChecker {
             }
         }
 
-        debug!(
-            component = "api_key_health_checker",
-            checked_keys = results.len(),
-            "Batch API key health check completed"
+        ldebug!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "batch_check_complete",
+            "Batch API key health check completed",
+            checked_keys = results.len()
         );
         Ok(results)
     }

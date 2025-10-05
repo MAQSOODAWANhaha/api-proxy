@@ -8,8 +8,7 @@ use sea_orm::DatabaseConnection;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
-
+use crate::{ldebug, lerror, linfo, lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService;
 use crate::error::{ProxyError, Result};
@@ -102,16 +101,22 @@ impl SmartApiKeyProvider {
     /// 3. 如果需要，执行token刷新
     /// 4. 返回有效凭证
     pub async fn get_valid_credential(&self, provider_key_id: i32) -> Result<CredentialResult> {
-        debug!(
-            "Getting valid credential for provider_key_id: {}",
-            provider_key_id
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "get_credential",
+            &format!("Getting valid credential for provider_key_id: {}", provider_key_id)
         );
 
         // 1. 先检查缓存
         if let Some(cached) = self.get_cached_credential(provider_key_id).await? {
-            debug!(
-                "Found cached credential for provider_key_id: {}",
-                provider_key_id
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Auth,
+                "cache_hit",
+                &format!("Found cached credential for provider_key_id: {}", provider_key_id)
             );
             return Ok(CredentialResult {
                 credential: cached.credential,
@@ -158,7 +163,7 @@ impl SmartApiKeyProvider {
             }
 
             auth_type => {
-                error!("Unsupported auth_type: {}", auth_type);
+                lerror!("system", LogStage::Authentication, LogComponent::Auth, "unsupported_auth_type", &format!("Unsupported auth_type: {}", auth_type));
                 Err(crate::proxy_err!(
                     auth,
                     "Unsupported auth_type: {}",
@@ -176,9 +181,12 @@ impl SmartApiKeyProvider {
     ) -> Result<CredentialResult> {
         let session_id = &provider_key.api_key;
 
-        debug!(
-            "Handling OAuth credential with refresh service for session_id: {}",
-            session_id
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "handle_oauth_credential",
+            &format!("Handling OAuth credential with refresh service for session_id: {}", session_id)
         );
 
         // 获取刷新锁，防止并发刷新
@@ -187,9 +195,12 @@ impl SmartApiKeyProvider {
 
         // 再次检查缓存（可能在等待锁的过程中其他线程已刷新）
         if let Some(cached) = self.get_cached_credential(provider_key_id).await? {
-            debug!(
-                "Found cached credential after lock for provider_key_id: {}",
-                provider_key_id
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Auth,
+                "cache_hit_after_lock",
+                &format!("Found cached credential after lock for provider_key_id: {}", provider_key_id)
             );
             return Ok(CredentialResult {
                 credential: cached.credential,
@@ -209,9 +220,12 @@ impl SmartApiKeyProvider {
                     // 刷新成功或token仍然有效
                     if let Some(new_access_token) = refresh_result.new_access_token {
                         // 有新token，更新缓存
-                        info!(
-                            "Got refreshed OAuth access token for provider_key_id: {}",
-                            provider_key_id
+                        linfo!(
+                            "system",
+                            LogStage::Authentication,
+                            LogComponent::Auth,
+                            "token_refreshed",
+                            &format!("Got refreshed OAuth access token for provider_key_id: {}", provider_key_id)
                         );
 
                         let credential_type = AuthCredentialType::OAuthToken {
@@ -242,9 +256,12 @@ impl SmartApiKeyProvider {
                         // token仍然有效，从OAuth client获取当前token
                         match self.oauth_client.get_valid_access_token(session_id).await {
                             Ok(Some(access_token)) => {
-                                debug!(
-                                    "Using current valid OAuth access token for provider_key_id: {}",
-                                    provider_key_id
+                                ldebug!(
+                                    "system",
+                                    LogStage::Authentication,
+                                    LogComponent::Auth,
+                                    "using_current_token",
+                                    &format!("Using current valid OAuth access token for provider_key_id: {}", provider_key_id)
                                 );
 
                                 let credential_type = AuthCredentialType::OAuthToken {
@@ -273,16 +290,22 @@ impl SmartApiKeyProvider {
                                 Ok(result)
                             }
                             Ok(None) => {
-                                warn!(
-                                    "No valid OAuth access token available for provider_key_id: {}",
-                                    provider_key_id
+                                lwarn!(
+                                    "system",
+                                    LogStage::Authentication,
+                                    LogComponent::Auth,
+                                    "no_valid_token",
+                                    &format!("No valid OAuth access token available for provider_key_id: {}", provider_key_id)
                                 );
                                 self.fallback_to_api_key(provider_key)
                             }
                             Err(e) => {
-                                error!(
-                                    "Failed to get OAuth access token for provider_key_id: {}: {:?}",
-                                    provider_key_id, e
+                                lerror!(
+                                    "system",
+                                    LogStage::Authentication,
+                                    LogComponent::Auth,
+                                    "get_token_failed",
+                                    &format!("Failed to get OAuth access token for provider_key_id: {}: {:?}", provider_key_id, e)
                                 );
                                 self.fallback_to_api_key(provider_key)
                             }
@@ -290,17 +313,23 @@ impl SmartApiKeyProvider {
                     }
                 } else {
                     // 刷新失败，尝试降级
-                    warn!(
-                        "OAuth token refresh failed for provider_key_id: {}, error: {:?}",
-                        provider_key_id, refresh_result.error_message
+                    lwarn!(
+                        "system",
+                        LogStage::Authentication,
+                        LogComponent::Auth,
+                        "token_refresh_failed",
+                        &format!("OAuth token refresh failed for provider_key_id: {}, error: {:?}", provider_key_id, refresh_result.error_message)
                     );
                     self.fallback_to_api_key(provider_key)
                 }
             }
             Err(e) => {
-                error!(
-                    "OAuth refresh service error for provider_key_id: {}: {:?}",
-                    provider_key_id, e
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "refresh_service_error",
+                    &format!("OAuth refresh service error for provider_key_id: {}: {:?}", provider_key_id, e)
                 );
                 self.fallback_to_api_key(provider_key)
             }
@@ -313,9 +342,12 @@ impl SmartApiKeyProvider {
         provider_key: &user_provider_keys::Model,
     ) -> Result<CredentialResult> {
         if !provider_key.api_key.is_empty() {
-            warn!(
-                "Falling back to stored api_key for provider_key_id: {}",
-                provider_key.id
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "fallback_to_api_key",
+                &format!("Falling back to stored api_key for provider_key_id: {}", provider_key.id)
             );
             Ok(CredentialResult {
                 credential: provider_key.api_key.clone(),
@@ -355,9 +387,12 @@ impl SmartApiKeyProvider {
                         if Utc::now() + buffer_time < expires_at {
                             return Ok(Some(cached.clone()));
                         } else {
-                            debug!(
-                                "Cached OAuth token expired or expiring soon for provider_key_id: {}",
-                                provider_key_id
+                            ldebug!(
+                                "system",
+                                LogStage::Cache,
+                                LogComponent::Auth,
+                                "token_expired",
+                                &format!("Cached OAuth token expired or expiring soon for provider_key_id: {}", provider_key_id)
                             );
                         }
                     }
@@ -429,7 +464,7 @@ impl SmartApiKeyProvider {
     pub async fn invalidate_cache(&self, provider_key_id: i32) {
         let mut cache = self.credential_cache.write().await;
         if cache.remove(&provider_key_id).is_some() {
-            debug!("Invalidated cache for provider_key_id: {}", provider_key_id);
+            ldebug!("system", LogStage::Cache, LogComponent::Auth, "invalidate_cache", &format!("Invalidated cache for provider_key_id: {}", provider_key_id));
         }
     }
 
@@ -438,7 +473,7 @@ impl SmartApiKeyProvider {
         let mut cache = self.credential_cache.write().await;
         let count = cache.len();
         cache.clear();
-        debug!("Cleared all cached credentials, count: {}", count);
+        ldebug!("system", LogStage::Cache, LogComponent::Auth, "clear_cache", &format!("Cleared all cached credentials, count: {}", count));
     }
 
     /// 获取缓存统计信息

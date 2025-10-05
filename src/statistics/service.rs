@@ -2,24 +2,18 @@
 //!
 //! 从 `src/proxy/statistics_service.rs` 迁移至此，作为统计模块对外服务。
 
+use crate::error::ProxyError;
+use crate::logging::{LogComponent, LogStage};
+use crate::pricing::PricingCalculatorService;
+use crate::proxy::ProxyContext;
+use crate::statistics::types::{RequestDetails, RequestStats, ResponseStats};
+use crate::{ldebug, linfo, lwarn};
 use anyhow::Result;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use std::collections::HashMap;
 use std::sync::Arc;
 use url::form_urlencoded;
-
-// use crate::auth::AuthUtils; // moved to request collector
-use crate::error::ProxyError;
-use crate::pricing::PricingCalculatorService;
-use crate::proxy::ProxyContext;
-// 提取器在此处不直接依赖，避免强耦合；如需高级解析可在 providers 层使用。
-
-// 复用统计模块类型定义
-pub use crate::statistics::types::{RequestDetails, ResponseDetails};
-use crate::statistics::types::{RequestStats, ResponseStats};
-
-// RequestStats/ResponseStats 已迁移至 statistics::types
 
 /// 代理端统计服务
 pub struct StatisticsService {
@@ -50,7 +44,13 @@ impl StatisticsService {
         {
             Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
             Err(e) => {
-                tracing::warn!(component = "statistics.service", request_id = %request_id, error = %e, "Failed to calculate cost (direct)");
+                lwarn!(
+                    request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "cost_calculation_fail",
+                    &format!("Failed to calculate cost (direct): {}", e)
+                );
                 Ok((None, None))
             }
         }
@@ -109,41 +109,53 @@ impl StatisticsService {
                                 current = element;
                                 continue;
                             } else {
-                                tracing::debug!(
-                                    component = "statistics.service",
+                                ldebug!(
+                                    "system",
+                                    LogStage::Internal,
+                                    LogComponent::Statistics,
+                                    "array_index_out_of_bounds",
+                                    "Array index out of bounds",
                                     path = %path,
                                     field_name = %field_name,
                                     index = %index_str,
                                     array_len = array.len(),
-                                    "Array index out of bounds"
                                 );
                                 return None;
                             }
                         } else {
-                            tracing::debug!(
-                                component = "statistics.service",
+                            ldebug!(
+                                "system",
+                                LogStage::Internal,
+                                LogComponent::Statistics,
+                                "invalid_array_index_format",
+                                "Invalid array index format",
                                 path = %path,
                                 field_name = %field_name,
                                 index = %index_str,
-                                "Invalid array index format"
                             );
                             return None;
                         }
                     } else {
-                        tracing::debug!(
-                            component = "statistics.service",
+                        ldebug!(
+                            "system",
+                            LogStage::Internal,
+                            LogComponent::Statistics,
+                            "field_not_array",
+                            "Field is not an array",
                             path = %path,
                             field_name = %field_name,
-                            "Field is not an array"
                         );
                         return None;
                     }
                 } else {
-                    tracing::debug!(
-                        component = "statistics.service",
+                    ldebug!(
+                        "system",
+                        LogStage::Internal,
+                        LogComponent::Statistics,
+                        "field_not_found",
+                        "Field not found",
                         path = %path,
                         field_name = %field_name,
-                        "Field not found"
                     );
                     return None;
                 }
@@ -155,30 +167,39 @@ impl StatisticsService {
                             current = element;
                             continue;
                         } else {
-                            tracing::debug!(
-                                component = "statistics.service",
+                            ldebug!(
+                                "system",
+                                LogStage::Internal,
+                                LogComponent::Statistics,
+                                "direct_array_index_out_of_bounds",
+                                "Direct array index out of bounds",
                                 path = %path,
                                 index = %part,
                                 array_len = array.len(),
-                                "Direct array index out of bounds"
                             );
                             return None;
                         }
                     } else {
-                        tracing::debug!(
-                            component = "statistics.service",
+                        ldebug!(
+                            "system",
+                            LogStage::Internal,
+                            LogComponent::Statistics,
+                            "invalid_direct_array_index_format",
+                            "Invalid direct array index format",
                             path = %path,
                             index = %part,
-                            "Invalid direct array index format"
                         );
                         return None;
                     }
                 } else {
-                    tracing::debug!(
-                        component = "statistics.service",
+                    ldebug!(
+                        "system",
+                        LogStage::Internal,
+                        LogComponent::Statistics,
+                        "not_array_for_direct_indexing",
+                        "Current value is not an array for direct indexing",
                         path = %path,
                         index = %part,
-                        "Current value is not an array for direct indexing"
                     );
                     return None;
                 }
@@ -187,11 +208,14 @@ impl StatisticsService {
                 if let Some(next) = current.get(part) {
                     current = next;
                 } else {
-                    tracing::debug!(
-                        component = "statistics.service",
+                    ldebug!(
+                        "system",
+                        LogStage::Internal,
+                        LogComponent::Statistics,
+                        "path_segment_not_found",
+                        "Path segment not found",
                         path = %path,
                         part = %part,
-                        "Path segment not found"
                     );
                     return None;
                 }
@@ -206,11 +230,14 @@ impl StatisticsService {
             }
         }
 
-        tracing::debug!(
-            component = "statistics.service",
+        ldebug!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "model_value_not_string",
+            "Model value is not a valid string",
             path = %path,
             final_value = %current,
-            "Model value is not a valid string"
         );
         None
     }
@@ -245,39 +272,47 @@ impl StatisticsService {
         session: &Session,
         ctx: &ProxyContext,
     ) -> Option<String> {
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "start_model_extraction",
             "Starting model extraction from request"
         );
 
         // 尝试使用数据库驱动的 ModelExtractor
         if let Some(model_name) = self.extract_model_from_request_with_db_config(session, ctx) {
-            tracing::info!(
-                component = "statistics.service",
-                request_id = ctx.request_id,
+            linfo!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "model_extracted_db",
+                "Model extracted successfully using database configuration",
                 model = model_name,
                 extraction_method = "database_extractor",
-                "Model extracted successfully using database configuration"
             );
             return Some(model_name);
         }
 
         // 回退：直接从请求体提取
         if let Some(model_name) = self.extract_model_from_request_body_fallback(ctx) {
-            tracing::info!(
-                component = "statistics.service",
-                request_id = ctx.request_id,
+            linfo!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "model_extracted_fallback",
+                "Model extracted from request body (fallback method)",
                 model = model_name,
                 extraction_method = "request_body_fallback",
-                "Model extracted from request body (fallback method)"
             );
             return Some(model_name);
         }
 
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "no_model_found",
             "No model found in request using any method"
         );
         None
@@ -290,34 +325,39 @@ impl StatisticsService {
         ctx: &ProxyContext,
     ) -> Option<String> {
         let provider = ctx.provider_type.as_ref()?;
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "check_model_extraction_config",
+            "Checking provider model extraction configuration",
             provider_id = provider.id,
             provider_name = provider.name,
             has_model_extraction_config = provider.model_extraction_json.is_some(),
-            "Checking provider model extraction configuration"
         );
 
         let model_extraction_json = provider.model_extraction_json.as_ref()?;
 
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "create_model_extractor",
+            "Creating ModelExtractor from database configuration",
             provider_id = provider.id,
-            "Creating ModelExtractor from database configuration"
         );
 
         let extractor = crate::statistics::field_extractor::ModelExtractor::from_json_config(
             model_extraction_json,
         )
         .map_err(|e| {
-            tracing::warn!(
-                component = "statistics.service",
-                request_id = ctx.request_id,
+            lwarn!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "create_model_extractor_fail",
+                &format!("Failed to create ModelExtractor from database config: {}", e),
                 provider_id = provider.id,
-                error = %e,
-                "Failed to create ModelExtractor from database config"
             );
             e
         })
@@ -327,24 +367,28 @@ impl StatisticsService {
         let query_params = self.extract_query_params_for_model(session);
         let url_path = session.req_header().uri.path();
 
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "extracting_model_with_config",
+            "Extracting model with configured extractor",
             url_path = url_path,
             has_body_json = body_json.is_some(),
             query_params_count = query_params.len(),
-            "Extracting model with configured extractor"
         );
 
         let model_name = extractor.extract_model_name(url_path, body_json.as_ref(), &query_params);
 
-        tracing::info!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        linfo!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "model_extracted_db_driven",
+            "Extracted model using database-configured ModelExtractor",
             model = model_name,
             extraction_method = "database_driven",
             provider_id = provider.id,
-            "Extracted model using database-configured ModelExtractor"
         );
 
         Some(model_name)
@@ -354,16 +398,21 @@ impl StatisticsService {
     pub fn extract_model_from_request_body_fallback(&self, ctx: &ProxyContext) -> Option<String> {
         let body_data = ctx.request_body.clone();
 
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "extract_model_from_body",
+            "Attempting to extract model from request body",
             body_size = body_data.len(),
-            "Attempting to extract model from request body"
         );
 
         if body_data.is_empty() {
-            tracing::debug!(
-                request_id = ctx.request_id,
+            ldebug!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "empty_body_skip_extraction",
                 "Request body is empty, skipping body extraction"
             );
             return None;
@@ -371,30 +420,34 @@ impl StatisticsService {
 
         let body_str = std::str::from_utf8(&body_data)
             .map_err(|e| {
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Request body is not valid UTF-8"
+                ldebug!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "invalid_utf8_body",
+                    &format!("Request body is not valid UTF-8: {}", e)
                 );
                 e
             })
             .ok()?;
 
-        tracing::debug!(
-            component = "statistics.service",
-            request_id = ctx.request_id,
+        ldebug!(
+            &ctx.request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "utf8_body_parsed",
+            "Request body parsed as UTF-8 successfully",
             body_length = body_str.len(),
-            "Request body parsed as UTF-8 successfully"
         );
 
         let json_value = serde_json::from_str::<serde_json::Value>(body_str)
             .map_err(|e| {
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Failed to parse request body as JSON"
+                ldebug!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "json_parse_fail",
+                    &format!("Failed to parse request body as JSON: {}", e)
                 );
                 e
             })
@@ -407,18 +460,22 @@ impl StatisticsService {
 
         match model_name {
             Some(ref model) => {
-                tracing::info!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
+                linfo!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "model_extracted_fallback_direct",
+                    "Extracted model from request body (fallback)",
                     model = model,
                     extraction_method = "fallback_direct",
-                    "Extracted model from request body (fallback)"
                 );
             }
             None => {
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
+                ldebug!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "no_model_field_in_json",
                     "No model field found in request body JSON"
                 );
             }
@@ -437,11 +494,12 @@ impl StatisticsService {
 
         let body_str = std::str::from_utf8(&body_data)
             .map_err(|e| {
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Request body is not valid UTF-8"
+                ldebug!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "invalid_utf8_body",
+                    &format!("Request body is not valid UTF-8: {}", e)
                 );
                 e
             })
@@ -449,11 +507,12 @@ impl StatisticsService {
 
         serde_json::from_str::<serde_json::Value>(body_str)
             .map_err(|e| {
-                tracing::debug!(
-                    component = "statistics.service",
-                    request_id = ctx.request_id,
-                    error = %e,
-                    "Failed to parse request body as JSON"
+                ldebug!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "json_parse_fail",
+                    &format!("Failed to parse request body as JSON: {}", e)
                 );
                 e
             })

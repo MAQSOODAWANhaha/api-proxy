@@ -12,7 +12,7 @@ use crate::proxy::{
     AuthenticationService, RequestTransformService, ResponseTransformService, StatisticsService,
     TracingService, UpstreamService, service::ProxyService,
 };
-use crate::proxy_info;
+use crate::linfo;
 use crate::scheduler::ApiKeyPoolManager;
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use crate::trace::TraceSystem;
@@ -127,9 +127,9 @@ impl ProxyServerBuilder {
             auth_config.clone(),
         ));
         let auth_manager = AuthManager::new(auth_service, auth_config, db, cache).await?;
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
+        linfo!(
+            "system",
+            LogStage::Startup,
             LogComponent::Builder,
             "auth_manager_created",
             "统一认证管理器创建完成"
@@ -144,9 +144,9 @@ impl ProxyServerBuilder {
         cache: Arc<CacheManager>,
         _provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
-        proxy_info!(
-            "server_builder",
-            LogStage::RequestStart,
+        linfo!(
+            "system",
+            LogStage::Startup,
             LogComponent::Builder,
             "creating_ai_proxy_service",
             "创建AI代理服务"

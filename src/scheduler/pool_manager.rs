@@ -7,12 +7,13 @@ use super::api_key_health::ApiKeyHealthChecker;
 use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
 use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, types::AuthStatus};
 use crate::error::{ProxyError, Result};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
 
 /// API密钥池管理器
 /// 职责：管理用户的API密钥池，根据策略选择合适的密钥，并集成OAuth token智能刷新
@@ -111,18 +112,25 @@ impl ApiKeyPoolManager {
 
         if healthy_keys.is_empty() {
             // 如果没有健康的密钥，记录警告并使用所有密钥（降级模式）
-            warn!(
+            lwarn!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "no_healthy_keys",
+                "No healthy API keys available, using all keys in degraded mode",
                 service_api_id = service_api.id,
                 total_keys = user_keys.len(),
-                "No healthy API keys available, using all keys in degraded mode"
             );
         } else if healthy_keys.len() != user_keys.len() {
-            debug!(
+            ldebug!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "unhealthy_keys_filtered",
+                &format!("Filtered out {} unhealthy API keys", user_keys.len() - healthy_keys.len()),
                 service_api_id = service_api.id,
                 total_keys = user_keys.len(),
                 healthy_keys = healthy_keys.len(),
-                "Filtered out {} unhealthy API keys",
-                user_keys.len() - healthy_keys.len()
             );
         }
 
@@ -193,11 +201,15 @@ impl ApiKeyPoolManager {
                 .await
             {
                 Ok(credential_result) => {
-                    info!(
+                    linfo!(
+                        "system",
+                        LogStage::Scheduling,
+                        LogComponent::Scheduler,
+                        "smart_credential_ok",
+                        "Successfully obtained smart API credential",
                         key_id = selection_result.selected_key.id,
                         auth_type = ?credential_result.auth_type,
                         refreshed = credential_result.refreshed,
-                        "Successfully obtained smart API credential"
                     );
 
                     Ok(SmartApiKeySelectionResult {
@@ -207,10 +219,14 @@ impl ApiKeyPoolManager {
                     })
                 }
                 Err(e) => {
-                    error!(
+                    lerror!(
+                        "system",
+                        LogStage::Scheduling,
+                        LogComponent::Scheduler,
+                        "smart_credential_fail",
+                        "Failed to get smart API credential, falling back to raw key",
                         key_id = selection_result.selected_key.id,
                         error = ?e,
-                        "Failed to get smart API credential, falling back to raw key"
                     );
 
                     // 降级：使用原始API密钥
@@ -338,34 +354,50 @@ impl ApiKeyPoolManager {
                     match status_enum {
                         AuthStatus::Authorized => {} // 认证成功，继续检查其他条件
                         AuthStatus::Pending => {
-                            debug!(
+                            ldebug!(
+                                "system",
+                                LogStage::Scheduling,
+                                LogComponent::Scheduler,
+                                "key_pending",
+                                "API key is pending authorization, skipping",
                                 key_id = key.id,
                                 key_name = %key.name,
-                                "API key is pending authorization, skipping"
                             );
                             return false;
                         }
                         AuthStatus::Expired => {
-                            debug!(
+                            ldebug!(
+                                "system",
+                                LogStage::Scheduling,
+                                LogComponent::Scheduler,
+                                "key_expired",
+                                "API key authorization has expired, skipping",
                                 key_id = key.id,
                                 key_name = %key.name,
-                                "API key authorization has expired, skipping"
                             );
                             return false;
                         }
                         AuthStatus::Error => {
-                            debug!(
+                            ldebug!(
+                                "system",
+                                LogStage::Scheduling,
+                                LogComponent::Scheduler,
+                                "key_auth_error",
+                                "API key has authorization error, skipping",
                                 key_id = key.id,
                                 key_name = %key.name,
-                                "API key has authorization error, skipping"
                             );
                             return false;
                         }
                         AuthStatus::Revoked => {
-                            debug!(
+                            ldebug!(
+                                "system",
+                                LogStage::Scheduling,
+                                LogComponent::Scheduler,
+                                "key_revoked",
+                                "API key has been revoked, skipping",
                                 key_id = key.id,
                                 key_name = %key.name,
-                                "API key has been revoked, skipping"
                             );
                             return false;
                         }
@@ -375,11 +407,15 @@ impl ApiKeyPoolManager {
                 // 2. 检查过期时间
                 if let Some(expires_at) = key.expires_at {
                     if now >= expires_at {
-                        debug!(
+                        ldebug!(
+                            "system",
+                            LogStage::Scheduling,
+                            LogComponent::Scheduler,
+                            "key_expired",
+                            "API key has expired, skipping",
                             key_id = key.id,
                             key_name = %key.name,
                             expires_at = %expires_at,
-                            "API key has expired, skipping"
                         );
                         return false;
                     }
@@ -399,42 +435,58 @@ impl ApiKeyPoolManager {
                                 // 限流已解除，允许通过
                                 true
                             } else {
-                                debug!(
+                                ldebug!(
+                                    "system",
+                                    LogStage::Scheduling,
+                                    LogComponent::Scheduler,
+                                    "key_rate_limited",
+                                    "API key is still rate limited, skipping",
                                     key_id = key.id,
                                     key_name = %key.name,
                                     health_status = %key.health_status,
                                     rate_limit_resets_at = ?resets_at,
-                                    "API key is still rate limited, skipping"
                                 );
                                 false
                             }
                         } else {
                             // 没有重置时间，保守地认为不健康
-                            debug!(
+                            ldebug!(
+                                "system",
+                                LogStage::Scheduling,
+                                LogComponent::Scheduler,
+                                "key_rate_limited_no_reset",
+                                "API key is rate limited without reset time, skipping",
                                 key_id = key.id,
                                 key_name = %key.name,
                                 health_status = %key.health_status,
-                                "API key is rate limited without reset time, skipping"
                             );
                             false
                         }
                     }
                     Ok(ApiKeyHealthStatus::Unhealthy) => {
-                        debug!(
+                        ldebug!(
+                            "system",
+                            LogStage::Scheduling,
+                            LogComponent::Scheduler,
+                            "key_unhealthy",
+                            "API key is unhealthy, skipping",
                             key_id = key.id,
                             key_name = %key.name,
                             health_status = %key.health_status,
-                            "API key is unhealthy, skipping"
                         );
                         false
                     }
                     Err(_) => {
                         // 无法解析的状态都归类为不健康（包括原来的 unknown 和 error）
-                        debug!(
+                        ldebug!(
+                            "system",
+                            LogStage::Scheduling,
+                            LogComponent::Scheduler,
+                            "key_unknown_health",
+                            "Unknown health status, treating as unhealthy",
                             key_id = key.id,
                             key_name = %key.name,
                             unknown_health = %key.health_status,
-                            "Unknown health status, treating as unhealthy"
                         );
                         false
                     }
@@ -447,7 +499,12 @@ impl ApiKeyPoolManager {
     /// 记录密钥限制信息
     async fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
         for key in keys {
-            debug!(
+            ldebug!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "key_info",
+                "API key limits and status information",
                 key_id = key.id,
                 key_name = %key.name,
                 weight = ?key.weight,
@@ -457,7 +514,6 @@ impl ApiKeyPoolManager {
                 auth_status = ?key.auth_status,
                 expires_at = ?key.expires_at,
                 health_status = %key.health_status,
-                "API key limits and status information"
             );
         }
     }
@@ -495,14 +551,18 @@ impl ApiKeyPoolManager {
                 let final_result = is_healthy_by_checker && is_locally_healthy;
 
                 if !final_result {
-                    debug!(
+                    ldebug!(
+                        "system",
+                        LogStage::Scheduling,
+                        LogComponent::Scheduler,
+                        "key_unhealthy_filtered",
+                        "Key filtered out due to health status",
                         key_id = key.id,
                         key_name = %key.name,
                         health_status = %key.health_status,
                         is_healthy_by_checker,
                         is_locally_healthy,
                         rate_limit_resets_at = ?key.rate_limit_resets_at,
-                        "Key filtered out due to health status"
                     );
                 }
 

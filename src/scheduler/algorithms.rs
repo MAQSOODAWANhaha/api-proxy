@@ -2,6 +2,7 @@
 //!
 //! 专注于从用户的多个API密钥中选择合适的密钥进行请求
 
+use crate::{ldebug, logging::{LogComponent, LogStage}};
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
 use entity::user_provider_keys;
@@ -149,11 +150,14 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             selected_key.id
         );
 
-        tracing::debug!(
-            request_id = %context.request_id,
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "select_key",
+            "Selected API key using round robin strategy",
             selected_key_id = selected_key.id,
-            reason = %reason,
-            "Selected API key using round robin strategy"
+            reason = %reason
         );
 
         Ok(ApiKeySelectionResult::new(
@@ -272,13 +276,16 @@ impl ApiKeySelector for HealthBestApiKeySelector {
             health_score, selected_key.health_status, selected_key.id
         );
 
-        tracing::debug!(
-            request_id = %context.request_id,
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "select_key",
+            "Selected API key using health-based strategy",
             selected_key_id = selected_key.id,
             health_score = %health_score,
             health_status = %selected_key.health_status,
-            reason = %reason,
-            "Selected API key using health-based strategy"
+            reason = %reason
         );
 
         Ok(ApiKeySelectionResult::new(
@@ -355,11 +362,14 @@ impl ApiKeySelector for WeightedApiKeySelector {
                 selected_key.id
             );
 
-            tracing::debug!(
-                request_id = %context.request_id,
+            ldebug!(
+                &context.request_id,
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "select_key",
+                "Selected API key using weighted strategy (fallback)",
                 selected_key_id = selected_key.id,
-                reason = %reason,
-                "Selected API key using weighted strategy (fallback)"
+                reason = %reason
             );
 
             return Ok(ApiKeySelectionResult::new(
@@ -399,11 +409,14 @@ impl ApiKeySelector for WeightedApiKeySelector {
             selected_key.id
         );
 
-        tracing::debug!(
-            request_id = %context.request_id,
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "select_key",
+            "Selected API key using weighted strategy",
             selected_key_id = selected_key.id,
-            reason = %reason,
-            "Selected API key using weighted strategy"
+            reason = %reason
         );
 
         Ok(ApiKeySelectionResult::new(

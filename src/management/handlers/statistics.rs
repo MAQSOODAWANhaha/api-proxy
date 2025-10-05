@@ -1,6 +1,8 @@
 //! # 统一统计信息处理器
 //!
 //! 基于proxy_tracing表的统一统计查询API
+use crate::logging::{LogComponent, LogStage};
+use crate::lerror;
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
@@ -161,7 +163,13 @@ pub async fn get_today_dashboard_cards(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!("Failed to fetch today's traces: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_today_traces_fail",
+                &format!("Failed to fetch today's traces: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch today's data: {}",
@@ -180,7 +188,13 @@ pub async fn get_today_dashboard_cards(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!("Failed to fetch yesterday's traces: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_yesterday_traces_fail",
+                &format!("Failed to fetch yesterday's traces: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch yesterday's data: {}",
@@ -286,7 +300,13 @@ pub async fn get_models_usage_rate(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!("Failed to fetch traces for models rate: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_models_rate_fail",
+                &format!("Failed to fetch traces for models rate: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch data: {}",
@@ -368,7 +388,13 @@ pub async fn get_models_statistics(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!("Failed to fetch traces for models statistics: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_models_stats_fail",
+                &format!("Failed to fetch traces for models statistics: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch data: {}",
@@ -447,7 +473,13 @@ pub async fn get_tokens_trend(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!("Failed to fetch traces for tokens trend: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_tokens_trend_fail",
+                &format!("Failed to fetch traces for tokens trend: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch data: {}",
@@ -557,9 +589,15 @@ pub async fn get_user_api_keys_request_trend(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!(
-                "Failed to fetch traces for user API keys request trend: {}",
-                err
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_keys_request_trend_fail",
+                &format!(
+                    "Failed to fetch traces for user API keys request trend: {}",
+                    err
+                )
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -645,9 +683,12 @@ pub async fn get_user_api_keys_token_trend(
     {
         Ok(traces) => traces,
         Err(err) => {
-            tracing::error!(
-                "Failed to fetch traces for user API keys token trend: {}",
-                err
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_keys_token_trend_fail",
+                &format!("Failed to fetch traces for user API keys token trend: {}", err)
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,

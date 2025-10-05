@@ -9,6 +9,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySe
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::{ldebug, linfo, lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::{
     AuthContext, AuthMethod, AuthResult,
     api_key::ApiKeyManager,
@@ -348,13 +349,13 @@ impl AuthService {
                 .set_with_strategy(&blacklist_key, &blacklist_data)
                 .await
             {
-                tracing::warn!("Failed to add token to blacklist cache: {}", e);
+                lwarn!("system", LogStage::Cache, LogComponent::Auth, "blacklist_cache_fail", &format!("Failed to add token to blacklist cache: {}", e));
             } else {
-                tracing::debug!("Token added to blacklist: {}", jti);
+                ldebug!("system", LogStage::Cache, LogComponent::Auth, "token_blacklisted", &format!("Token added to blacklist: {}", jti));
             }
         }
 
-        tracing::info!("Token revoked: {}", jti);
+        linfo!("system", LogStage::Authentication, LogComponent::Auth, "token_revoked", &format!("Token revoked: {}", jti));
         Ok(())
     }
 
@@ -365,14 +366,14 @@ impl AuthService {
             match cache_manager.exists(&blacklist_key.build()).await {
                 Ok(exists) => {
                     if exists {
-                        tracing::debug!("Token found in blacklist: {}", jti);
+                        ldebug!("system", LogStage::Cache, LogComponent::Auth, "token_found_in_blacklist", &format!("Token found in blacklist: {}", jti));
                         true
                     } else {
                         false
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to check token blacklist: {}", e);
+                    lwarn!("system", LogStage::Cache, LogComponent::Auth, "blacklist_check_fail", &format!("Failed to check token blacklist: {}", e));
                     // 在缓存不可用时，为了安全起见，不允许访问
                     false
                 }

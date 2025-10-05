@@ -1,13 +1,15 @@
 //! # 认证管理处理器
 
 use crate::auth::types::UserInfo as AuthUserInfo;
+use crate::logging::{LogComponent, LogStage};
 use crate::management::{response, server::AppState};
+use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use chrono::Utc;
 use entity::users::Entity as Users;
-use jsonwebtoken::{DecodingKey, Validation, decode};
+use jsonwebtoken::{decode, DecodingKey, Validation};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 // remove unused Value
@@ -78,7 +80,13 @@ pub async fn login(
     {
         Ok(pair) => pair,
         Err(err) => {
-            tracing::warn!("Login failed for user {}: {}", request.username, err);
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "login_fail",
+                &format!("Login failed for user {}: {}", request.username, err)
+            );
             return crate::manage_error!(err);
         }
     };
@@ -90,10 +98,16 @@ pub async fn login(
     {
         Ok(claims) => claims,
         Err(err) => {
-            tracing::error!(
-                "Generated access token failed validation for user {}: {}",
-                request.username,
-                err
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "token_validation_fail",
+                &format!(
+                    "Generated access token failed validation for user {}: {}",
+                    request.username,
+                    err
+                )
             );
             return crate::manage_error!(err);
         }
@@ -102,7 +116,13 @@ pub async fn login(
     let user_id = match claims.user_id() {
         Ok(id) => id,
         Err(err) => {
-            tracing::error!("Failed to parse user id from access token: {}", err);
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "parse_user_id_fail",
+                &format!("Failed to parse user id from access token: {}", err)
+            );
             return crate::manage_error!(err);
         }
     };
@@ -110,16 +130,34 @@ pub async fn login(
     let auth_user: AuthUserInfo = match state.auth_service.get_user_info(user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            tracing::error!("User {} not found after successful login", user_id);
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "user_not_found_after_login",
+                &format!("User {} not found after successful login", user_id)
+            );
             return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
         }
         Err(err) => {
-            tracing::error!("Failed to load user info for {}: {}", user_id, err);
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "load_user_info_fail",
+                &format!("Failed to load user info for {}: {}", user_id, err)
+            );
             return crate::manage_error!(err);
         }
     };
 
-    tracing::info!("User {} logged in successfully", request.username);
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::Auth,
+        "login_success",
+        &format!("User {} logged in successfully", request.username)
+    );
 
     let response = LoginResponse {
         token: token_pair.access_token,
@@ -154,7 +192,13 @@ pub async fn logout(
         Some(header) => match header.to_str() {
             Ok(header_str) => header_str,
             Err(err) => {
-                tracing::warn!("Invalid Authorization header format: {}", err);
+                lwarn!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "invalid_auth_header",
+                    &format!("Invalid Authorization header format: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(
                     business,
                     "Invalid Authorization header format"
@@ -162,7 +206,13 @@ pub async fn logout(
             }
         },
         None => {
-            tracing::warn!("No Authorization header found in logout request");
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "no_auth_header_logout",
+                "No Authorization header found in logout request"
+            );
             return crate::manage_error!(crate::proxy_err!(
                 business,
                 "No Authorization header found"
@@ -193,7 +243,13 @@ pub async fn logout(
     ) {
         Ok(data) => data,
         Err(err) => {
-            tracing::debug!("Token validation failed during logout: {}", err);
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "token_validation_fail_logout",
+                &format!("Token validation failed during logout: {}", err)
+            );
             // 即使token无效，也返回成功，避免客户端异常
             return response::success_without_data("Logout successful");
         }
@@ -202,9 +258,12 @@ pub async fn logout(
     // TODO: 在生产环境中，应该将token加入黑名单
     // 这里可以将token的jti添加到Redis黑名单中
 
-    tracing::info!(
-        "User {} logged out successfully",
-        token_data.claims.username
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::Auth,
+        "logout_success",
+        &format!("User {} logged out successfully", token_data.claims.username)
     );
 
     response::success_without_data("Logout successful")
@@ -216,10 +275,22 @@ pub async fn validate_token(
     headers: HeaderMap,
 ) -> axum::response::Response {
     // 记录所有请求头用于调试
-    tracing::info!("Validate token request headers:");
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::Auth,
+        "validate_token_headers",
+        "Validate token request headers:"
+    );
     for (name, value) in headers.iter() {
         if let Ok(value_str) = value.to_str() {
-            tracing::info!("  {}: {}", name, value_str);
+            linfo!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "validate_token_header",
+                &format!("  {}: {}", name, value_str)
+            );
         }
     }
 
@@ -227,11 +298,23 @@ pub async fn validate_token(
     let auth_header = match headers.get("Authorization") {
         Some(header) => match header.to_str() {
             Ok(header_str) => {
-                tracing::info!("Found Authorization header: {}", header_str);
+                linfo!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "found_auth_header",
+                    &format!("Found Authorization header: {}", header_str)
+                );
                 header_str
             }
             Err(err) => {
-                tracing::warn!("Invalid Authorization header format: {}", err);
+                lwarn!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "invalid_auth_header",
+                    &format!("Invalid Authorization header format: {}", err)
+                );
                 let response_data = ValidateTokenResponse {
                     valid: false,
                     user: None,
@@ -240,7 +323,13 @@ pub async fn validate_token(
             }
         },
         None => {
-            tracing::warn!("No Authorization header found in request");
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "no_auth_header",
+                "No Authorization header found in request"
+            );
             let response_data = ValidateTokenResponse {
                 valid: false,
                 user: None,
@@ -273,7 +362,13 @@ pub async fn validate_token(
     ) {
         Ok(data) => data,
         Err(err) => {
-            tracing::debug!("Token validation failed: {}", err);
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "token_validation_fail",
+                &format!("Token validation failed: {}", err)
+            );
             let response_data = ValidateTokenResponse {
                 valid: false,
                 user: None,
@@ -300,7 +395,13 @@ pub async fn validate_token(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            tracing::warn!("Token valid but user {} not found in database", user_id);
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "user_not_found_in_db",
+                &format!("Token valid but user {} not found in database", user_id)
+            );
             let response_data = ValidateTokenResponse {
                 valid: false,
                 user: None,
@@ -308,7 +409,13 @@ pub async fn validate_token(
             return response::success(response_data);
         }
         Err(err) => {
-            tracing::error!("Database error during token validation: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Auth,
+                "db_error_token_validation",
+                &format!("Database error during token validation: {}", err)
+            );
             let response_data = ValidateTokenResponse {
                 valid: false,
                 user: None,

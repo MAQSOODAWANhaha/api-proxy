@@ -3,16 +3,14 @@
 //! 负责所有与上游节点（Peer）相关的逻辑，包括根据服务商策略选择地址和配置连接参数。
 
 use crate::error::Result;
-use crate::proxy_err;
-use std::sync::Arc;
-use std::time::Duration;
-
-use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
-
+use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
-use crate::proxy_info;
+use crate::proxy_err;
+use pingora_core::upstreams::peer::{HttpPeer, Peer, ALPN};
 use sea_orm::DatabaseConnection;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// 上游服务
 pub struct UpstreamService {
@@ -53,10 +51,10 @@ impl UpstreamService {
             }
         });
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::UpstreamRequest,
-            LogComponent::UpstreamService,
+            LogComponent::Upstream,
             "upstream_peer_selected",
             "上游节点选择完成",
             upstream = final_addr,
@@ -85,10 +83,10 @@ impl UpstreamService {
             options.max_h2_streams = 100;
         }
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::UpstreamRequest,
-            LogComponent::UpstreamService,
+            LogComponent::Upstream,
             "peer_options_configured",
             "配置通用peer选项（动态超时）",
             provider = provider_type.name,

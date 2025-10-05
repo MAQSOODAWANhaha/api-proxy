@@ -2,6 +2,7 @@
 //!
 //! 提供基于IP地址的访问控制功能
 
+use crate::{ldebug, lwarn, logging::{LogComponent, LogStage}};
 use axum::{
     extract::{ConnectInfo, Request},
     http::StatusCode,
@@ -10,7 +11,6 @@ use axum::{
 };
 use ipnetwork::IpNetwork;
 use std::net::{IpAddr, SocketAddr};
-use tracing::{debug, warn};
 
 /// IP访问控制配置
 #[derive(Debug, Clone)]
@@ -35,7 +35,7 @@ impl IpFilterConfig {
             match ip_str.parse::<IpNetwork>() {
                 Ok(network) => allowed_ips.push(network),
                 Err(e) => {
-                    warn!("Failed to parse allowed IP '{}': {}", ip_str, e);
+                    lwarn!("system", LogStage::Configuration, LogComponent::Config, "parse_ip_fail", &format!("Failed to parse allowed IP '{}': {}", ip_str, e));
                     // 尝试解析为单个IP地址
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
@@ -57,7 +57,7 @@ impl IpFilterConfig {
             match ip_str.parse::<IpNetwork>() {
                 Ok(network) => denied_ips.push(network),
                 Err(e) => {
-                    warn!("Failed to parse denied IP '{}': {}", ip_str, e);
+                    lwarn!("system", LogStage::Configuration, LogComponent::Config, "parse_ip_fail", &format!("Failed to parse denied IP '{}': {}", ip_str, e));
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
                             IpAddr::V4(ipv4) => {
@@ -84,7 +84,7 @@ impl IpFilterConfig {
         // 首先检查是否在拒绝列表中
         for denied_network in &self.denied_ips {
             if denied_network.contains(ip) {
-                debug!("IP {} is in denied list", ip);
+                ldebug!("system", LogStage::Authentication, LogComponent::Auth, "ip_denied", &format!("IP {} is in denied list", ip));
                 return false;
             }
         }
@@ -97,12 +97,12 @@ impl IpFilterConfig {
         // 检查是否在允许列表中
         for allowed_network in &self.allowed_ips {
             if allowed_network.contains(ip) {
-                debug!("IP {} is in allowed list", ip);
+                ldebug!("system", LogStage::Authentication, LogComponent::Auth, "ip_allowed", &format!("IP {} is in allowed list", ip));
                 return true;
             }
         }
 
-        debug!("IP {} is not in allowed list", ip);
+        ldebug!("system", LogStage::Authentication, LogComponent::Auth, "ip_not_in_allow_list", &format!("IP {} is not in allowed list", ip));
         false
     }
 }
@@ -120,12 +120,12 @@ pub async fn ip_filter_middleware(
 
     if let Some(config) = config {
         if !config.is_allowed(client_ip) {
-            warn!("Access denied for IP: {}", client_ip);
+            lwarn!("system", LogStage::Authentication, LogComponent::Auth, "ip_denied", &format!("Access denied for IP: {}", client_ip));
             return Err(StatusCode::FORBIDDEN);
         }
     }
 
-    debug!("Access allowed for IP: {}", client_ip);
+    ldebug!("system", LogStage::Authentication, LogComponent::Auth, "ip_allowed", &format!("Access allowed for IP: {}", client_ip));
     Ok(next.run(request).await)
 }
 

@@ -2,9 +2,9 @@
 //!
 //! 专门负责管理和执行各种认证策略
 
+use crate::{linfo, logging::{LogComponent, LogStage}};
 use serde_json::Value;
 use std::collections::HashMap;
-use tracing::info;
 
 use crate::auth::{
     strategies::{
@@ -44,8 +44,11 @@ impl AuthStrategyManager {
         let api_key_strategy = Box::new(ApiKeyStrategy::new("Authorization", "Bearer {key}"));
         self.register_strategy(api_key_strategy);
 
-        info!(
-            component = "auth_strategy_manager",
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Auth,
+            "register_default_strategies",
             "Default auth strategies registered in AuthStrategyManager"
         );
     }

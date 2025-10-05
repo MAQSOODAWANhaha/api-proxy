@@ -1,3 +1,5 @@
+use crate::lerror;
+use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
 use crate::scheduler::types::SchedulingStrategy;
@@ -20,7 +22,13 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
     let provider_types_data = match provider_types_result {
         Ok(data) => data,
         Err(err) => {
-            tracing::error!("Failed to fetch provider types: {}", err);
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_provider_types_fail",
+                &format!("Failed to fetch provider types: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider types: {}",

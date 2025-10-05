@@ -3,15 +3,13 @@
 //! 从RequestHandler中提取的追踪相关逻辑，专门负责处理代理端的请求追踪需求
 //! 包括请求追踪开始、完成、错误处理和扩展信息更新等功能
 
-use crate::error::Result;
-use crate::{proxy_err, proxy_warn};
-use std::sync::Arc;
-
 use crate::error::ProxyError;
+use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
-use crate::{proxy_debug, proxy_info};
+use crate::{ldebug, linfo, lwarn, proxy_err};
+use std::sync::Arc;
 
 /// 代理端追踪服务
 ///
@@ -54,10 +52,10 @@ impl TracingService {
                 )
                 .await
                 .map_err(|e| {
-                    proxy_warn!(
+                    lwarn!(
                         request_id,
                         LogStage::Error,
-                        LogComponent::TracingService,
+                        LogComponent::Tracing,
                         "trace_start_failed",
                         "即时追踪启动失败",
                         error = format!("{:?}", e)
@@ -65,10 +63,10 @@ impl TracingService {
                     proxy_err!(tracing, "Failed to start trace: {}", e)
                 })?;
 
-            proxy_debug!(
+            ldebug!(
                 request_id,
                 LogStage::RequestStart,
-                LogComponent::TracingService,
+                LogComponent::Tracing,
                 "trace_started",
                 "请求追踪启动成功",
                 user_service_api_id = user_service_api_id
@@ -98,10 +96,10 @@ impl TracingService {
                 )
                 .await
                 .map_err(|e| {
-                    proxy_warn!(
+                    lwarn!(
                         request_id,
                         LogStage::Error,
-                        LogComponent::TracingService,
+                        LogComponent::Tracing,
                         "model_info_update_failed",
                         "模型信息更新失败（第一层）",
                         error = format!("{:?}", e)
@@ -109,10 +107,10 @@ impl TracingService {
                     proxy_err!(tracing, "Failed to update model info: {}", e)
                 })?;
 
-            proxy_info!(
+            linfo!(
                 request_id,
                 LogStage::RequestModify,
-                LogComponent::TracingService,
+                LogComponent::Tracing,
                 "model_info_updated",
                 "模型信息更新成功（第一层：立即更新）",
                 provider_type_id = provider_type_id,
@@ -157,10 +155,10 @@ impl TracingService {
                 )
                 .await
                 .map_err(|e| {
-                    proxy_warn!(
+                    lwarn!(
                         request_id,
                         LogStage::Error,
-                        LogComponent::TracingService,
+                        LogComponent::Tracing,
                         "success_trace_complete_failed",
                         "成功请求追踪完成失败（第二层）",
                         error = format!("{:?}", e)
@@ -168,10 +166,10 @@ impl TracingService {
                     proxy_err!(tracing, "Failed to complete trace: {}", e)
                 })?;
 
-            proxy_info!(
+            linfo!(
                 request_id,
                 LogStage::Response,
-                LogComponent::TracingService,
+                LogComponent::Tracing,
                 "success_trace_completed",
                 "成功请求追踪完成（第二层：批量更新）",
                 status_code = status_code,
@@ -212,10 +210,10 @@ impl TracingService {
                 )
                 .await
                 .map_err(|e| {
-                    proxy_warn!(
+                    lwarn!(
                         request_id,
                         LogStage::Error,
-                        LogComponent::TracingService,
+                        LogComponent::Tracing,
                         "failure_trace_complete_failed",
                         "失败请求追踪完成失败（第二层）",
                         error = format!("{:?}", e)
@@ -223,10 +221,10 @@ impl TracingService {
                     proxy_err!(tracing, "Failed to complete trace: {}", e)
                 })?;
 
-            proxy_info!(
+            linfo!(
                 request_id,
                 LogStage::ResponseFailure,
-                LogComponent::TracingService,
+                LogComponent::Tracing,
                 "failure_trace_completed",
                 "失败请求追踪完成（第二层：批量更新）",
                 status_code = status_code,

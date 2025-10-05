@@ -2,6 +2,8 @@
 //!
 //! 解决长时间请求的内存占用和数据丢失问题，采用即时数据库写入模式
 
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use anyhow::Result;
 use chrono::Utc;
 use entity::proxy_tracing;
@@ -9,7 +11,6 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, NotSet, QueryFilter, QuerySelect, Set,
 };
 use std::sync::Arc;
-use tracing::{debug, error, info};
 
 /// 即时写入追踪器配置（已简化）
 #[derive(Debug, Clone)]
@@ -37,7 +38,7 @@ pub struct ImmediateProxyTracer {
 impl ImmediateProxyTracer {
     /// 创建新的即时写入追踪器
     pub fn new(db: Arc<DatabaseConnection>, _config: ImmediateTracerConfig) -> Self {
-        info!("Initializing immediate proxy tracer with all requests traced");
+        linfo!("system", LogStage::Startup, LogComponent::TracingService, "init", "Initializing immediate proxy tracer with all requests traced");
 
         Self {
             config: ImmediateTracerConfig::default(),
@@ -98,11 +99,14 @@ impl ImmediateProxyTracer {
             .exec(&*self.db)
             .await?;
 
-        debug!(
-            request_id = %request_id,
+        ldebug!(
+            &request_id,
+            LogStage::Internal,
+            LogComponent::Tracing,
+            "trace_started",
+            "Started simplified proxy trace",
             trace_id = insert_result.last_insert_id,
-            user_id = ?user_id,
-            "Started simplified proxy trace"
+            user_id = ?user_id
         );
 
         Ok(())
@@ -133,10 +137,13 @@ impl ImmediateProxyTracer {
             .await?;
 
         if update_result.rows_affected > 0 {
-            debug!(
-                request_id = %request_id,
-                rows_affected = update_result.rows_affected,
-                "Updated trace intermediate info"
+            ldebug!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Tracing,
+                "trace_info_updated",
+                "Updated trace intermediate info",
+                rows_affected = update_result.rows_affected
             );
         }
 
@@ -164,9 +171,9 @@ impl ImmediateProxyTracer {
             update_model.provider_type_id = Set(Some(provider_id));
             updated_fields.push(format!("provider_type_id={}", provider_id));
         }
-        if let Some(model) = model_used {
-            update_model.model_used = Set(Some(model.clone()));
-            updated_fields.push(format!("model_used={}", model));
+        if let Some(model) = model_used.clone() {
+            update_model.model_used = Set(Some(model));
+            updated_fields.push(format!("model_used={}", model_used.unwrap_or_default()));
         }
         if let Some(user_key_id) = user_provider_key_id {
             update_model.user_provider_key_id = Set(Some(user_key_id));
@@ -181,15 +188,21 @@ impl ImmediateProxyTracer {
             .await?;
 
         if update_result.rows_affected > 0 {
-            info!(
-                request_id = %request_id,
+            linfo!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::Tracing,
+                "model_info_updated",
+                "模型信息更新成功（第一层：立即更新）",
                 rows_affected = update_result.rows_affected,
-                updated_fields = ?updated_fields,
-                "Updated trace model information (Layer 1: Immediate)"
+                updated_fields = ?updated_fields
             );
         } else {
-            tracing::warn!(
-                request_id = %request_id,
+            lwarn!(
+                request_id,
+                LogStage::RequestModify,
+                LogComponent::Tracing,
+                "model_info_update_not_found",
                 "No trace record found to update model info"
             );
         }
@@ -297,8 +310,12 @@ impl ImmediateProxyTracer {
             .await?;
 
         if update_result.rows_affected > 0 {
-            info!(
-                request_id = %request_id,
+            linfo!(
+                request_id,
+                LogStage::Response,
+                LogComponent::Tracing,
+                "trace_completed",
+                "Completed trace with comprehensive stats",
                 status_code = status_code,
                 is_success = is_success,
                 tokens_total = ?tokens_total,
@@ -306,12 +323,14 @@ impl ImmediateProxyTracer {
                 cache_create_tokens = ?cache_create_tokens,
                 cache_read_tokens = ?cache_read_tokens,
                 duration_ms = ?duration_ms,
-                rows_affected = update_result.rows_affected,
-                "Completed trace with comprehensive stats"
+                rows_affected = update_result.rows_affected
             );
         } else {
-            error!(
-                request_id = %request_id,
+            lerror!(
+                request_id,
+                LogStage::Response,
+                LogComponent::Tracing,
+                "trace_complete_failed",
                 "Failed to complete trace - no matching record found"
             );
         }
@@ -347,21 +366,26 @@ impl ImmediateProxyTracer {
 
         match &result {
             Ok(_) => {
-                info!(
-                    request_id = %request_id,
+                linfo!(
+                    request_id,
+                    LogStage::Response,
+                    LogComponent::Tracing,
+                    "trace_completed_batch",
+                    "Completed trace with batch statistics update (Layer 2: Batch)",
                     status_code = status_code,
                     is_success = is_success,
                     input_tokens = ?trace_stats.input_tokens,
                     output_tokens = ?trace_stats.output_tokens,
-                    cost = ?trace_stats.cost,
-                    "Completed trace with batch statistics update (Layer 2: Batch)"
+                    cost = ?trace_stats.cost
                 );
             }
             Err(e) => {
-                tracing::error!(
-                    request_id = %request_id,
-                    error = %e,
-                    "Failed to complete trace with batch statistics"
+                lerror!(
+                    request_id,
+                    LogStage::Response,
+                    LogComponent::Tracing,
+                    "trace_complete_batch_failed",
+                    &format!("Failed to complete trace with batch statistics: {}", e)
                 );
             }
         }
@@ -391,10 +415,13 @@ impl ImmediateProxyTracer {
             .await?;
 
         if delete_result.rows_affected > 0 {
-            info!(
-                rows_deleted = delete_result.rows_affected,
-                hours_threshold = hours_threshold,
-                "Cleaned up orphaned trace records"
+            linfo!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::Tracing,
+                "cleanup_orphaned",
+                &format!("Cleaned up orphaned trace records: {} rows deleted", delete_result.rows_affected),
+                hours_threshold = hours_threshold
             );
         }
 

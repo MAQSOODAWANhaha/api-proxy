@@ -2,11 +2,12 @@
 //!
 //! 基于模型定价和阶梯定价配置，计算AI请求的token使用费用
 
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use anyhow::Result;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
 
 use entity::{
     model_pricing::{self, Entity as ModelPricing},
@@ -73,34 +74,43 @@ impl PricingCalculatorService {
         {
             Some(pricing) => pricing,
             None => {
-                warn!(
-                    request_id = %request_id,
+                lwarn!(
+                    request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "no_pricing_config",
+                    "No pricing configuration found for model, using fallback",
                     model = %model_used,
                     provider_type_id = provider_type_id,
-                    "No pricing configuration found for model, using fallback"
                 );
                 return Ok(self.create_fallback_result());
             }
         };
 
-        info!(
-            request_id = %request_id,
+        linfo!(
+            request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "pricing_config_found",
+            "Found pricing configuration",
             model = %model_used,
             provider_type_id = provider_type_id,
             pricing_id = model_pricing.id,
             currency = %model_pricing.cost_currency,
-            "Found pricing configuration"
         );
 
         // 查找阶梯定价配置
         let pricing_tiers = self.get_pricing_tiers(model_pricing.id).await?;
 
         if pricing_tiers.is_empty() {
-            warn!(
-                request_id = %request_id,
+            lwarn!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "no_pricing_tiers",
+                "No pricing tiers found for model, using fallback",
                 model = %model_used,
                 pricing_id = model_pricing.id,
-                "No pricing tiers found for model, using fallback"
             );
             return Ok(self.create_fallback_result());
         }
@@ -150,13 +160,16 @@ impl PricingCalculatorService {
             total_cost += cost;
         }
 
-        info!(
-            request_id = %request_id,
+        linfo!(
+            request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "cost_calculated",
+            "Successfully calculated cost",
             model = %model_used,
             total_cost = total_cost,
             currency = %model_pricing.cost_currency,
             cost_breakdown = ?cost_breakdown,
-            "Successfully calculated cost"
         );
 
         Ok(CostCalculationResult {
@@ -182,20 +195,28 @@ impl PricingCalculatorService {
         // 验证ProviderTypeId匹配
         if let Some(ref pricing_model) = pricing {
             if pricing_model.provider_type_id != expected_provider_type_id {
-                error!(
+                lerror!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "provider_id_mismatch",
+                    "ProviderTypeId mismatch in pricing configuration",
                     model = %model_name,
                     expected_provider_id = expected_provider_type_id,
                     actual_provider_id = pricing_model.provider_type_id,
-                    "ProviderTypeId mismatch in pricing configuration"
                 );
                 return Ok(None);
             }
 
-            debug!(
+            ldebug!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "provider_id_validation_ok",
+                "ProviderTypeId validation successful",
                 model = %model_name,
                 provider_type_id = expected_provider_type_id,
                 pricing_id = pricing_model.id,
-                "ProviderTypeId validation successful"
             );
         }
 
@@ -212,10 +233,14 @@ impl PricingCalculatorService {
             .all(&*self.db)
             .await?;
 
-        debug!(
+        ldebug!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "pricing_tiers_retrieved",
+            "Retrieved pricing tiers",
             model_pricing_id = model_pricing_id,
             tiers_count = tiers.len(),
-            "Retrieved pricing tiers"
         );
 
         Ok(tiers)
@@ -238,11 +263,14 @@ impl PricingCalculatorService {
             .collect();
 
         if relevant_tiers.is_empty() {
-            debug!(
-                request_id = %request_id,
+            ldebug!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "no_pricing_tiers_for_type",
+                "No pricing tiers found for token type, cost = 0",
                 token_type = %token_type,
                 token_count = token_count,
-                "No pricing tiers found for token type, cost = 0"
             );
             return 0.0;
         }
@@ -260,26 +288,32 @@ impl PricingCalculatorService {
                 let tier_cost = tier.calculate_cost(tokens_in_tier);
                 total_cost += tier_cost;
 
-                debug!(
-                    request_id = %request_id,
+                ldebug!(
+                    request_id,
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "pricing_tier_applied",
+                    "Applied pricing tier",
                     token_type = %token_type,
                     tier_min = tier.min_tokens,
                     tier_max = ?tier.max_tokens,
                     tokens_in_tier = tokens_in_tier,
                     price_per_token = tier.price_per_token,
                     tier_cost = tier_cost,
-                    "Applied pricing tier"
                 );
             }
         }
 
-        debug!(
-            request_id = %request_id,
+        ldebug!(
+            request_id,
+            LogStage::Internal,
+            LogComponent::Statistics,
+            "tiered_cost_calculated",
+            "Calculated tiered cost",
             token_type = %token_type,
             token_count = token_count,
             total_cost = total_cost,
             tiers_used = sorted_tiers.len(),
-            "Calculated tiered cost"
         );
 
         total_cost

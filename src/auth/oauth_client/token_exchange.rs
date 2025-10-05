@@ -6,12 +6,13 @@
 use super::providers::OAuthProviderManager;
 use super::session_manager::SessionManager;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, linfo};
 use entity::oauth_client_sessions;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::info;
 
 /// 令牌响应结构（来自OAuth服务器的原始响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,11 +91,12 @@ impl TokenExchangeClient {
         // 提取真正的authorization code（移除fragment部分）
         let actual_code = if authorization_code.contains('#') {
             let parts: Vec<&str> = authorization_code.split('#').collect();
-            tracing::debug!(
-                component = "oauth_token_exchange",
-                "Authorization code contains fragment, using code part: {} -> {}",
-                authorization_code,
-                parts[0]
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "auth_code_fragment",
+                &format!("Authorization code contains fragment, using code part: {} -> {}", authorization_code, parts[0])
             );
             parts[0].to_string()
         } else {
@@ -216,10 +218,12 @@ impl TokenExchangeClient {
             "openai" => "https://auth.openai.com/oauth/revoke",
             _ => {
                 // 对于不支持撤销的提供商，只是在本地标记为失效
-                tracing::debug!(
-                    component = "oauth_token_exchange",
-                    "Provider {} does not support token revocation",
-                    base_provider
+                ldebug!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "revocation_unsupported",
+                    &format!("Provider {} does not support token revocation", base_provider)
                 );
                 return Ok(());
             }
@@ -295,10 +299,12 @@ impl TokenExchangeClient {
     ) -> OAuthResult<bool> {
         // 对于没有特定验证端点的提供商，默认认为令牌有效
         // 实际应用中可以根据需要实现更复杂的验证逻辑
-        tracing::debug!(
-            component = "oauth_token_exchange",
-            "Generic token validation for provider: {}",
-            provider_name
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "generic_token_validation",
+            &format!("Generic token validation for provider: {}", provider_name)
         );
         Ok(true)
     }
@@ -316,11 +322,12 @@ impl TokenExchangeClient {
 
         let response = if is_claude_token_url {
             // Claude使用JSON格式 - 根据Wei-Shaw项目实现
-            tracing::debug!(
-                component = "oauth_token_exchange",
-                "🌟 发送Claude token exchange请求: url={}, params={:?}",
-                token_url,
-                form_params
+            ldebug!(
+                "system",
+                LogStage::ExternalApi,
+                LogComponent::OAuth,
+                "claude_token_exchange",
+                &format!("🌟 发送Claude token exchange请求: url={}, params={:?}", token_url, form_params)
             );
 
             self.http_client
@@ -350,9 +357,12 @@ impl TokenExchangeClient {
         if !status.is_success() {
             // 对于错误响应，先尝试解析为JSON，如果失败则获取文本内容
             let error_text = response.text().await?;
-            info!(
-                component = "oauth_token_exchange",
-                "🌟 Token exchange error response: status={}, body={}", status, error_text
+            linfo!(
+                "system",
+                LogStage::ExternalApi,
+                LogComponent::OAuth,
+                "token_exchange_error",
+                &format!("🌟 Token exchange error response: status={}, body={}", status, error_text)
             );
 
             // 尝试解析错误响应
@@ -376,9 +386,12 @@ impl TokenExchangeClient {
             .map_err(|e| OAuthError::SerdeError(format!("Failed to read response text: {}", e)))?;
 
         // 打印完整的原始JSON响应（注意：生产环境中应该小心处理敏感信息）
-        info!(
-            component = "oauth_token_exchange",
-            "🌟 Token exchange complete: status={}, body={}", status, data
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::OAuth,
+            "token_exchange_complete",
+            &format!("🌟 Token exchange complete: status={}, body={}", status, data)
         );
 
         // 解析为我们定义的TokenResponse结构体

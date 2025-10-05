@@ -2,8 +2,9 @@
 //!
 //! 为认证系统提供统一、优化的缓存策略，确保一致性和性能
 
+use crate::logging::{LogComponent, LogStage};
+use crate::ldebug;
 use std::time::Duration;
-use tracing::debug;
 
 use crate::auth::types::AuthConfig;
 use crate::cache::CacheManager;
@@ -106,7 +107,7 @@ impl UnifiedAuthCacheManager {
         T: serde::Serialize + Send + Sync,
     {
         if !key.should_cache() {
-            debug!("Skipping cache for key type: {:?}", key);
+            ldebug!("system", LogStage::Cache, LogComponent::Cache, "skip_cache", &format!("Skipping cache for key type: {:?}", key));
             return Ok(());
         }
 
@@ -120,20 +121,12 @@ impl UnifiedAuthCacheManager {
             .await
         {
             Ok(_) => {
-                debug!(
-                    cache_key = %cache_key,
-                    ttl_seconds = ttl.as_secs(),
-                    "Cached auth result"
-                );
+                ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_set", "Cached auth result", cache_key = %cache_key, ttl_seconds = ttl.as_secs());
                 Ok(())
             }
             Err(e) => {
                 // 缓存失败不应该影响业务逻辑
-                debug!(
-                    cache_key = %cache_key,
-                    error = %e,
-                    "Failed to cache auth result, continuing without cache"
-                );
+                ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_set_fail", "Failed to cache auth result, continuing without cache", cache_key = %cache_key, error = %e);
                 Ok(())
             }
         }
@@ -148,25 +141,15 @@ impl UnifiedAuthCacheManager {
 
         match self.cache_manager.provider().get::<T>(&cache_key).await {
             Ok(Some(value)) => {
-                debug!(
-                    cache_key = %cache_key,
-                    "Auth cache hit"
-                );
+                ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_hit", "Auth cache hit", cache_key = %cache_key);
                 Some(value)
             }
             Ok(None) => {
-                debug!(
-                    cache_key = %cache_key,
-                    "Auth cache miss"
-                );
+                ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_miss", "Auth cache miss", cache_key = %cache_key);
                 None
             }
             Err(e) => {
-                debug!(
-                    cache_key = %cache_key,
-                    error = %e,
-                    "Auth cache error, treating as miss"
-                );
+                ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_get_fail", "Auth cache error, treating as miss", cache_key = %cache_key, error = %e);
                 None
             }
         }
@@ -183,11 +166,7 @@ impl UnifiedAuthCacheManager {
             .set(&cache_key, Option::<()>::None, Some(Duration::from_secs(1)))
             .await;
 
-        debug!(
-            cache_key = %cache_key,
-            success = result.is_ok(),
-            "Auth cache invalidated"
-        );
+        ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_invalidate", "Auth cache invalidated", cache_key = %cache_key, success = result.is_ok());
 
         Ok(())
     }
@@ -237,11 +216,7 @@ impl UnifiedAuthCacheManager {
             }
         }
 
-        debug!(
-            successful_operations = successful,
-            failed_operations = failed,
-            "Batch cache operation completed"
-        );
+        ldebug!("system", LogStage::Cache, LogComponent::Cache, "batch_cache_complete", "Batch cache operation completed", successful_operations = successful, failed_operations = failed);
 
         Ok(())
     }
@@ -252,7 +227,7 @@ impl UnifiedAuthCacheManager {
     pub async fn warm_cache(&self, _warm_entries: Vec<AuthCacheKey>) -> Result<()> {
         // 预热逻辑可以根据实际需要实现
         // 例如：预加载常用的API密钥验证结果
-        debug!("Auth cache warm-up completed");
+        ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_complete", "Auth cache warm-up completed");
         Ok(())
     }
 
@@ -273,7 +248,7 @@ impl UnifiedAuthCacheManager {
     /// 清理过期缓存
     pub async fn cleanup_expired(&self) -> Result<u64> {
         // CacheManager基于TTL自动清理
-        debug!("Auth cache cleanup - handled automatically by TTL");
+        ldebug!("system", LogStage::Cache, LogComponent::Cache, "cleanup_auto", "Auth cache cleanup - handled automatically by TTL");
         Ok(0)
     }
 }

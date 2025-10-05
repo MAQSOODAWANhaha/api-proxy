@@ -3,11 +3,11 @@
 //! 说明：当前仅做最小无害改写示例（如补充少量兼容性 Header），
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
+use crate::{ldebug, linfo, logging::{self, LogComponent, LogStage}};
 use super::ProviderStrategy;
 use crate::error::Result;
-use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::ProxyContext;
-use crate::{proxy_err, proxy_info};
+use crate::{proxy_err};
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
@@ -91,10 +91,13 @@ impl ProviderStrategy for GeminiStrategy {
                 ));
             }
 
-            tracing::info!(
-                request_id = ctx.request_id,
-                request_headers = logging::headers_json_string_request(upstream_request),
-                "Set correct Host header for Gemini provider"
+            linfo!(
+                &ctx.request_id,
+                LogStage::RequestModify,
+                LogComponent::GeminiStrategy,
+                "set_host_header",
+                "Set correct Host header for Gemini provider",
+                request_headers = logging::headers_json_string_request(upstream_request)
             );
         }
 
@@ -147,7 +150,7 @@ impl ProviderStrategy for GeminiStrategy {
         };
 
         if modified {
-            proxy_info!(
+            linfo!(
                 &ctx.request_id,
                 LogStage::RequestModify,
                 LogComponent::GeminiStrategy,
@@ -168,7 +171,12 @@ impl ProviderStrategy for GeminiStrategy {
             ("X-goog-api-key".to_string(), api_key.to_string()),
         ];
 
-        tracing::debug!(
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::GeminiStrategy,
+            "build_auth_headers",
+            "Generated Gemini-specific authentication headers",
             provider_name = "gemini",
             generated_headers = format!(
                 "{:?}",
@@ -176,8 +184,7 @@ impl ProviderStrategy for GeminiStrategy {
                     .iter()
                     .map(|(name, _)| name)
                     .collect::<Vec<_>>()
-            ),
-            "Generated Gemini-specific authentication headers"
+            )
         );
 
         auth_headers

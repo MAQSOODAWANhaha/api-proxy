@@ -2,11 +2,11 @@
 //!
 //! 强化管理端(9090)和代理端(8080)的认证边界，防止认证方式混用
 
-use std::collections::HashSet;
-use tracing::{debug, warn};
-
 use crate::auth::{AuthMethod, AuthResult};
 use crate::error::{ProxyError, Result};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lwarn};
+use std::collections::HashSet;
 
 /// 端口类型定义
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -191,11 +191,15 @@ impl DualAuthBoundaryController {
             )));
         }
 
-        debug!(
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "boundary_validation_passed",
+            "Authentication boundary validation passed",
             port = port,
             method = ?method,
-            client_ip = request_context.client_ip.as_deref().unwrap_or("unknown"),
-            "Authentication boundary validation passed"
+            client_ip = request_context.client_ip.as_deref().unwrap_or("unknown")
         );
 
         Ok(())
@@ -223,7 +227,12 @@ impl DualAuthBoundaryController {
             .violation_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        warn!(
+        lwarn!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "boundary_violation",
+            "Authentication boundary violation detected",
             violation_id = count,
             port = port_type.port(),
             port_type = ?port_type,
@@ -231,8 +240,7 @@ impl DualAuthBoundaryController {
             client_ip = context.client_ip.as_deref().unwrap_or("unknown"),
             user_agent = context.user_agent.as_deref().unwrap_or("unknown"),
             path = context.path.as_deref().unwrap_or("unknown"),
-            reason = reason,
-            "Authentication boundary violation detected"
+            reason = reason
         );
     }
 
@@ -252,19 +260,19 @@ impl DualAuthBoundaryController {
     pub fn reset_violation_count(&self) {
         self.violation_count
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        debug!("Authentication boundary violation counter reset");
+        ldebug!("system", LogStage::Internal, LogComponent::Auth, "boundary_counter_reset", "Authentication boundary violation counter reset");
     }
 
     /// 启用边界检查
     pub fn enable(&mut self) {
         self.enabled = true;
-        debug!("Authentication boundary checking enabled");
+        ldebug!("system", LogStage::Configuration, LogComponent::Auth, "boundary_check_enabled", "Authentication boundary checking enabled");
     }
 
     /// 禁用边界检查
     pub fn disable(&mut self) {
         self.enabled = false;
-        warn!("Authentication boundary checking disabled - this should only be used for testing");
+        lwarn!("system", LogStage::Configuration, LogComponent::Auth, "boundary_check_disabled", "Authentication boundary checking disabled - this should only be used for testing");
     }
 
     /// 检查是否启用
@@ -286,11 +294,11 @@ impl DualAuthBoundaryController {
         match port_type {
             PortType::Management => {
                 self.management_rule = rule;
-                debug!("Updated management port authentication rule");
+                ldebug!("system", LogStage::Configuration, LogComponent::Auth, "mgmt_rule_updated", "Updated management port authentication rule");
             }
             PortType::Proxy => {
                 self.proxy_rule = rule;
-                debug!("Updated proxy port authentication rule");
+                ldebug!("system", LogStage::Configuration, LogComponent::Auth, "proxy_rule_updated", "Updated proxy port authentication rule");
             }
         }
     }

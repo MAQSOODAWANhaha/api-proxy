@@ -2,9 +2,11 @@
 //!
 //! 基于 proxy_tracing 表的日志查询、统计和分析功能
 
+use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
+use crate::{lerror, linfo};
 use ::entity::proxy_tracing;
 use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
 use axum::{
@@ -156,7 +158,13 @@ pub async fn get_dashboard_stats(
     match calculate_dashboard_stats(&state.database).await {
         Ok(stats) => ApiResponse::Success(stats).into_response(),
         Err(e) => {
-            tracing::error!("获取日志仪表板统计失败: {}", e);
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "dashboard_stats_fail",
+                &format!("获取日志仪表板统计失败: {}", e)
+            );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
                 "获取统计数据失败: {}",
@@ -254,7 +262,13 @@ pub async fn get_traces_list(
     {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
-            tracing::error!("获取日志列表失败: {}", e);
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Tracing,
+                "get_traces_fail",
+                &format!("获取日志列表失败: {}", e)
+            );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
                 "获取日志列表失败: {}",
@@ -279,12 +293,24 @@ async fn fetch_traces_list(
     // 权限控制：非管理员只能查看自己的日志记录
     if !is_admin {
         select = select.filter(proxy_tracing::Column::UserId.eq(current_user_id));
-        tracing::info!(
-            "Non-admin user {} accessing traces - filtering by user_id",
-            current_user_id
+        linfo!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Tracing,
+            "non_admin_access",
+            &format!(
+                "Non-admin user {} accessing traces - filtering by user_id",
+                current_user_id
+            )
         );
     } else {
-        tracing::info!("Admin user {} accessing all traces", current_user_id);
+        linfo!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Tracing,
+            "admin_access",
+            &format!("Admin user {} accessing all traces", current_user_id)
+        );
     }
 
     // 应用搜索过滤
@@ -420,7 +446,13 @@ pub async fn get_trace_detail(
             id
         )),
         Err(e) => {
-            tracing::error!("获取日志详情失败: {}", e);
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Tracing,
+                "get_trace_detail_fail",
+                &format!("获取日志详情失败: {}", e)
+            );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
                 "获取日志详情失败: {}",
@@ -507,7 +539,13 @@ pub async fn get_logs_analytics(
     match fetch_logs_analytics(&state.database, time_range, group_by).await {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
-            tracing::error!("获取日志统计分析失败: {}", e);
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "analytics_fail",
+                &format!("获取日志统计分析失败: {}", e)
+            );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
                 "获取统计分析失败: {}",

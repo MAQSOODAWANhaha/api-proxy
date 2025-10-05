@@ -8,12 +8,13 @@ use super::session_manager::SessionManager;
 use super::token_exchange::TokenExchangeClient;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
 use crate::auth::types::AuthStatus;
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{Duration, Utc};
 use entity::{oauth_client_sessions, user_provider_keys};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
 
 /// Token自动刷新管理器
 #[derive(Debug)]
@@ -78,9 +79,12 @@ impl AutoRefreshManager {
         let session = self.session_manager.get_session(session_id).await?;
 
         if session.status != AuthStatus::Authorized.to_string() {
-            debug!(
-                "Session {} is not authorized, status: {}",
-                session_id, session.status
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "session_not_authorized",
+                &format!("Session {} is not authorized, status: {}", session_id, session.status)
             );
             return Ok(None);
         }
@@ -97,32 +101,41 @@ impl AutoRefreshManager {
             return Ok(session.access_token);
         }
 
-        debug!("Token for session {} needs refresh", session_id);
+        ldebug!("system", LogStage::Authentication, LogComponent::OAuth, "token_needs_refresh", &format!("Token for session {} needs refresh", session_id));
 
         // 检查是否有refresh_token
         if session.refresh_token.is_none() {
-            warn!(
-                "Session {} has no refresh token, cannot auto-refresh",
-                session_id
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "no_refresh_token",
+                &format!("Session {} has no refresh token, cannot auto-refresh", session_id)
             );
             return Ok(None);
         }
 
-        debug!("Session {} 通过关联验证，开始执行token刷新", session_id);
+        ldebug!("system", LogStage::Authentication, LogComponent::OAuth, "start_token_refresh", &format!("Session {} 通过关联验证，开始执行token刷新", session_id));
 
         // 执行自动刷新
         match self.auto_refresh_token(session_id, &policy).await {
             Ok(token_response) => {
-                debug!(
-                    "Successfully auto-refreshed token for session {}",
-                    session_id
+                ldebug!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "token_refresh_ok",
+                    &format!("Successfully auto-refreshed token for session {}", session_id)
                 );
                 Ok(Some(token_response.access_token))
             }
             Err(e) => {
-                error!(
-                    "Failed to auto-refresh token for session {}: {}",
-                    session_id, e
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "token_refresh_fail",
+                    &format!("Failed to auto-refresh token for session {}: {}", session_id, e)
                 );
                 // 刷新失败：如已过期则返回None，否则返回当前token
                 let now = Utc::now().naive_utc();
@@ -241,9 +254,12 @@ impl AutoRefreshManager {
 
         // 🔥 关键检查：验证该会话是否还有对应的user_provider_keys关联
         if !self.validate_session_association(&current_session).await? {
-            warn!(
-                "Session {} 没有对应的user_provider_keys关联，跳过刷新",
-                session_id
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "session_orphaned",
+                &format!("Session {} 没有对应的user_provider_keys关联，跳过刷新", session_id)
             );
             // 不在刷新路径进行删除，交由后台清理任务处理
             return Err(OAuthError::InvalidSession(format!(
@@ -253,7 +269,7 @@ impl AutoRefreshManager {
         }
 
         if !self.should_refresh_token(&current_session, policy)? {
-            debug!("Token for session {} was already refreshed", session_id);
+            ldebug!("system", LogStage::Authentication, LogComponent::OAuth, "token_already_refreshed", &format!("Token for session {} was already refreshed", session_id));
             if let Some(token) = current_session.access_token {
                 // 清理锁映射
                 {
@@ -276,9 +292,12 @@ impl AutoRefreshManager {
         let mut last_error = OAuthError::TokenExchangeFailed("No attempts made".to_string());
 
         for attempt in 1..=policy.max_retry_attempts {
-            debug!(
-                "Attempting token refresh for session {} (attempt {}/{})",
-                session_id, attempt, policy.max_retry_attempts
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "token_refresh_attempt",
+                &format!("Attempting token refresh for session {} (attempt {}/{})", session_id, attempt, policy.max_retry_attempts)
             );
 
             match self
@@ -287,9 +306,12 @@ impl AutoRefreshManager {
                 .await
             {
                 Ok(token_response) => {
-                    debug!(
-                        "Successfully refreshed token for session {} on attempt {}",
-                        session_id, attempt
+                    ldebug!(
+                        "system",
+                        LogStage::Authentication,
+                        LogComponent::OAuth,
+                        "token_refresh_ok",
+                        &format!("Successfully refreshed token for session {} on attempt {}", session_id, attempt)
                     );
                     // 成功后清理锁映射
                     {
@@ -299,9 +321,12 @@ impl AutoRefreshManager {
                     return Ok(token_response);
                 }
                 Err(e) => {
-                    warn!(
-                        "Token refresh attempt {} failed for session {}: {}",
-                        attempt, session_id, e
+                    lwarn!(
+                        "system",
+                        LogStage::Authentication,
+                        LogComponent::OAuth,
+                        "token_refresh_attempt_fail",
+                        &format!("Token refresh attempt {} failed for session {}: {}", attempt, session_id, e)
                     );
                     last_error = e;
 
@@ -337,10 +362,12 @@ impl AutoRefreshManager {
         let min_age_threshold = Duration::try_minutes(5).unwrap_or_default();
 
         if session_age < min_age_threshold {
-            debug!(
-                "Session {} 创建时间不足5分钟 ({}分钟)，跳过孤立检查",
-                session.session_id,
-                session_age.num_minutes()
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "skip_orphan_check",
+                &format!("Session {} 创建时间不足5分钟 ({}分钟)，跳过孤立检查", session.session_id, session_age.num_minutes())
             );
             return Ok(true); // 新会话暂时视为有效，等待后续处理
         }
@@ -357,10 +384,12 @@ impl AutoRefreshManager {
         let has_association = associated_key.is_some();
 
         if !has_association {
-            info!(
-                "Session {} 创建 {} 分钟后仍无user_provider_keys关联，判定为孤立会话，开始清理",
-                session.session_id,
-                session_age.num_minutes()
+            linfo!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "orphan_session_cleanup",
+                &format!("Session {} 创建 {} 分钟后仍无user_provider_keys关联，判定为孤立会话，开始清理", session.session_id, session_age.num_minutes())
             );
 
             // 删除孤立会话
@@ -369,14 +398,17 @@ impl AutoRefreshManager {
                 .delete_session(&session.session_id, session.user_id)
                 .await
             {
-                error!("删除孤立会话失败 {}: {}", session.session_id, e);
+                lerror!("system", LogStage::Authentication, LogComponent::OAuth, "orphan_session_delete_fail", &format!("删除孤立会话失败 {}: {}", session.session_id, e));
             } else {
-                info!("成功删除孤立会话 {}", session.session_id);
+                linfo!("system", LogStage::Authentication, LogComponent::OAuth, "orphan_session_delete_ok", &format!("成功删除孤立会话 {}", session.session_id));
             }
         } else {
-            debug!(
-                "Session {} 有有效的user_provider_keys关联",
-                session.session_id
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "session_association_ok",
+                &format!("Session {} 有有效的user_provider_keys关联", session.session_id)
             );
         }
 

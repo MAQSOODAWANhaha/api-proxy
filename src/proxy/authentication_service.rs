@@ -2,30 +2,25 @@
 //!
 //! 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 
-use crate::error::Result;
-use crate::{proxy_err, proxy_info};
-use pingora_proxy::Session;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
-use std::sync::Arc;
-use std::time::Duration;
-
-use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::{
-    AuthManager,
-    types::{AuthStatus, AuthType},
+    rate_limit_dist::DistributedRateLimiter, types::{AuthStatus, AuthType}, AuthManager
 };
 use crate::cache::CacheManager;
-
+use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
-use crate::proxy_debug;
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
+use crate::{ldebug, linfo, proxy_err};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
     user_provider_keys,
     user_service_apis::{self},
 };
+use pingora_proxy::Session;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// 认证信息来源类型
 #[derive(Debug, Clone)]
@@ -130,10 +125,10 @@ impl AuthenticationService {
             .authenticate_proxy_request(&user_auth.auth_value)
             .await?;
 
-        proxy_info!(
+        linfo!(
             request_id,
             LogStage::Authentication,
-            LogComponent::AuthService,
+            LogComponent::Auth,
             "entry_auth_success",
             "入口API认证成功",
             user_id = proxy_auth_result.user_id,
@@ -294,10 +289,10 @@ impl AuthenticationService {
             .api_key_pool
             .select_api_key_from_service_api(user_service_api, &context)
             .await?;
-        proxy_debug!(
+        ldebug!(
             request_id,
             LogStage::Authentication,
-            LogComponent::AuthService,
+            LogComponent::Auth,
             "api_key_selected",
             "API密钥选择完成",
             selected_key_id = result.selected_key.id,

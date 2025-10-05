@@ -4,7 +4,9 @@
 //! 从 JWT payload 中提取 chatgpt_account_id 等关键信息
 
 use crate::auth::oauth_client::OAuthError;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use crate::logging::{LogComponent, LogStage};
+use crate::{ldebug, lwarn};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -75,14 +77,18 @@ impl JWTParser {
 
         // 提取 OpenAI 认证信息
         if let Some(openai_auth) = token_data.claims.openai_auth {
-            tracing::debug!(
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "openai_jwt_parsed",
+                "成功从 JWT 解析 OpenAI 用户信息",
                 chatgpt_account_id = %openai_auth.chatgpt_account_id,
-                chatgpt_plan_type = ?openai_auth.chatgpt_plan_type,
-                "成功从 JWT 解析 OpenAI 用户信息"
+                chatgpt_plan_type = ?openai_auth.chatgpt_plan_type
             );
             Ok(Some(openai_auth))
         } else {
-            tracing::warn!("JWT 中未找到 OpenAI 认证信息");
+            lwarn!("system", LogStage::Authentication, LogComponent::OAuth, "openai_jwt_missing_auth", "JWT 中未找到 OpenAI 认证信息");
             Ok(None)
         }
     }

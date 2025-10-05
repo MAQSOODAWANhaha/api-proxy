@@ -2,6 +2,7 @@
 //!
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
+use crate::{linfo, lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{ErrorContext, Result};
 use crate::proxy::ProxyContext;
@@ -14,7 +15,6 @@ use pingora_proxy::Session;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, warn};
 
 use super::ProviderStrategy;
 
@@ -63,15 +63,21 @@ impl OpenAIStrategy {
         };
 
         if let Some(error_info) = self.parse_429_response(body) {
-            info!(
-                request_id = %ctx.request_id,
-                error_type = %error_info.error.r#type,
-                "成功解析OpenAI 429错误，准备更新密钥状态"
+            linfo!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::OpenAIStrategy,
+                "parse_429_error",
+                "成功解析OpenAI 429错误，准备更新密钥状态",
+                error_type = %error_info.error.r#type
             );
             Self::update_key_health_status_async(db.clone(), key_id, &error_info.error).await?;
         } else {
-            warn!(
-                request_id = %ctx.request_id,
+            lwarn!(
+                &ctx.request_id,
+                LogStage::Internal,
+                LogComponent::OpenAIStrategy,
+                "parse_429_error_fail",
                 "无法解析OpenAI 429错误响应体"
             );
         }
@@ -115,7 +121,7 @@ impl OpenAIStrategy {
             .await
             .with_database_context(|| format!("更新API密钥健康状态失败，ID: {}", key_id))?;
 
-        info!(key_id = key_id, error_type = %error_detail.r#type, "OpenAI API密钥已更新为详细限流状态");
+        linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "update_key_status", "OpenAI API密钥已更新为详细限流状态", key_id = key_id, error_type = %error_detail.r#type);
         Ok(())
     }
 }
@@ -180,7 +186,7 @@ impl ProviderStrategy for OpenAIStrategy {
         if key.health_status == "rate_limited" {
             if let Some(resets_at) = key.rate_limit_resets_at {
                 if Utc::now().naive_utc() > resets_at {
-                    info!(key_id = key.id, "OpenAI API密钥限流已解除，恢复使用");
+                    linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "rate_limit_lifted", "OpenAI API密钥限流已解除，恢复使用", key_id = key.id);
                     return Ok(true);
                 }
             }

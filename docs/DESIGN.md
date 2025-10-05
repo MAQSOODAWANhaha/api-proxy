@@ -734,11 +734,11 @@ use proxy::UnifiedProxyService;
 #[tokio::main]
 async fn main() -> Result<()> {
     // 初始化日志系统
-    tracing_subscriber::fmt::init();
+    crate::logging::init_logging(&config.logging)?;
     
     // 加载配置
     let config = AppConfig::load()?;
-    tracing::info!("Loaded configuration: {:?}", config);
+    linfo!("system", LogStage::Startup, LogComponent::System, "config_loaded", &format!("Loaded configuration: {:?}", config));
 
     // 创建Pingora服务器
     let mut server = Server::new(Some(Opt::default()))?;
@@ -771,13 +771,13 @@ async fn main() -> Result<()> {
     // 优雅关闭处理
     let shutdown_signal = async {
         signal::ctrl_c().await.expect("Failed to install CTRL+C signal handler");
-        tracing::info!("Received shutdown signal");
+        linfo!("system", LogStage::Shutdown, LogComponent::System, "received_shutdown_signal", "Received shutdown signal");
     };
 
     tokio::select! {
         _ = server.run_forever() => {},
         _ = shutdown_signal => {
-            tracing::info!("Shutting down gracefully...");
+            linfo!("system", LogStage::Shutdown, LogComponent::System, "shutting_down_gracefully", "Shutting down gracefully...");
         }
     }
 
@@ -897,11 +897,16 @@ impl ProxyHttp for UnifiedProxyService {
         ctx.start_time = std::time::Instant::now();
         
         // 记录请求日志
-        tracing::info!(
-            request_id = %ctx.request_id,
-            method = %session.req_header().method,
-            path = %path,
-            "Processing request"
+        linfo!(
+            "proxy",
+            LogStage::Request,
+            LogComponent::ProxyService,
+            "processing_request",
+            &format!(
+                "Processing request: method={}, path={}",
+                session.req_header().method,
+                path
+            )
         );
 
         // 路由决策
@@ -913,10 +918,12 @@ impl ProxyHttp for UnifiedProxyService {
                 match self.handle_management_request(session, ctx).await {
                     Ok(_) => Ok(true), // 请求已处理，终止代理流程
                     Err(e) => {
-                        tracing::error!(
-                            request_id = %ctx.request_id,
-                            error = %e,
-                            "Management request failed"
+                        lerror!(
+                            "proxy",
+                            LogStage::Request,
+                            LogComponent::ProxyService,
+                            "management_request_failed",
+                            &format!("Management request failed: {}", e)
                         );
                         self.send_error_response(session, e).await;
                         Ok(true)
@@ -976,28 +983,37 @@ impl ProxyHttp for UnifiedProxyService {
 
         // 记录访问日志
         if let Some(error) = e {
-            tracing::error!(
-                request_id = %ctx.request_id,
-                status_code = status_code,
-                response_time_ms = response_time,
-                error = %error,
-                "Request completed with error"
+            lerror!(
+                "proxy",
+                LogStage::Request,
+                LogComponent::ProxyService,
+                "request_completed_with_error",
+                &format!(
+                    "Request completed with error: status_code={}, response_time_ms={}, error={}",
+                    status_code, response_time, error
+                )
             );
         } else {
-            tracing::info!(
-                request_id = %ctx.request_id,
-                status_code = status_code,
-                response_time_ms = response_time,
-                "Request completed successfully"
+            linfo!(
+                "proxy",
+                LogStage::Request,
+                LogComponent::ProxyService,
+                "request_completed_successfully",
+                &format!(
+                    "Request completed successfully: status_code={}, response_time_ms={}",
+                    status_code, response_time
+                )
             );
         }
 
         // 记录统计数据
         if let Err(e) = self.record_request_stats(session, ctx, e).await {
-            tracing::warn!(
-                request_id = %ctx.request_id,
-                error = %e,
-                "Failed to record request statistics"
+            lwarn!(
+                "proxy",
+                LogStage::Request,
+                LogComponent::ProxyService,
+                "failed_to_record_request_statistics",
+                &format!("Failed to record request statistics: {}", e)
             );
         }
     }
@@ -1142,12 +1158,17 @@ impl AIProxyHandler {
         let selected_backend = scheduler.select_backend(&user_service_api).await?;
         ctx.selected_backend = Some(selected_backend);
 
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            user_api_id = user_service_api.id,
-            backend_key_id = ctx.selected_backend.as_ref().unwrap().id,
-            strategy = %user_service_api.scheduling_strategy,
-            "Backend selected successfully"
+        ldebug!(
+            "proxy",
+            LogStage::Request,
+            LogComponent::AIProxyHandler,
+            "backend_selected_successfully",
+            &format!(
+                "Backend selected successfully: user_api_id={}, backend_key_id={}, strategy={}",
+                user_service_api.id,
+                ctx.selected_backend.as_ref().unwrap().id,
+                user_service_api.scheduling_strategy
+            )
         );
 
         Ok(())
@@ -1159,10 +1180,12 @@ impl AIProxyHandler {
 
         let upstream_addr = format!("{}:443", provider_type.base_url);
         
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            upstream = %upstream_addr,
-            "Selected upstream peer"
+        ldebug!(
+            "proxy",
+            LogStage::Request,
+            LogComponent::AIProxyHandler,
+            "selected_upstream_peer",
+            &format!("Selected upstream peer: {}", upstream_addr)
         );
 
         let peer = HttpPeer::new(upstream_addr, true, String::new());
@@ -1212,11 +1235,16 @@ impl AIProxyHandler {
         upstream_request.insert_header("x-request-id", &ctx.request_id)
             .map_err(|e| ProxyError::Internal(format!("Failed to set request-id: {}", e)))?;
 
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            backend_key_id = selected_backend.id,
-            provider = %provider_type.name,
-            "Upstream request filtered"
+        ldebug!(
+            "proxy",
+            LogStage::Request,
+            LogComponent::AIProxyHandler,
+            "upstream_request_filtered",
+            &format!(
+                "Upstream request filtered: backend_key_id={}, provider={}",
+                selected_backend.id,
+                provider_type.name
+            )
         );
 
         Ok(())
@@ -1238,11 +1266,16 @@ impl AIProxyHandler {
         upstream_response.insert_header("server", "AI-Proxy-Service")
             .map_err(|e| ProxyError::Internal(format!("Failed to set server header: {}", e)))?;
 
-        tracing::debug!(
-            request_id = %ctx.request_id,
-            status = upstream_response.status.as_u16(),
-            tokens_used = ctx.tokens_used,
-            "Upstream response filtered"
+        ldebug!(
+            "proxy",
+            LogStage::Response,
+            LogComponent::AIProxyHandler,
+            "upstream_response_filtered",
+            &format!(
+                "Upstream response filtered: status={}, tokens_used={}",
+                upstream_response.status.as_u16(),
+                ctx.tokens_used
+            )
         );
 
         Ok(())
@@ -1482,13 +1515,19 @@ impl LoadBalancer for RoundRobinScheduler {
 
         let selected_key = available_keys[current_index as usize % available_keys.len()].clone();
 
-        tracing::debug!(
-            user_id = user_service_api.user_id,
-            provider_type_id = user_service_api.provider_type_id,
-            selected_key_id = selected_key.id,
-            current_index = current_index,
-            total_keys = available_keys.len(),
-            "Round robin selection"
+        ldebug!(
+            "scheduler",
+            LogStage::Selection,
+            LogComponent::RoundRobinScheduler,
+            "round_robin_selection",
+            &format!(
+                "Round robin selection: user_id={}, provider_type_id={}, selected_key_id={}, current_index={}, total_keys={}",
+                user_service_api.user_id,
+                user_service_api.provider_type_id,
+                selected_key.id,
+                current_index,
+                available_keys.len()
+            )
         );
 
         Ok(selected_key)
@@ -1547,13 +1586,19 @@ impl LoadBalancer for WeightedScheduler {
         for key in &available_keys {
             random_weight -= key.weight;
             if random_weight <= 0 {
-                tracing::debug!(
-                    user_id = user_service_api.user_id,
-                    provider_type_id = user_service_api.provider_type_id,
-                    selected_key_id = key.id,
-                    key_weight = key.weight,
-                    total_weight = total_weight,
-                    Weighted selection
+                ldebug!(
+                    "scheduler",
+                    LogStage::Selection,
+                    LogComponent::WeightedScheduler,
+                    "weighted_selection",
+                    &format!(
+                        "Weighted selection: user_id={}, provider_type_id={}, selected_key_id={}, key_weight={}, total_weight={}",
+                        user_service_api.user_id,
+                        user_service_api.provider_type_id,
+                        key.id,
+                        key.weight,
+                        total_weight
+                    )
                 );
                 return Ok(key.clone());
             }
@@ -1602,12 +1647,18 @@ impl LoadBalancer for HealthBestScheduler {
             .min_by_key(|key| key.response_time_ms)
             .ok_or_else(|| ProxyError::Internal("Failed to select best key".into()))?;
 
-        tracing::debug!(
-            user_id = user_service_api.user_id,
-            provider_type_id = user_service_api.provider_type_id,
-            selected_key_id = best_key.id,
-            response_time_ms = best_key.response_time_ms,
-            "Health-best selection"
+        ldebug!(
+            "scheduler",
+            LogStage::Selection,
+            LogComponent::HealthBestScheduler,
+            "health_best_selection",
+            &format!(
+                "Health-best selection: user_id={}, provider_type_id={}, selected_key_id={}, response_time_ms={}",
+                user_service_api.user_id,
+                user_service_api.provider_type_id,
+                best_key.id,
+                best_key.response_time_ms
+            )
         );
 
         Ok(best_key)
@@ -1645,7 +1696,13 @@ impl HealthChecker {
             interval.tick().await;
             
             if let Err(e) = self.check_all_apis().await {
-                tracing::error!("Health check cycle failed: {}", e);
+                lerror!(
+                    "health",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "health_check_cycle_failed",
+                    &format!("Health check cycle failed: {}", e)
+                );
             }
         }
     }
@@ -1660,7 +1717,13 @@ impl HealthChecker {
             .await
             .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
 
-        tracing::info!("Starting health check for {} API keys", provider_keys.len());
+        linfo!(
+            "health",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "starting_health_check",
+            &format!("Starting health check for {} API keys", provider_keys.len())
+        );
 
         // 并发检查所有API密钥
         let tasks: Vec<_> = provider_keys
@@ -1683,19 +1746,36 @@ impl HealthChecker {
                 Ok(Ok(_)) => success_count += 1,
                 Ok(Err(e)) => {
                     error_count += 1;
-                    tracing::warn!("Health check failed for API key: {}", e);
+                    lwarn!(
+                        "health",
+                        LogStage::HealthCheck,
+                        LogComponent::HealthChecker,
+                        "health_check_failed",
+                        &format!("Health check failed for API key: {}", e)
+                    );
                 }
                 Err(e) => {
                     error_count += 1;
-                    tracing::error!("Health check task panicked: {}", e);
+                    lerror!(
+                        "health",
+                        LogStage::HealthCheck,
+                        LogComponent::HealthChecker,
+                        "health_check_task_panicked",
+                        &format!("Health check task panicked: {}", e)
+                    );
                 }
             }
         }
 
-        tracing::info!(
-            "Health check completed: {} successful, {} failed",
-            success_count,
-            error_count
+        linfo!(
+            "health",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "health_check_completed",
+            &format!(
+                "Health check completed: {} successful, {} failed",
+                success_count, error_count
+            )
         );
 
         Ok(())
@@ -1746,12 +1826,15 @@ impl HealthChecker {
         // 更新健康状态
         self.update_health_status(key.id, is_healthy, response_time, error_message).await?;
 
-        tracing::debug!(
-            key_id = key.id,
-            provider = %provider_type.name,
-            is_healthy = is_healthy,
-            response_time_ms = response_time,
-            "Health check completed"
+        ldebug!(
+            "health",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "single_health_check_completed",
+            &format!(
+                "Health check completed for key_id={}: provider={}, is_healthy={}, response_time_ms={}",
+                key.id, provider_type.name, is_healthy, response_time
+            )
         );
 
         Ok(())
@@ -2199,7 +2282,13 @@ impl TlsManager {
             interval.tick().await;
             
             if let Err(e) = self.check_and_renew_certificates().await {
-                tracing::error!("Certificate renewal check failed: {}", e);
+                lerror!(
+                    "tls",
+                    LogStage::Renewal,
+                    LogComponent::TlsManager,
+                    "certificate_renewal_check_failed",
+                    &format!("Certificate renewal check failed: {}", e)
+                );
             }
         }
     }
@@ -2216,16 +2305,23 @@ impl TlsManager {
             .await
             .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
 
-        tracing::info!("Found {} certificates to renew", expiring_certs.len());
+        linfo!(
+            "tls",
+            LogStage::Renewal,
+            LogComponent::TlsManager,
+            "found_certificates_to_renew",
+            &format!("Found {} certificates to renew", expiring_certs.len())
+        );
 
         for cert in expiring_certs {
             if let Err(e) = self.renew_certificate(&cert).await {
-                tracing::error!(
-                    domain = %cert.domain,
-                    error = %e,
-                    "Failed to renew certificate"
-                );
-            }
+                lerror!(
+                    "tls",
+                    LogStage::Renewal,
+                    LogComponent::TlsManager,
+                    "failed_to_renew_certificate",
+                    &format!("Failed to renew certificate for domain {}: {}", cert.domain, e)
+                );            }
         }
 
         Ok(())
@@ -2233,18 +2329,28 @@ impl TlsManager {
 
     // 续期单个证书
     async fn renew_certificate(&self, cert: &entity::tls_certificates::Model) -> Result<(), ProxyError> {
-        tracing::info!(domain = %cert.domain, "Renewing certificate");
+        linfo!(
+            "tls",
+            LogStage::Renewal,
+            LogComponent::TlsManager,
+            "renewing_certificate",
+            &format!("Renewing certificate for domain {}", cert.domain)
+        );
 
         match cert.cert_type.as_str() {
             "acme" => self.renew_acme_certificate(cert).await,
             "self_signed" => self.renew_self_signed_certificate(cert).await,
             _ => {
-                tracing::warn!(
-                    domain = %cert.domain,
-                    cert_type = %cert.cert_type,
-                    "Cannot auto-renew certificate of this type"
-                );
-                Ok(())
+                lwarn!(
+                    "tls",
+                    LogStage::Renewal,
+                    LogComponent::TlsManager,
+                    "cannot_auto_renew_certificate",
+                    &format!(
+                        "Cannot auto-renew certificate of type {} for domain {}",
+                        cert.cert_type, cert.domain
+                    )
+                );                Ok(())
             }
         }
     }
@@ -2292,10 +2398,15 @@ impl TlsManager {
         cert_model.update(&*self.app_state.db).await
             .map_err(|e| ProxyError::Internal(format!("Failed to update certificate: {}", e)))?;
 
-        tracing::info!(
-            domain = %cert.domain,
-            expires_at = %expires_at,
-            "Certificate renewed successfully"
+        linfo!(
+            "tls",
+            LogStage::Renewal,
+            LogComponent::TlsManager,
+            "certificate_renewed_successfully",
+            &format!(
+                "Certificate renewed successfully for domain {}: expires at {}",
+                cert.domain, expires_at
+            )
         );
 
         Ok(())
@@ -3022,42 +3133,7 @@ pub async fn api_key_auth_middleware(
 }
 ```
 
-### 6.3 传输安全
 
-**TLS配置**
-```rust
-use rustls::{ServerConfig, ClientConfig, Certificate, PrivateKey};
-
-pub fn create_tls_config() -> Result<ServerConfig, TlsError> {
-    let config = ServerConfig::builder()
-        .with_safe_default_cipher_suites()
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])?
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, private_key)?;
-
-    Ok(config)
-}
-```
-
-**HSTS配置**
-```rust
-// 添加安全头部中间件
-pub async fn security_headers_middleware(
-    request: Request,
-    next: Next,
-) -> Response {
-    let mut response = next.run(request).await;
-    
-    let headers = response.headers_mut();
-    headers.insert("Strict-Transport-Security", "max-age=31536000; includeSubDomains".parse().unwrap());
-    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
-    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
-    
-    response
-}
-```
 
 ### 6.4 数据安全
 

@@ -3,13 +3,12 @@
 //! 负责修改从上游返回的响应头，例如添加CORS头、移除敏感信息等。
 
 use crate::error::Result;
+use crate::linfo;
+use crate::logging::{LogComponent, LogStage};
+use crate::proxy::context::ProxyContext;
 use crate::proxy_err;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
-
-use crate::logging::{LogComponent, LogStage};
-use crate::proxy::context::ProxyContext;
-use crate::proxy_info;
 
 /// 响应转换服务
 pub struct ResponseTransformService;
@@ -50,10 +49,10 @@ impl ResponseTransformService {
         // 3. 清理可能暴露服务器信息的头部
         self.cleanup_headers(upstream_response);
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::Response,
-            LogComponent::ResponseTransformService,
+            LogComponent::ResponseTransform,
             "response_transformed",
             "上游响应转换完成",
             status = upstream_response.status.as_u16()

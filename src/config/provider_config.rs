@@ -9,8 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
-
+use crate::{ldebug, lerror, lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::types::{AuthType, MultiAuthConfig};
 use crate::cache::CacheManager;
 use crate::error::{ProxyError, Result};
@@ -89,9 +88,12 @@ impl ProviderConfigManager {
             .get::<Vec<ProviderConfig>>(cache_key)
             .await
         {
-            debug!(
-                "Retrieved {} active providers from cache",
-                cached_configs.len()
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Config,
+                "cache_hit",
+                &format!("Retrieved {} active providers from cache", cached_configs.len())
             );
             return Ok(cached_configs);
         }
@@ -111,9 +113,12 @@ impl ProviderConfigManager {
             match self.parse_provider_config(provider) {
                 Ok(config) => configs.push(config),
                 Err(e) => {
-                    warn!(
-                        "Failed to parse provider config for {}: {}",
-                        provider_name, e
+                    lwarn!(
+                        "system",
+                        LogStage::Configuration,
+                        LogComponent::Config,
+                        "parse_provider_config_fail",
+                        &format!("Failed to parse provider config for {}: {}", provider_name, e)
                     );
                 }
             }
@@ -126,10 +131,10 @@ impl ProviderConfigManager {
             .set(cache_key, &configs, Some(Duration::from_secs(300)))
             .await
         {
-            warn!("Failed to cache active providers: {}", e);
+            lwarn!("system", LogStage::Cache, LogComponent::Config, "cache_fail", &format!("Failed to cache active providers: {}", e));
         }
 
-        debug!("Loaded {} active providers from database", configs.len());
+        ldebug!("system", LogStage::Db, LogComponent::Config, "load_from_db", &format!("Loaded {} active providers from database", configs.len()));
         Ok(configs)
     }
 
@@ -227,12 +232,12 @@ impl ProviderConfigManager {
                         .set(&cache_key, &config, Some(Duration::from_secs(600)))
                         .await
                     {
-                        warn!("Failed to cache provider config for {}: {}", name, e);
+                        lwarn!("system", LogStage::Cache, LogComponent::Config, "cache_fail", &format!("Failed to cache provider config for {}: {}", name, e));
                     }
                     Ok(Some(config))
                 }
                 Err(e) => {
-                    error!("Failed to parse provider config for {}: {}", name, e);
+                    lerror!("system", LogStage::Configuration, LogComponent::Config, "parse_provider_config_fail", &format!("Failed to parse provider config for {}: {}", name, e));
                     Err(e)
                 }
             }
@@ -277,12 +282,12 @@ impl ProviderConfigManager {
                         .set(&cache_key, &config, Some(Duration::from_secs(600)))
                         .await
                     {
-                        warn!("Failed to cache provider config for id {}: {}", id, e);
+                        lwarn!("system", LogStage::Cache, LogComponent::Config, "cache_fail", &format!("Failed to cache provider config for id {}: {}", id, e));
                     }
                     Ok(Some(config))
                 }
                 Err(e) => {
-                    error!("Failed to parse provider config for id {}: {}", id, e);
+                    lerror!("system", LogStage::Configuration, LogComponent::Config, "parse_provider_config_fail", &format!("Failed to parse provider config for id {}: {}", id, e));
                     Err(e)
                 }
             }
@@ -293,7 +298,7 @@ impl ProviderConfigManager {
 
     /// 刷新配置缓存
     pub async fn refresh_cache(&self) -> Result<()> {
-        debug!("Refreshing provider configuration cache");
+        ldebug!("system", LogStage::Configuration, LogComponent::Config, "refresh_cache", "Refreshing provider configuration cache");
 
         // 清除相关缓存
         let _ = self
@@ -305,7 +310,7 @@ impl ProviderConfigManager {
         // 重新加载配置
         let _configs = self.get_active_providers().await?;
 
-        debug!("Provider configuration cache refreshed successfully");
+        ldebug!("system", LogStage::Configuration, LogComponent::Config, "refresh_cache_ok", "Provider configuration cache refreshed successfully");
         Ok(())
     }
 
@@ -327,9 +332,12 @@ impl ProviderConfigManager {
             match serde_json::from_str(json_str) {
                 Ok(json) => Some(json),
                 Err(e) => {
-                    warn!(
-                        "Failed to parse config_json for provider {}: {}",
-                        provider.name, e
+                    lwarn!(
+                        "system",
+                        LogStage::Configuration,
+                        LogComponent::Config,
+                        "parse_config_json_fail",
+                        &format!("Failed to parse config_json for provider {}: {}", provider.name, e)
                     );
                     None
                 }
@@ -347,9 +355,12 @@ impl ProviderConfigManager {
             match self.parse_auth_configs_from_map(json_str) {
                 Ok(configs) => Some(configs),
                 Err(e) => {
-                    warn!(
-                        "Failed to parse auth_configs_json for provider {}: {}. Raw JSON: '{}'",
-                        provider.name, e, json_str
+                    lwarn!(
+                        "system",
+                        LogStage::Configuration,
+                        LogComponent::Config,
+                        "parse_auth_configs_fail",
+                        &format!("Failed to parse auth_configs_json for provider {}: {}. Raw JSON: '{}'", provider.name, e, json_str)
                     );
                     None
                 }
@@ -406,7 +417,7 @@ impl ProviderConfigManager {
                     extra_config,
                 });
             } else {
-                warn!("Unknown auth type in provider config: {}", auth_type_str);
+                lwarn!("system", LogStage::Configuration, LogComponent::Config, "unknown_auth_type", &format!("Unknown auth type in provider config: {}", auth_type_str));
             }
         }
 
@@ -424,7 +435,7 @@ impl ProviderConfigManager {
             if let Some(auth_type) = AuthType::from(&type_str) {
                 auth_types.push(auth_type);
             } else {
-                warn!("Unknown auth type in configuration: {}", type_str);
+                lwarn!("system", LogStage::Configuration, LogComponent::Config, "unknown_auth_type", &format!("Unknown auth type in configuration: {}", type_str));
             }
         }
 

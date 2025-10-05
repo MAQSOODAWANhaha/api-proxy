@@ -3,16 +3,14 @@
 //! 负责在请求发往上游前对其进行修改，包括注入认证头、改写路径/请求体、清理代理痕迹等。
 
 use crate::error::Result;
+use crate::linfo;
+use crate::logging::{self, LogComponent, LogStage};
+use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::proxy_err;
-use std::sync::Arc;
-
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
-
-use crate::logging::{self, LogComponent, LogStage};
-use crate::proxy::context::{ProxyContext, ResolvedCredential};
-use crate::proxy_info;
+use std::sync::Arc;
 
 /// 请求转换服务
 pub struct RequestTransformService {
@@ -51,10 +49,10 @@ impl RequestTransformService {
         // 5. 处理 Content-Length
         self.handle_content_length(session, upstream_request, ctx);
 
-        proxy_info!(
+        linfo!(
             &ctx.request_id,
             LogStage::UpstreamRequest,
-            LogComponent::RequestTransformService,
+            LogComponent::RequestTransform,
             "request_transformed",
             "上游请求转换完成",
             method = upstream_request.method.to_string(),
