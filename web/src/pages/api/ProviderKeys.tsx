@@ -28,7 +28,8 @@ import AuthTypeSelector from '../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
 import { api, CreateProviderKeyRequest, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType, UpdateProviderKeyRequest } from '../../lib/api'
 import { toast } from 'sonner'
-import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency, safeTrendData } from '../../lib/dataValidation'
+import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency } from '../../lib/dataValidation'
+import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip as ReTooltip } from 'recharts'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
 interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
@@ -1819,6 +1820,12 @@ const DeleteDialog: React.FC<{
 }
 
 /** 统计对话框 */
+interface ProviderKeyTrendPoint {
+  date: string
+  requests: number
+  cost: number
+}
+
 const StatsDialog: React.FC<{
   item: LocalProviderKey
   onClose: () => void
@@ -1827,7 +1834,7 @@ const StatsDialog: React.FC<{
   const usageStats = createSafeStats(item.usage)
 
   // 趋势数据状态管理
-  const [trendData, setTrendData] = useState<any[]>([])
+  const [trendSeries, setTrendSeries] = useState<ProviderKeyTrendPoint[]>([])
   const [trendLoading, setTrendLoading] = useState(true)
 
   // 获取趋势数据
@@ -1837,16 +1844,30 @@ const StatsDialog: React.FC<{
         setTrendLoading(true)
         const response = await api.providerKeys.getTrends(item.id.toString(), { days: 7 })
         if (response.success && response.data && Array.isArray(response.data.trend_data)) {
-          // 转换后端数据为前端需要的格式
-          const formattedData = response.data.trend_data.map((point: any) => point.requests || 0)
-          setTrendData(formattedData)
+          const formatted = response.data.trend_data.map((point: any) => ({
+            date: typeof point?.date === 'string' ? point.date : '',
+            requests: Number(point?.requests ?? 0),
+            cost: Number(point?.cost ?? 0),
+          })) as ProviderKeyTrendPoint[]
+
+          const withSortedDates = formatted.some((p) => p.date)
+            ? [...formatted].sort((a, b) => {
+                const aTime = new Date(a.date).getTime()
+                const bTime = new Date(b.date).getTime()
+                if (Number.isNaN(aTime) || Number.isNaN(bTime)) {
+                  return 0
+                }
+                return aTime - bTime
+              })
+            : formatted
+
+          setTrendSeries(withSortedDates)
         } else {
-          // 如果获取失败或数据格式不对，使用空数组
-          setTrendData([])
+          setTrendSeries([])
         }
       } catch (error) {
         console.error('获取趋势数据失败:', error)
-        setTrendData([])
+        setTrendSeries([])
       } finally {
         setTrendLoading(false)
       }
@@ -1857,10 +1878,26 @@ const StatsDialog: React.FC<{
 
   const stats = {
     ...usageStats,
-    // 使用真实的趋势数据
-    dailyUsage: trendData.length > 0 ? trendData : safeTrendData([320, 450, 289, 645, 378, 534, 489]),
-    dailyCost: safeTrendData([12.5, 18.2, 11.3, 25.8, 15.1, 21.4, 19.6]),
   }
+
+  const chartSeries = trendSeries
+
+  const formatDateLabel = (value: string) => {
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+    return `${parsed.getMonth() + 1}/${parsed.getDate()}`
+  }
+
+  const trendChartData = useMemo(
+    () =>
+      chartSeries.map((point, index) => ({
+        ...point,
+        label: formatDateLabel(point.date) || `Day ${index + 1}`,
+      })),
+    [chartSeries]
+  )
 
   const successRateDisplay = useMemo(
     () => safePercentage(stats.successRate).toFixed(2),
@@ -1916,41 +1953,97 @@ const StatsDialog: React.FC<{
           </div>
         </div>
 
-        {/* 使用趋势 */}
-        <div className="grid grid-cols-2 gap-6">
+        {/* 使用与花费趋势 */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <div>
             <h4 className="text-sm font-medium text-neutral-900 mb-3">7天使用趋势</h4>
-            <div className="flex items-end gap-1 h-32">
+            <div className="h-40 w-full">
               {trendLoading ? (
-                <div className="flex-1 flex items-center justify-center text-neutral-500">
+                <div className="flex h-full items-center justify-center text-neutral-500">
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
                 </div>
+              ) : chartSeries.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-neutral-400 text-sm">
+                  暂无趋势数据
+                </div>
               ) : (
-                stats.dailyUsage.map((value, index) => (
-                  <div key={index} className="flex-1 flex flex-col items-center">
-                    <div
-                      className="w-full bg-violet-600 rounded-t"
-                      style={{ height: `${(value / Math.max(...stats.dailyUsage, 1)) * 100}%` }}
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendChartData}>
+                    <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
                     />
-                    <div className="text-xs text-neutral-500 mt-1">{value}</div>
-                  </div>
-                ))
+                    <YAxis
+                      allowDecimals={false}
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                    />
+                    <ReTooltip
+                      formatter={(value: any) => [`${value}`, '请求数']}
+                      labelFormatter={(label: any) => `日期: ${label}`}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="requests"
+                      stroke="#6366F1"
+                      strokeWidth={2}
+                      dot={{ r: 3, strokeWidth: 2, fill: '#6366F1' }}
+                      activeDot={{ r: 5 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
               )}
             </div>
           </div>
-          
+
           <div>
             <h4 className="text-sm font-medium text-neutral-900 mb-3">7天花费趋势</h4>
-            <div className="flex items-end gap-1 h-32">
-              {stats.dailyCost.map((value, index) => (
-                <div key={index} className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full bg-orange-600 rounded-t"
-                    style={{ height: `${(value / Math.max(...stats.dailyCost)) * 100}%` }}
-                  />
-                  <div className="text-xs text-neutral-500 mt-1">${value}</div>
+            <div className="h-40 w-full">
+              {trendLoading ? (
+                <div className="flex h-full items-center justify-center text-neutral-500">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
                 </div>
-              ))}
+              ) : chartSeries.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-neutral-400 text-sm">
+                  暂无趋势数据
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendChartData}>
+                    <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                    />
+                    <YAxis
+                      tickFormatter={(value: number) => `$${Number(value).toFixed(2)}`}
+                      tick={{ fontSize: 11, fill: '#6B7280' }}
+                      axisLine={{ stroke: '#D1D5DB' }}
+                      tickLine={{ stroke: '#D1D5DB' }}
+                    />
+                    <ReTooltip
+                      formatter={(value: any) => [`$${Number(value).toFixed(4)}`, '花费']}
+                      labelFormatter={(label: any) => `日期: ${label}`}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="cost"
+                      stroke="#F97316"
+                      strokeWidth={2}
+                      dot={{ r: 3, strokeWidth: 2, fill: '#F97316' }}
+                      activeDot={{ r: 5 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
         </div>
