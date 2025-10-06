@@ -1639,12 +1639,12 @@ const StatsDialog: React.FC<{
     fetchTrendData()
   }, [item.id])
 
-  // 获取详细的趋势数据（用于混合图表）
+  // 获取7天的详细趋势数据（用于综合趋势图）
   useEffect(() => {
     const fetchDetailedTrendData = async () => {
       try {
         setDetailedTrendLoading(true)
-        const response = await api.userService.getKeyTrends(item.id, { days: 30 })
+        const response = await api.userService.getKeyTrends(item.id, { days: 7 })
         if (
           response.success &&
           response.data &&
@@ -1756,9 +1756,9 @@ const StatsDialog: React.FC<{
           </div>
         </div>
 
-        {/* 30天综合趋势图（柱状图+折线图） */}
+        {/* 7天综合趋势图（柱状图+折线图） */}
         <div>
-          <h4 className="text-sm font-medium text-neutral-900 mb-3">30天综合趋势分析</h4>
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">7天综合趋势分析</h4>
           <div className="h-64 w-full">
             {detailedTrendLoading ? (
               <div className="flex items-center justify-center h-full text-neutral-500">
