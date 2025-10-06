@@ -102,15 +102,15 @@ async fn test_layer1_immediate_model_info_update() {
     let config = ImmediateTracerConfig::default();
     let tracer = ImmediateProxyTracer::new(db.clone(), config);
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
+    let request_id = "test_layer1_immediate_model_info_update_1";
 
-    let request_id = "test_layer1_12345";
-
-    // 阶段1：开始追踪
     tracer
         .start_trace(
             request_id.to_string(),
             1000,
             Some(1000),
+            Some(100), // provider_type_id
+            None,      // user_provider_key_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),
@@ -156,15 +156,15 @@ async fn test_layer2_batch_statistics_update() {
     let config = ImmediateTracerConfig::default();
     let tracer = ImmediateProxyTracer::new(db.clone(), config);
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
+    let request_id = "test_layer2_batch_statistics_update_1";
 
-    let request_id = "test_layer2_67890";
-
-    // 阶段1：开始追踪
     tracer
         .start_trace(
             request_id.to_string(),
             1000,
             Some(1000),
+            Some(100), // provider_type_id
+            None,      // user_provider_key_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),
@@ -229,15 +229,15 @@ async fn test_layered_update_with_error() {
     let config = ImmediateTracerConfig::default();
     let tracer = ImmediateProxyTracer::new(db.clone(), config);
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
+    let request_id = "test_layered_update_with_error_1";
 
-    let request_id = "test_error_54321";
-
-    // 阶段1：开始追踪
     tracer
         .start_trace(
             request_id.to_string(),
             1000,
             Some(1000),
+            Some(100), // provider_type_id
+            None,      // user_provider_key_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),
@@ -298,17 +298,16 @@ async fn test_layered_update_performance() {
     let config = ImmediateTracerConfig::default();
     let tracer = ImmediateProxyTracer::new(db.clone(), config);
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
-
-    let request_id = "test_performance_98765";
-
+    let request_id = "test_layered_update_performance_1";
     let start_time = std::time::Instant::now();
 
-    // 阶段1：开始追踪
     tracer
         .start_trace(
             request_id.to_string(),
             1000,
             Some(1000),
+            Some(100), // provider_type_id
+            None,      // user_provider_key_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),
@@ -388,6 +387,8 @@ async fn test_backward_compatibility() {
             request_id.to_string(),
             1000,
             Some(1000),
+            Some(100), // provider_type_id
+            None,      // user_provider_key_id
             "POST".to_string(),
             Some("/v1/chat/completions".to_string()),
             Some("127.0.0.1".to_string()),

@@ -99,11 +99,7 @@ impl AuthenticationService {
         let provider_type = self.get_provider_type(user_api.provider_type_id).await?;
 
         // 4. 选择后端密钥
-        let route_group = if ctx.request_details.path.is_empty() {
-            "/".to_string()
-        } else {
-            ctx.request_details.path.clone()
-        };
+        let route_group = session.req_header().uri.path().to_string();
         let selected_backend = self
             .select_api_key(&user_api, &ctx.request_id, route_group)
             .await?;
