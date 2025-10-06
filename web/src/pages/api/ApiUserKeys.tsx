@@ -1614,9 +1614,15 @@ const StatsDialog: React.FC<{
       try {
         setTrendLoading(true)
         const response = await api.userService.getKeyTrends(item.id, { days: 7 })
-        if (response.success && response.data && Array.isArray(response.data.trend_data)) {
+        if (
+          response.success &&
+          response.data &&
+          Array.isArray(response.data.trend_data)
+        ) {
           // 转换后端数据为前端需要的格式
-          const formattedData = response.data.trend_data.map((point: any) => point.requests || 0)
+          const formattedData = response.data.trend_data.map((point: any) =>
+            Number(point?.requests ?? 0)
+          )
           setTrendData(formattedData)
         } else {
           // 如果获取失败或数据格式不对，使用空数组
@@ -1639,14 +1645,21 @@ const StatsDialog: React.FC<{
       try {
         setDetailedTrendLoading(true)
         const response = await api.userService.getKeyTrends(item.id, { days: 30 })
-        if (response.success && response.data && Array.isArray(response.data.trend_data)) {
+        if (
+          response.success &&
+          response.data &&
+          Array.isArray(response.data.trend_data)
+        ) {
           // 转换为混合图表需要的格式
           const formattedData = response.data.trend_data.map((point: any) => ({
-            date: point.date,
-            requests: point.requests || 0,
-            tokens: point.tokens || 0,
-            successful_requests: point.successful_requests || 0,
-            failed_requests: point.failed_requests || 0,
+            date: point?.date,
+            requests: Number(point?.requests ?? 0),
+            tokens: Number(point?.tokens ?? point?.total_tokens ?? 0),
+            successful_requests: Number(point?.successful_requests ?? 0),
+            failed_requests: Number(point?.failed_requests ?? 0),
+            cost: Number(point?.cost ?? point?.total_cost ?? 0),
+            avg_response_time: Number(point?.avg_response_time ?? 0),
+            success_rate: Number(point?.success_rate ?? 0),
           }))
           setDetailedTrendData(formattedData)
         } else {
@@ -1668,6 +1681,11 @@ const StatsDialog: React.FC<{
     // 使用真实的趋势数据
     dailyUsage: trendData.length > 0 ? trendData : safeTrendData(),
   }
+
+  const successRateDisplay = useMemo(
+    () => safePercentage(stats.successRate).toFixed(2),
+    [stats.successRate]
+  )
 
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
@@ -1704,7 +1722,7 @@ const StatsDialog: React.FC<{
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>
-            <div className="text-2xl font-bold text-emerald-900">{safePercentage(stats.successRate)}%</div>
+            <div className="text-2xl font-bold text-emerald-900">{successRateDisplay}%</div>
           </div>
           <div className="p-4 bg-orange-50 rounded-xl">
             <div className="text-sm text-orange-600">平均响应时间</div>

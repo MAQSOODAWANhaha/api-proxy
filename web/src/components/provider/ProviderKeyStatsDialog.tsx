@@ -105,6 +105,9 @@ interface TrendData {
   tokens: number
   successful_requests: number
   failed_requests: number
+  success_rate: number
+  avg_response_time: number
+  cost: number
 }
 
 /**
@@ -151,11 +154,14 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
         if (response.success && response.data?.trend_data) {
           // 转换后端数据为前端需要的格式
           const formattedData = response.data.trend_data.map((point: any) => ({
-            date: point.date,
-            requests: point.requests || 0,
-            tokens: point.tokens || 0,
-            successful_requests: point.successful_requests || 0,
-            failed_requests: point.failed_requests || 0,
+            date: point?.date,
+            requests: Number(point?.requests ?? 0),
+            tokens: Number(point?.tokens ?? point?.total_tokens ?? 0),
+            successful_requests: Number(point?.successful_requests ?? 0),
+            failed_requests: Number(point?.failed_requests ?? 0),
+            success_rate: Number(point?.success_rate ?? 0),
+            avg_response_time: Number(point?.avg_response_time ?? 0),
+            cost: Number(point?.cost ?? point?.total_cost ?? 0),
           }))
           setTrendData(formattedData)
           setUseRealData(true)
@@ -185,12 +191,17 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
       const req = (h % 131) + 30
       const tokens = req * (8 + (h % 7))
       const successRate = 0.8 + (h % 20) / 100
+      const avgResponse = 500 + (h % 2000)
+      const cost = (req * 0.12 * (1 + (h % 10) / 40)).toFixed(2)
       return {
         date: iso,
         requests: req,
         tokens,
         successful_requests: Math.round(req * successRate),
         failed_requests: Math.round(req * (1 - successRate)),
+        success_rate: Math.min(100, Math.max(0, successRate * 100)),
+        avg_response_time: avgResponse,
+        cost: Number(cost),
       }
     })
     setTrendData(mockData)

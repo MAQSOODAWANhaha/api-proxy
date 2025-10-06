@@ -1862,6 +1862,11 @@ const StatsDialog: React.FC<{
     dailyCost: safeTrendData([12.5, 18.2, 11.3, 25.8, 15.1, 21.4, 19.6]),
   }
 
+  const successRateDisplay = useMemo(
+    () => safePercentage(stats.successRate).toFixed(2),
+    [stats.successRate]
+  )
+
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
@@ -1903,7 +1908,7 @@ const StatsDialog: React.FC<{
           </div>
           <div className="p-4 bg-emerald-50 rounded-xl">
             <div className="text-sm text-emerald-600">成功率</div>
-            <div className="text-2xl font-bold text-emerald-900">{safePercentage(stats.successRate)}%</div>
+            <div className="text-2xl font-bold text-emerald-900">{successRateDisplay}%</div>
           </div>
           <div className="p-4 bg-blue-50 rounded-xl">
             <div className="text-sm text-blue-600">平均响应时间</div>

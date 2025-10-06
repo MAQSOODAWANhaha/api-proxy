@@ -1237,6 +1237,22 @@ pub async fn get_provider_key_stats(
         }
     };
 
+    let usage_series: Vec<i64> = trends
+        .trend_data
+        .iter()
+        .map(|point| point.requests)
+        .collect();
+    let cost_series: Vec<f64> = trends
+        .trend_data
+        .iter()
+        .map(|point| point.cost)
+        .collect();
+    let response_time_series: Vec<i64> = trends
+        .trend_data
+        .iter()
+        .map(|point| point.avg_response_time)
+        .collect();
+
     let data = json!({
         "basic_info": {
             "provider": provider_name,
@@ -1250,9 +1266,9 @@ pub async fn get_provider_key_stats(
             "avg_response_time": trends.avg_response_time
         },
         "daily_trends": {
-            "usage": trends.daily_usage,
-            "cost": trends.daily_cost,
-            "response_time": trends.daily_response_time
+            "usage": usage_series,
+            "cost": cost_series,
+            "response_time": response_time_series
         },
         "limits": {
             "max_requests_per_minute": provider_key.0.max_requests_per_minute,
@@ -1745,15 +1761,13 @@ pub async fn get_provider_key_trends(
     };
 
     let data = json!({
-        "daily_usage": trends.daily_usage,
-        "daily_cost": trends.daily_cost,
-        "daily_response_time": trends.daily_response_time,
-        "dates": trends.dates,
+        "trend_data": trends.trend_data,
         "summary": {
             "total_requests": trends.total_requests,
             "total_cost": trends.total_cost,
             "avg_response_time": trends.avg_response_time,
-            "success_rate": trends.success_rate
+            "success_rate": trends.success_rate,
+            "total_tokens": trends.total_tokens,
         }
     });
 
@@ -1820,15 +1834,13 @@ pub async fn get_user_service_api_trends(
         };
 
     let data = json!({
-        "daily_usage": trends.daily_usage,
-        "daily_cost": trends.daily_cost,
-        "daily_response_time": trends.daily_response_time,
-        "dates": trends.dates,
+        "trend_data": trends.trend_data,
         "summary": {
             "total_requests": trends.total_requests,
             "total_cost": trends.total_cost,
             "avg_response_time": trends.avg_response_time,
-            "success_rate": trends.success_rate
+            "success_rate": trends.success_rate,
+            "total_tokens": trends.total_tokens,
         }
     });
 
@@ -1838,14 +1850,30 @@ pub async fn get_user_service_api_trends(
 /// 趋势数据结构
 #[derive(Debug, Default, Serialize)]
 struct TrendData {
-    daily_usage: Vec<i64>,
-    daily_cost: Vec<f64>,
-    daily_response_time: Vec<i64>,
-    dates: Vec<String>,
+    trend_data: Vec<TrendDataPoint>,
     total_requests: i64,
     total_cost: f64,
+    total_tokens: i64,
     avg_response_time: i64,
     success_rate: f64,
+    #[serde(skip_serializing)]
+    total_successful_requests: i64,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct TrendDataPoint {
+    date: String,
+    requests: i64,
+    successful_requests: i64,
+    failed_requests: i64,
+    success_rate: f64,
+    avg_response_time: i64,
+    tokens: i64,
+    cost: f64,
+}
+
+fn round_two_decimal(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
 }
 
 /// 获取趋势数据的通用函数
@@ -1900,32 +1928,46 @@ async fn fetch_key_trends_data(
 
     while current_date <= end_date_only {
         let date_str = current_date.format("%Y-%m-%d").to_string();
-        trend_data.dates.push(date_str.clone());
 
         if let Some(stats) = daily_stats.get(&date_str) {
-            trend_data.daily_usage.push(stats.total_requests);
-            trend_data.daily_cost.push(stats.total_cost);
-            trend_data
-                .daily_response_time
-                .push(if stats.successful_requests > 0 {
-                    stats.total_response_time / stats.successful_requests
-                } else {
-                    0
-                });
+            let avg_response_time = if stats.successful_requests > 0 {
+                stats.total_response_time / stats.successful_requests
+            } else {
+                0
+            };
 
-            // 累计汇总数据
-            trend_data.total_requests += stats.total_requests;
-            trend_data.total_cost += stats.total_cost;
-            trend_data.success_rate += if stats.total_requests > 0 {
+            let success_rate = if stats.total_requests > 0 {
                 (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0
             } else {
                 0.0
             };
+
+            trend_data.trend_data.push(TrendDataPoint {
+                date: date_str.clone(),
+                requests: stats.total_requests,
+                successful_requests: stats.successful_requests,
+                failed_requests: stats.total_requests - stats.successful_requests,
+                success_rate: round_two_decimal(success_rate),
+                avg_response_time,
+                tokens: stats.total_tokens,
+                cost: round_two_decimal(stats.total_cost),
+            });
+
+            trend_data.total_requests += stats.total_requests;
+            trend_data.total_cost += stats.total_cost;
+            trend_data.total_tokens += stats.total_tokens;
+            trend_data.total_successful_requests += stats.successful_requests;
         } else {
-            // 没有数据的日期填充0
-            trend_data.daily_usage.push(0);
-            trend_data.daily_cost.push(0.0);
-            trend_data.daily_response_time.push(0);
+            trend_data.trend_data.push(TrendDataPoint {
+                date: date_str.clone(),
+                requests: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                success_rate: 0.0,
+                avg_response_time: 0,
+                tokens: 0,
+                cost: 0.0,
+            });
         }
 
         current_date += chrono::Duration::days(1);
@@ -1951,16 +1993,17 @@ async fn fetch_key_trends_data(
             0
         };
 
-        trend_data.success_rate = if !trend_data.dates.is_empty() {
-            trend_data.success_rate / trend_data.dates.len() as f64
+        trend_data.success_rate = if trend_data.total_requests > 0 {
+            let rate = (trend_data.total_successful_requests as f64
+                / trend_data.total_requests as f64)
+                * 100.0;
+            round_two_decimal(rate)
         } else {
             0.0
         };
     }
 
-    // 四舍五入保留两位小数
-    trend_data.success_rate = (trend_data.success_rate * 100.0).round() / 100.0;
-    trend_data.total_cost = (trend_data.total_cost * 100.0).round() / 100.0;
+    trend_data.total_cost = round_two_decimal(trend_data.total_cost);
 
     Ok(trend_data)
 }

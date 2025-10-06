@@ -331,8 +331,8 @@ export interface TrendDataPoint {
   failed_requests: number
   success_rate: number
   avg_response_time: number
-  total_tokens: number
-  total_cost: number
+  tokens: number
+  cost: number
 }
 
 export interface TrendDataResponse {
