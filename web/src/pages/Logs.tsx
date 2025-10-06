@@ -3,7 +3,7 @@
  * 请求记录页面：完整的请求记录数据展示、搜索过滤和分页功能
  */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Search,
   Filter,
@@ -42,6 +42,8 @@ const LogsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [methodFilter, setMethodFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [userKeyNameFilter, setUserKeyNameFilter] = useState('')
+  const [providerKeyNameFilter, setProviderKeyNameFilter] = useState('')
   const [selectedItem, setSelectedItem] = useState<ProxyTraceEntry | null>(null)
   const [dialogType, setDialogType] = useState<DialogType>(null)
   
@@ -75,6 +77,8 @@ const LogsPage: React.FC = () => {
         search: searchTerm || undefined,
         method: methodFilter === 'all' ? undefined : methodFilter,
         status_code: statusFilter === 'all' ? undefined : parseInt(statusFilter),
+        user_service_api_name: userKeyNameFilter || undefined,
+        user_provider_key_name: providerKeyNameFilter || undefined,
       })
       
       if (response.success && response.data) {
@@ -99,13 +103,7 @@ const LogsPage: React.FC = () => {
 
   useEffect(() => {
     fetchData()
-  }, [currentPage, pageSize, searchTerm, methodFilter, statusFilter])
-
-  // 获取所有HTTP方法列表
-  const methods = useMemo(() => {
-    const uniqueMethods = Array.from(new Set(data.map(item => item.method)))
-    return uniqueMethods
-  }, [data])
+  }, [currentPage, pageSize, searchTerm, methodFilter, statusFilter, userKeyNameFilter, providerKeyNameFilter])
 
   // 由于后端已经处理了过滤和分页，前端直接使用返回的数据
   const paginatedData = data
@@ -113,7 +111,7 @@ const LogsPage: React.FC = () => {
   // 重置页码当过滤条件改变时
   React.useEffect(() => {
     setCurrentPage(1)
-  }, [searchTerm, methodFilter, statusFilter])
+  }, [searchTerm, methodFilter, statusFilter, userKeyNameFilter, providerKeyNameFilter])
 
   // 格式化时间戳
   const formatTimestamp = (timestamp: string) => {
@@ -251,6 +249,18 @@ const LogsPage: React.FC = () => {
             ]}
             placeholder="全部状态"
           />
+          <input
+            value={userKeyNameFilter}
+            onChange={(e) => setUserKeyNameFilter(e.target.value)}
+            placeholder="用户 API Key 名称"
+            className="w-48 px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+          />
+          <input
+            value={providerKeyNameFilter}
+            onChange={(e) => setProviderKeyNameFilter(e.target.value)}
+            placeholder="账号 API Key 名称"
+            className="w-48 px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+          />
         </div>
       </div>
 
@@ -262,7 +272,8 @@ const LogsPage: React.FC = () => {
               <tr>
                 <th className="px-4 py-3 text-left font-medium">时间</th>
                 <th className="px-4 py-3 text-left font-medium">请求ID</th>
-                <th className="px-4 py-3 text-left font-medium">方法</th>
+                <th className="px-4 py-3 text-left font-medium">用户 API Key</th>
+                <th className="px-4 py-3 text-left font-medium">账号 API Key</th>
                 <th className="px-4 py-3 text-left font-medium">路径</th>
                 <th className="px-4 py-3 text-left font-medium">状态</th>
                 <th className="px-4 py-3 text-left font-medium">模型</th>
@@ -274,7 +285,7 @@ const LogsPage: React.FC = () => {
             <tbody className="divide-y divide-neutral-200">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center">
+                  <td colSpan={10} className="px-4 py-8 text-center">
                     <div className="flex justify-center items-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
                       <span className="text-neutral-600">加载中...</span>
@@ -283,7 +294,7 @@ const LogsPage: React.FC = () => {
                 </tr>
               ) : paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-neutral-500">
                     暂无数据
                   </td>
                 </tr>
@@ -307,9 +318,18 @@ const LogsPage: React.FC = () => {
                         </code>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-mono">
-                          {item.method}
-                        </span>
+                        <div className="flex flex-col text-xs text-neutral-600">
+                          <span className="font-medium text-neutral-800">{item.user_service_api_name || '未命名'}</span>
+                          <span className="text-neutral-500">ID: {item.user_service_api_id}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col text-xs text-neutral-600">
+                          <span className="font-medium text-neutral-800">{item.user_provider_key_name || '未绑定'}</span>
+                          {item.user_provider_key_id && (
+                            <span className="text-neutral-500">ID: {item.user_provider_key_id}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <code className="text-xs bg-neutral-100 px-2 py-1 rounded max-w-xs truncate block">
@@ -526,6 +546,27 @@ const LogDetailsDialog: React.FC<{
             <code className="text-sm bg-neutral-100 px-2 py-1 rounded mt-1 inline-block">
               {item.path || 'N/A'}
             </code>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">用户 API Key</div>
+              <div className="font-medium">
+                {item.user_service_api_name || '未命名'}
+              </div>
+              <div className="text-xs text-neutral-500 mt-1">
+                ID: {item.user_service_api_id}
+              </div>
+            </div>
+            <div className="p-3 bg-neutral-50 rounded-lg">
+              <div className="text-sm text-neutral-600">账号 API Key</div>
+              <div className="font-medium">
+                {item.user_provider_key_name || '未绑定'}
+              </div>
+              <div className="text-xs text-neutral-500 mt-1">
+                ID: {item.user_provider_key_id || 'N/A'}
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

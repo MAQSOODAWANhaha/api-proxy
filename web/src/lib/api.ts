@@ -615,8 +615,8 @@ export interface ProxyTraceEntry {
   is_success: boolean
   created_at: string
   provider_name?: string
-  service_name?: string
-  provider_key_name?: string
+  user_service_api_name?: string
+  user_provider_key_name?: string
 }
 
 export interface LogsListResponse {
@@ -1833,6 +1833,8 @@ export const api = {
       model_used?: string
       provider_type_id?: number
       user_service_api_id?: number
+      user_service_api_name?: string
+      user_provider_key_name?: string
       start_time?: string
       end_time?: string
     }): Promise<ApiResponse<LogsListResponse>> {
@@ -1847,6 +1849,8 @@ export const api = {
         if (params?.model_used) queryParams.model_used = params.model_used
         if (params?.provider_type_id !== undefined) queryParams.provider_type_id = params.provider_type_id.toString()
         if (params?.user_service_api_id !== undefined) queryParams.user_service_api_id = params.user_service_api_id.toString()
+        if (params?.user_service_api_name) queryParams.user_service_api_name = params.user_service_api_name
+        if (params?.user_provider_key_name) queryParams.user_provider_key_name = params.user_provider_key_name
         if (params?.start_time) queryParams.start_time = params.start_time
         if (params?.end_time) queryParams.end_time = params.end_time
 

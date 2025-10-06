@@ -7,8 +7,10 @@ use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
 use crate::{lerror, linfo};
-use ::entity::proxy_tracing;
-use ::entity::{ProviderTypes, ProxyTracing, UserProviderKeys};
+use ::entity::{
+    proxy_tracing, user_provider_keys, user_service_apis, ProviderTypes, ProxyTracing,
+    UserProviderKeys, UserServiceApis,
+};
 use axum::{
     extract::{Extension, Path, Query, State},
     response::IntoResponse,
@@ -16,7 +18,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use sea_orm::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// 日志仪表板统计响应
@@ -63,7 +65,8 @@ pub struct ProxyTraceEntry {
     pub is_success: bool,
     pub created_at: DateTime<Utc>,
     pub provider_name: Option<String>,
-    pub provider_key_name: Option<String>,
+    pub user_service_api_name: Option<String>,
+    pub user_provider_key_name: Option<String>,
 }
 
 /// 日志列表响应
@@ -138,6 +141,8 @@ pub struct LogsListQuery {
     pub model_used: Option<String>,
     pub provider_type_id: Option<i32>,
     pub user_service_api_id: Option<i32>,
+    pub user_service_api_name: Option<String>,
+    pub user_provider_key_name: Option<String>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
 }
@@ -356,6 +361,51 @@ async fn fetch_traces_list(
         select = select.filter(proxy_tracing::Column::UserServiceApiId.eq(user_service_api_id));
     }
 
+    if let Some(name_filter) = query
+        .user_service_api_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let pattern = format!("%{}%", name_filter);
+        let matched_ids: Vec<i32> = UserServiceApis::find()
+            .filter(user_service_apis::Column::Name.like(&pattern))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|api| api.id)
+            .collect();
+
+        if matched_ids.is_empty() {
+            select = select.filter(proxy_tracing::Column::UserServiceApiId.eq(-1));
+        } else {
+            select = select.filter(proxy_tracing::Column::UserServiceApiId.is_in(matched_ids));
+        }
+    }
+
+    // 应用账号 API Key 名称过滤
+    if let Some(name_filter) = query
+        .user_provider_key_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let pattern = format!("%{}%", name_filter);
+        let matched_ids: Vec<i32> = UserProviderKeys::find()
+            .filter(user_provider_keys::Column::Name.like(&pattern))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|key| key.id)
+            .collect();
+
+        if matched_ids.is_empty() {
+            select = select.filter(proxy_tracing::Column::UserProviderKeyId.eq(-1));
+        } else {
+            select = select.filter(proxy_tracing::Column::UserProviderKeyId.is_in(matched_ids));
+        }
+    }
+
     // 应用时间范围过滤
     if let Some(start_time) = query.start_time {
         select = select.filter(proxy_tracing::Column::CreatedAt.gte(start_time));
@@ -379,8 +429,54 @@ async fn fetch_traces_list(
 
     // 转换为响应格式
     let mut traces = Vec::new();
+    let mut user_service_api_ids: HashSet<i32> = HashSet::new();
+    let mut user_provider_key_ids: HashSet<i32> = HashSet::new();
+    let mut base_records = Vec::new();
+
     for (trace_model, provider_types) in traces_models {
         let provider_name = provider_types.first().map(|pt| pt.display_name.clone());
+
+        user_service_api_ids.insert(trace_model.user_service_api_id);
+        if let Some(provider_key_id) = trace_model.user_provider_key_id {
+            user_provider_key_ids.insert(provider_key_id);
+        }
+
+        base_records.push((trace_model, provider_name));
+    }
+
+    let user_service_api_name_map: HashMap<i32, String> = if !user_service_api_ids.is_empty() {
+        let ids: Vec<i32> = user_service_api_ids.into_iter().collect();
+        UserServiceApis::find()
+            .filter(user_service_apis::Column::Id.is_in(ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .filter_map(|model| model.name.map(|name| (model.id, name)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    let user_provider_key_name_map: HashMap<i32, String> = if !user_provider_key_ids.is_empty() {
+        let ids: Vec<i32> = user_provider_key_ids.into_iter().collect();
+        UserProviderKeys::find()
+            .filter(user_provider_keys::Column::Id.is_in(ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|model| (model.id, model.name))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    for (trace_model, provider_name) in base_records {
+        let user_service_api_name = user_service_api_name_map
+            .get(&trace_model.user_service_api_id)
+            .cloned();
+        let user_provider_key_name = trace_model
+            .user_provider_key_id
+            .and_then(|id| user_provider_key_name_map.get(&id).cloned());
 
         traces.push(ProxyTraceEntry {
             id: trace_model.id,
@@ -414,7 +510,8 @@ async fn fetch_traces_list(
             is_success: trace_model.is_success,
             created_at: trace_model.created_at.and_utc(),
             provider_name,
-            provider_key_name: None, // TODO: 如果需要，可以添加关联查询
+            user_service_api_name,
+            user_provider_key_name,
         });
     }
 
@@ -486,6 +583,13 @@ async fn fetch_trace_detail(
             None
         };
 
+        let user_service_api_name = UserServiceApis::find_by_id(trace_model.user_service_api_id)
+            .one(db)
+            .await?
+            .and_then(|api| api.name);
+
+        let user_provider_key_name = provider_key_name.clone();
+
         let trace_entry = ProxyTraceEntry {
             id: trace_model.id,
             request_id: trace_model.request_id,
@@ -518,7 +622,8 @@ async fn fetch_trace_detail(
             is_success: trace_model.is_success,
             created_at: trace_model.created_at.and_utc(),
             provider_name,
-            provider_key_name,
+            user_service_api_name,
+            user_provider_key_name,
         };
 
         Ok(Some(trace_entry))
