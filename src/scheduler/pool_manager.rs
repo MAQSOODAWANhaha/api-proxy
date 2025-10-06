@@ -68,6 +68,16 @@ impl ApiKeyPoolManager {
         service_api: &entity::user_service_apis::Model,
         context: &SelectionContext,
     ) -> Result<ApiKeySelectionResult> {
+        linfo!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "start_key_selection",
+            "Starting API key selection for service API",
+            service_api_id = service_api.id,
+            route_group = %context.route_group
+        );
+
         // 从service_api中解析user_provider_keys_ids JSON数组
         let provider_key_ids: Vec<i32> = match &service_api.user_provider_keys_ids {
             sea_orm::prelude::Json::Array(ids) => ids
@@ -87,6 +97,15 @@ impl ApiKeyPoolManager {
             ));
         }
 
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "configured_keys",
+            "Found configured provider key IDs",
+            key_ids = ?provider_key_ids
+        );
+
         // 查询指定的API密钥，并应用基础筛选条件
         let all_candidate_keys = entity::user_provider_keys::Entity::find()
             .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids))
@@ -95,6 +114,15 @@ impl ApiKeyPoolManager {
             .all(&*self.db)
             .await
             .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "candidate_keys_count",
+            "Retrieved candidate keys from DB",
+            count = all_candidate_keys.len()
+        );
 
         // 应用更智能的筛选逻辑，考虑认证状态和过期时间
         let user_keys = self.filter_valid_keys(&all_candidate_keys).await;
@@ -105,8 +133,26 @@ impl ApiKeyPoolManager {
             ));
         }
 
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "valid_keys_count",
+            "Keys remaining after initial validation filter",
+            count = user_keys.len()
+        );
+
         // 过滤健康的密钥
         let healthy_keys = self.filter_healthy_keys(&user_keys).await;
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "healthy_keys_count",
+            "Keys remaining after health filter",
+            count = healthy_keys.len()
+        );
 
         // 记录密钥限制信息用于调试
         self.log_key_limits(&user_keys).await;
@@ -144,6 +190,15 @@ impl ApiKeyPoolManager {
         } else {
             &healthy_keys
         };
+
+        linfo!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "keys_for_selection_count",
+            "Final number of keys passed to the selection algorithm",
+            count = keys_to_use.len()
+        );
 
         // 使用配置的调度策略
         let scheduling_strategy = service_api

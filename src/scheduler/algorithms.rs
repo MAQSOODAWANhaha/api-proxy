@@ -4,11 +4,7 @@
 
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
-use crate::{
-    ldebug,
-    logging::{LogComponent, LogStage},
-    lwarn,
-};
+use crate::{ ldebug, linfo, logging::{LogComponent, LogStage}, lwarn };
 use dashmap::DashMap;
 use entity::user_provider_keys;
 use std::sync::Arc;
@@ -139,15 +135,30 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         }
 
         // 轮询选择（按路由分组维护计数器）
-        let key = (context.user_service_api_id, context.route_group.clone());
+        let group_key = (context.user_service_api_id, context.route_group.clone());
         let counter_arc = self
             .counters
-            .entry(key)
+            .entry(group_key.clone())
             .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
             .clone();
+        
+        let previous_counter = counter_arc.load(Ordering::SeqCst);
         let counter = counter_arc.fetch_add(1, Ordering::SeqCst);
         let selected_relative_index = counter % active_keys.len();
         let selected_key = active_keys[selected_relative_index];
+
+        linfo!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "round_robin_state",
+            "Round-robin internal state for selection",
+            group_key = ?group_key,
+            previous_counter = previous_counter,
+            next_counter = counter + 1,
+            active_keys_len = active_keys.len(),
+            selected_index = selected_relative_index
+        );
 
         // 找到在原始数组中的索引
         let selected_index = keys
