@@ -8,16 +8,16 @@
 
 这是一个基于**双端口分离架构**的企业级 AI 服务代理平台，采用以下核心设计：
 
-- **PingoraProxyServer** (端口8080): 专注高性能AI请求代理，基于Pingora 0.5.0原生性能
+- **PingoraProxyServer** (端口8080): 专注高性能AI请求代理，基于Pingora 0.6.0原生性能
 - **ManagementServer** (端口9090): 专注业务管理逻辑，用户管理、API密钥管理、统计查询
 - **共享数据层**: SQLite数据库 + CacheManager + AuthManager
 
 ### 技术栈组成
 
-- **核心框架**: Rust 2024 Edition + Pingora 0.5.0 + Axum 0.8.4
-- **数据库**: SQLite + Sea-ORM 1.1.13 + Sea-ORM-Migration  
+- **核心框架**: Rust 2024 Edition + Pingora 0.6.0 + Axum 0.8.4
+- **数据库**: SQLite + Sea-ORM 1.x + Sea-ORM-Migration
 - **缓存**: Redis with CacheManager (支持内存/Redis后端)
-- **认证**: AuthManager + JWT + API Key + RBAC
+- **认证**: AuthManager + JWT + API Key + RBAC + OAuth 2.0
 - **追踪**: TraceSystem + ImmediateProxyTracer
 - **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 

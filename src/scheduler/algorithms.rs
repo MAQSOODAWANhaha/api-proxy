@@ -7,6 +7,7 @@ use crate::error::{ProxyError, Result};
 use crate::{
     ldebug,
     logging::{LogComponent, LogStage},
+    lwarn,
 };
 use dashmap::DashMap;
 use entity::user_provider_keys;
@@ -318,12 +319,16 @@ impl ApiKeySelector for HealthBestApiKeySelector {
     }
 }
 
-/// 基于权重的API密钥选择器
-pub struct WeightedApiKeySelector;
+/// 基于权重的API密钥选择器 (有状态, 按分组轮询)
+pub struct WeightedApiKeySelector {
+    counters: DashMap<(i32, String), Arc<AtomicUsize>>,
+}
 
 impl WeightedApiKeySelector {
     pub fn new() -> Self {
-        Self
+        Self {
+            counters: DashMap::new(),
+        }
     }
 }
 
@@ -346,12 +351,9 @@ impl ApiKeySelector for WeightedApiKeySelector {
             ));
         }
 
-        // 过滤活跃的密钥并计算总权重
-        let active_keys: Vec<(usize, &user_provider_keys::Model)> = keys
-            .iter()
-            .enumerate()
-            .filter(|(_, key)| key.is_active)
-            .collect();
+        // 过滤活跃的密钥
+        let active_keys: Vec<&user_provider_keys::Model> = 
+            keys.iter().filter(|key| key.is_active).collect();
 
         if active_keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
@@ -359,67 +361,52 @@ impl ApiKeySelector for WeightedApiKeySelector {
             ));
         }
 
-        // 计算总权重，如果没有设置权重则默认为1
-        let total_weight: i32 = active_keys
-            .iter()
-            .map(|(_, key)| key.weight.unwrap_or(1))
-            .sum();
-
-        if total_weight <= 0 {
-            // 如果所有权重都是0，则回退到轮询
-            let selected_index = 0;
-            let (_, selected_key) = active_keys[selected_index];
-
-            let reason = format!(
-                "Weighted selection fallback to round robin: group='{}', total_weight=0, key_id={}",
-                context.route_group, selected_key.id
-            );
-
-            ldebug!(
-                &context.request_id,
-                LogStage::Scheduling,
-                LogComponent::Scheduler,
-                "select_key",
-                "Selected API key using weighted strategy (fallback)",
-                selected_key_id = selected_key.id,
-                route_group = context.route_group.as_str(),
-                reason = %reason
-            );
-
-            return Ok(ApiKeySelectionResult::new(
-                selected_index,
-                selected_key.clone(),
-                reason,
-                SchedulingStrategy::Weighted,
-            ));
-        }
-
-        // 生成随机数进行权重选择
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let random_value: i32 = rng.gen_range(0..total_weight);
-
-        // 根据权重选择密钥
-        let mut accumulated_weight = 0;
-        let mut selected_index = 0;
-        let mut selected_key = active_keys[0].1.clone();
-
-        for &(index, key) in &active_keys {
-            let key_weight = key.weight.unwrap_or(1);
-            accumulated_weight += key_weight;
-
-            if random_value <= accumulated_weight {
-                selected_index = index;
-                selected_key = key.clone();
-                break;
+        // 根据权重创建扩展列表
+        let mut weighted_list: Vec<&user_provider_keys::Model> = Vec::new();
+        for key in &active_keys {
+            // 如果权重为None或无效，则默认为1
+            let weight = key.weight.unwrap_or(1).max(0) as usize;
+            for _ in 0..weight {
+                weighted_list.push(key);
             }
         }
 
+        // 如果所有权重都为0，则回退到无权重的轮询
+        if weighted_list.is_empty() {
+            lwarn!(
+                &context.request_id,
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "weighted_fallback",
+                "All key weights are zero, falling back to simple round-robin for this selection.",
+                route_group = context.route_group.as_str()
+            );
+            let round_robin_selector = RoundRobinApiKeySelector::new();
+            return round_robin_selector.select_key(keys, context).await;
+        }
+
+        // 使用轮询逻辑在加权列表上选择
+        let key = (context.user_service_api_id, context.route_group.clone());
+        let counter_arc = self
+            .counters
+            .entry(key)
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+            .clone();
+        let counter = counter_arc.fetch_add(1, Ordering::SeqCst);
+        let selected_relative_index = counter % weighted_list.len();
+        let selected_key = weighted_list[selected_relative_index];
+
+        // 找到在原始数组中的索引
+        let selected_index = keys
+            .iter()
+            .position(|key| key.id == selected_key.id)
+            .unwrap_or(0); // Fallback to 0 if not found, though it should always be found
+
         let reason = format!(
-            "Weighted selection: group='{}', random_value={}, total_weight={}, key_weight={}, key_id={}",
+            "Stateful Weighted selection: group='{}', counter={}, total_weight={}, key_weight={}, key_id={}",
             context.route_group,
-            random_value,
-            total_weight,
+            counter,
+            weighted_list.len(),
             selected_key.weight.unwrap_or(1),
             selected_key.id
         );
@@ -429,7 +416,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
             LogStage::Scheduling,
             LogComponent::Scheduler,
             "select_key",
-            "Selected API key using weighted strategy",
+            "Selected API key using stateful weighted strategy",
             selected_key_id = selected_key.id,
             route_group = context.route_group.as_str(),
             reason = %reason
@@ -448,7 +435,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
     }
 
     async fn reset(&self) {
-        // 无状态，无需重置
+        self.counters.clear();
     }
 }
 

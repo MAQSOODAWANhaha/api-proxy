@@ -10,7 +10,7 @@ use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use entity::user_provider_keys;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -91,6 +91,7 @@ impl ApiKeyPoolManager {
         let all_candidate_keys = entity::user_provider_keys::Entity::find()
             .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids))
             .filter(entity::user_provider_keys::Column::IsActive.eq(true))
+            .order_by_asc(entity::user_provider_keys::Column::Id)
             .all(&*self.db)
             .await
             .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;

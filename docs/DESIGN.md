@@ -67,9 +67,8 @@
 ### 1.3 技术栈
 
 **后端技术栈**
-- **代理服务**: Rust + Pingora (端口8080，专注AI代理)
-- **管理服务**: Axum (端口9090，专注管理API)
-- **数据库**: SQLite + Sea-ORM
+- **核心框架**: Rust 2024 Edition + Pingora 0.6.0 (代理服务) + Axum 0.8.4 (管理服务)
+- **数据库**: SQLite + Sea-ORM 1.x
 - **缓存**: Redis
 - **错误处理**: thiserror + anyhow
 - **TLS**: rustls + acme-lib
@@ -77,11 +76,10 @@
 **前端技术栈**
 - **框架**: React 18 + TypeScript
 - **UI库**: shadcn/ui + Radix UI
-- **构建工具**: ESBuild (自定义构建脚本)
+- **构建工具**: ESBuild (通过自定义脚本 `scripts/build.mjs`)
 - **状态管理**: Zustand
-- **路由**: React Router 7
-- **样式**: Tailwind CSS + CSS Variables
-- **主题**: next-themes (支持亮/暗模式)
+- **路由**: React Router
+- **样式**: Tailwind CSS
 
 ### 1.4 系统特色
 
@@ -99,57 +97,52 @@
 
 ### 2.1 总体架构图
 
-```
-                           ┌─────────────────────────────────┐
-                           │         Client Applications      │
-                           │    (Web, Mobile, API Clients)   │
-                           └─────────────────┬───────────────┘
-                                            │ HTTPS/HTTP
-                                            │
-                        ┌───────────────────┼───────────────────┐
-                        │                   │                   │
-                 AI代理请求                  │               管理API请求
-            (/v1/*, /proxy/*)              │          (/api/*, /admin/*, /)
-                        │                   │                   │
-                        │              ┏━━━━▼━━━━┓              │
-                        │              ┃ TLS终止  ┃              │
-                        │              ┃ 证书管理  ┃              │
-                        │              ┗━━━━━━━━━┛              │
-                        │                   │                   │
-                ┏━━━━━━━▼━━━━━━━┓            │            ┏━━━━━▼━━━━━┓
-                ┃  Pingora 代理   ┃            │            ┃ Axum 管理  ┃
-                ┃   端口 :8080    ┃            │            ┃ 端口 :9090 ┃
-                ┗━━━━━━━┳━━━━━━━┛            │            ┗━━━━━┳━━━━━┛
-                        │                   │                   │
-        ┌───────────────┼───────────────────┼───────────────────┼──────────────┐
-        │               │                   │                   │              │
-  ┏━━━━▼━━━┓ ┏━━━━▼━━━━┓ ┏━━━━▼━━━━┓ ┏━━━━▼━━━━┓ ┏━━━▼━━━┓ ┏━━━▼━━━┓
-  ┃负载均衡 ┃ ┃限速策略  ┃ ┃健康检查 ┃ ┃用户管理 ┃ ┃API管理 ┃ ┃统计查询┃
-  ┃调度器   ┃ ┃熔断器   ┃ ┃请求转发 ┃ ┃       ┃ ┃       ┃ ┃系统配置┃
-  ┗━━━━━━━┛ ┗━━━━━━━━┛ ┗━━━━━━━━┛ ┗━━━━━━━━┛ ┗━━━━━━━┛ ┗━━━━━━━┛
-                                            │
-                    ┏━━━━━━━━━━━━━━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                    ┃                   共享数据层                      ┃
-                    ┃                                               ┃
-                    ┃  ┏━━━━━━━━━━━┓    ┏━━━━━━━━━━━━━┓    ┏━━━━━━━━━┓  ┃
-                    ┃  ┃ SQLite DB ┃    ┃ Redis Cache ┃    ┃ 文件存储 ┃  ┃
-                    ┃  ┃用户数据    ┃    ┃认证缓存      ┃    ┃TLS证书  ┃  ┃
-                    ┃  ┃配置数据    ┃    ┃健康状态缓存  ┃    ┃日志文件  ┃  ┃
-                    ┃  ┃统计数据    ┃    ┃负载均衡状态  ┃    ┃         ┃  ┃
-                    ┃  ┗━━━━━━━━━━━┛    ┗━━━━━━━━━━━━━┛    ┗━━━━━━━━━┛  ┃
-                    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-                                            │
-                                            │ 代理转发 (仅从Pingora)
-                                            │
-                    ┏━━━━━━━━━━━━━━━━━━━━━━━━━▼━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                    ┃                外部AI服务商                      ┃
-                    ┃                                               ┃
-                    ┃  ┏━━━━━━━━━┓    ┏━━━━━━━━━┓    ┏━━━━━━━━━━━┓    ┃
-                    ┃  ┃ OpenAI  ┃    ┃ Google  ┃    ┃ Anthropic ┃    ┃
-                    ┃  ┃ChatGPT  ┃    ┃ Gemini  ┃    ┃  Claude   ┃    ┃
-                    ┃  ┃   API   ┃    ┃   API   ┃    ┃   API     ┃    ┃
-                    ┃  ┗━━━━━━━━━┛    ┗━━━━━━━━━┛    ┗━━━━━━━━━━━┛    ┃
-                    ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```mermaid
+graph TD
+    subgraph "用户端 (Clients)"
+        Client[Web/Mobile/SDK]
+    end
+
+    subgraph "接入层 (Edge Layer)"
+        ProxyServer["Pingora 代理服务<br/>:8080"]
+        MgmtServer["Axum 管理服务<br/>:9090"]
+    end
+
+    subgraph "共享核心服务 (Shared Core Services)"
+        AuthService["认证服务<br/>(API Key, JWT, OAuth2)"]
+        Scheduler["调度器<br/>(轮询, 权重, 健康优先)"]
+        HealthChecker["健康检查器"]
+        TracingService["追踪与统计服务"]
+    end
+
+    subgraph "数据持久层 (Data Layer)"
+        Database[(SQLite / PostgreSQL)]
+        Cache[(Redis)]
+    end
+
+    subgraph "上游服务商 (Upstream Providers)"
+        Provider[OpenAI, Gemini, Claude, etc.]
+    end
+
+    Client -- "AI 请求" --> ProxyServer
+    Client -- "管理操作" --> MgmtServer
+
+    ProxyServer -- "调用" --> AuthService
+    ProxyServer -- "调用" --> Scheduler
+    ProxyServer -- "调用" --> TracingService
+    MgmtServer -- "调用" --> AuthService
+    MgmtServer -- "读/写" --> Database
+    MgmtServer -- "读/写" --> Cache
+
+    Scheduler -- "依赖" --> HealthChecker
+    Scheduler -- "读取" --> Database
+    Scheduler -- "读取" --> Cache
+
+    HealthChecker -- "更新" --> Database
+    HealthChecker -- "更新" --> Cache
+    TracingService -- "写入" --> Database
+
+    ProxyServer -- "转发请求至" --> Provider
 ```
 
 ### 2.2 核心设计原则
@@ -185,25 +178,21 @@
 
 ### 2.3 数据流设计
 
-**AI代理请求流程（端口8080）** - 透明代理设计
+**AI代理请求流程（端口8080）** - 协调器与管线模式
 ```
-Client → Pingora(8080) → PathMatch(/v1/*, /proxy/*) → Auth(API Key/JWT) → LoadBalancer → TransparentForward → AI Provider → Response → Stats
+Client → Pingora(8080) → RequestFilter Pipeline → Upstream → Response → Logging & Tracing
 ```
-
-**代理透明性说明**：
-- **PathMatch**: 仅检查路径前缀，不解析具体 URI 参数  
-- **Auth**: 验证 API 密钥或 JWT 令牌，不关心具体业务逻辑
-- **TransparentForward**: 完整透明转发原始请求，保持所有头信息和请求体
-- **上游处理**: 所有 AI API 业务逻辑（模型选择、参数验证等）由上游 AI 服务商处理
+**管线步骤 (Pipeline Steps)**:
+1.  **认证 (Authentication)**: `AuthenticationService` 验证入口密钥 (API Key/OAuth 2.0)。
+2.  **追踪启动 (Start Trace)**: `TracingService` 初始化追踪记录。
+3.  **速率限制 (Rate Limit)**: 检查并应用速率限制策略。
+4.  **配置加载 (Load Config)**: 从 `ProviderConfigManager` 加载服务商特定配置。
+5.  **密钥选择 (Key Selection)**: `ApiKeyPoolManager` + `HealthChecker` + `Scheduler` 选择一个健康的后端密钥。
+6.  **追踪更新 (Update Trace)**: `TracingService` 更新追踪记录，关联后端密钥。
 
 **管理API请求流程（端口9090）**
 ```
 Client → Axum(9090) → Auth → Business Logic → Database/Redis → Response
-```
-
-**认证统一流程**
-```
-服务(Pingora/Axum) → AuthService → Redis缓存查询 → Database验证 → 认证结果缓存 → Response
 ```
 
 **双服务协同数据同步**
@@ -215,20 +204,43 @@ Client → Axum(9090) → Auth → Business Logic → Database/Redis → Respons
 
 ## 2.4 Pingora 代理实现设计
 
-### 2.4.1 透明代理核心逻辑
+### 2.4.1 代理核心逻辑 (Pipeline)
 
-**设计原则**: Pingora 代理服务应保持最大透明性，专注于高性能转发，避免业务逻辑判断。
+**设计原则**: `ProxyService` 的 `request_filter` 作为协调器，按顺序执行一系列独立的、可复用的处理步骤（管线模式），以完成请求的准备工作。
 
 ```rust
-// 简化的代理核心逻辑
-async fn proxy_request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) -> Result<bool> {
-    let path = session.req_header().uri.path();
+// src/proxy/service.rs -> request_filter()
+async fn request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) -> Result<bool> {
+    // 预检请求直接返回
+    if session.req_header().method == "OPTIONS" {
+        // ... handle CORS preflight
+        return Ok(true); // 终止代理
+    }
 
-    // 步骤1: 身份认证 (统一认证服务)
-    self.authenticate_request(session, ctx).await?;
+    // --- 请求处理管线开始 ---
 
-    // 步骤2: 其他全部透明转发，不做业务判断
-    Ok(false) // 继续正常代理流程
+    // 步骤 1: 认证
+    let auth_result = self.auth_service.authenticate_proxy_request(session, ctx).await?;
+    ctx.set_auth_result(auth_result);
+
+    // 步骤 2: 启动追踪
+    self.tracing_service.start_trace(session, ctx).await?;
+
+    // 步骤 3: 速率限制
+    self.rate_limit_service.check_rate_limit(ctx).await?;
+
+    // 步骤 4: 加载 Provider 配置
+    self.provider_config_service.load_provider_config(ctx).await?;
+
+    // 步骤 5: 选择后端 API 密钥
+    let selection_result = self.api_key_selection_service.select_api_key(ctx).await?;
+    ctx.set_selection_result(selection_result);
+
+    // 步骤 6: 更新追踪信息
+    self.tracing_service.update_extended_trace_info(ctx).await?;
+
+    // --- 管线结束, 准备转发 ---
+    Ok(false) // false 表示继续执行 Pingora 的生命周期 (upstream_peer, etc.)
 }
 ```
 
@@ -236,27 +248,26 @@ async fn proxy_request_filter(&self, session: &mut Session, ctx: &mut ProxyConte
 
 **代理路径** (转发到 AI 服务商):
 - `/v1/*` - OpenAI 兼容 API 格式
-- `/proxy/*` - 通用代理路径
+- `/proxy/{provider_name}/*` - 通用代理路径，动态识别 `provider_name`
 
 **非代理路径处理**:
-- `/api/*`, `/admin/*` - 返回 404，提示使用管理端口
-- `/*` - 其他路径返回 404
+- `/api/*`, `/admin/*` - 在 `request_filter` 阶段被识别并由 Axum 处理，不会进入 Pingora 的转发逻辑。
 
 ### 2.4.3 上游选择逻辑
 
 ```rust
-// 透明的上游选择
-async fn upstream_peer(&self, session: &mut Session, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
-    // 从认证结果获取用户配置
-    let user_config = &ctx.auth_result.user_config;
+// src/proxy/service.rs -> upstream_peer()
+async fn upstream_peer(&self, _session: &mut Session, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
+    // 从上下文中获取已加载的 Provider 配置
+    let provider_config = ctx.provider_config.as_ref().ok_or_else(|| ...)?;
     
-    // 根据负载均衡策略选择上游
-    let upstream = self.load_balancer
-        .select_upstream(user_config, &ctx.forwarding_context)
-        .await?;
+    // 使用 Provider 的 base_url 构建上游地址
+    let upstream_addr = format!("{}:443", provider_config.base_url);
     
-    // 创建上游连接 - 完全透明
-    Ok(Box::new(HttpPeer::new(upstream, true, "".to_string())))
+    // 创建一个启用 TLS 的上游对等点
+    let peer = HttpPeer::new(upstream_addr, true, provider_config.base_url.clone());
+    
+    Ok(Box::new(peer))
 }
 ```
 
@@ -264,30 +275,31 @@ async fn upstream_peer(&self, session: &mut Session, ctx: &ProxyContext) -> Resu
 
 **保持完整透明**:
 - 不修改请求 URI 和参数
-- 不解析请求体内容  
-- 保持所有原始头信息
-- 仅添加必要的代理头信息
+- 不解析请求体内容
+- 保持大部分原始头信息
+- 仅添加或修改必要的代理头信息
 
-**仅添加的头信息**:
+**修改/添加的头信息**:
 ```
 X-Forwarded-For: <client-ip>
 X-Request-ID: <uuid>
-Authorization: <upstream-api-key>  // 替换用户密钥为上游密钥
+Authorization: <upstream-api-key>  // 关键：替换用户密钥为上游密钥
+Host: <provider-base-url>         // 关键：确保 Host 头正确
+User-Agent: AI-Proxy/1.0
 ```
 
 ### 2.4.5 性能优化设计
 
 **避免的重负载操作**:
 - ❌ 复杂的 URI 解析和路由匹配
-- ❌ 请求体内容解析和修改
-- ❌ 复杂的业务逻辑判断
-- ❌ 同步数据库查询
+- ❌ 请求体内容解析和修改 (只在统计阶段对响应体进行)
+- ❌ 同步数据库查询 (所有 DB 操作都是异步的)
 
 **采用的高性能策略**:
 - ✅ 简单字符串前缀匹配
-- ✅ Redis 缓存认证结果
-- ✅ 异步非阻塞处理
-- ✅ 连接池复用
+- ✅ Redis 缓存认证结果、健康状态、配置信息
+- ✅ 异步非阻塞 I/O
+- ✅ 数据库和上游连接池复用
 
 ---
 
@@ -458,34 +470,19 @@ CREATE TABLE api_health_status (
     INDEX idx_last_check (updated_at)
 );
 
--- 请求统计表
-CREATE TABLE request_statistics (
+-- 请求统计表 (在 v2.0 中被 proxy_tracing 表替代)
+-- CREATE TABLE request_statistics (...)
+
+-- 统一追踪表 (v2.0)
+CREATE TABLE proxy_tracing (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_service_api_id INTEGER NOT NULL,
-    user_provider_key_id INTEGER,        -- 可能为空（如果请求在路由阶段失败）
-    request_id VARCHAR(36),              -- UUID请求ID
-    method VARCHAR(10) NOT NULL,         -- HTTP方法
-    path VARCHAR(500),                   -- 请求路径
-    status_code INTEGER,                 -- HTTP状态码
-    response_time_ms INTEGER,            -- 响应时间（毫秒）
-    request_size INTEGER DEFAULT 0,      -- 请求大小（字节）
-    response_size INTEGER DEFAULT 0,     -- 响应大小（字节）
-    tokens_prompt INTEGER DEFAULT 0,     -- 输入token数
-    tokens_completion INTEGER DEFAULT 0, -- 输出token数
-    tokens_total INTEGER DEFAULT 0,      -- 总token数
-    model_used VARCHAR(100),             -- 使用的模型
-    client_ip VARCHAR(45),               -- 客户端IP（脱敏）
-    user_agent TEXT,                     -- User-Agent
-    error_type VARCHAR(50),              -- 错误类型：TIMEOUT, AUTH_FAIL等
-    error_message TEXT,                  -- 错误详情
-    retry_count INTEGER DEFAULT 0,       -- 重试次数
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_service_api_id) REFERENCES user_service_apis(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_provider_key_id) REFERENCES user_provider_keys(id),
-    INDEX idx_user_service_time (user_service_api_id, created_at),
-    INDEX idx_status_time (status_code, created_at),
-    INDEX idx_request_time (created_at)
+    request_id VARCHAR(36) UNIQUE NOT NULL,
+    user_service_api_id INTEGER,
+    user_provider_key_id INTEGER,
+    -- ... 更多追踪字段
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
 
 -- 每日统计汇总表（用于快速查询）
 CREATE TABLE daily_statistics (
@@ -588,121 +585,31 @@ DatabaseConfig {
 ```
 ai-proxy-system/
 ├── Cargo.toml                     # Rust项目配置
-├── Cargo.lock
-├── README.md
-├── docker-compose.yml             # 开发环境配置
-├── Dockerfile                     # 生产环境镜像
-├── migration/                     # 数据库迁移文件
-│   ├── Cargo.toml
-│   ├── src/
-│   │   ├── lib.rs
-│   │   ├── m20231201_000001_create_users_table.rs
-│   │   ├── m20231201_000002_create_provider_types_table.rs
-│   │   └── ...
-├── entity/                        # Sea-ORM实体定义
-│   ├── Cargo.toml
-│   ├── src/
-│   │   ├── lib.rs
-│   │   ├── users.rs
-│   │   ├── provider_types.rs
-│   │   ├── user_provider_keys.rs
-│   │   └── ...
 ├── src/                          # 主应用源码
 │   ├── main.rs                   # 程序入口
 │   ├── lib.rs                    # 库入口
 │   ├── config/                   # 配置管理
-│   │   ├── mod.rs
-│   │   ├── app_config.rs         # 应用配置结构
-│   │   └── database.rs           # 数据库配置
-│   ├── auth/                     # 认证授权
-│   │   ├── mod.rs
-│   │   ├── jwt.rs                # JWT处理
-│   │   ├── middleware.rs         # 认证中间件
-│   │   └── password.rs           # 密码处理
-│   ├── proxy/                    # Pingora代理服务
-│   │   ├── mod.rs
-│   │   ├── service.rs            # 主代理服务
-│   │   ├── router.rs             # 路由分发
-│   │   ├── context.rs            # 请求上下文
-│   │   └── ai_handler.rs         # AI请求处理
+│   ├── auth/                     # 认证授权 (API Key, JWT, OAuth2)
+│   ├── proxy/                    # Pingora代理服务 (service.rs, builder.rs)
 │   ├── management/               # Axum管理API
-│   │   ├── mod.rs
-│   │   ├── routes/               # 路由定义
-│   │   │   ├── mod.rs
-│   │   │   ├── auth.rs
-│   │   │   ├── users.rs
-│   │   │   ├── apis.rs
-│   │   │   └── statistics.rs
-│   │   ├── handlers/             # 请求处理器
-│   │   │   ├── mod.rs
-│   │   │   ├── auth_handler.rs
-│   │   │   ├── user_handler.rs
-│   │   │   └── ...
-│   │   └── middleware/           # 中间件
-│   │       ├── mod.rs
-│   │       ├── auth.rs
-│   │       └── cors.rs
-│   ├── scheduler/                # 负载均衡调度
-│   │   ├── mod.rs
-│   │   ├── trait.rs              # 调度器trait
-│   │   ├── round_robin.rs        # 轮询调度
-│   │   ├── weighted.rs           # 权重调度
-│   │   └── health_best.rs        # 健康度最佳调度
-│   ├── health/                   # 健康检查
-│   │   ├── mod.rs
-│   │   ├── checker.rs            # 健康检查器
-│   │   └── models.rs             # 健康状态模型
-│   ├── statistics/               # 统计监控
-│   │   ├── mod.rs
-│   │   ├── collector.rs          # 统计数据收集
-│   │   ├── aggregator.rs         # 数据聚合
-│   │   └── exporter.rs           # 数据导出
-│   ├── tls/                      # TLS证书管理
-│   │   ├── mod.rs
-│   │   ├── manager.rs            # 证书管理器
-│   │   ├── acme.rs               # ACME协议实现
-│   │   └── storage.rs            # 证书存储
+│   ├── scheduler/                # 负载均衡调度 (pool_manager.rs, algorithms.rs)
+│   ├── health/                   # 健康检查 (api_key_health.rs)
+│   ├── statistics/               # 统计监控 (service.rs)
+│   ├── trace/                    # 请求追踪 (immediate.rs)
 │   ├── providers/                # AI服务商适配
-│   │   ├── mod.rs
-│   │   ├── trait.rs              # 服务商trait
-│   │   ├── openai.rs             # OpenAI适配器
-│   │   ├── gemini.rs             # Gemini适配器
-│   │   └── claude.rs             # Claude适配器
 │   ├── cache/                    # Redis缓存
-│   │   ├── mod.rs
-│   │   ├── client.rs             # Redis客户端
-│   │   └── keys.rs               # 缓存键定义
 │   ├── utils/                    # 工具函数
-│   │   ├── mod.rs
-│   │   ├── crypto.rs             # 加密工具
-│   │   ├── time.rs               # 时间工具
-│   │   └── validation.rs         # 验证工具
 │   └── error/                    # 错误处理
-│       ├── mod.rs
-│       └── types.rs              # 错误类型定义
-├── tests/                        # 测试代码
-│   ├── integration/              # 集成测试
-│   └── fixtures/                 # 测试数据
-├── frontend/                     # Vue前端
+├── entity/                        # Sea-ORM实体定义
+├── migration/                     # 数据库迁移文件
+├── web/                           # React 前端应用
 │   ├── package.json
-│   ├── vite.config.ts
+│   ├── scripts/
+│   │   └── build.mjs             # ESBuild 构建脚本
 │   ├── src/
-│   │   ├── main.ts
-│   │   ├── App.vue
-│   │   ├── router/
-│   │   ├── stores/
-│   │   ├── views/
-│   │   ├── components/
-│   │   └── api/
-│   └── public/
+│   └── ...
 ├── config/                       # 配置文件
-│   ├── config.toml               # 默认配置
-│   ├── config.dev.toml           # 开发配置
-│   └── config.prod.toml          # 生产配置
 └── docs/                         # 文档
-    ├── api.md                    # API文档
-    ├── deployment.md             # 部署文档
-    └── development.md            # 开发文档
 ```
 
 ### 4.2 Pingora统一入口服务
@@ -710,147 +617,29 @@ ai-proxy-system/
 #### 4.2.1 主服务实现
 
 ```rust
-// src/main.rs
-use anyhow::Result;
-use pingora::prelude::*;
-use std::sync::Arc;
-use tokio::signal;
+// src/main.rs & src/dual_port_setup.rs
+async fn run_dual_port_servers() -> Result<()> {
+    // 1. 初始化日志
+    // 2. 加载配置
+    // 3. 初始化所有共享服务 (数据库, 缓存, 认证, 调度器, 健康检查器等)
+    let shared_services = initialize_shared_services().await?;
 
-mod config;
-mod proxy;
-mod management;
-mod auth;
-mod scheduler;
-mod health;
-mod statistics;
-mod tls;
-mod cache;
-mod utils;
-mod error;
-
-use config::AppConfig;
-use proxy::UnifiedProxyService;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 初始化日志系统
-    crate::logging::init_logging(&config.logging)?;
-    
-    // 加载配置
-    let config = AppConfig::load()?;
-    linfo!("system", LogStage::Startup, LogComponent::System, "config_loaded", &format!("Loaded configuration: {:?}", config));
-
-    // 创建Pingora服务器
-    let mut server = Server::new(Some(Opt::default()))?;
-    server.bootstrap();
-
-    // 初始化应用状态
-    let app_state = Arc::new(AppState::new(&config).await?);
-    
-    // 启动后台任务
-    start_background_tasks(app_state.clone()).await;
-
-    // 创建统一代理服务
-    let proxy_service = Arc::new(UnifiedProxyService::new(app_state.clone()));
-    let mut http_proxy = http_proxy_service(&server.configuration, proxy_service);
-
-    // 配置HTTPS监听
-    if config.tls.enabled {
-        http_proxy.add_tls(
-            &config.server.https_bind_address,
-            None,
-            tls::create_tls_callback(app_state.clone()),
-        );
-    }
-
-    // 配置HTTP监听
-    http_proxy.add_tcp(&config.server.http_bind_address);
-
-    server.add_service(http_proxy);
-
-    // 优雅关闭处理
-    let shutdown_signal = async {
-        signal::ctrl_c().await.expect("Failed to install CTRL+C signal handler");
-        linfo!("system", LogStage::Shutdown, LogComponent::System, "received_shutdown_signal", "Received shutdown signal");
-    };
-
+    // 4. 并发启动两个服务
     tokio::select! {
-        _ = server.run_forever() => {},
-        _ = shutdown_signal => {
-            linfo!("system", LogStage::Shutdown, LogComponent::System, "shutting_down_gracefully", "Shutting down gracefully...");
-        }
+        _ = ManagementServer::serve(shared_services.clone()) => {}, // Axum on :9090
+        _ = PingoraProxyServer::start(shared_services.clone()) => {},   // Pingora on :8080
     }
-
     Ok(())
 }
 
-// 启动后台任务
-async fn start_background_tasks(app_state: Arc<AppState>) {
-    // 健康检查任务
-    let health_checker = app_state.health_checker.clone();
-    tokio::spawn(async move {
-        health_checker.start_background_checks().await;
-    });
-
-    // 统计数据聚合任务
-    let statistics = app_state.statistics.clone();
-    tokio::spawn(async move {
-        statistics.start_aggregation_task().await;
-    });
-
-    // TLS证书续期任务
-    let tls_manager = app_state.tls_manager.clone();
-    tokio::spawn(async move {
-        tls_manager.start_renewal_task().await;
-    });
-
-    // 数据清理任务
-    let db = app_state.db.clone();
-    tokio::spawn(async move {
-        cleanup_old_data(db).await;
-    });
-}
-
-// 应用状态结构
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<AppConfig>,
-    pub db: Arc<DatabaseConnection>,
-    pub redis: Arc<redis::Client>,
-    pub health_checker: Arc<health::HealthChecker>,
-    pub tls_manager: Arc<tls::TlsManager>,
-    pub schedulers: Arc<scheduler::SchedulerRegistry>,
-}
-
-impl AppState {
-    pub async fn new(config: &AppConfig) -> Result<Self> {
-        // 初始化数据库
-        let db = Arc::new(sea_orm::Database::connect(&config.database.url).await?);
-        
-        // 运行数据库迁移
-        migration::run_migrations(&db).await?;
-
-        // 初始化Redis
-        let redis = Arc::new(redis::Client::open(config.redis.url.clone())?);
-
-        // 创建各个服务实例
-        let health_checker = Arc::new(health::HealthChecker::new(db.clone(), redis.clone()));
-        let tls_manager = Arc::new(tls::TlsManager::new(db.clone(), config.clone()));
-        let schedulers = Arc::new(scheduler::SchedulerRegistry::new(
-            db.clone(), 
-            redis.clone(),
-            health_checker.clone()
-        ));
-
-        Ok(Self {
-            config: Arc::new(config.clone()),
-            db,
-            redis,
-            health_checker,
-            tls_manager,
-            schedulers,
-        })
-    }
+// src/dual_port_setup.rs
+async fn initialize_shared_services() -> Result<SharedServices> {
+    // ...
+    let auth_manager = AuthManager::new(...);
+    let health_checker = ApiKeyHealthChecker::new(...);
+    let pool_manager = ApiKeyPoolManager::new(..., health_checker.clone());
+    // ...
+    Ok(SharedServices { ... })
 }
 ```
 
@@ -858,1145 +647,110 @@ impl AppState {
 
 ```rust
 // src/proxy/service.rs
-use pingora::prelude::*;
-use std::sync::Arc;
-use crate::{AppState, error::ProxyError};
-
-pub struct UnifiedProxyService {
-    app_state: Arc<AppState>,
-    management_service: Arc<management::ManagementService>,
-    ai_proxy_handler: Arc<AIProxyHandler>,
-}
-
-impl UnifiedProxyService {
-    pub fn new(app_state: Arc<AppState>) -> Self {
-        let management_service = Arc::new(management::ManagementService::new(app_state.clone()));
-        let ai_proxy_handler = Arc::new(AIProxyHandler::new(app_state.clone()));
-
-        Self {
-            app_state,
-            management_service,
-            ai_proxy_handler,
-        }
-    }
+pub struct ProxyService {
+    // 依赖注入所有需要的共享服务
+    auth_service: Arc<AuthenticationService>,
+    tracing_service: Arc<TracingService>,
+    // ...
 }
 
 #[async_trait]
-impl ProxyHttp for UnifiedProxyService {
+impl ProxyHttp for ProxyService {
     type CTX = ProxyContext;
+    fn new_ctx(&self) -> Self::CTX { /* ... */ }
 
-    fn new_ctx(&self) -> Self::CTX {
-        ProxyContext::new()
+    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // 实际实现见 2.4.1 中的 Pipeline 示例
+        // ...
     }
 
-    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool, pingora::Error> {
-        let path = session.req_header().uri.path();
-        
-        // 生成请求ID用于追踪
-        ctx.request_id = uuid::Uuid::new_v4().to_string();
-        ctx.start_time = std::time::Instant::now();
-        
-        // 记录请求日志
-        linfo!(
-            "proxy",
-            LogStage::Request,
-            LogComponent::ProxyService,
-            "processing_request",
-            &format!(
-                "Processing request: method={}, path={}",
-                session.req_header().method,
-                path
-            )
-        );
-
-        // 路由决策
-        ctx.route_type = self.determine_route_type(path);
-
-        match ctx.route_type {
-            RouteType::Management | RouteType::Static => {
-                // 处理管理API或静态文件请求
-                match self.handle_management_request(session, ctx).await {
-                    Ok(_) => Ok(true), // 请求已处理，终止代理流程
-                    Err(e) => {
-                        lerror!(
-                            "proxy",
-                            LogStage::Request,
-                            LogComponent::ProxyService,
-                            "management_request_failed",
-                            &format!("Management request failed: {}", e)
-                        );
-                        self.send_error_response(session, e).await;
-                        Ok(true)
-                    }
-                }
-            },
-            RouteType::AIProxy => {
-                // 处理AI代理请求
-                // 早期设计曾使用 Pipeline（认证→限流→配置→选 key）模式。
-                // 现已改为由 ProxyService 内部按阶段顺序编排执行，并在顶层统一映射错误。
-                match self.prepare_proxy(session, ctx).await {
-                    Ok(_) => Ok(false),
-                    Err(e) => { self.send_error_response(session, e).await; Ok(true) }
-                }
-            }
-        }
+    async fn upstream_peer(&self, _session: &mut Session, ctx: &mut Self::CTX) -> Result<Box<HttpPeer>> {
+        // ...
     }
 
-    async fn upstream_peer(&self, _session: &mut Session, ctx: &mut Self::CTX) -> Result<Box<HttpPeer>, pingora::Error> {
-        // 只有AI代理请求会到达这里
-        self.ai_proxy_handler.select_upstream_peer(ctx).await
-            .map_err(|e| pingora::Error::new_str(&e.to_string()))
+    async fn upstream_request_filter(&self, ..., ctx: &mut Self::CTX) -> Result<()> {
+        // ...
     }
 
-    async fn upstream_request_filter(
-        &self,
-        session: &mut Session,
-        upstream_request: &mut RequestHeader,
-        ctx: &mut Self::CTX,
-    ) -> Result<(), pingora::Error> {
-        // 处理上游请求，隐藏源信息
-        self.ai_proxy_handler
-            .filter_upstream_request(session, upstream_request, ctx)
-            .await
-            .map_err(|e| pingora::Error::new_str(&e.to_string()))
-    }
-
-    async fn upstream_response_filter(
-        &self,
-        _session: &mut Session,
-        upstream_response: &mut ResponseHeader,
-        ctx: &mut Self::CTX,
-    ) -> Result<(), pingora::Error> {
-        // 处理上游响应
-        self.ai_proxy_handler
-            .filter_upstream_response(upstream_response, ctx)
-            .await
-            .map_err(|e| pingora::Error::new_str(&e.to_string()))
-    }
-
-    async fn logging(&self, session: &mut Session, e: Option<&pingora::Error>, ctx: &mut Self::CTX) {
-        let status_code = session.response_written()
-            .map(|resp| resp.status.as_u16())
-            .unwrap_or(500);
-            
-        let response_time = ctx.start_time.elapsed().as_millis() as u32;
-
-        // 记录访问日志
-        if let Some(error) = e {
-            lerror!(
-                "proxy",
-                LogStage::Request,
-                LogComponent::ProxyService,
-                "request_completed_with_error",
-                &format!(
-                    "Request completed with error: status_code={}, response_time_ms={}, error={}",
-                    status_code, response_time, error
-                )
-            );
-        } else {
-            linfo!(
-                "proxy",
-                LogStage::Request,
-                LogComponent::ProxyService,
-                "request_completed_successfully",
-                &format!(
-                    "Request completed successfully: status_code={}, response_time_ms={}",
-                    status_code, response_time
-                )
-            );
-        }
-
-        // 记录统计数据
-        if let Err(e) = self.record_request_stats(session, ctx, e).await {
-            lwarn!(
-                "proxy",
-                LogStage::Request,
-                LogComponent::ProxyService,
-                "failed_to_record_request_statistics",
-                &format!("Failed to record request statistics: {}", e)
-            );
-        }
-    }
-}
-
-impl UnifiedProxyService {
-    fn determine_route_type(&self, path: &str) -> RouteType {
-        if path.starts_with("/api/") || path.starts_with("/admin/") {
-            RouteType::Management
-        } else if path.starts_with("/v1/") || path.starts_with("/proxy/") {
-            RouteType::AIProxy
-        } else {
-            RouteType::Static
-        }
-    }
-
-    async fn handle_management_request(
-        &self,
-        session: &mut Session,
-        ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
-        self.management_service.handle_request(session, ctx).await
-    }
-
-    async fn send_error_response(&self, session: &mut Session, error: ProxyError) {
-        let (status, message) = match error {
-            ProxyError::Authentication(_) => (401, "Authentication required"),
-            ProxyError::Authorization(_) => (403, "Access denied"),
-            ProxyError::NotFound(_) => (404, "Not found"),
-            ProxyError::RateLimit(_) => (429, "Rate limit exceeded"),
-            ProxyError::Timeout(_) => (408, "Request timeout"),
-            ProxyError::BadGateway(_) => (502, "Bad gateway"),
-            _ => (500, "Internal server error"),
-        };
-
-        let response_body = serde_json::json!({
-            "error": {
-                "message": message,
-                "type": "api_error",
-                "code": status
-            }
-        });
-
-        session.set_response_status(status).ok();
-        session.insert_header("content-type", "application/json").ok();
-        session.write_response_body(Some(response_body.to_string().into())).await.ok();
-    }
-
-    async fn record_request_stats(
-        &self,
-        session: &Session,
-        ctx: &ProxyContext,
-        error: Option<&pingora::Error>,
-    ) -> Result<(), ProxyError> {
-        // 收集统计数据并异步记录
-        let stats = RequestStats {
-            request_id: ctx.request_id.clone(),
-            route_type: ctx.route_type,
-            user_service_api_id: ctx.user_service_api.as_ref().map(|api| api.id),
-            user_provider_key_id: ctx.selected_backend.as_ref().map(|key| key.id),
-            method: session.req_header().method.to_string(),
-            path: session.req_header().uri.path().to_string(),
-            status_code: session.response_written()
-                .map(|resp| resp.status.as_u16())
-                .unwrap_or(500),
-            response_time_ms: ctx.start_time.elapsed().as_millis() as u32,
-            error_message: error.map(|e| e.to_string()),
-            created_at: chrono::Utc::now(),
-        };
-
-        // 异步记录统计数据，避免阻塞请求处理
-        let statistics = self.app_state.statistics.clone();
-        tokio::spawn(async move {
-            if let Err(e) = statistics.record_request(stats).await {
-                tracing::warn!("Failed to record request statistics: {}", e);
-            }
-        });
-
-        Ok(())
-    }
-}
-
-// 请求上下文
-#[derive(Default)]
-pub struct ProxyContext {
-    pub request_id: String,
-    pub route_type: RouteType,
-    pub user_service_api: Option<entity::user_service_apis::Model>,
-    pub selected_backend: Option<entity::user_provider_keys::Model>,
-    pub provider_type: Option<entity::provider_types::Model>,
-    pub start_time: std::time::Instant,
-    pub retry_count: u32,
-    pub tokens_used: u32,
-}
-
-#[derive(Default, Clone, Copy, PartialEq)]
-pub enum RouteType {
-    #[default]
-    Management,
-    AIProxy,
-    Static,
-}
-
-impl ProxyContext {
-    pub fn new() -> Self {
-        Self {
-            request_id: String::new(),
-            start_time: std::time::Instant::now(),
-            ..Default::default()
-        }
+    async fn logging(&self, ..., ctx: &mut Self::CTX) {
+        // 最终完成追踪和统计
+        self.tracing_service.complete_trace(ctx).await;
     }
 }
 ```
 
 ### 4.3 AI代理处理器
 
-```rust
-// src/proxy/ai_handler.rs
-use std::sync::Arc;
-use pingora::prelude::*;
-use crate::{AppState, error::ProxyError, scheduler::LoadBalancer};
-
-pub struct AIProxyHandler {
-    app_state: Arc<AppState>,
-}
-
-impl AIProxyHandler {
-    pub fn new(app_state: Arc<AppState>) -> Self {
-        Self { app_state }
-    }
-
-    // 旧式 prepare_proxy_request 已废弃：改为 ProxyService + Pipeline
-        // 2. 检查速率限制
-        self.check_rate_limit(&user_service_api).await?;
-
-        // 3. 获取提供商类型信息
-        let provider_type = self.get_provider_type(user_service_api.provider_type_id).await?;
-        ctx.provider_type = Some(provider_type);
-
-        // 4. 根据调度策略选择后端API密钥
-        let scheduler = self.app_state.schedulers.get(&user_service_api.scheduling_strategy)?;
-        let selected_backend = scheduler.select_backend(&user_service_api).await?;
-        ctx.selected_backend = Some(selected_backend);
-
-        ldebug!(
-            "proxy",
-            LogStage::Request,
-            LogComponent::AIProxyHandler,
-            "backend_selected_successfully",
-            &format!(
-                "Backend selected successfully: user_api_id={}, backend_key_id={}, strategy={}",
-                user_service_api.id,
-                ctx.selected_backend.as_ref().unwrap().id,
-                user_service_api.scheduling_strategy
-            )
-        );
-
-        Ok(())
-    }
-
-    pub async fn select_upstream_peer(&self, ctx: &ProxyContext) -> Result<Box<HttpPeer>, ProxyError> {
-        let provider_type = ctx.provider_type.as_ref()
-            .ok_or(ProxyError::Internal("Provider type not set".into()))?;
-
-        let upstream_addr = format!("{}:443", provider_type.base_url);
-        
-        ldebug!(
-            "proxy",
-            LogStage::Request,
-            LogComponent::AIProxyHandler,
-            "selected_upstream_peer",
-            &format!("Selected upstream peer: {}", upstream_addr)
-        );
-
-        let peer = HttpPeer::new(upstream_addr, true, String::new());
-        Ok(Box::new(peer))
-    }
-
-    pub async fn filter_upstream_request(
-        &self,
-        _session: &Session,
-        upstream_request: &mut RequestHeader,
-        ctx: &ProxyContext,
-    ) -> Result<(), ProxyError> {
-        let selected_backend = ctx.selected_backend.as_ref()
-            .ok_or(ProxyError::Internal("Backend not selected".into()))?;
-        let provider_type = ctx.provider_type.as_ref()
-            .ok_or(ProxyError::Internal("Provider type not set".into()))?;
-
-        // 替换Authorization头
-        upstream_request.remove_header("authorization");
-        let auth_value = self.build_auth_header_from_config(&provider_type.config_json, &selected_backend.api_key);
-        upstream_request.insert_header("authorization", &auth_value)
-            .map_err(|e| ProxyError::Internal(format!("Failed to set auth header: {}", e)))?;
-
-        // 设置正确的Host头
-        upstream_request.insert_header("host", &provider_type.base_url)
-            .map_err(|e| ProxyError::Internal(format!("Failed to set host header: {}", e)))?;
-
-        // 移除可能暴露客户端信息的头部
-        let headers_to_remove = [
-            "x-forwarded-for",
-            "x-real-ip", 
-            "x-forwarded-proto",
-            "x-original-forwarded-for",
-            "x-client-ip",
-            "cf-connecting-ip",
-        ];
-
-        for header in &headers_to_remove {
-            upstream_request.remove_header(header);
-        }
-
-        // 添加代理标识
-        upstream_request.insert_header("user-agent", "AI-Proxy-Service/1.0")
-            .map_err(|e| ProxyError::Internal(format!("Failed to set user-agent: {}", e)))?;
-
-        // 添加请求ID用于追踪
-        upstream_request.insert_header("x-request-id", &ctx.request_id)
-            .map_err(|e| ProxyError::Internal(format!("Failed to set request-id: {}", e)))?;
-
-        ldebug!(
-            "proxy",
-            LogStage::Request,
-            LogComponent::AIProxyHandler,
-            "upstream_request_filtered",
-            &format!(
-                "Upstream request filtered: backend_key_id={}, provider={}",
-                selected_backend.id,
-                provider_type.name
-            )
-        );
-
-        Ok(())
-    }
-
-    pub async fn filter_upstream_response(
-        &self,
-        upstream_response: &mut ResponseHeader,
-        ctx: &mut ProxyContext,
-    ) -> Result<(), ProxyError> {
-        // 提取token使用信息
-        ctx.tokens_used = self.extract_token_usage(upstream_response);
-
-        // 移除可能暴露上游服务器信息的头部
-        upstream_response.remove_header("server");
-        upstream_response.remove_header("x-powered-by");
-
-        // 添加自己的服务器标识
-        upstream_response.insert_header("server", "AI-Proxy-Service")
-            .map_err(|e| ProxyError::Internal(format!("Failed to set server header: {}", e)))?;
-
-        ldebug!(
-            "proxy",
-            LogStage::Response,
-            LogComponent::AIProxyHandler,
-            "upstream_response_filtered",
-            &format!(
-                "Upstream response filtered: status={}, tokens_used={}",
-                upstream_response.status.as_u16(),
-                ctx.tokens_used
-            )
-        );
-
-        Ok(())
-    }
-
-    // 私有辅助方法
-    async fn extract_api_key(&self, session: &Session) -> Result<String, ProxyError> {
-        // 从Authorization头提取API密钥
-        if let Some(auth_header) = session.req_header().headers.get("authorization") {
-            let auth_str = std::str::from_utf8(auth_header.as_bytes())
-                .map_err(|_| ProxyError::Authentication("Invalid authorization header encoding".into()))?;
-            
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Ok(token.to_string());
-            }
-        }
-
-        // 从查询参数提取API密钥
-        if let Some(query) = session.req_header().uri.query() {
-            for param in query.split('&') {
-                if let Some((key, value)) = param.split_once('=') {
-                    if key == "api_key" {
-                        return Ok(value.to_string());
-                    }
-                }
-            }
-        }
-
-        Err(ProxyError::Authentication("API key not found".into()))
-    }
-
-    async fn authenticate_api_key(&self, api_key: &str) -> Result<entity::user_service_apis::Model, ProxyError> {
-        use entity::user_service_apis::{Entity as UserServiceApis, Column};
-        use sea_orm::EntityTrait;
-
-        let user_api = UserServiceApis::find()
-            .filter(Column::ApiKey.eq(api_key))
-            .filter(Column::IsActive.eq(true))
-            .one(&*self.app_state.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?
-            .ok_or(ProxyError::Authentication("Invalid API key".into()))?;
-
-        // 检查API密钥是否过期
-        if let Some(expires_at) = user_api.expires_at {
-            if expires_at < chrono::Utc::now().naive_utc() {
-                return Err(ProxyError::Authentication("API key expired".into()));
-            }
-        }
-
-        Ok(user_api)
-    }
-
-    async fn check_rate_limit(&self, user_api: &entity::user_service_apis::Model) -> Result<(), ProxyError> {
-        let cache_key = format!("rate_limit:api:{}:minute", user_api.id);
-        
-        let mut redis_conn = self.app_state.redis.get_connection()
-            .map_err(|e| ProxyError::Internal(format!("Redis connection error: {}", e)))?;
-
-        // 使用Redis的滑动窗口算法实现速率限制
-        let current_count: i32 = redis::cmd("INCR")
-            .arg(&cache_key)
-            .query(&mut redis_conn)
-            .unwrap_or(1);
-
-        if current_count == 1 {
-            // 设置过期时间为60秒
-            redis::cmd("EXPIRE")
-                .arg(&cache_key)
-                .arg(60)
-                .execute(&mut redis_conn)
-                .ok();
-        }
-
-        if current_count > user_api.rate_limit {
-            return Err(ProxyError::RateLimit(format!(
-                "Rate limit exceeded: {} requests per minute",
-                user_api.rate_limit
-            )));
-        }
-
-        Ok(())
-    }
-
-    async fn get_provider_type(&self, provider_type_id: i32) -> Result<entity::provider_types::Model, ProxyError> {
-        use entity::provider_types::{Entity as ProviderTypes};
-        use sea_orm::EntityTrait;
-
-        ProviderTypes::find_by_id(provider_type_id)
-            .one(&*self.app_state.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?
-            .ok_or(ProxyError::Internal("Provider type not found".into()))
-    }
-
-    fn build_auth_header(&self, format: &str, api_key: &str) -> String {
-        format.replace("{key}", api_key)
-    }
-
-    fn extract_token_usage(&self, response: &ResponseHeader) -> u32 {
-        // 尝试从不同的响应头中提取token使用信息
-        let token_headers = [
-            "x-openai-total-tokens",
-            "x-anthropic-total-tokens", 
-            "x-google-total-tokens",
-        ];
-
-        for header_name in &token_headers {
-            if let Some(header_value) = response.headers.get(*header_name) {
-                if let Ok(tokens_str) = std::str::from_utf8(header_value.as_bytes()) {
-                    if let Ok(tokens) = tokens_str.parse::<u32>() {
-                        return tokens;
-                    }
-                }
-            }
-        }
-
-        0
-    }
-}
-```
+(逻辑被分解到 `AuthenticationService`, `ApiKeySelectionService` 等多个服务中，由 `ProxyService` 协调)
 
 ### 4.4 负载均衡调度器
 
 ```rust
-// src/scheduler/mod.rs
-use async_trait::async_trait;
-use std::{sync::Arc, collections::HashMap};
-use crate::{AppState, error::ProxyError};
+// src/scheduler/pool_manager.rs
+pub struct ApiKeyPoolManager {
+    db: DatabaseConnection,
+    cache: UnifiedCacheManager,
+    health_checker: Arc<ApiKeyHealthChecker>,
+}
 
-// 调度器trait定义
-#[async_trait]
-pub trait LoadBalancer: Send + Sync {
-    async fn select_backend(
+impl ApiKeyPoolManager {
+    pub async fn select_api_key_from_service_api(
         &self,
-        user_service_api: &entity::user_service_apis::Model,
-    ) -> Result<entity::user_provider_keys::Model, ProxyError>;
-}
+        service_api: &UserServiceApi,
+    ) -> Result<ApiKeySelectionResult> {
+        // 1. 从 service_api.user_provider_keys_ids 获取密钥ID列表
+        // 2. 从数据库批量查询这些密钥的详情
+        let candidate_keys = self.get_candidate_keys(...).await?;
 
-// 调度器注册表
-pub struct SchedulerRegistry {
-    schedulers: HashMap<String, Arc<dyn LoadBalancer>>,
-}
+        // 3. 使用健康检查器过滤掉不健康的密钥
+        let healthy_keys = self.health_checker.filter_healthy_keys(candidate_keys).await;
 
-impl SchedulerRegistry {
-    pub fn new(
-        db: Arc<sea_orm::DatabaseConnection>,
-        redis: Arc<redis::Client>,
-        health_checker: Arc<crate::health::HealthChecker>,
-    ) -> Self {
-        let mut schedulers: HashMap<String, Arc<dyn LoadBalancer>> = HashMap::new();
+        // 4. 根据 service_api.scheduling_strategy 选择调度算法
+        let selector = ApiKeySelector::from_strategy(&service_api.scheduling_strategy);
 
-        // 注册轮询调度器
-        schedulers.insert(
-            "round_robin".to_string(),
-            Arc::new(RoundRobinScheduler::new(db.clone(), redis.clone())),
-        );
+        // 5. 执行算法选出最终密钥
+        let selected_key = selector.select(healthy_keys)?;
 
-        // 注册权重调度器
-        schedulers.insert(
-            "weighted".to_string(),
-            Arc::new(WeightedScheduler::new(db.clone(), redis.clone())),
-        );
-
-        // 注册健康度最佳调度器
-        schedulers.insert(
-            "health_best".to_string(),
-            Arc::new(HealthBestScheduler::new(db.clone(), redis.clone(), health_checker)),
-        );
-
-        Self { schedulers }
-    }
-
-    pub fn get(&self, strategy: &str) -> Result<Arc<dyn LoadBalancer>, ProxyError> {
-        self.schedulers
-            .get(strategy)
-            .cloned()
-            .ok_or_else(|| ProxyError::Internal(format!("Unknown scheduling strategy: {}", strategy)))
+        Ok(ApiKeySelectionResult { ... })
     }
 }
 
-// 轮询调度器实现
-pub struct RoundRobinScheduler {
-    db: Arc<sea_orm::DatabaseConnection>,
-    redis: Arc<redis::Client>,
-}
+// src/scheduler/algorithms.rs
+enum SchedulingStrategy { RoundRobin, Weighted, HealthBest }
 
-impl RoundRobinScheduler {
-    pub fn new(db: Arc<sea_orm::DatabaseConnection>, redis: Arc<redis::Client>) -> Self {
-        Self { db, redis }
-    }
-}
-
-#[async_trait]
-impl LoadBalancer for RoundRobinScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &entity::user_service_apis::Model,
-    ) -> Result<entity::user_provider_keys::Model, ProxyError> {
-        use entity::user_provider_keys::{Entity as UserProviderKeys, Column};
-        use sea_orm::{EntityTrait, QueryFilter, QueryOrder};
-
-        // 获取该用户该服务商的所有活跃API密钥
-        let available_keys = UserProviderKeys::find()
-            .filter(Column::UserId.eq(user_service_api.user_id))
-            .filter(Column::ProviderTypeId.eq(user_service_api.provider_type_id))
-            .filter(Column::IsActive.eq(true))
-            .order_by_asc(Column::Id)
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
-
-        if available_keys.is_empty() {
-            return Err(ProxyError::BadGateway("No available API keys".into()));
-        }
-
-        // 从Redis获取当前轮询位置
-        let cache_key = format!("round_robin:{}:{}", user_service_api.user_id, user_service_api.provider_type_id);
-        let mut redis_conn = self.redis.get_connection()
-            .map_err(|e| ProxyError::Internal(format!("Redis connection error: {}", e)))?;
-
-        let current_index: i32 = redis::cmd("GET")
-            .arg(&cache_key)
-            .query(&mut redis_conn)
-            .unwrap_or(0);
-
-        let next_index = (current_index + 1) % available_keys.len() as i32;
-        
-        // 更新轮询位置
-        redis::cmd("SET")
-            .arg(&cache_key)
-            .arg(next_index)
-            .arg("EX")
-            .arg(3600) // 1小时过期
-            .execute(&mut redis_conn)
-            .ok();
-
-        let selected_key = available_keys[current_index as usize % available_keys.len()].clone();
-
-        ldebug!(
-            "scheduler",
-            LogStage::Selection,
-            LogComponent::RoundRobinScheduler,
-            "round_robin_selection",
-            &format!(
-                "Round robin selection: user_id={}, provider_type_id={}, selected_key_id={}, current_index={}, total_keys={}",
-                user_service_api.user_id,
-                user_service_api.provider_type_id,
-                selected_key.id,
-                current_index,
-                available_keys.len()
-            )
-        );
-
-        Ok(selected_key)
-    }
-}
-
-// 权重调度器实现
-pub struct WeightedScheduler {
-    db: Arc<sea_orm::DatabaseConnection>,
-    redis: Arc<redis::Client>,
-}
-
-impl WeightedScheduler {
-    pub fn new(db: Arc<sea_orm::DatabaseConnection>, redis: Arc<redis::Client>) -> Self {
-        Self { db, redis }
-    }
-}
-
-#[async_trait]
-impl LoadBalancer for WeightedScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &entity::user_service_apis::Model,
-    ) -> Result<entity::user_provider_keys::Model, ProxyError> {
-        use entity::user_provider_keys::{Entity as UserProviderKeys, Column};
-        use sea_orm::{EntityTrait, QueryFilter, QueryOrder};
-        use rand::Rng;
-
-        // 获取该用户该服务商的所有活跃API密钥
-        let available_keys = UserProviderKeys::find()
-            .filter(Column::UserId.eq(user_service_api.user_id))
-            .filter(Column::ProviderTypeId.eq(user_service_api.provider_type_id))
-            .filter(Column::IsActive.eq(true))
-            .order_by_asc(Column::Weight.desc())
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
-
-        if available_keys.is_empty() {
-            return Err(ProxyError::BadGateway("No available API keys".into()));
-        }
-
-        // 计算总权重
-        let total_weight: i32 = available_keys.iter().map(|key| key.weight).sum();
-        
-        if total_weight <= 0 {
-            // 如果总权重为0，使用轮询算法
-            let round_robin = RoundRobinScheduler::new(self.db.clone(), self.redis.clone());
-            return round_robin.select_backend(user_service_api).await;
-        }
-
-        // 使用加权随机算法选择
-        let mut rng = rand::thread_rng();
-        let mut random_weight = rng.gen_range(1..=total_weight);
-
-        for key in &available_keys {
-            random_weight -= key.weight;
-            if random_weight <= 0 {
-                ldebug!(
-                    "scheduler",
-                    LogStage::Selection,
-                    LogComponent::WeightedScheduler,
-                    "weighted_selection",
-                    &format!(
-                        "Weighted selection: user_id={}, provider_type_id={}, selected_key_id={}, key_weight={}, total_weight={}",
-                        user_service_api.user_id,
-                        user_service_api.provider_type_id,
-                        key.id,
-                        key.weight,
-                        total_weight
-                    )
-                );
-                return Ok(key.clone());
-            }
-        }
-
-        // 理论上不应该到达这里，但为了安全返回第一个
-        Ok(available_keys[0].clone())
-    }
-}
-
-// 健康度最佳调度器实现
-pub struct HealthBestScheduler {
-    db: Arc<sea_orm::DatabaseConnection>,
-    redis: Arc<redis::Client>,
-    health_checker: Arc<crate::health::HealthChecker>,
-}
-
-impl HealthBestScheduler {
-    pub fn new(
-        db: Arc<sea_orm::DatabaseConnection>, 
-        redis: Arc<redis::Client>,
-        health_checker: Arc<crate::health::HealthChecker>,
-    ) -> Self {
-        Self { db, redis, health_checker }
-    }
-}
-
-#[async_trait]
-impl LoadBalancer for HealthBestScheduler {
-    async fn select_backend(
-        &self,
-        user_service_api: &entity::user_service_apis::Model,
-    ) -> Result<entity::user_provider_keys::Model, ProxyError> {
-        // 获取所有健康的API密钥
-        let healthy_keys = self.health_checker
-            .get_healthy_keys(user_service_api.user_id, user_service_api.provider_type_id)
-            .await?;
-
-        if healthy_keys.is_empty() {
-            return Err(ProxyError::BadGateway("No healthy API keys available".into()));
-        }
-
-        // 选择响应时间最短的健康节点
-        let best_key = healthy_keys
-            .into_iter()
-            .min_by_key(|key| key.response_time_ms)
-            .ok_or_else(|| ProxyError::Internal("Failed to select best key".into()))?;
-
-        ldebug!(
-            "scheduler",
-            LogStage::Selection,
-            LogComponent::HealthBestScheduler,
-            "health_best_selection",
-            &format!(
-                "Health-best selection: user_id={}, provider_type_id={}, selected_key_id={}, response_time_ms={}",
-                user_service_api.user_id,
-                user_service_api.provider_type_id,
-                best_key.id,
-                best_key.response_time_ms
-            )
-        );
-
-        Ok(best_key)
-    }
+trait ApiKeySelector {
+    fn select(&self, keys: Vec<ProviderKey>) -> Result<ProviderKey>;
 }
 ```
 
 ### 4.5 健康检查模块
 
 ```rust
-// src/health/mod.rs
-use std::sync::Arc;
-use tokio::time::{interval, Duration};
-use sea_orm::{EntityTrait, QueryFilter};
-use crate::{AppState, error::ProxyError};
-
-pub struct HealthChecker {
-    db: Arc<sea_orm::DatabaseConnection>,
-    redis: Arc<redis::Client>,
+// src/scheduler/api_key_health.rs
+pub struct ApiKeyHealthChecker {
+    db: DatabaseConnection,
+    cache: UnifiedCacheManager,
 }
 
-impl HealthChecker {
-    pub fn new(
-        db: Arc<sea_orm::DatabaseConnection>,
-        redis: Arc<redis::Client>,
-    ) -> Self {
-        Self { db, redis }
+impl ApiKeyHealthChecker {
+    // 被动健康检查：根据请求成功/失败更新状态
+    pub async fn update_health_status_on_request_outcome(&self, key_id: i32, outcome: RequestOutcome) {
+        // ... 更新数据库和缓存中的健康状态、响应时间、错误率等
     }
 
-    // 启动后台健康检查任务
-    pub async fn start_background_checks(&self) {
-        let mut interval = interval(Duration::from_secs(30)); // 每30秒检查一次
-        
-        loop {
-            interval.tick().await;
-            
-            if let Err(e) = self.check_all_apis().await {
-                lerror!(
-                    "health",
-                    LogStage::HealthCheck,
-                    LogComponent::HealthChecker,
-                    "health_check_cycle_failed",
-                    &format!("Health check cycle failed: {}", e)
-                );
-            }
-        }
+    // 主动健康检查：后台任务
+    pub async fn run_background_checks(&self) {
+        // 定期查询所有密钥
+        // 对每个密钥执行一次轻量级的测试请求 (e.g., GET /models)
+        // 根据结果更新健康状态
     }
 
-    // 检查所有活跃的API密钥
-    async fn check_all_apis(&self) -> Result<(), ProxyError> {
-        use entity::user_provider_keys::{Entity as UserProviderKeys, Column};
-
-        let provider_keys = UserProviderKeys::find()
-            .filter(Column::IsActive.eq(true))
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
-
-        linfo!(
-            "health",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "starting_health_check",
-            &format!("Starting health check for {} API keys", provider_keys.len())
-        );
-
-        // 并发检查所有API密钥
-        let tasks: Vec<_> = provider_keys
-            .into_iter()
-            .map(|key| {
-                let checker = self.clone();
-                tokio::spawn(async move {
-                    checker.check_single_api(&key).await
-                })
-            })
-            .collect();
-
-        let results = futures::future::join_all(tasks).await;
-        
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for result in results {
-            match result {
-                Ok(Ok(_)) => success_count += 1,
-                Ok(Err(e)) => {
-                    error_count += 1;
-                    lwarn!(
-                        "health",
-                        LogStage::HealthCheck,
-                        LogComponent::HealthChecker,
-                        "health_check_failed",
-                        &format!("Health check failed for API key: {}", e)
-                    );
-                }
-                Err(e) => {
-                    error_count += 1;
-                    lerror!(
-                        "health",
-                        LogStage::HealthCheck,
-                        LogComponent::HealthChecker,
-                        "health_check_task_panicked",
-                        &format!("Health check task panicked: {}", e)
-                    );
-                }
-            }
-        }
-
-        linfo!(
-            "health",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "health_check_completed",
-            &format!(
-                "Health check completed: {} successful, {} failed",
-                success_count, error_count
-            )
-        );
-
-        Ok(())
-    }
-
-    // 检查单个API密钥
-    async fn check_single_api(&self, key: &entity::user_provider_keys::Model) -> Result<(), ProxyError> {
-        let start_time = std::time::Instant::now();
-        
-        // 获取提供商类型信息
-        let provider_type = self.get_provider_type(key.provider_type_id).await?;
-        
-        // 构建健康检查URL
-        let health_check_url = format!(
-            "https://{}{}", 
-            provider_type.base_url, 
-            provider_type.health_check_path
-        );
-
-        // 创建HTTP客户端
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(provider_type.timeout_seconds as u64))
-            .build()
-            .map_err(|e| ProxyError::Internal(format!("Failed to create HTTP client: {}", e)))?;
-
-        // 构建请求
-        let auth_header = extract_auth_header_from_config(&provider_type.config_json, &key.api_key);
-        let request = client
-            .get(&health_check_url)
-            .header("Authorization", &auth_header)
-            .header("User-Agent", "AI-Proxy-HealthCheck/1.0");
-
-        // 发送健康检查请求
-        let response = request.send().await;
-        let response_time = start_time.elapsed().as_millis() as i32;
-
-        let (is_healthy, error_message) = match response {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    (true, None)
-                } else {
-                    (false, Some(format!("HTTP {}: {}", resp.status(), resp.status().canonical_reason().unwrap_or("Unknown"))))
-                }
-            }
-            Err(e) => (false, Some(e.to_string())),
-        };
-
-        // 更新健康状态
-        self.update_health_status(key.id, is_healthy, response_time, error_message).await?;
-
-        ldebug!(
-            "health",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "single_health_check_completed",
-            &format!(
-                "Health check completed for key_id={}: provider={}, is_healthy={}, response_time_ms={}",
-                key.id, provider_type.name, is_healthy, response_time
-            )
-        );
-
-        Ok(())
-    }
-
-    // 更新健康状态
-    async fn update_health_status(
-        &self,
-        key_id: i32,
-        is_healthy: bool,
-        response_time_ms: i32,
-        error_message: Option<String>,
-    ) -> Result<(), ProxyError> {
-        use entity::api_health_status::{Entity as ApiHealthStatus, Column, ActiveModel};
-        use sea_orm::{Set, ActiveModelTrait, EntityTrait};
-
-        // 查找或创建健康状态记录
-        let existing_status = ApiHealthStatus::find()
-            .filter(Column::UserProviderKeyId.eq(key_id))
-            .one(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
-
-        let now = chrono::Utc::now().naive_utc();
-
-        let mut status_model = if let Some(status) = existing_status {
-            let consecutive_failures = if is_healthy {
-                0
-            } else {
-                status.consecutive_failures + 1
-            };
-
-            ActiveModel {
-                id: Set(status.id),
-                user_provider_key_id: Set(status.user_provider_key_id),
-                is_healthy: Set(is_healthy),
-                response_time_ms: Set(response_time_ms),
-                success_rate: Set(self.calculate_success_rate(status.total_checks + 1, status.successful_checks + if is_healthy { 1 } else { 0 })),
-                last_success: Set(if is_healthy { Some(now) } else { status.last_success }),
-                last_failure: Set(if !is_healthy { Some(now) } else { status.last_failure }),
-                consecutive_failures: Set(consecutive_failures),
-                total_checks: Set(status.total_checks + 1),
-                successful_checks: Set(status.successful_checks + if is_healthy { 1 } else { 0 }),
-                last_error_message: Set(error_message),
-                updated_at: Set(now),
-                ..Default::default()
-            }
-        } else {
-            ActiveModel {
-                user_provider_key_id: Set(key_id),
-                is_healthy: Set(is_healthy),
-                response_time_ms: Set(response_time_ms),
-                success_rate: Set(if is_healthy { 1.0 } else { 0.0 }),
-                last_success: Set(if is_healthy { Some(now) } else { None }),
-                last_failure: Set(if !is_healthy { Some(now) } else { None }),
-                consecutive_failures: Set(if is_healthy { 0 } else { 1 }),
-                total_checks: Set(1),
-                successful_checks: Set(if is_healthy { 1 } else { 0 }),
-                last_error_message: Set(error_message),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
-            }
-        };
-
-        status_model.save(&*self.db).await
-            .map_err(|e| ProxyError::Internal(format!("Failed to save health status: {}", e)))?;
-
-        // 更新Redis缓存
-        self.cache_health_status(key_id, is_healthy, response_time_ms).await?;
-
-        Ok(())
-    }
-
-    // 获取健康的API密钥列表
-    pub async fn get_healthy_keys(
-        &self,
-        user_id: i32,
-        provider_type_id: i32,
-    ) -> Result<Vec<HealthyKey>, ProxyError> {
-        use entity::user_provider_keys::{Entity as UserProviderKeys, Column as KeyColumn};
-        use entity::api_health_status::{Entity as ApiHealthStatus, Column as StatusColumn};
-        use sea_orm::{QueryFilter, QuerySelect, JoinType};
-
-        let healthy_keys = UserProviderKeys::find()
-            .filter(KeyColumn::UserId.eq(user_id))
-            .filter(KeyColumn::ProviderTypeId.eq(provider_type_id))
-            .filter(KeyColumn::IsActive.eq(true))
-            .join(JoinType::LeftJoin, entity::user_provider_keys::Relation::ApiHealthStatus.def())
-            .filter(StatusColumn::IsHealthy.eq(true).or(StatusColumn::IsHealthy.is_null()))
-            .select_also(ApiHealthStatus)
-            .all(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
-
-        let result: Vec<HealthyKey> = healthy_keys
-            .into_iter()
-            .map(|(key, health_status)| HealthyKey {
-                id: key.id,
-                api_key: key.api_key,
-                name: key.name,
-                weight: key.weight,
-                response_time_ms: health_status
-                    .as_ref()
-                    .map(|h| h.response_time_ms)
-                    .unwrap_or(1000), // 默认1秒响应时间
-                success_rate: health_status
-                    .as_ref()
-                    .map(|h| h.success_rate)
-                    .unwrap_or(1.0), // 默认100%成功率
-            })
-            .collect();
-
-        Ok(result)
-    }
-
-    // 私有辅助方法
-    async fn get_provider_type(&self, provider_type_id: i32) -> Result<entity::provider_types::Model, ProxyError> {
-        use entity::provider_types::Entity as ProviderTypes;
-
-        ProviderTypes::find_by_id(provider_type_id)
-            .one(&*self.db)
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?
-            .ok_or(ProxyError::Internal("Provider type not found".into()))
-    }
-
-    fn calculate_success_rate(&self, total_checks: i32, successful_checks: i32) -> f64 {
-        if total_checks == 0 {
-            0.0
-        } else {
-            successful_checks as f64 / total_checks as f64
-        }
-    }
-
-    async fn cache_health_status(
-        &self,
-        key_id: i32,
-        is_healthy: bool,
-        response_time_ms: i32,
-    ) -> Result<(), ProxyError> {
-        let cache_key = format!("health:key:{}", key_id);
-        let cache_value = serde_json::json!({
-            "is_healthy": is_healthy,
-            "response_time_ms": response_time_ms,
-            "updated_at": chrono::Utc::now().timestamp()
-        });
-
-        let mut redis_conn = self.redis.get_connection()
-            .map_err(|e| ProxyError::Internal(format!("Redis connection error: {}", e)))?;
-
-        redis::cmd("SET")
-            .arg(&cache_key)
-            .arg(cache_value.to_string())
-            .arg("EX")
-            .arg(300) // 5分钟过期
-            .execute(&mut redis_conn)
-            .map_err(|e| ProxyError::Internal(format!("Redis SET error: {}", e)))?;
-
-        Ok(())
+    // 过滤健康密钥供调度器使用
+    pub async fn filter_healthy_keys(&self, keys: Vec<ProviderKey>) -> Vec<ProviderKey> {
+        // ... 从缓存或数据库获取健康状态，返回健康的密钥列表
     }
 }
+```
 
 // 健康密钥结构
 #[derive(Debug, Clone)]
