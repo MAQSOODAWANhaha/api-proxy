@@ -585,9 +585,8 @@ export interface UpdateUserServiceApiKeyStatusResponse {
 }
 
 // Logs 相关接口定义（基于 proxy_tracing 表）
-export interface ProxyTraceEntry {
+interface ProxyTraceBase {
   id: number
-  request_id: string
   user_service_api_id: number
   user_provider_key_id?: number
   user_id?: number
@@ -619,8 +618,14 @@ export interface ProxyTraceEntry {
   user_provider_key_name?: string
 }
 
+export interface ProxyTraceListEntry extends ProxyTraceBase {}
+
+export interface ProxyTraceEntry extends ProxyTraceBase {
+  request_id: string
+}
+
 export interface LogsListResponse {
-  traces: ProxyTraceEntry[]
+  traces: ProxyTraceListEntry[]
   pagination: {
     page: number
     limit: number

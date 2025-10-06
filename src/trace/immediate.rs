@@ -58,6 +58,8 @@ impl ImmediateProxyTracer {
         request_id: String,
         user_service_api_id: i32,
         user_id: Option<i32>,
+        provider_type_id: Option<i32>,
+        user_provider_key_id: Option<i32>,
         method: String,
         path: Option<String>,
         client_ip: Option<String>,
@@ -71,7 +73,7 @@ impl ImmediateProxyTracer {
         let trace_record = proxy_tracing::ActiveModel {
             id: NotSet,
             user_service_api_id: Set(user_service_api_id),
-            user_provider_key_id: Set(None), // 稍后可更新
+            user_provider_key_id: Set(user_provider_key_id),
             user_id: Set(user_id),
             request_id: Set(request_id.clone()),
             method: Set(method),
@@ -95,7 +97,7 @@ impl ImmediateProxyTracer {
             error_type: NotSet,
             error_message: NotSet,
             retry_count: Set(Some(0)),
-            provider_type_id: NotSet,
+            provider_type_id: Set(provider_type_id),
             end_time: NotSet,
             duration_ms: NotSet,
         };
@@ -112,7 +114,9 @@ impl ImmediateProxyTracer {
             "trace_started",
             "Started simplified proxy trace",
             trace_id = insert_result.last_insert_id,
-            user_id = ?user_id
+            user_id = ?user_id,
+            provider_type_id = ?provider_type_id,
+            user_provider_key_id = ?user_provider_key_id
         );
 
         Ok(())
@@ -507,6 +511,8 @@ mod tests {
                 request_id.clone(),
                 999,
                 Some(999), // user_id
+                Some(1),
+                None,
                 "POST".to_string(),
                 Some("/v1/chat/completions".to_string()),
                 Some("127.0.0.1".to_string()),

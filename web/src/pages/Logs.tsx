@@ -23,9 +23,9 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
-import { api, ProxyTraceEntry, LogsDashboardStatsResponse } from '../lib/api'
+import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse } from '../lib/api'
 
-// 使用从api.ts导入的ProxyTraceEntry接口
+// 使用从 api.ts 导出的日志数据接口
 
 /** 弹窗类型 */
 type DialogType = 'details' | null
@@ -33,7 +33,7 @@ type DialogType = 'details' | null
 /** 页面主组件 */
 const LogsPage: React.FC = () => {
   // 数据状态
-  const [data, setData] = useState<ProxyTraceEntry[]>([])
+  const [data, setData] = useState<ProxyTraceListEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dashboardStats, setDashboardStats] = useState<LogsDashboardStatsResponse | null>(null)
@@ -46,6 +46,7 @@ const LogsPage: React.FC = () => {
   const [providerKeyNameFilter, setProviderKeyNameFilter] = useState('')
   const [selectedItem, setSelectedItem] = useState<ProxyTraceEntry | null>(null)
   const [dialogType, setDialogType] = useState<DialogType>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   
   // 分页状态（后端分页）
   const [currentPage, setCurrentPage] = useState(1)
@@ -93,6 +94,29 @@ const LogsPage: React.FC = () => {
       setError(error instanceof Error ? error.message : '获取数据失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 打开详情弹窗并从后端获取完整数据
+  const openDetailDialog = async (traceId: number) => {
+    setDialogType('details')
+    setDetailLoading(true)
+    setSelectedItem(null)
+
+    try {
+      const response = await api.logs.getDetail(traceId)
+      if (response.success && response.data) {
+        setSelectedItem(response.data)
+      } else {
+        setError(response.error?.message || '获取日志详情失败')
+        setDialogType(null)
+      }
+    } catch (error) {
+      console.error('获取日志详情失败:', error)
+      setError('获取日志详情失败')
+      setDialogType(null)
+    } finally {
+      setDetailLoading(false)
     }
   }
 
@@ -216,7 +240,7 @@ const LogsPage: React.FC = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400" size={16} />
           <input
             type="text"
-            placeholder="搜索路径、请求ID、模型或错误信息..."
+            placeholder="搜索路径、模型或错误信息..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
@@ -271,7 +295,6 @@ const LogsPage: React.FC = () => {
             <thead className="bg-neutral-50 text-neutral-600">
               <tr>
                 <th className="px-4 py-3 text-left font-medium">时间</th>
-                <th className="px-4 py-3 text-left font-medium">请求ID</th>
                 <th className="px-4 py-3 text-left font-medium">用户 API Key</th>
                 <th className="px-4 py-3 text-left font-medium">账号 API Key</th>
                 <th className="px-4 py-3 text-left font-medium">路径</th>
@@ -285,7 +308,7 @@ const LogsPage: React.FC = () => {
             <tbody className="divide-y divide-neutral-200">
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center">
+                  <td colSpan={9} className="px-4 py-8 text-center">
                     <div className="flex justify-center items-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
                       <span className="text-neutral-600">加载中...</span>
@@ -294,7 +317,7 @@ const LogsPage: React.FC = () => {
                 </tr>
               ) : paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-neutral-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
                     暂无数据
                   </td>
                 </tr>
@@ -311,11 +334,6 @@ const LogsPage: React.FC = () => {
                             <div className="text-xs font-mono text-neutral-700">{time}</div>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <code className="text-xs bg-neutral-100 px-2 py-1 rounded font-mono">
-                          {item.request_id}
-                        </code>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col text-xs text-neutral-600">
@@ -366,10 +384,7 @@ const LogsPage: React.FC = () => {
                       </td>
                       <td className="px-4 py-3">
                         <button
-                          onClick={() => {
-                            setSelectedItem(item)
-                            setDialogType('details')
-                          }}
+                          onClick={() => openDetailDialog(item.id)}
                           className="p-1 text-neutral-500 hover:text-violet-600"
                           title="查看详情"
                         >
@@ -475,13 +490,15 @@ const LogsPage: React.FC = () => {
 
 
       {/* 详情对话框 */}
-      {dialogType === 'details' && selectedItem && (
-        <LogDetailsDialog 
-          item={selectedItem} 
+      {dialogType === 'details' && (
+        <LogDetailsDialog
+          item={selectedItem}
+          loading={detailLoading}
           onClose={() => {
             setDialogType(null)
             setSelectedItem(null)
-          }} 
+            setDetailLoading(false)
+          }}
         />
       )}
     </div>
@@ -490,16 +507,20 @@ const LogsPage: React.FC = () => {
 
 /** 代理跟踪日志详情对话框 */
 const LogDetailsDialog: React.FC<{
-  item: ProxyTraceEntry
+  item: ProxyTraceEntry | null
+  loading: boolean
   onClose: () => void
-}> = ({ item, onClose }) => {
+}> = ({ item, loading, onClose }) => {
   const { date, time } = React.useMemo(() => {
+    if (!item) {
+      return { date: '', time: '' }
+    }
     const d = new Date(item.created_at)
     return {
       date: d.toLocaleDateString(),
       time: d.toLocaleTimeString()
     }
-  }, [item.created_at])
+  }, [item?.created_at])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -514,6 +535,13 @@ const LogDetailsDialog: React.FC<{
           </button>
         </div>
         
+        {loading ? (
+          <div className="py-12 flex items-center justify-center text-neutral-500">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+          </div>
+        ) : !item ? (
+          <div className="py-12 text-center text-neutral-500">暂无详情数据</div>
+        ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="p-3 bg-neutral-50 rounded-lg">
@@ -677,6 +705,7 @@ const LogDetailsDialog: React.FC<{
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )

@@ -154,12 +154,16 @@ impl ProxyHttp for ProxyService {
             .collect_request_details(session, &req_stats);
 
         if let Some(user_api) = &ctx.user_service_api {
+            let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
+            let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
             let _ = self
                 .trace_service
                 .start_trace(
                     &ctx.request_id,
                     user_api.id,
                     Some(user_api.user_id),
+                    provider_type_id,
+                    user_provider_key_id,
                     req_stats.method.as_str(),
                     Some(req_stats.path.clone()),
                     Some(req_stats.client_ip.clone()),

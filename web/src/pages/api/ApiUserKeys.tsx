@@ -1734,31 +1734,9 @@ const StatsDialog: React.FC<{
           </div>
         </div>
 
-        {/* 使用趋势 */}
+        {/* 综合趋势图（柱状图+折线图） */}
         <div>
-          <h4 className="text-sm font-medium text-neutral-900 mb-3">7天使用趋势</h4>
-          <div className="flex items-end gap-2 h-32">
-            {trendLoading ? (
-              <div className="flex-1 flex items-center justify-center text-neutral-500">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
-              </div>
-            ) : (
-              stats.dailyUsage.map((value, index) => (
-                <div key={index} className="flex-1 flex flex-col items-center">
-                  <div
-                    className="w-full bg-violet-600 rounded-t"
-                    style={{ height: `${(value / Math.max(...stats.dailyUsage, 1)) * 100}%` }}
-                  />
-                  <div className="text-xs text-neutral-500 mt-1">{value}</div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* 7天综合趋势图（柱状图+折线图） */}
-        <div>
-          <h4 className="text-sm font-medium text-neutral-900 mb-3">7天综合趋势分析</h4>
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">综合使用趋势分析</h4>
           <div className="h-64 w-full">
             {detailedTrendLoading ? (
               <div className="flex items-center justify-center h-full text-neutral-500">

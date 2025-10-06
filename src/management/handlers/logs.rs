@@ -33,7 +33,42 @@ pub struct LogsDashboardStatsResponse {
     pub avg_response_time: i64,
 }
 
-/// 代理跟踪日志条目
+/// 日志列表条目（省略 request_id 字段）
+#[derive(Debug, Serialize)]
+pub struct ProxyTraceListEntry {
+    pub id: i32,
+    pub user_service_api_id: i32,
+    pub user_provider_key_id: Option<i32>,
+    pub user_id: Option<i32>,
+    pub method: String,
+    pub path: Option<String>,
+    pub status_code: Option<i32>,
+    pub tokens_prompt: i32,
+    pub tokens_completion: i32,
+    pub tokens_total: i32,
+    pub token_efficiency_ratio: Option<f64>,
+    pub cache_create_tokens: i32,
+    pub cache_read_tokens: i32,
+    pub cost: Option<f64>,
+    pub cost_currency: String,
+    pub model_used: Option<String>,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub error_type: Option<String>,
+    pub error_message: Option<String>,
+    pub retry_count: i32,
+    pub provider_type_id: Option<i32>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub duration_ms: Option<i64>,
+    pub is_success: bool,
+    pub created_at: DateTime<Utc>,
+    pub provider_name: Option<String>,
+    pub user_service_api_name: Option<String>,
+    pub user_provider_key_name: Option<String>,
+}
+
+/// 代理跟踪日志详情条目
 #[derive(Debug, Serialize)]
 pub struct ProxyTraceEntry {
     pub id: i32,
@@ -72,7 +107,7 @@ pub struct ProxyTraceEntry {
 /// 日志列表响应
 #[derive(Debug, Serialize)]
 pub struct LogsListResponse {
-    pub traces: Vec<ProxyTraceEntry>,
+    pub traces: Vec<ProxyTraceListEntry>,
     pub pagination: PaginationInfo,
 }
 
@@ -478,9 +513,8 @@ async fn fetch_traces_list(
             .user_provider_key_id
             .and_then(|id| user_provider_key_name_map.get(&id).cloned());
 
-        traces.push(ProxyTraceEntry {
+        traces.push(ProxyTraceListEntry {
             id: trace_model.id,
-            request_id: trace_model.request_id,
             user_service_api_id: trace_model.user_service_api_id,
             user_provider_key_id: trace_model.user_provider_key_id,
             user_id: trace_model.user_id,

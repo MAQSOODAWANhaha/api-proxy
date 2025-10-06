@@ -34,6 +34,8 @@ impl TracingService {
         request_id: &str,
         user_service_api_id: i32,
         user_id: Option<i32>,
+        provider_type_id: Option<i32>,
+        user_provider_key_id: Option<i32>,
         method: &str,
         path: Option<String>,
         client_ip: Option<String>,
@@ -45,6 +47,8 @@ impl TracingService {
                     request_id.to_string(),
                     user_service_api_id,
                     user_id,
+                    provider_type_id,
+                    user_provider_key_id,
                     method.to_string(),
                     path,
                     client_ip,
@@ -69,7 +73,9 @@ impl TracingService {
                 LogComponent::Tracing,
                 "trace_started",
                 "请求追踪启动成功",
-                user_service_api_id = user_service_api_id
+                user_service_api_id = user_service_api_id,
+                provider_type_id = provider_type_id,
+                user_provider_key_id = user_provider_key_id
             );
         }
 
@@ -434,6 +440,8 @@ mod tests {
                     "test",
                     1,
                     Some(1),
+                    None,
+                    None,
                     "GET",
                     Some("/test".to_string()),
                     None,
