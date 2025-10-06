@@ -181,7 +181,10 @@ impl GeminiCodeAssistClient {
                         LogStage::ExternalApi,
                         LogComponent::GeminiClient,
                         "retry_success",
-                        &format!("{}在第{}次尝试中成功完成，耗时: {:?}", operation, attempt, duration)
+                        &format!(
+                            "{}在第{}次尝试中成功完成，耗时: {:?}",
+                            operation, attempt, duration
+                        )
                     );
                     return Ok(response);
                 }
@@ -192,7 +195,10 @@ impl GeminiCodeAssistClient {
                         LogStage::ExternalApi,
                         LogComponent::GeminiClient,
                         "retry_fail",
-                        &format!("{}第{}次尝试失败，耗时: {:?}，错误: {}", operation, attempt, duration, e)
+                        &format!(
+                            "{}第{}次尝试失败，耗时: {:?}，错误: {}",
+                            operation, attempt, duration, e
+                        )
                     );
 
                     // 如果是最后一次尝试，保存错误并返回
@@ -355,7 +361,10 @@ impl GeminiCodeAssistClient {
                     LogStage::ExternalApi,
                     LogComponent::GeminiClient,
                     "load_code_assist_fail",
-                    &format!("loadCodeAssist API失败: status={}, response={}", status, error_text)
+                    &format!(
+                        "loadCodeAssist API失败: status={}, response={}",
+                        status, error_text
+                    )
                 );
                 return Err(ProxyError::gemini_code_assist(format!(
                     "loadCodeAssist API failed: {} - {}",
@@ -386,9 +395,11 @@ impl GeminiCodeAssistClient {
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
                 "load_code_assist_ok",
-                &format!("loadCodeAssist调用成功: has_project={}, tier_id={}",
-                response_data.cloudaicompanionProject.is_some(),
-                tier_id)
+                &format!(
+                    "loadCodeAssist调用成功: has_project={}, tier_id={}",
+                    response_data.cloudaicompanionProject.is_some(),
+                    tier_id
+                )
             );
 
             Ok(response_data)
@@ -450,7 +461,10 @@ impl GeminiCodeAssistClient {
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
                 "onboard_user_call",
-                &format!("调用onboardUser with tier_id: {:?}, project_id: {:?}", tier_id, project_id)
+                &format!(
+                    "调用onboardUser with tier_id: {:?}, project_id: {:?}",
+                    tier_id, project_id
+                )
             );
 
             let url = format!("{}/v1internal:onboardUser", self.base_url);
@@ -499,7 +513,10 @@ impl GeminiCodeAssistClient {
                     LogStage::ExternalApi,
                     LogComponent::GeminiClient,
                     "onboard_user_fail",
-                    &format!("onboardUser API失败: status={}, response={}", status, error_text)
+                    &format!(
+                        "onboardUser API失败: status={}, response={}",
+                        status, error_text
+                    )
                 );
                 return Err(ProxyError::gemini_code_assist(format!(
                     "onboardUser API failed: {} - {}",
@@ -529,10 +546,12 @@ impl GeminiCodeAssistClient {
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
                 "onboard_user_ok",
-                &format!("onboardUser调用成功: status={}, project_id={}, display_name={}",
-                response_data.status,
-                response_data.cloudaicompanionProject.id,
-                response_data.cloudaicompanionProject.display_name)
+                &format!(
+                    "onboardUser调用成功: status={}, project_id={}, display_name={}",
+                    response_data.status,
+                    response_data.cloudaicompanionProject.id,
+                    response_data.cloudaicompanionProject.display_name
+                )
             );
 
             Ok(response_data)
@@ -585,11 +604,13 @@ impl GeminiCodeAssistClient {
                             LogStage::ExternalApi,
                             LogComponent::GeminiClient,
                             "onboard_user_retry_fail",
-                            &format!("onboardUser第{}次调用失败，{}ms后进行第{}次重试. 错误: {}",
-                            retry_count,
-                            delay_ms,
-                            retry_count + 1,
-                            e)
+                            &format!(
+                                "onboardUser第{}次调用失败，{}ms后进行第{}次重试. 错误: {}",
+                                retry_count,
+                                delay_ms,
+                                retry_count + 1,
+                                e
+                            )
                         );
 
                         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
@@ -599,7 +620,10 @@ impl GeminiCodeAssistClient {
                             LogStage::ExternalApi,
                             LogComponent::GeminiClient,
                             "onboard_user_retry_giveup",
-                            &format!("onboardUser重试{}次后仍然失败，最终错误: {}", MAX_RETRIES, e)
+                            &format!(
+                                "onboardUser重试{}次后仍然失败，最终错误: {}",
+                                MAX_RETRIES, e
+                            )
                         );
                     }
                 }
@@ -705,9 +729,10 @@ impl GeminiCodeAssistClient {
             LogStage::ExternalApi,
             LogComponent::GeminiClient,
             "project_id_from_onboard",
-            &format!("通过onboardUser重试获取到project_id: {:?} (display_name: {})",
-            project_id,
-            onboard_response.cloudaicompanionProject.display_name)
+            &format!(
+                "通过onboardUser重试获取到project_id: {:?} (display_name: {})",
+                project_id, onboard_response.cloudaicompanionProject.display_name
+            )
         );
 
         Ok(project_id)
@@ -824,9 +849,10 @@ impl GeminiCodeAssistClient {
             LogStage::ExternalApi,
             LogComponent::GeminiClient,
             "project_id_from_onboard",
-            &format!("通过onboardUser获取到project_id: {:?} (display_name: {})",
-            project_id,
-            onboard_response.cloudaicompanionProject.display_name)
+            &format!(
+                "通过onboardUser获取到project_id: {:?} (display_name: {})",
+                project_id, onboard_response.cloudaicompanionProject.display_name
+            )
         );
 
         Ok(project_id)

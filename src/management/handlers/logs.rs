@@ -8,8 +8,8 @@ use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
 use crate::{lerror, linfo};
 use ::entity::{
-    proxy_tracing, user_provider_keys, user_service_apis, ProviderTypes, ProxyTracing,
-    UserProviderKeys, UserServiceApis,
+    ProviderTypes, ProxyTracing, UserProviderKeys, UserServiceApis, proxy_tracing,
+    user_provider_keys, user_service_apis,
 };
 use axum::{
     extract::{Extension, Path, Query, State},

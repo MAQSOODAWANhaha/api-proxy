@@ -1,6 +1,16 @@
+use crate::{
+    ProxyError,
+    auth::{AuthManager, service::AuthService},
+    config::{AppConfig, ConfigManager, ProviderConfigManager},
+    error::Result,
+    management::server::{ManagementConfig, ManagementServer},
+    proxy::PingoraProxyServer,
+};
 /// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
-use crate::{lerror, linfo, logging::{LogComponent, LogStage}};
-use crate::{ProxyError, auth::{AuthManager, service::AuthService}, config::{AppConfig, ConfigManager, ProviderConfigManager}, error::Result, management::server::{ManagementConfig, ManagementServer}, proxy::PingoraProxyServer};
+use crate::{
+    lerror, linfo,
+    logging::{LogComponent, LogStage},
+};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
@@ -57,16 +67,21 @@ pub async fn run_dual_port_servers() -> Result<()> {
         LogStage::Startup,
         LogComponent::ServerSetup,
         "management_listen_info",
-        &format!("📊 Management server will listen on {}:{}", management_config.bind_address, management_config.port)
+        &format!(
+            "📊 Management server will listen on {}:{}",
+            management_config.bind_address, management_config.port
+        )
     );
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
         "proxy_listen_info",
-        &format!("🔗 Proxy server will listen on {}:{}",
-        config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-        config.server.as_ref().map_or(8080, |s| s.port))
+        &format!(
+            "🔗 Proxy server will listen on {}:{}",
+            config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
+            config.server.as_ref().map_or(8080, |s| s.port)
+        )
     );
 
     // 创建管理服务器
@@ -162,7 +177,13 @@ pub async fn initialize_shared_services() -> Result<(
     Arc<crate::trace::TraceSystem>,
 )> {
     // 加载配置
-    linfo!("system", LogStage::Startup, LogComponent::ServerSetup, "load_config", "📋 Loading configuration...");
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "load_config",
+        "📋 Loading configuration..."
+    );
     let config_manager = ConfigManager::new().await?;
     let config = config_manager.get_config().await;
 
@@ -330,10 +351,9 @@ pub async fn initialize_shared_services() -> Result<(
         "init_health_checker",
         "🏥 Initializing API key health checker..."
     );
-let api_key_health_checker = Arc::new(crate::scheduler::api_key_health::ApiKeyHealthChecker::new(
-            db.clone(),
-            None,
-        ));
+    let api_key_health_checker = Arc::new(
+        crate::scheduler::api_key_health::ApiKeyHealthChecker::new(db.clone(), None),
+    );
     linfo!(
         "system",
         LogStage::Startup,

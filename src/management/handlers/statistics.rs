@@ -1,8 +1,8 @@
 //! # 统一统计信息处理器
 //!
 //! 基于proxy_tracing表的统一统计查询API
-use crate::logging::{LogComponent, LogStage};
 use crate::lerror;
+use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
@@ -688,7 +688,10 @@ pub async fn get_user_api_keys_token_trend(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_token_trend_fail",
-                &format!("Failed to fetch traces for user API keys token trend: {}", err)
+                &format!(
+                    "Failed to fetch traces for user API keys token trend: {}",
+                    err
+                )
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,

@@ -2,15 +2,15 @@
 //!
 //! Axum HTTP服务器，提供管理和监控API
 
-use super::middleware::{ip_filter_middleware, IpFilterConfig};
+use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
 use anyhow::Result;
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 // use axum::http::StatusCode; // not needed with manage_error!
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -181,20 +181,22 @@ impl ManagementServer {
         }
 
         // 创建IP过滤配置
-        let ip_filter_config = IpFilterConfig::from_strings(&config.allowed_ips, &config.denied_ips)
-            .unwrap_or_else(|e| {
-                lwarn!(
-                    "system",
-                    LogStage::Startup,
-                    LogComponent::ServerSetup,
-                    "ip_filter_config_fail",
-                    &format!("Failed to create IP filter config: {}, using default", e)
-                );
-                IpFilterConfig {
-                    allowed_ips: vec![],
-                    denied_ips: vec![],
-                }
-            });
+        let ip_filter_config =
+            IpFilterConfig::from_strings(&config.allowed_ips, &config.denied_ips).unwrap_or_else(
+                |e| {
+                    lwarn!(
+                        "system",
+                        LogStage::Startup,
+                        LogComponent::ServerSetup,
+                        "ip_filter_config_fail",
+                        &format!("Failed to create IP filter config: {}, using default", e)
+                    );
+                    IpFilterConfig {
+                        allowed_ips: vec![],
+                        denied_ips: vec![],
+                    }
+                },
+            );
 
         // 添加中间件
         let service_builder = ServiceBuilder::new().layer(TraceLayer::new_for_http());
@@ -237,7 +239,10 @@ impl ManagementServer {
                             LogStage::Startup,
                             LogComponent::ServerSetup,
                             "cors_config_fail",
-                            &format!("Invalid CORS origin configuration: {}, falling back to allow any", e)
+                            &format!(
+                                "Invalid CORS origin configuration: {}, falling back to allow any",
+                                e
+                            )
                         );
                         cors_layer = cors_layer.allow_origin(Any);
                     }

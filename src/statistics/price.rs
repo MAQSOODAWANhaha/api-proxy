@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
-use crate::{lwarn, logging::{LogComponent, LogStage}};
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
 use crate::statistics::types::TokenUsageMetrics;
+use crate::{
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 
 /// 根据模型、提供商与用量计算成本
 pub async fn calculate(
@@ -31,7 +34,13 @@ pub async fn calculate(
     {
         Ok(cost) => Ok((Some(cost.total_cost), Some(cost.currency))),
         Err(e) => {
-            lwarn!(request_id, LogStage::Internal, LogComponent::Statistics, "cost_calculation_fail", &format!("Failed to calculate cost: {}", e));
+            lwarn!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "cost_calculation_fail",
+                &format!("Failed to calculate cost: {}", e)
+            );
             Ok((None, None))
         }
     }

@@ -26,8 +26,11 @@ pub use providers::OAuthProviderManager;
 pub use session_manager::SessionManager;
 pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
-use crate::{ldebug, linfo, logging::{LogComponent, LogStage}};
 use crate::auth::types::AuthStatus;
+use crate::{
+    ldebug, linfo,
+    logging::{LogComponent, LogStage},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -215,7 +218,10 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "start_authorization",
-            &format!("🚀 [OAuth] 开始授权流程: user_id={}, provider_name={}, name={}", user_id, provider_name, name)
+            &format!(
+                "🚀 [OAuth] 开始授权流程: user_id={}, provider_name={}, name={}",
+                user_id, provider_name, name
+            )
         );
 
         // 获取提供商配置
@@ -226,7 +232,10 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "get_provider_config_ok",
-            &format!("✅ [OAuth] 提供商配置获取成功: provider_name={}, client_id={}", provider_name, config.client_id)
+            &format!(
+                "✅ [OAuth] 提供商配置获取成功: provider_name={}, client_id={}",
+                provider_name, config.client_id
+            )
         );
 
         // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
@@ -243,7 +252,10 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "create_session",
-            &format!("📝 [OAuth] 创建会话: user_id={}, provider_name={}, provider_type_id={:?}", user_id, provider_name, provider_type_id)
+            &format!(
+                "📝 [OAuth] 创建会话: user_id={}, provider_name={}, provider_type_id={:?}",
+                user_id, provider_name, provider_type_id
+            )
         );
 
         // 创建会话
@@ -264,7 +276,10 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "session_created",
-            &format!("✅ [OAuth] 会话创建成功: session_id={}, state={}", session.session_id, session.state)
+            &format!(
+                "✅ [OAuth] 会话创建成功: session_id={}, state={}",
+                session.session_id, session.state
+            )
         );
 
         // 生成授权URL
@@ -277,7 +292,10 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "authorization_started",
-            &format!("🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s", session.session_id)
+            &format!(
+                "🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s",
+                session.session_id
+            )
         );
 
         Ok(AuthorizeUrlResponse {

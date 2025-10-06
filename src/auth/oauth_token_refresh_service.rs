@@ -159,7 +159,10 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_pending_sessions",
-                &format!("Deleted {} expired pending OAuth sessions", delete_pending.rows_affected)
+                &format!(
+                    "Deleted {} expired pending OAuth sessions",
+                    delete_pending.rows_affected
+                )
             );
         }
 
@@ -180,7 +183,10 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_expired_sessions",
-                &format!("Deleted {} old expired OAuth sessions", delete_expired.rows_affected)
+                &format!(
+                    "Deleted {} old expired OAuth sessions",
+                    delete_expired.rows_affected
+                )
             );
         }
 
@@ -234,7 +240,10 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_orphan_sessions",
-                &format!("Deleted {} orphan OAuth sessions (no linked provider keys)", deleted.rows_affected)
+                &format!(
+                    "Deleted {} orphan OAuth sessions (no linked provider keys)",
+                    deleted.rows_affected
+                )
             );
         }
 
@@ -332,7 +341,10 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_failed",
-                &format!("Failed to cleanup OAuth sessions before scheduling: {:?}", e)
+                &format!(
+                    "Failed to cleanup OAuth sessions before scheduling: {:?}",
+                    e
+                )
             );
         }
 
@@ -364,7 +376,10 @@ impl OAuthTokenRefreshService {
                             LogStage::BackgroundTask,
                             LogComponent::OAuth,
                             "eager_refresh_failed",
-                            &format!("Failed to eagerly refresh session {}: {:?}", session.session_id, e)
+                            &format!(
+                                "Failed to eagerly refresh session {}: {:?}",
+                                session.session_id, e
+                            )
                         );
                         let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
                         schedule.push(ScheduledTokenRefresh {
@@ -438,7 +453,10 @@ impl OAuthTokenRefreshService {
                         LogStage::BackgroundTask,
                         LogComponent::OAuth,
                         "eager_refresh_failed",
-                        &format!("Failed to eagerly refresh session {}: {:?}", session.session_id, e)
+                        &format!(
+                            "Failed to eagerly refresh session {}: {:?}",
+                            session.session_id, e
+                        )
                     );
                     let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
                     return Ok(ScheduledTokenRefresh {
@@ -521,11 +539,23 @@ impl OAuthTokenRefreshService {
     ///
     /// 这个方法通常在SmartApiKeyProvider中使用时调用
     pub async fn passive_refresh_if_needed(&self, session_id: &str) -> Result<TokenRefreshResult> {
-        ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "passive_refresh_check", &format!("Checking passive refresh for session_id: {}", session_id));
+        ldebug!(
+            "system",
+            LogStage::BackgroundTask,
+            LogComponent::OAuth,
+            "passive_refresh_check",
+            &format!("Checking passive refresh for session_id: {}", session_id)
+        );
 
         // 检查是否需要刷新
         if !self.should_refresh_token(session_id).await? {
-            ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "passive_refresh_not_needed", &format!("Token for session_id {} does not need refresh", session_id));
+            ldebug!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "passive_refresh_not_needed",
+                &format!("Token for session_id {} does not need refresh", session_id)
+            );
             return Ok(TokenRefreshResult {
                 success: true,
                 new_access_token: None,
@@ -560,7 +590,13 @@ impl OAuthTokenRefreshService {
 
         // 检查是否有有效的访问token
         if session.access_token.is_none() {
-            ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "no_access_token", &format!("Session {} has no access token", session_id));
+            ldebug!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "no_access_token",
+                &format!("Session {} has no access token", session_id)
+            );
             return Ok(false); // 没有token，无需刷新
         }
 
@@ -572,7 +608,10 @@ impl OAuthTokenRefreshService {
             LogStage::BackgroundTask,
             LogComponent::OAuth,
             "should_refresh_check",
-            &format!("Session {} expires at {:?}, should refresh: {}", session_id, session.expires_at, should_refresh)
+            &format!(
+                "Session {} expires at {:?}, should refresh: {}",
+                session_id, session.expires_at, should_refresh
+            )
         );
 
         Ok(should_refresh)
@@ -595,7 +634,10 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "already_refreshed",
-                &format!("Token already refreshed by another thread for session: {}", session_id)
+                &format!(
+                    "Token already refreshed by another thread for session: {}",
+                    session_id
+                )
             );
             return Ok(TokenRefreshResult {
                 success: true,
@@ -635,7 +677,10 @@ impl OAuthTokenRefreshService {
             LogStage::BackgroundTask,
             LogComponent::OAuth,
             "perform_token_refresh",
-            &format!("Performing token refresh for session: {}, type: {:?}", session_id, refresh_type)
+            &format!(
+                "Performing token refresh for session: {}, type: {:?}",
+                session_id, refresh_type
+            )
         );
 
         // 使用OAuth client进行token刷新
@@ -686,7 +731,10 @@ impl OAuthTokenRefreshService {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "token_refresh_fail",
-                    &format!("Failed to refresh token for session {}: {:?}", session_id, e)
+                    &format!(
+                        "Failed to refresh token for session {}: {:?}",
+                        session_id, e
+                    )
                 );
                 Ok(TokenRefreshResult {
                     success: false,

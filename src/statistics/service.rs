@@ -356,7 +356,10 @@ impl StatisticsService {
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "create_model_extractor_fail",
-                &format!("Failed to create ModelExtractor from database config: {}", e),
+                &format!(
+                    "Failed to create ModelExtractor from database config: {}",
+                    e
+                ),
                 provider_id = provider.id,
             );
             e

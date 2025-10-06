@@ -6,8 +6,8 @@ use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use pingora_core::prelude::*;
 use pingora_core::ErrorType;
+use pingora_core::prelude::*;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sea_orm::DatabaseConnection;
@@ -376,7 +376,13 @@ impl ProxyHttp for ProxyService {
                 .handle_response_body(session, ctx, status_code, &ctx.response_body)
                 .await
             {
-                lwarn!(&ctx.request_id, LogStage::Response, LogComponent::Proxy, "strategy_response_fail", &format!("Provider strategy handle_response_body failed: {}", e));
+                lwarn!(
+                    &ctx.request_id,
+                    LogStage::Response,
+                    LogComponent::Proxy,
+                    "strategy_response_fail",
+                    &format!("Provider strategy handle_response_body failed: {}", e)
+                );
             }
         }
 

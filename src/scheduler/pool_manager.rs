@@ -127,7 +127,10 @@ impl ApiKeyPoolManager {
                 LogStage::Scheduling,
                 LogComponent::Scheduler,
                 "unhealthy_keys_filtered",
-                &format!("Filtered out {} unhealthy API keys", user_keys.len() - healthy_keys.len()),
+                &format!(
+                    "Filtered out {} unhealthy API keys",
+                    user_keys.len() - healthy_keys.len()
+                ),
                 service_api_id = service_api.id,
                 total_keys = user_keys.len(),
                 healthy_keys = healthy_keys.len(),

@@ -3,11 +3,14 @@
 //! 说明：当前仅做最小无害改写示例（如补充少量兼容性 Header），
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
-use crate::{ldebug, linfo, logging::{self, LogComponent, LogStage}};
 use super::ProviderStrategy;
 use crate::error::Result;
 use crate::proxy::ProxyContext;
-use crate::{proxy_err};
+use crate::proxy_err;
+use crate::{
+    ldebug, linfo,
+    logging::{self, LogComponent, LogStage},
+};
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;

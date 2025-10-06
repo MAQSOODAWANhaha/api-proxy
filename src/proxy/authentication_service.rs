@@ -3,7 +3,9 @@
 //! 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 
 use crate::auth::{
-    rate_limit_dist::DistributedRateLimiter, types::{AuthStatus, AuthType}, AuthManager
+    AuthManager,
+    rate_limit_dist::DistributedRateLimiter,
+    types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
 use crate::error::Result;
@@ -97,7 +99,14 @@ impl AuthenticationService {
         let provider_type = self.get_provider_type(user_api.provider_type_id).await?;
 
         // 4. 选择后端密钥
-        let selected_backend = self.select_api_key(&user_api, &ctx.request_id).await?;
+        let route_group = if ctx.request_details.path.is_empty() {
+            "/".to_string()
+        } else {
+            ctx.request_details.path.clone()
+        };
+        let selected_backend = self
+            .select_api_key(&user_api, &ctx.request_id, route_group)
+            .await?;
 
         // 5. 解析最终凭证
         let resolved_credential = self
@@ -278,12 +287,14 @@ impl AuthenticationService {
         &self,
         user_service_api: &user_service_apis::Model,
         request_id: &str,
+        route_group: String,
     ) -> Result<user_provider_keys::Model> {
         let context = SelectionContext::new(
             request_id.to_string(),
             user_service_api.user_id,
             user_service_api.id,
             user_service_api.provider_type_id,
+            route_group,
         );
         let result = self
             .api_key_pool

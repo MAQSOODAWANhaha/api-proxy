@@ -3,20 +3,17 @@
 //! 使用新的services架构消除重复实现，保持向后兼容的API
 //! 本文件提供统一认证管理器（AuthManager）的实现。
 
-use crate::logging::{LogComponent, LogStage};
 use crate::ldebug;
+use crate::logging::{LogComponent, LogStage};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::auth::{
+    AuthContext, AuthMethod, AuthResult, AuthService,
     strategies::traits::OAuthTokenResult,
     types::{AuthConfig, AuthType},
-    AuthContext,
-    AuthMethod,
-    AuthResult,
-    AuthService,
 }; // oauth::OAuthSessionManager, // 已删除，使用oauth_client替代
 use crate::cache::CacheManager;
 use crate::error::Result;
@@ -83,7 +80,10 @@ impl AuthManager {
             LogStage::Authentication,
             LogComponent::Auth,
             "auth_request",
-            &format!("Processing authentication request for path: {} (via refactored manager)", request.path)
+            &format!(
+                "Processing authentication request for path: {} (via refactored manager)",
+                request.path
+            )
         );
 
         // 尝试从Authorization头解析认证信息
@@ -200,7 +200,13 @@ impl AuthManager {
     /// 令牌黑名单管理（委托给AuthService）
     pub async fn blacklist_token(&self, token: &str, _expire_time: DateTime<Utc>) {
         if let Err(e) = self.auth_service.logout(token).await {
-            ldebug!("system", LogStage::Authentication, LogComponent::Auth, "blacklist_fail", &format!("Failed to blacklist token: {}", e));
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "blacklist_fail",
+                &format!("Failed to blacklist token: {}", e)
+            );
         }
     }
 
@@ -211,7 +217,13 @@ impl AuthManager {
 
     /// 清空缓存（保持向后兼容）
     pub async fn clear_cache(&self) {
-        ldebug!("system", LogStage::Cache, LogComponent::Auth, "cache_clear", "Cache clear requested - handled by AuthService");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Auth,
+            "cache_clear",
+            "Cache clear requested - handled by AuthService"
+        );
         self.auth_service.cleanup().await;
     }
 

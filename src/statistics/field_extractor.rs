@@ -2,8 +2,11 @@
 //!
 //! 基于数据库配置的通用字段提取器，支持JSONPath查询、数学表达式和条件判断
 
-use crate::{ldebug, logging::{LogComponent, LogStage}};
-use anyhow::{anyhow, Result};
+use crate::{
+    ldebug,
+    logging::{LogComponent, LogStage},
+};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -384,10 +387,22 @@ impl TokenFieldExtractor {
         fallback: &Option<Box<TokenMapping>>,
     ) -> Option<Value> {
         if let Some(fallback_mapping) = fallback {
-            ldebug!("system", LogStage::Internal, LogComponent::Statistics, "fallback_extraction", "Attempting fallback extraction");
+            ldebug!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "fallback_extraction",
+                "Attempting fallback extraction"
+            );
             self.extract_by_mapping(response, fallback_mapping.as_ref())
         } else {
-            ldebug!("system", LogStage::Internal, LogComponent::Statistics, "no_fallback", "No fallback available");
+            ldebug!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "no_fallback",
+                "No fallback available"
+            );
             None
         }
     }

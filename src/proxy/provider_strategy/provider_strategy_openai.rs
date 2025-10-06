@@ -2,12 +2,16 @@
 //!
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
-use crate::{linfo, lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{ErrorContext, Result};
 use crate::proxy::ProxyContext;
 use crate::proxy::context::ResolvedCredential;
 use crate::proxy_err;
+use crate::{
+    linfo,
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
@@ -186,7 +190,14 @@ impl ProviderStrategy for OpenAIStrategy {
         if key.health_status == "rate_limited" {
             if let Some(resets_at) = key.rate_limit_resets_at {
                 if Utc::now().naive_utc() > resets_at {
-                    linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "rate_limit_lifted", "OpenAI API密钥限流已解除，恢复使用", key_id = key.id);
+                    linfo!(
+                        "system",
+                        LogStage::Internal,
+                        LogComponent::OpenAIStrategy,
+                        "rate_limit_lifted",
+                        "OpenAI API密钥限流已解除，恢复使用",
+                        key_id = key.id
+                    );
                     return Ok(true);
                 }
             }

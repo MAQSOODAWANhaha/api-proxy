@@ -7,7 +7,7 @@ use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
 use crate::proxy_err;
-use pingora_core::upstreams::peer::{HttpPeer, Peer, ALPN};
+use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use std::time::Duration;

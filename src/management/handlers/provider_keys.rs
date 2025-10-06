@@ -14,8 +14,8 @@ use crate::management::{response, server::AppState};
 use crate::scheduler::types::ApiKeyHealthStatus;
 use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
-use axum::response::Json;
 use axum::response::IntoResponse;
+use axum::response::Json;
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
@@ -129,7 +129,13 @@ pub async fn get_provider_keys_list(
     let total = match select.clone().count(db).await {
         Ok(count) => count,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "count_fail", &format!("Failed to count provider keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_fail",
+                &format!("Failed to count provider keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count provider keys"
@@ -148,7 +154,13 @@ pub async fn get_provider_keys_list(
     {
         Ok(data) => data,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_fail", &format!("Failed to fetch provider keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_fail",
+                &format!("Failed to fetch provider keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider keys"
@@ -285,7 +297,13 @@ pub async fn create_provider_key(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "check_exist_fail", &format!("Failed to check existing provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "check_exist_fail",
+                &format!("Failed to check existing provider key: {}", err)
+            );
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to check existing provider key",
                 err,
@@ -341,7 +359,13 @@ pub async fn create_provider_key(
                             ));
                         }
                         Err(err) => {
-                            lerror!("system", LogStage::Db, LogComponent::OAuth, "check_session_usage_fail", &format!("Failed to check OAuth session usage: {}", err));
+                            lerror!(
+                                "system",
+                                LogStage::Db,
+                                LogComponent::OAuth,
+                                "check_session_usage_fail",
+                                &format!("Failed to check OAuth session usage: {}", err)
+                            );
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
                                     "Failed to check OAuth session usage",
@@ -359,7 +383,13 @@ pub async fn create_provider_key(
                     ));
                 }
                 Err(err) => {
-                    lerror!("system", LogStage::Db, LogComponent::OAuth, "validate_session_fail", &format!("Failed to validate OAuth session: {}", err));
+                    lerror!(
+                        "system",
+                        LogStage::Db,
+                        LogComponent::OAuth,
+                        "validate_session_fail",
+                        &format!("Failed to validate OAuth session: {}", err)
+                    );
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
                         err,
@@ -542,7 +572,13 @@ pub async fn create_provider_key(
     let result = match new_provider_key.insert(db).await {
         Ok(model) => model,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "create_key_fail", &format!("Failed to create provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "create_key_fail",
+                &format!("Failed to create provider key: {}", err)
+            );
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to create provider key",
                 err,
@@ -571,7 +607,10 @@ pub async fn create_provider_key(
                         LogStage::Db,
                         LogComponent::Database,
                         "rollback_key_fail",
-                        &format!("Failed to rollback provider key after enqueue error: {}", delete_err),
+                        &format!(
+                            "Failed to rollback provider key after enqueue error: {}",
+                            delete_err
+                        ),
                         user_id = user_id,
                         key_id = result.id,
                     );
@@ -690,7 +729,13 @@ pub async fn get_provider_key_detail(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key detail: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_detail_fail",
+                &format!("Failed to fetch provider key detail: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key detail: {}",
@@ -849,7 +894,13 @@ pub async fn update_provider_key(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "find_key_fail",
+                &format!("Failed to find provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -885,7 +936,13 @@ pub async fn update_provider_key(
                 ));
             }
             Err(err) => {
-                lerror!("system", LogStage::Db, LogComponent::Database, "check_duplicate_fail", &format!("Failed to check duplicate name: {}", err));
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::Database,
+                    "check_duplicate_fail",
+                    &format!("Failed to check duplicate name: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to check duplicate name: {}",
@@ -946,7 +1003,13 @@ pub async fn update_provider_key(
                             ));
                         }
                         Err(err) => {
-                            lerror!("system", LogStage::Db, LogComponent::OAuth, "check_session_usage_fail", &format!("Failed to check OAuth session usage: {}", err));
+                            lerror!(
+                                "system",
+                                LogStage::Db,
+                                LogComponent::OAuth,
+                                "check_session_usage_fail",
+                                &format!("Failed to check OAuth session usage: {}", err)
+                            );
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
                                     "Failed to check OAuth session usage",
@@ -964,7 +1027,13 @@ pub async fn update_provider_key(
                     ));
                 }
                 Err(err) => {
-                    lerror!("system", LogStage::Db, LogComponent::OAuth, "validate_session_fail", &format!("Failed to validate OAuth session: {}", err));
+                    lerror!(
+                        "system",
+                        LogStage::Db,
+                        LogComponent::OAuth,
+                        "validate_session_fail",
+                        &format!("Failed to validate OAuth session: {}", err)
+                    );
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
                         err,
@@ -1008,7 +1077,13 @@ pub async fn update_provider_key(
     let updated_key = match active_model.update(db).await {
         Ok(model) => model,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "update_key_fail", &format!("Failed to update provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_key_fail",
+                &format!("Failed to update provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update provider key: {}",
@@ -1025,7 +1100,10 @@ pub async fn update_provider_key(
                     LogStage::Scheduling,
                     LogComponent::OAuth,
                     "enqueue_schedule_update_fail",
-                    &format!("Failed to enqueue OAuth refresh schedule during update: {}", err),
+                    &format!(
+                        "Failed to enqueue OAuth refresh schedule during update: {}",
+                        err
+                    ),
                     user_id = user_id,
                     key_id = key_id,
                 );
@@ -1036,7 +1114,10 @@ pub async fn update_provider_key(
                         LogStage::Db,
                         LogComponent::Database,
                         "rollback_key_update_fail",
-                        &format!("Failed to rollback provider key after enqueue error: {}", revert_err),
+                        &format!(
+                            "Failed to rollback provider key after enqueue error: {}",
+                            revert_err
+                        ),
                         user_id = user_id,
                         key_id = key_id,
                     );
@@ -1072,7 +1153,10 @@ pub async fn update_provider_key(
                         LogStage::Scheduling,
                         LogComponent::OAuth,
                         "remove_old_session_fail",
-                        &format!("Failed to remove old OAuth session from refresh queue: {}", err),
+                        &format!(
+                            "Failed to remove old OAuth session from refresh queue: {}",
+                            err
+                        ),
                         user_id = user_id,
                         key_id = key_id,
                         session_id = old_id.as_str(),
@@ -1122,7 +1206,13 @@ pub async fn delete_provider_key(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "find_key_fail",
+                &format!("Failed to find provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -1143,7 +1233,13 @@ pub async fn delete_provider_key(
     match active_model.delete(db).await {
         Ok(_) => {}
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "delete_key_fail", &format!("Failed to delete provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "delete_key_fail",
+                &format!("Failed to delete provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to delete provider key: {}",
@@ -1160,7 +1256,10 @@ pub async fn delete_provider_key(
                     LogStage::Scheduling,
                     LogComponent::OAuth,
                     "remove_session_after_delete_fail",
-                    &format!("Failed to remove OAuth session from refresh queue after delete: {}", err),
+                    &format!(
+                        "Failed to remove OAuth session from refresh queue after delete: {}",
+                        err
+                    ),
                     user_id = user_id,
                     key_id = key_id,
                     session_id = session_id.as_str(),
@@ -1207,7 +1306,13 @@ pub async fn get_provider_key_stats(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_detail_fail",
+                &format!("Failed to fetch provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key: {}",
@@ -1228,7 +1333,13 @@ pub async fn get_provider_key_stats(
     let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
         Ok(trends) => trends,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_trends_fail", &format!("Failed to fetch provider key trends: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_trends_fail",
+                &format!("Failed to fetch provider key trends: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch trends data: {}",
@@ -1242,11 +1353,7 @@ pub async fn get_provider_key_stats(
         .iter()
         .map(|point| point.requests)
         .collect();
-    let cost_series: Vec<f64> = trends
-        .trend_data
-        .iter()
-        .map(|point| point.cost)
-        .collect();
+    let cost_series: Vec<f64> = trends.trend_data.iter().map(|point| point.cost).collect();
     let response_time_series: Vec<i64> = trends
         .trend_data
         .iter()
@@ -1299,7 +1406,13 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(count) => count,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "count_total_keys_fail", &format!("Failed to count total keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_total_keys_fail",
+                &format!("Failed to count total keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count total keys: {}",
@@ -1317,7 +1430,13 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(count) => count,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "count_active_keys_fail", &format!("Failed to count active keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "count_active_keys_fail",
+                &format!("Failed to count active keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to count active keys: {}",
@@ -1335,7 +1454,13 @@ pub async fn get_provider_keys_dashboard_stats(
     {
         Ok(keys) => keys.iter().map(|k| k.id).collect(),
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_keys_fail", &format!("Failed to fetch user provider keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_keys_fail",
+                &format!("Failed to fetch user provider keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user provider keys: {}",
@@ -1362,7 +1487,13 @@ pub async fn get_provider_keys_dashboard_stats(
                 (usage_count, cost_sum)
             }
             Err(err) => {
-                lerror!("system", LogStage::Db, LogComponent::Database, "fetch_tracing_fail", &format!("Failed to fetch proxy tracing records: {}", err));
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::Database,
+                    "fetch_tracing_fail",
+                    &format!("Failed to fetch proxy tracing records: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to fetch usage statistics: {}",
@@ -1417,7 +1548,13 @@ pub async fn get_simple_provider_keys_list(
     {
         Ok(data) => data,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_simple_keys_fail", &format!("Failed to fetch simple provider keys: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_simple_keys_fail",
+                &format!("Failed to fetch simple provider keys: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider keys: {}",
@@ -1484,7 +1621,13 @@ pub async fn health_check_provider_key(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "find_key_fail", &format!("Failed to find provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "find_key_fail",
+                &format!("Failed to find provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to find provider key: {}",
@@ -1506,7 +1649,13 @@ pub async fn health_check_provider_key(
     match active_model.update(db).await {
         Ok(_) => {}
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::HealthChecker, "update_health_fail", &format!("Failed to update health status: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::HealthChecker,
+                "update_health_fail",
+                &format!("Failed to update health status: {}", err)
+            );
             // 不返回错误，继续返回检查结果
         }
     };
@@ -1631,7 +1780,13 @@ async fn fetch_provider_keys_usage_stats(
     {
         Ok(records) => records,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_tracing_fail", &format!("Failed to fetch proxy tracing records: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_tracing_fail",
+                &format!("Failed to fetch proxy tracing records: {}", err)
+            );
             return stats_map;
         }
     };
@@ -1733,7 +1888,13 @@ pub async fn get_provider_key_trends(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_detail_fail", &format!("Failed to fetch provider key: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_detail_fail",
+                &format!("Failed to fetch provider key: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch provider key: {}",
@@ -1751,7 +1912,13 @@ pub async fn get_provider_key_trends(
     let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
         Ok(trends) => trends,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_trends_fail", &format!("Failed to fetch provider key trends: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_trends_fail",
+                &format!("Failed to fetch provider key trends: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch trends data: {}",
@@ -1805,7 +1972,13 @@ pub async fn get_user_service_api_trends(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_service_api_fail", &format!("Failed to fetch user service api: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_api_fail",
+                &format!("Failed to fetch user service api: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user service api: {}",
@@ -1824,7 +1997,13 @@ pub async fn get_user_service_api_trends(
         match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
             Ok(trends) => trends,
             Err(err) => {
-                lerror!("system", LogStage::Db, LogComponent::Database, "fetch_service_api_trends_fail", &format!("Failed to fetch user service api trends: {}", err));
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::Database,
+                    "fetch_service_api_trends_fail",
+                    &format!("Failed to fetch user service api trends: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "Failed to fetch trends data: {}",

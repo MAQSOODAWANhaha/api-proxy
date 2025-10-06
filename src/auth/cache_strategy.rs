@@ -2,8 +2,8 @@
 //!
 //! 为认证系统提供统一、优化的缓存策略，确保一致性和性能
 
-use crate::logging::{LogComponent, LogStage};
 use crate::ldebug;
+use crate::logging::{LogComponent, LogStage};
 use std::time::Duration;
 
 use crate::auth::types::AuthConfig;
@@ -107,7 +107,13 @@ impl UnifiedAuthCacheManager {
         T: serde::Serialize + Send + Sync,
     {
         if !key.should_cache() {
-            ldebug!("system", LogStage::Cache, LogComponent::Cache, "skip_cache", &format!("Skipping cache for key type: {:?}", key));
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "skip_cache",
+                &format!("Skipping cache for key type: {:?}", key)
+            );
             return Ok(());
         }
 
@@ -216,7 +222,15 @@ impl UnifiedAuthCacheManager {
             }
         }
 
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "batch_cache_complete", "Batch cache operation completed", successful_operations = successful, failed_operations = failed);
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "batch_cache_complete",
+            "Batch cache operation completed",
+            successful_operations = successful,
+            failed_operations = failed
+        );
 
         Ok(())
     }
@@ -227,7 +241,13 @@ impl UnifiedAuthCacheManager {
     pub async fn warm_cache(&self, _warm_entries: Vec<AuthCacheKey>) -> Result<()> {
         // 预热逻辑可以根据实际需要实现
         // 例如：预加载常用的API密钥验证结果
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_complete", "Auth cache warm-up completed");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_complete",
+            "Auth cache warm-up completed"
+        );
         Ok(())
     }
 
@@ -248,7 +268,13 @@ impl UnifiedAuthCacheManager {
     /// 清理过期缓存
     pub async fn cleanup_expired(&self) -> Result<u64> {
         // CacheManager基于TTL自动清理
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "cleanup_auto", "Auth cache cleanup - handled automatically by TTL");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "cleanup_auto",
+            "Auth cache cleanup - handled automatically by TTL"
+        );
         Ok(0)
     }
 }

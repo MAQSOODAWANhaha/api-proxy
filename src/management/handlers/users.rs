@@ -1,15 +1,18 @@
 //! # 用户管理处理器
 
-use crate::{lerror, linfo, logging::{LogComponent, LogStage}};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
+use crate::{
+    lerror, linfo,
+    logging::{LogComponent, LogStage},
+};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
 use bcrypt::{DEFAULT_COST, hash};
 use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
-use rand::{distributions::Alphanumeric, Rng};
-use sea_orm::{entity::*, query::*, DatabaseConnection};
+use rand::{Rng, distributions::Alphanumeric};
+use sea_orm::{DatabaseConnection, entity::*, query::*};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 // Removed unused serde_json imports
@@ -235,7 +238,13 @@ pub async fn list_users(
                 ));
             }
             Err(err) => {
-                lerror!("system", LogStage::Db, LogComponent::Database, "get_user_fail", &format!("获取用户信息失败: {}", err));
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::Database,
+                    "get_user_fail",
+                    &format!("获取用户信息失败: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
                     "获取用户信息失败: {}",
@@ -259,12 +268,21 @@ pub async fn list_users(
             LogStage::Authentication,
             LogComponent::Auth,
             "non_admin_access",
-            &format!("Non-admin user {} accessing only their own user info", user_id)
+            &format!(
+                "Non-admin user {} accessing only their own user info",
+                user_id
+            )
         );
         return response::paginated(vec![user_response], pagination);
     }
 
-    linfo!("system", LogStage::Authentication, LogComponent::Auth, "admin_access", &format!("Admin user {} accessing all users list", user_id));
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::Auth,
+        "admin_access",
+        &format!("Admin user {} accessing all users list", user_id)
+    );
     let page = query.page.unwrap_or(1).max(1);
     let limit = query.limit.unwrap_or(10).min(100);
     let offset = (page - 1) * limit;
@@ -342,7 +360,13 @@ pub async fn list_users(
     let users = match users_result {
         Ok(users) => users,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_users_fail", &format!("获取用户列表失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_users_fail",
+                &format!("获取用户列表失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户列表失败: {}", err));
         }
     };
@@ -351,7 +375,13 @@ pub async fn list_users(
     let total = match count_select.count(state.database.as_ref()).await {
         Ok(count) => count,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_user_count_fail", &format!("获取用户总数失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_count_fail",
+                &format!("获取用户总数失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户总数失败: {}", err));
         }
     };
@@ -433,7 +463,13 @@ pub async fn create_user(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "check_existing_user_fail", &format!("Failed to check existing user: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "check_existing_user_fail",
+                &format!("Failed to check existing user: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to check existing user: {}",
@@ -453,7 +489,13 @@ pub async fn create_user(
     let password_hash = match hash(&request.password, DEFAULT_COST) {
         Ok(hash) => hash,
         Err(err) => {
-            lerror!("system", LogStage::Internal, LogComponent::Auth, "hash_password_fail", &format!("Failed to hash password: {}", err));
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Auth,
+                "hash_password_fail",
+                &format!("Failed to hash password: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
                 "Failed to hash password: {}",
@@ -484,7 +526,13 @@ pub async fn create_user(
     let user_id = match insert_result {
         Ok(result) => result.last_insert_id,
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "create_user_fail", &format!("Failed to create user: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "create_user_fail",
+                &format!("Failed to create user: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to create user: {}",
@@ -500,14 +548,26 @@ pub async fn create_user(
     {
         Ok(Some(user)) => user,
         Ok(None) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "user_not_found_after_creation", "User not found after creation");
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "user_not_found_after_creation",
+                "User not found after creation"
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "User not found after creation"
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_created_user_fail", &format!("Failed to fetch created user: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_created_user_fail",
+                &format!("Failed to fetch created user: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch created user: {}",
@@ -551,7 +611,13 @@ pub async fn get_user(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_fail", &format!("Failed to fetch user {}: {}", user_id, err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_fail",
+                &format!("Failed to fetch user {}: {}", user_id, err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user: {}",
@@ -612,7 +678,13 @@ pub async fn get_user_profile(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_profile_fail", &format!("Failed to fetch user profile: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_profile_fail",
+                &format!("Failed to fetch user profile: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user profile: {}",
@@ -680,7 +752,13 @@ pub async fn update_user_profile(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_for_update_fail", &format!("Failed to fetch user for update: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_for_update_fail",
+                &format!("Failed to fetch user for update: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user for update: {}",
@@ -732,7 +810,13 @@ pub async fn update_user_profile(
             response::success_with_message(profile, "Profile updated successfully")
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "update_user_profile_fail", &format!("Failed to update user profile: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_user_profile_fail",
+                &format!("Failed to update user profile: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update user profile: {}",
@@ -772,7 +856,13 @@ pub async fn change_password(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "fetch_user_for_password_change_fail", &format!("Failed to fetch user for password change: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_user_for_password_change_fail",
+                &format!("Failed to fetch user for password change: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to fetch user for password change: {}",
@@ -791,7 +881,13 @@ pub async fn change_password(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Internal, LogComponent::Auth, "verify_password_fail", &format!("Failed to verify current password: {}", err));
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Auth,
+                "verify_password_fail",
+                &format!("Failed to verify current password: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
                 "Failed to verify current password: {}",
@@ -804,7 +900,13 @@ pub async fn change_password(
     let new_password_hash = match hash(&request.new_password, DEFAULT_COST) {
         Ok(hash) => hash,
         Err(err) => {
-            lerror!("system", LogStage::Internal, LogComponent::Auth, "hash_password_fail", &format!("Failed to hash new password: {}", err));
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Auth,
+                "hash_password_fail",
+                &format!("Failed to hash new password: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
                 "Failed to hash new password: {}",
@@ -821,7 +923,13 @@ pub async fn change_password(
     match active_model.update(state.database.as_ref()).await {
         Ok(_) => response::success_without_data("Password changed successfully"),
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "update_password_fail", &format!("Failed to update password: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_password_fail",
+                &format!("Failed to update password: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(
                 database,
                 "Failed to update password: {}",
@@ -887,7 +995,13 @@ pub async fn update_user(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_user_fail", &format!("获取用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_fail",
+                &format!("获取用户失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
@@ -942,7 +1056,13 @@ pub async fn update_user(
         let password_hash = match hash(&password, DEFAULT_COST) {
             Ok(hash) => hash,
             Err(err) => {
-                lerror!("system", LogStage::Internal, LogComponent::Auth, "hash_password_fail", &format!("密码加密失败: {}", err));
+                lerror!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Auth,
+                    "hash_password_fail",
+                    &format!("密码加密失败: {}", err)
+                );
                 return crate::manage_error!(crate::proxy_err!(internal, "密码加密失败: {}", err));
             }
         };
@@ -966,7 +1086,13 @@ pub async fn update_user(
             response::success_with_message(user_response, "用户更新成功")
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "update_user_fail", &format!("更新用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_user_fail",
+                &format!("更新用户失败: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(database, "更新用户失败: {}", err))
         }
     }
@@ -1004,7 +1130,13 @@ pub async fn delete_user(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_user_fail", &format!("获取用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_fail",
+                &format!("获取用户失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
@@ -1016,7 +1148,13 @@ pub async fn delete_user(
     {
         Ok(_) => response::success_without_data("用户删除成功"),
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "delete_user_fail", &format!("删除用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "delete_user_fail",
+                &format!("删除用户失败: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(database, "删除用户失败: {}", err))
         }
     }
@@ -1055,7 +1193,13 @@ pub async fn batch_delete_users(
             response::success_without_data(&format!("成功删除 {} 个用户", deleted_count))
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "batch_delete_users_fail", &format!("批量删除用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "batch_delete_users_fail",
+                &format!("批量删除用户失败: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(database, "批量删除用户失败: {}", err))
         }
     }
@@ -1086,7 +1230,13 @@ pub async fn toggle_user_status(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_user_fail", &format!("获取用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_fail",
+                &format!("获取用户失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
@@ -1104,7 +1254,13 @@ pub async fn toggle_user_status(
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "update_user_status_fail", &format!("更新用户状态失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "update_user_status_fail",
+                &format!("更新用户状态失败: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(database, "更新用户状态失败: {}", err))
         }
     }
@@ -1141,7 +1297,13 @@ pub async fn reset_user_password(
             ));
         }
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "get_user_fail", &format!("获取用户失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_fail",
+                &format!("获取用户失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
     };
@@ -1150,7 +1312,13 @@ pub async fn reset_user_password(
     let new_password_hash = match hash(&request.new_password, DEFAULT_COST) {
         Ok(hash) => hash,
         Err(err) => {
-            lerror!("system", LogStage::Internal, LogComponent::Auth, "hash_password_fail", &format!("密码加密失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Auth,
+                "hash_password_fail",
+                &format!("密码加密失败: {}", err)
+            );
             return crate::manage_error!(crate::proxy_err!(internal, "密码加密失败: {}", err));
         }
     };
@@ -1163,7 +1331,13 @@ pub async fn reset_user_password(
     match active_model.update(state.database.as_ref()).await {
         Ok(_) => response::success_without_data("密码重置成功"),
         Err(err) => {
-            lerror!("system", LogStage::Db, LogComponent::Database, "reset_password_fail", &format!("重置密码失败: {}", err));
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "reset_password_fail",
+                &format!("重置密码失败: {}", err)
+            );
             crate::manage_error!(crate::proxy_err!(database, "重置密码失败: {}", err))
         }
     }

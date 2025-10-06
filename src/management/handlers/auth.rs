@@ -9,7 +9,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use chrono::Utc;
 use entity::users::Entity as Users;
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 // remove unused Value
@@ -105,8 +105,7 @@ pub async fn login(
                 "token_validation_fail",
                 &format!(
                     "Generated access token failed validation for user {}: {}",
-                    request.username,
-                    err
+                    request.username, err
                 )
             );
             return crate::manage_error!(err);
@@ -263,7 +262,10 @@ pub async fn logout(
         LogStage::Authentication,
         LogComponent::Auth,
         "logout_success",
-        &format!("User {} logged out successfully", token_data.claims.username)
+        &format!(
+            "User {} logged out successfully",
+            token_data.claims.username
+        )
     );
 
     response::success_without_data("Logout successful")

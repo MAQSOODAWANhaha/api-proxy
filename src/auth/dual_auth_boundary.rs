@@ -260,19 +260,37 @@ impl DualAuthBoundaryController {
     pub fn reset_violation_count(&self) {
         self.violation_count
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        ldebug!("system", LogStage::Internal, LogComponent::Auth, "boundary_counter_reset", "Authentication boundary violation counter reset");
+        ldebug!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Auth,
+            "boundary_counter_reset",
+            "Authentication boundary violation counter reset"
+        );
     }
 
     /// 启用边界检查
     pub fn enable(&mut self) {
         self.enabled = true;
-        ldebug!("system", LogStage::Configuration, LogComponent::Auth, "boundary_check_enabled", "Authentication boundary checking enabled");
+        ldebug!(
+            "system",
+            LogStage::Configuration,
+            LogComponent::Auth,
+            "boundary_check_enabled",
+            "Authentication boundary checking enabled"
+        );
     }
 
     /// 禁用边界检查
     pub fn disable(&mut self) {
         self.enabled = false;
-        lwarn!("system", LogStage::Configuration, LogComponent::Auth, "boundary_check_disabled", "Authentication boundary checking disabled - this should only be used for testing");
+        lwarn!(
+            "system",
+            LogStage::Configuration,
+            LogComponent::Auth,
+            "boundary_check_disabled",
+            "Authentication boundary checking disabled - this should only be used for testing"
+        );
     }
 
     /// 检查是否启用
@@ -294,11 +312,23 @@ impl DualAuthBoundaryController {
         match port_type {
             PortType::Management => {
                 self.management_rule = rule;
-                ldebug!("system", LogStage::Configuration, LogComponent::Auth, "mgmt_rule_updated", "Updated management port authentication rule");
+                ldebug!(
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Auth,
+                    "mgmt_rule_updated",
+                    "Updated management port authentication rule"
+                );
             }
             PortType::Proxy => {
                 self.proxy_rule = rule;
-                ldebug!("system", LogStage::Configuration, LogComponent::Auth, "proxy_rule_updated", "Updated proxy port authentication rule");
+                ldebug!(
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Auth,
+                    "proxy_rule_updated",
+                    "Updated proxy port authentication rule"
+                );
             }
         }
     }

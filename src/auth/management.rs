@@ -45,7 +45,13 @@ pub fn extract_user_id_from_headers(
     let auth_header = match AuthUtils::extract_authorization_header(headers) {
         Some(header) => header,
         None => {
-            lwarn!("", LogStage::Authentication, LogComponent::Auth, "missing_auth_header", "Missing Authorization header");
+            lwarn!(
+                "",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "missing_auth_header",
+                "Missing Authorization header"
+            );
             return Err(crate::manage_error!(crate::proxy_err!(
                 auth,
                 "Authorization header required"
@@ -57,7 +63,13 @@ pub fn extract_user_id_from_headers(
     let token = match AuthUtils::extract_bearer_token(&auth_header) {
         Some(token) => token,
         None => {
-            lwarn!("", LogStage::Authentication, LogComponent::Auth, "invalid_auth_header", "Invalid Authorization header format - not a Bearer token");
+            lwarn!(
+                "",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "invalid_auth_header",
+                "Invalid Authorization header format - not a Bearer token"
+            );
             return Err(crate::manage_error!(crate::proxy_err!(
                 business,
                 "Invalid Authorization header format - Bearer token required"
@@ -69,7 +81,13 @@ pub fn extract_user_id_from_headers(
     let claims = match jwt_manager.validate_token(&token) {
         Ok(claims) => claims,
         Err(err) => {
-            lwarn!("", LogStage::Authentication, LogComponent::Auth, "jwt_validation_failed", &format!("JWT token validation failed: {}", err));
+            lwarn!(
+                "",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "jwt_validation_failed",
+                &format!("JWT token validation failed: {}", err)
+            );
             return Err(crate::manage_error!(crate::proxy_err!(
                 auth,
                 "Invalid or expired token"
@@ -79,7 +97,13 @@ pub fn extract_user_id_from_headers(
 
     // 从claims中安全地获取user_id
     claims.user_id().map_err(|err| {
-        lerror!("", LogStage::Authentication, LogComponent::Auth, "jwt_parse_user_id_failed", &format!("Failed to parse user ID from JWT token: {}", err));
+        lerror!(
+            "",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "jwt_parse_user_id_failed",
+            &format!("Failed to parse user ID from JWT token: {}", err)
+        );
         crate::manage_error!(crate::proxy_err!(internal, "Invalid user ID in token"))
     })
 }

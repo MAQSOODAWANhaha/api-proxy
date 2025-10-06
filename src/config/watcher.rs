@@ -2,11 +2,15 @@
 //!
 //! 实现配置文件的热重载功能
 
-use crate::{ldebug, lerror, linfo, lwarn, logging::{LogComponent, LogStage}};
+use crate::{
+    ldebug, lerror, linfo,
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use super::AppConfig;
 
@@ -56,11 +60,23 @@ impl ConfigWatcher {
                     if let Err(e) =
                         Self::handle_file_event(&event, &config_clone, &sender_clone, &path_clone)
                     {
-                        lerror!("system", LogStage::Configuration, LogComponent::Config, "handle_file_event_fail", &format!("处理文件变更事件失败: {}", e));
+                        lerror!(
+                            "system",
+                            LogStage::Configuration,
+                            LogComponent::Config,
+                            "handle_file_event_fail",
+                            &format!("处理文件变更事件失败: {}", e)
+                        );
                     }
                 }
                 Err(e) => {
-                    lerror!("system", LogStage::Configuration, LogComponent::Config, "watcher_error", &format!("文件监控错误: {}", e));
+                    lerror!(
+                        "system",
+                        LogStage::Configuration,
+                        LogComponent::Config,
+                        "watcher_error",
+                        &format!("文件监控错误: {}", e)
+                    );
                 }
             })
             .map_err(|e| crate::error::ProxyError::config_with_source("创建文件监控器失败", e))?;
@@ -109,12 +125,12 @@ impl ConfigWatcher {
 
                 let _ = self.event_sender.send(ConfigEvent::Reloaded(new_config));
                 linfo!(
-                                    "system",
-                                    LogStage::Configuration,
-                                    LogComponent::Config,
-                                    "config_reloaded",
-                                    "配置文件已重新加载"
-                                );
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Config,
+                    "config_reloaded",
+                    "配置文件已重新加载"
+                );
                 Ok(())
             }
             Err(e) => {
@@ -146,13 +162,13 @@ impl ConfigWatcher {
 
         match &event.kind {
             EventKind::Modify(_) | EventKind::Create(_) => {
-ldebug!(
-                                "system",
-                                LogStage::Configuration,
-                                LogComponent::Config,
-                                "config_event",
-                                &format!("配置文件事件: {:?}", event.paths)
-                            );
+                ldebug!(
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Config,
+                    "config_event",
+                    &format!("配置文件事件: {:?}", event.paths)
+                );
 
                 // 等待一小段时间，确保文件写入完成
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -169,23 +185,35 @@ ldebug!(
                         });
 
                         let _ = sender.send(ConfigEvent::Reloaded(new_config));
-                        linfo!("system", LogStage::Configuration, LogComponent::Config, "config_reloaded", "配置文件热重载成功");
+                        linfo!(
+                            "system",
+                            LogStage::Configuration,
+                            LogComponent::Config,
+                            "config_reloaded",
+                            "配置文件热重载成功"
+                        );
                     }
                     Err(e) => {
                         let error_msg = format!("配置文件重载失败: {}", e);
-                        lwarn!("system", LogStage::Configuration, LogComponent::Config, "config_reload_fail", &error_msg);
+                        lwarn!(
+                            "system",
+                            LogStage::Configuration,
+                            LogComponent::Config,
+                            "config_reload_fail",
+                            &error_msg
+                        );
                         let _ = sender.send(ConfigEvent::ReloadFailed(error_msg));
                     }
                 }
             }
             EventKind::Remove(_) => {
                 lwarn!(
-                                    "system",
-                                    LogStage::Configuration,
-                                    LogComponent::Config,
-                                    "config_deleted",
-                                    "配置文件被删除"
-                                );
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Config,
+                    "config_deleted",
+                    "配置文件被删除"
+                );
                 let _ = sender.send(ConfigEvent::FileDeleted);
             }
             _ => {

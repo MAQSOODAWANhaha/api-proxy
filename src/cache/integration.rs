@@ -2,7 +2,11 @@
 //!
 //! 提供高级缓存操作和策略集成
 
-use crate::{ldebug, lerror, linfo, lwarn, logging::{LogComponent, LogStage}};
+use crate::{
+    ldebug, lerror, linfo,
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -101,7 +105,13 @@ impl CacheFacade {
 
         // 验证值是否符合策略要求
         if !strategy.validate_value(&json_value) {
-            lwarn!("system", LogStage::Cache, LogComponent::Cache, "invalid_value", &format!("缓存值不符合策略要求: key={}", key));
+            lwarn!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "invalid_value",
+                &format!("缓存值不符合策略要求: key={}", key)
+            );
             return Ok(());
         }
 
@@ -116,7 +126,13 @@ impl CacheFacade {
                 .await?;
         }
 
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "set_with_strategy", &format!("使用策略设置缓存成功: key={}, ttl={:?}", key, strategy.ttl));
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "set_with_strategy",
+            &format!("使用策略设置缓存成功: key={}, ttl={:?}", key, strategy.ttl)
+        );
         Ok(())
     }
 
@@ -172,17 +188,32 @@ impl CacheFacade {
             LogStage::Cache,
             LogComponent::Cache,
             "clear_user_cache_complete",
-            &format!("清空用户缓存完成: user_id={}, deleted={}", user_id, total_deleted)
+            &format!(
+                "清空用户缓存完成: user_id={}, deleted={}",
+                user_id, total_deleted
+            )
         );
         Ok(total_deleted)
     }
 
     /// 预热关键缓存
     pub async fn warmup_cache(&self) -> Result<()> {
-        linfo!("system", LogStage::Cache, LogComponent::Cache, "warmup_start", "开始预热缓存...");
+        linfo!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_start",
+            "开始预热缓存..."
+        );
 
         let Some(db) = &self.database else {
-            lwarn!("system", LogStage::Cache, LogComponent::Cache, "warmup_no_db", "数据库连接不可用，跳过缓存预热");
+            lwarn!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_no_db",
+                "数据库连接不可用，跳过缓存预热"
+            );
             return Ok(());
         };
 
@@ -191,37 +222,85 @@ impl CacheFacade {
         // 预热提供商配置缓存
         match self.warmup_provider_configs(db).await {
             Ok(count) => {
-                linfo!("system", LogStage::Cache, LogComponent::Cache, "warmup_provider_configs_ok", &format!("成功预热 {} 个提供商配置到缓存", count));
+                linfo!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "warmup_provider_configs_ok",
+                    &format!("成功预热 {} 个提供商配置到缓存", count)
+                );
                 warmup_count += count;
             }
-            Err(e) => lerror!("system", LogStage::Cache, LogComponent::Cache, "warmup_provider_configs_fail", &format!("预热提供商配置失败: {}", e)),
+            Err(e) => lerror!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_provider_configs_fail",
+                &format!("预热提供商配置失败: {}", e)
+            ),
         }
 
         // 预热活跃用户的API密钥配置
         match self.warmup_active_user_configs(db).await {
             Ok(count) => {
-                linfo!("system", LogStage::Cache, LogComponent::Cache, "warmup_user_configs_ok", &format!("成功预热 {} 个用户API配置到缓存", count));
+                linfo!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "warmup_user_configs_ok",
+                    &format!("成功预热 {} 个用户API配置到缓存", count)
+                );
                 warmup_count += count;
             }
-            Err(e) => lerror!("system", LogStage::Cache, LogComponent::Cache, "warmup_user_configs_fail", &format!("预热用户API配置失败: {}", e)),
+            Err(e) => lerror!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_user_configs_fail",
+                &format!("预热用户API配置失败: {}", e)
+            ),
         }
 
         // 预热系统配置
         match self.warmup_system_configs(db).await {
             Ok(count) => {
-                linfo!("system", LogStage::Cache, LogComponent::Cache, "warmup_system_configs_ok", &format!("成功预热 {} 个系统配置到缓存", count));
+                linfo!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "warmup_system_configs_ok",
+                    &format!("成功预热 {} 个系统配置到缓存", count)
+                );
                 warmup_count += count;
             }
-            Err(e) => lerror!("system", LogStage::Cache, LogComponent::Cache, "warmup_system_configs_fail", &format!("预热系统配置失败: {}", e)),
+            Err(e) => lerror!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_system_configs_fail",
+                &format!("预热系统配置失败: {}", e)
+            ),
         }
 
-        linfo!("system", LogStage::Cache, LogComponent::Cache, "warmup_complete", &format!("缓存预热完成，共预热 {} 个配置项", warmup_count));
+        linfo!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_complete",
+            &format!("缓存预热完成，共预热 {} 个配置项", warmup_count)
+        );
         Ok(())
     }
 
     /// 预热提供商配置
     async fn warmup_provider_configs(&self, db: &DatabaseConnection) -> Result<usize> {
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_provider_configs", "开始预热提供商配置...");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_provider_configs",
+            "开始预热提供商配置..."
+        );
 
         // 查询所有活跃的提供商类型
         let providers = ProviderTypes::find()
@@ -258,13 +337,22 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_provider_fail",
-                    &format!("缓存提供商配置失败: provider={}, error={}", provider.name, e)
+                    &format!(
+                        "缓存提供商配置失败: provider={}, error={}",
+                        provider.name, e
+                    )
                 );
                 continue;
             }
 
             cached_count += 1;
-            ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_provider_config", &format!("已缓存提供商配置: {}", provider.name));
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_provider_config",
+                &format!("已缓存提供商配置: {}", provider.name)
+            );
         }
 
         Ok(cached_count)
@@ -272,7 +360,13 @@ impl CacheFacade {
 
     /// 预热活跃用户的API配置
     async fn warmup_active_user_configs(&self, db: &DatabaseConnection) -> Result<usize> {
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_user_configs", "开始预热用户API配置...");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_user_configs",
+            "开始预热用户API配置..."
+        );
 
         // 查询最近活跃的用户API配置（最近30天有使用记录的）
         let _thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
@@ -319,7 +413,10 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_user_api_fail",
-                    &format!("缓存用户API配置失败: user_id={}, api_id={}, error={}", user_api.user_id, user_api.id, e)
+                    &format!(
+                        "缓存用户API配置失败: user_id={}, api_id={}, error={}",
+                        user_api.user_id, user_api.id, e
+                    )
                 );
                 continue;
             }
@@ -330,7 +427,10 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_user_config",
-                &format!("已缓存用户API配置: user_id={}, api_id={}", user_api.user_id, user_api.id)
+                &format!(
+                    "已缓存用户API配置: user_id={}, api_id={}",
+                    user_api.user_id, user_api.id
+                )
             );
         }
 
@@ -339,7 +439,13 @@ impl CacheFacade {
 
     /// 预热系统配置
     async fn warmup_system_configs(&self, _db: &DatabaseConnection) -> Result<usize> {
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_system_configs", "开始预热系统配置...");
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "warmup_system_configs",
+            "开始预热系统配置..."
+        );
 
         let mut cached_count = 0;
 
@@ -375,12 +481,24 @@ impl CacheFacade {
             let config_key = super::keys::CacheKeyBuilder::config(config_name);
 
             if let Err(e) = self.set_with_strategy(&config_key, &config_value).await {
-                lwarn!("system", LogStage::Cache, LogComponent::Cache, "warmup_system_config_fail", &format!("缓存系统配置失败: config={}, error={}", config_name, e));
+                lwarn!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "warmup_system_config_fail",
+                    &format!("缓存系统配置失败: config={}, error={}", config_name, e)
+                );
                 continue;
             }
 
             cached_count += 1;
-            ldebug!("system", LogStage::Cache, LogComponent::Cache, "warmup_system_config", &format!("已缓存系统配置: {}", config_name));
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "warmup_system_config",
+                &format!("已缓存系统配置: {}", config_name)
+            );
         }
 
         Ok(cached_count)
@@ -418,12 +536,24 @@ impl<'a> CacheDecorator<'a> {
     {
         // 先尝试从缓存获取
         if let Some(cached_value) = self.manager.get::<T>(&self.key).await? {
-            ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_hit", &format!("缓存命中: key={}", self.key));
+            ldebug!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "cache_hit",
+                &format!("缓存命中: key={}", self.key)
+            );
             return Ok(cached_value);
         }
 
         // 缓存未命中，计算新值
-        ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_miss", &format!("缓存未命中，计算新值: key={}", self.key));
+        ldebug!(
+            "system",
+            LogStage::Cache,
+            LogComponent::Cache,
+            "cache_miss",
+            &format!("缓存未命中，计算新值: key={}", self.key)
+        );
         let computed_value = compute_fn().await?;
 
         // 将计算结果存入缓存
@@ -432,7 +562,13 @@ impl<'a> CacheDecorator<'a> {
             .set_with_strategy(&self.key, &computed_value)
             .await
         {
-            lwarn!("system", LogStage::Cache, LogComponent::Cache, "set_cache_fail", &format!("设置缓存失败: key={}, error={}", self.key, e));
+            lwarn!(
+                "system",
+                LogStage::Cache,
+                LogComponent::Cache,
+                "set_cache_fail",
+                &format!("设置缓存失败: key={}, error={}", self.key, e)
+            );
         }
 
         Ok(computed_value)

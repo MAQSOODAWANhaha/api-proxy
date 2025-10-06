@@ -2,7 +2,11 @@
 //!
 //! 负责检测和管理API密钥的可用性状态，通过真实API调用验证密钥健康度
 
-use crate::{ldebug, lerror, linfo, lwarn, logging::{LogComponent, LogStage}};
+use crate::{
+    ldebug, lerror, linfo,
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -828,7 +832,10 @@ impl ApiKeyHealthChecker {
             LogStage::Db,
             LogComponent::HealthChecker,
             "load_status_from_db",
-            &format!("Loaded {} API keys health status from database", health_map.len())
+            &format!(
+                "Loaded {} API keys health status from database",
+                health_map.len()
+            )
         );
         Ok(())
     }

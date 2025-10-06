@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::cache_strategy::{hash_token, AuthCacheKey, UnifiedAuthCacheManager};
+use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
 use crate::auth::permissions::{Permission, PermissionChecker, Role};
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
@@ -148,7 +148,13 @@ impl ApiKeyManager {
         };
         // Use a reasonable TTL for API key info, e.g., 5 minutes
         if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
-            lwarn!("system", LogStage::Cache, LogComponent::ApiKey, "cache_fail", &format!("Failed to cache API key info: {}", e));
+            lwarn!(
+                "system",
+                LogStage::Cache,
+                LogComponent::ApiKey,
+                "cache_fail",
+                &format!("Failed to cache API key info: {}", e)
+            );
         }
 
         Ok(ApiKeyValidationResult {
@@ -355,7 +361,11 @@ impl ApiKeyManager {
             LogStage::Internal,
             LogComponent::ApiKey,
             "usage_recorded",
-            &format!("Recorded usage for API key: {}, tokens: {}", self.sanitize_api_key(api_key), tokens_used)
+            &format!(
+                "Recorded usage for API key: {}, tokens: {}",
+                self.sanitize_api_key(api_key),
+                tokens_used
+            )
         );
 
         Ok(())
@@ -465,7 +475,13 @@ impl ApiKeyManager {
                 permissions,
             };
             if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
-                lwarn!("system", LogStage::Cache, LogComponent::ApiKey, "cache_fail", &format!("Failed to cache API key info: {}", e));
+                lwarn!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::ApiKey,
+                    "cache_fail",
+                    &format!("Failed to cache API key info: {}", e)
+                );
             }
 
             Ok(Some(api_key_info))

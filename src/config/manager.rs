@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use super::{AppConfig, ConfigCrypto, ConfigEvent, ConfigWatcher, SensitiveFields};
 
@@ -84,17 +84,41 @@ impl ConfigManager {
                                         &mut final_config,
                                         &env_overrides_clone,
                                     ) {
-                                        lwarn!("system", LogStage::Configuration, LogComponent::Config, "env_override_failed", &format!("应用环境变量覆盖失败: {}", e));
+                                        lwarn!(
+                                            "system",
+                                            LogStage::Configuration,
+                                            LogComponent::Config,
+                                            "env_override_failed",
+                                            &format!("应用环境变量覆盖失败: {}", e)
+                                        );
                                     } else {
                                         *config_clone.write().await = final_config;
-                                        linfo!("system", LogStage::Configuration, LogComponent::Config, "reload_complete", "配置热重载并应用环境变量覆盖完成");
+                                        linfo!(
+                                            "system",
+                                            LogStage::Configuration,
+                                            LogComponent::Config,
+                                            "reload_complete",
+                                            "配置热重载并应用环境变量覆盖完成"
+                                        );
                                     }
                                 }
                                 ConfigEvent::ReloadFailed(error) => {
-                                    lwarn!("system", LogStage::Configuration, LogComponent::Config, "reload_failed", &format!("配置重载失败: {}", error));
+                                    lwarn!(
+                                        "system",
+                                        LogStage::Configuration,
+                                        LogComponent::Config,
+                                        "reload_failed",
+                                        &format!("配置重载失败: {}", error)
+                                    );
                                 }
                                 ConfigEvent::FileDeleted => {
-                                    lwarn!("system", LogStage::Configuration, LogComponent::Config, "file_deleted", "配置文件被删除");
+                                    lwarn!(
+                                        "system",
+                                        LogStage::Configuration,
+                                        LogComponent::Config,
+                                        "file_deleted",
+                                        "配置文件被删除"
+                                    );
                                 }
                             }
                         }
@@ -103,7 +127,13 @@ impl ConfigManager {
                     Some(watcher)
                 }
                 Err(e) => {
-                    lwarn!("system", LogStage::Startup, LogComponent::Config, "watcher_start_failed", &format!("无法启动配置文件监控: {}, 将禁用热重载功能", e));
+                    lwarn!(
+                        "system",
+                        LogStage::Startup,
+                        LogComponent::Config,
+                        "watcher_start_failed",
+                        &format!("无法启动配置文件监控: {}, 将禁用热重载功能", e)
+                    );
                     None
                 }
             }
@@ -111,16 +141,41 @@ impl ConfigManager {
             None
         };
 
-        linfo!("system", LogStage::Startup, LogComponent::Config, "init_complete", "配置管理器初始化完成");
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Config,
+            "init_complete",
+            "配置管理器初始化完成"
+        );
         linfo!(
             "system",
             LogStage::Startup,
             LogComponent::Config,
             "init_status_reload",
-            &format!("- 热重载: {}", if watcher.is_some() { "启用" } else { "禁用" })
+            &format!(
+                "- 热重载: {}",
+                if watcher.is_some() {
+                    "启用"
+                } else {
+                    "禁用"
+                }
+            )
         );
-        linfo!("system", LogStage::Startup, LogComponent::Config, "init_status_crypto", &format!("- 加密: {}", if crypto.is_some() { "启用" } else { "禁用" }));
-        linfo!("system", LogStage::Startup, LogComponent::Config, "init_status_env", &format!("- 环境变量覆盖: {} 个", env_overrides.len()));
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Config,
+            "init_status_crypto",
+            &format!("- 加密: {}", if crypto.is_some() { "启用" } else { "禁用" })
+        );
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::Config,
+            "init_status_env",
+            &format!("- 环境变量覆盖: {} 个", env_overrides.len())
+        );
 
         Ok(Self {
             watcher,
@@ -145,7 +200,13 @@ impl ConfigManager {
     pub async fn reload(&self) -> crate::error::Result<()> {
         if let Some(watcher) = &self.watcher {
             watcher.reload().await?;
-            linfo!("system", LogStage::Configuration, LogComponent::Config, "manual_reload_ok", "手动重载配置成功");
+            linfo!(
+                "system",
+                LogStage::Configuration,
+                LogComponent::Config,
+                "manual_reload_ok",
+                "手动重载配置成功"
+            );
         } else {
             return Err(crate::error::ProxyError::config("配置热重载功能未启用"));
         }
@@ -221,7 +282,13 @@ impl ConfigManager {
             }
         }
 
-        ldebug!("system", LogStage::Configuration, LogComponent::Config, "env_override_scan", &format!("发现 {} 个环境变量覆盖", overrides.len()));
+        ldebug!(
+            "system",
+            LogStage::Configuration,
+            LogComponent::Config,
+            "env_override_scan",
+            &format!("发现 {} 个环境变量覆盖", overrides.len())
+        );
         overrides
     }
 
@@ -236,13 +303,16 @@ impl ConfigManager {
                 LogStage::Configuration,
                 LogComponent::Config,
                 "apply_env_override",
-                &format!("应用环境变量覆盖: {} = {}",
-                path,
-                if path.contains("password") || path.contains("key") || path.contains("secret") {
-                    "***"
-                } else {
-                    value
-                })
+                &format!(
+                    "应用环境变量覆盖: {} = {}",
+                    path,
+                    if path.contains("password") || path.contains("key") || path.contains("secret")
+                    {
+                        "***"
+                    } else {
+                        value
+                    }
+                )
             );
 
             Self::apply_override_to_config(config, path, value)?;
@@ -304,7 +374,13 @@ impl ConfigManager {
             }
 
             _ => {
-                lwarn!("system", LogStage::Configuration, LogComponent::Config, "unknown_env_override", &format!("未知的配置路径，忽略环境变量覆盖: {}", path));
+                lwarn!(
+                    "system",
+                    LogStage::Configuration,
+                    LogComponent::Config,
+                    "unknown_env_override",
+                    &format!("未知的配置路径，忽略环境变量覆盖: {}", path)
+                );
             }
         }
 

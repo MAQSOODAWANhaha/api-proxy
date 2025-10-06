@@ -6,7 +6,7 @@
 use crate::auth::oauth_client::OAuthError;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lwarn};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -88,7 +88,13 @@ impl JWTParser {
             );
             Ok(Some(openai_auth))
         } else {
-            lwarn!("system", LogStage::Authentication, LogComponent::OAuth, "openai_jwt_missing_auth", "JWT 中未找到 OpenAI 认证信息");
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "openai_jwt_missing_auth",
+                "JWT 中未找到 OpenAI 认证信息"
+            );
             Ok(None)
         }
     }

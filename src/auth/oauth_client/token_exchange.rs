@@ -96,7 +96,10 @@ impl TokenExchangeClient {
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "auth_code_fragment",
-                &format!("Authorization code contains fragment, using code part: {} -> {}", authorization_code, parts[0])
+                &format!(
+                    "Authorization code contains fragment, using code part: {} -> {}",
+                    authorization_code, parts[0]
+                )
             );
             parts[0].to_string()
         } else {
@@ -223,7 +226,10 @@ impl TokenExchangeClient {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "revocation_unsupported",
-                    &format!("Provider {} does not support token revocation", base_provider)
+                    &format!(
+                        "Provider {} does not support token revocation",
+                        base_provider
+                    )
                 );
                 return Ok(());
             }
@@ -327,7 +333,10 @@ impl TokenExchangeClient {
                 LogStage::ExternalApi,
                 LogComponent::OAuth,
                 "claude_token_exchange",
-                &format!("🌟 发送Claude token exchange请求: url={}, params={:?}", token_url, form_params)
+                &format!(
+                    "🌟 发送Claude token exchange请求: url={}, params={:?}",
+                    token_url, form_params
+                )
             );
 
             self.http_client
@@ -362,7 +371,10 @@ impl TokenExchangeClient {
                 LogStage::ExternalApi,
                 LogComponent::OAuth,
                 "token_exchange_error",
-                &format!("🌟 Token exchange error response: status={}, body={}", status, error_text)
+                &format!(
+                    "🌟 Token exchange error response: status={}, body={}",
+                    status, error_text
+                )
             );
 
             // 尝试解析错误响应
@@ -391,7 +403,10 @@ impl TokenExchangeClient {
             LogStage::ExternalApi,
             LogComponent::OAuth,
             "token_exchange_complete",
-            &format!("🌟 Token exchange complete: status={}, body={}", status, data)
+            &format!(
+                "🌟 Token exchange complete: status={}, body={}",
+                status, data
+            )
         );
 
         // 解析为我们定义的TokenResponse结构体

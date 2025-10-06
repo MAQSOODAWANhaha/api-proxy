@@ -61,7 +61,8 @@ hex = "0.4"
 sha2 = "0.10"
 md5 = "0.7"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-brotli-decompressor = "4"
+brotli-decompressor = "5"
+dashmap = "6"
 
 # 核心依赖 - Pingora 和 Web 框架（使用最新版本）
 pingora-core = {version = "0.6.0",features = ["openssl"]}

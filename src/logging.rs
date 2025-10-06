@@ -658,7 +658,10 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogStage::Startup,
             LogComponent::Main,
             "log_init",
-            &format!("🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {}", actual_filter)
+            &format!(
+                "🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {}",
+                actual_filter
+            )
         );
     } else {
         linfo!(
@@ -666,7 +669,10 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogStage::Startup,
             LogComponent::Main,
             "log_init",
-            &format!("📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {}", actual_filter)
+            &format!(
+                "📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {}",
+                actual_filter
+            )
         );
     }
 
@@ -712,19 +718,37 @@ impl LogFormatValidator {
     ) -> bool {
         // 检查 request_id 非空
         if request_id.is_empty() {
-            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: request_id 不能为空");
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Config,
+                "log_validation_fail",
+                "日志格式验证失败: request_id 不能为空"
+            );
             return false;
         }
 
         // 检查 operation 非空
         if operation.is_empty() {
-            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: operation 不能为空");
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Config,
+                "log_validation_fail",
+                "日志格式验证失败: operation 不能为空"
+            );
             return false;
         }
 
         // 检查 description 非空
         if description.is_empty() {
-            lerror!("system", LogStage::Internal, LogComponent::Config, "log_validation_fail", "日志格式验证失败: description 不能为空");
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Config,
+                "log_validation_fail",
+                "日志格式验证失败: description 不能为空"
+            );
             return false;
         }
 
@@ -786,7 +810,10 @@ impl LogFormatValidator {
                 LogStage::Internal,
                 LogComponent::Config,
                 "log_validation_fail",
-                &format!("日志格式验证失败，跳过记录: request_id={}, operation={}", request_id, operation)
+                &format!(
+                    "日志格式验证失败，跳过记录: request_id={}, operation={}",
+                    request_id, operation
+                )
             );
         }
     }

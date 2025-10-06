@@ -2,9 +2,13 @@
 //!
 //! 专注于从用户的多个API密钥中选择合适的密钥进行请求
 
-use crate::{ldebug, logging::{LogComponent, LogStage}};
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
+use crate::{
+    ldebug,
+    logging::{LogComponent, LogStage},
+};
+use dashmap::DashMap;
 use entity::user_provider_keys;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,8 +24,8 @@ pub struct SelectionContext {
     pub user_service_api_id: i32,
     /// 提供商类型ID
     pub provider_type_id: i32,
-    /// 额外提示信息
-    pub hints: std::collections::HashMap<String, String>,
+    /// 路由分组（通常为请求路径）
+    pub route_group: String,
 }
 
 impl SelectionContext {
@@ -30,13 +34,14 @@ impl SelectionContext {
         user_id: i32,
         user_service_api_id: i32,
         provider_type_id: i32,
+        route_group: String,
     ) -> Self {
         Self {
             request_id,
             user_id,
             user_service_api_id,
             provider_type_id,
-            hints: std::collections::HashMap::new(),
+            route_group,
         }
     }
 }
@@ -92,13 +97,13 @@ pub trait ApiKeySelector: Send + Sync {
 
 /// 轮询API密钥选择器
 pub struct RoundRobinApiKeySelector {
-    counter: AtomicUsize,
+    counters: DashMap<(i32, String), Arc<AtomicUsize>>,
 }
 
 impl RoundRobinApiKeySelector {
     pub fn new() -> Self {
         Self {
-            counter: AtomicUsize::new(0),
+            counters: DashMap::new(),
         }
     }
 }
@@ -132,8 +137,14 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             ));
         }
 
-        // 轮询选择
-        let counter = self.counter.fetch_add(1, Ordering::SeqCst);
+        // 轮询选择（按路由分组维护计数器）
+        let key = (context.user_service_api_id, context.route_group.clone());
+        let counter_arc = self
+            .counters
+            .entry(key)
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+            .clone();
+        let counter = counter_arc.fetch_add(1, Ordering::SeqCst);
         let selected_relative_index = counter % active_keys.len();
         let selected_key = active_keys[selected_relative_index];
 
@@ -144,7 +155,8 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             .unwrap();
 
         let reason = format!(
-            "Round robin selection: counter={}, active_keys={}, selected_key_id={}",
+            "Round robin selection: group='{}', counter={}, active_keys={}, selected_key_id={}",
+            context.route_group,
             counter,
             active_keys.len(),
             selected_key.id
@@ -157,6 +169,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             "select_key",
             "Selected API key using round robin strategy",
             selected_key_id = selected_key.id,
+            route_group = context.route_group.as_str(),
             reason = %reason
         );
 
@@ -173,7 +186,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
     }
 
     async fn reset(&self) {
-        self.counter.store(0, Ordering::SeqCst);
+        self.counters.clear();
     }
 }
 
@@ -358,8 +371,8 @@ impl ApiKeySelector for WeightedApiKeySelector {
             let (_, selected_key) = active_keys[selected_index];
 
             let reason = format!(
-                "Weighted selection fallback to round robin: total_weight=0, key_id={}",
-                selected_key.id
+                "Weighted selection fallback to round robin: group='{}', total_weight=0, key_id={}",
+                context.route_group, selected_key.id
             );
 
             ldebug!(
@@ -369,6 +382,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
                 "select_key",
                 "Selected API key using weighted strategy (fallback)",
                 selected_key_id = selected_key.id,
+                route_group = context.route_group.as_str(),
                 reason = %reason
             );
 
@@ -402,7 +416,8 @@ impl ApiKeySelector for WeightedApiKeySelector {
         }
 
         let reason = format!(
-            "Weighted selection: random_value={}, total_weight={}, key_weight={}, key_id={}",
+            "Weighted selection: group='{}', random_value={}, total_weight={}, key_weight={}, key_id={}",
+            context.route_group,
             random_value,
             total_weight,
             selected_key.weight.unwrap_or(1),
@@ -416,6 +431,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
             "select_key",
             "Selected API key using weighted strategy",
             selected_key_id = selected_key.id,
+            route_group = context.route_group.as_str(),
             reason = %reason
         );
 

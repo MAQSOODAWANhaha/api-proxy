@@ -1,7 +1,10 @@
 //! # 数据库配置
 
 use crate::error::{ProxyError, Result};
-use crate::{linfo, logging::{LogComponent, LogStage}};
+use crate::{
+    linfo,
+    logging::{LogComponent, LogStage},
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -47,13 +50,25 @@ impl DatabaseConfig {
                         )
                     })?;
 
-                    linfo!("system", LogStage::Startup, LogComponent::Database, "create_db_dir", &format!("创建数据库目录: {}", parent.display()));
+                    linfo!(
+                        "system",
+                        LogStage::Startup,
+                        LogComponent::Database,
+                        "create_db_dir",
+                        &format!("创建数据库目录: {}", parent.display())
+                    );
                 }
             }
 
             // 如果数据库文件不存在，记录将要创建的信息
             if !db_path.exists() {
-                linfo!("system", LogStage::Startup, LogComponent::Database, "create_db_file_info", &format!("数据库文件将在首次连接时创建: {}", db_path.display()));
+                linfo!(
+                    "system",
+                    LogStage::Startup,
+                    LogComponent::Database,
+                    "create_db_file_info",
+                    &format!("数据库文件将在首次连接时创建: {}", db_path.display())
+                );
             }
         }
 

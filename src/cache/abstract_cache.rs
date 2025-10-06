@@ -2,11 +2,14 @@
 //!
 //! 提供统一的缓存接口，支持内存缓存和Redis缓存
 
-use crate::{linfo, logging::{LogComponent, LogStage}};
 use crate::config::{CacheConfig, CacheType};
 use crate::error::{ProxyError, Result};
+use crate::{
+    linfo,
+    logging::{LogComponent, LogStage},
+};
 use async_trait::async_trait;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -509,11 +512,23 @@ impl CacheManager {
     pub fn new(config: &CacheConfig, redis_url: &str) -> Result<Self> {
         let provider = match config.cache_type {
             CacheType::Memory => {
-                linfo!("system", LogStage::Cache, LogComponent::Cache, "use_memory_cache", &format!("使用内存缓存，最大条目数: {}", config.memory_max_entries));
+                linfo!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "use_memory_cache",
+                    &format!("使用内存缓存，最大条目数: {}", config.memory_max_entries)
+                );
                 CacheProviderType::Memory(MemoryCache::new(config.memory_max_entries))
             }
             CacheType::Redis => {
-                linfo!("system", LogStage::Cache, LogComponent::Cache, "use_redis_cache", &format!("使用Redis缓存，URL: {}", redis_url));
+                linfo!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Cache,
+                    "use_redis_cache",
+                    &format!("使用Redis缓存，URL: {}", redis_url)
+                );
                 CacheProviderType::Redis(RedisCache::new(redis_url)?)
             }
         };

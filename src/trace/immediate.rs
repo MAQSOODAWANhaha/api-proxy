@@ -38,7 +38,13 @@ pub struct ImmediateProxyTracer {
 impl ImmediateProxyTracer {
     /// 创建新的即时写入追踪器
     pub fn new(db: Arc<DatabaseConnection>, _config: ImmediateTracerConfig) -> Self {
-        linfo!("system", LogStage::Startup, LogComponent::TracingService, "init", "Initializing immediate proxy tracer with all requests traced");
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::TracingService,
+            "init",
+            "Initializing immediate proxy tracer with all requests traced"
+        );
 
         Self {
             config: ImmediateTracerConfig::default(),
@@ -420,7 +426,10 @@ impl ImmediateProxyTracer {
                 LogStage::BackgroundTask,
                 LogComponent::Tracing,
                 "cleanup_orphaned",
-                &format!("Cleaned up orphaned trace records: {} rows deleted", delete_result.rows_affected),
+                &format!(
+                    "Cleaned up orphaned trace records: {} rows deleted",
+                    delete_result.rows_affected
+                ),
                 hours_threshold = hours_threshold
             );
         }

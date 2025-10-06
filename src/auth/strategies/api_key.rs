@@ -4,9 +4,12 @@
 //! 集成共享的ApiKeyManager进行数据库验证
 
 use super::traits::{AuthStrategy, OAuthTokenResult};
-use crate::{lwarn, logging::{LogComponent, LogStage}};
 use crate::auth::{ApiKeyManager, types::AuthType};
 use crate::error::Result;
+use crate::{
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -166,7 +169,13 @@ impl AuthStrategy for ApiKeyStrategy {
             }
         } else {
             // 回退到基础格式验证（用于测试或没有管理器的场景）
-            lwarn!("system", LogStage::Authentication, LogComponent::ApiKey, "no_api_key_manager", "ApiKeyStrategy: 没有配置API密钥管理器，使用基础验证");
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::ApiKey,
+                "no_api_key_manager",
+                "ApiKeyStrategy: 没有配置API密钥管理器，使用基础验证"
+            );
 
             // 基础格式检查
             if !api_key.starts_with("sk-") || api_key.len() < 20 {

@@ -2,7 +2,10 @@
 //!
 //! 专门负责管理和执行各种认证策略
 
-use crate::{linfo, logging::{LogComponent, LogStage}};
+use crate::{
+    linfo,
+    logging::{LogComponent, LogStage},
+};
 use serde_json::Value;
 use std::collections::HashMap;
 
