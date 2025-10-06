@@ -607,7 +607,7 @@ impl ApiKeyPoolManager {
                         Err(_) => false, // 无法解析的状态都认为不健康
                     };
 
-                let final_result = is_healthy_by_checker && is_locally_healthy;
+                let final_result = is_healthy_by_checker || is_locally_healthy;
 
                 if !final_result {
                     ldebug!(

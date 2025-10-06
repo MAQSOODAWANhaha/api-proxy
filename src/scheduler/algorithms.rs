@@ -124,9 +124,13 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             ));
         }
 
+        let incoming_key_ids: Vec<i32> = keys.iter().map(|k| k.id).collect();
+
         // 过滤活跃的密钥
         let active_keys: Vec<&user_provider_keys::Model> =
             keys.iter().filter(|key| key.is_active).collect();
+        
+        let active_key_ids: Vec<i32> = active_keys.iter().map(|k| k.id).collect();
 
         if active_keys.is_empty() {
             return Err(ProxyError::upstream_not_available(
@@ -151,13 +155,16 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             &context.request_id,
             LogStage::Scheduling,
             LogComponent::Scheduler,
-            "round_robin_state",
-            "Round-robin internal state for selection",
+            "round_robin_diagnostic",
+            "[DIAGNOSTIC] Round-robin internal state",
             group_key = ?group_key,
+            incoming_keys = ?incoming_key_ids,
+            active_keys = ?active_key_ids,
+            active_keys_len = active_keys.len(),
             previous_counter = previous_counter,
             next_counter = counter + 1,
-            active_keys_len = active_keys.len(),
-            selected_index = selected_relative_index
+            selected_index_in_active = selected_relative_index,
+            selected_key_id = selected_key.id
         );
 
         // 找到在原始数组中的索引
