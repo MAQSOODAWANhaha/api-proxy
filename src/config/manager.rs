@@ -329,26 +329,41 @@ impl ConfigManager {
         let parts: Vec<&str> = path.split('.').collect();
 
         match parts.as_slice() {
-            ["server", "host"] => {
-                if let Some(ref mut server) = config.server {
-                    server.host = value.to_string();
-                }
-            }
-            ["server", "port"] => {
-                if let Some(ref mut server) = config.server {
-                    server.port = value.parse().map_err(|e| {
+            ["dual_port", "workers"] => {
+                if let Some(ref mut dual_port) = config.dual_port {
+                    dual_port.workers = value.parse().map_err(|e| {
                         crate::error::ProxyError::config_with_source(
-                            format!("无效的端口号: {}", value),
+                            format!("无效的工作线程数: {}", value),
                             e,
                         )
                     })?;
                 }
             }
-            ["server", "workers"] => {
-                if let Some(ref mut server) = config.server {
-                    server.workers = value.parse().map_err(|e| {
+            ["dual_port", "management", "http", "host"] => {
+                if let Some(ref mut dual_port) = config.dual_port {
+                    dual_port.management.http.host = value.to_string();
+                }
+            }
+            ["dual_port", "management", "http", "port"] => {
+                if let Some(ref mut dual_port) = config.dual_port {
+                    dual_port.management.http.port = value.parse().map_err(|e| {
                         crate::error::ProxyError::config_with_source(
-                            format!("无效的工作线程数: {}", value),
+                            format!("无效的管理端口: {}", value),
+                            e,
+                        )
+                    })?;
+                }
+            }
+            ["dual_port", "proxy", "http", "host"] => {
+                if let Some(ref mut dual_port) = config.dual_port {
+                    dual_port.proxy.http.host = value.to_string();
+                }
+            }
+            ["dual_port", "proxy", "http", "port"] => {
+                if let Some(ref mut dual_port) = config.dual_port {
+                    dual_port.proxy.http.port = value.parse().map_err(|e| {
+                        crate::error::ProxyError::config_with_source(
+                            format!("无效的代理端口: {}", value),
                             e,
                         )
                     })?;

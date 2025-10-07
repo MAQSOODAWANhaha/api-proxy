@@ -79,8 +79,8 @@ pub async fn run_dual_port_servers() -> Result<()> {
         "proxy_listen_info",
         &format!(
             "🔗 Proxy server will listen on {}:{}",
-            config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            config.server.as_ref().map_or(8080, |s| s.port)
+            config.dual_port.as_ref().map_or("0.0.0.0", |d| &d.proxy.http.host),
+            config.dual_port.as_ref().map_or(8080, |d| d.proxy.http.port)
         )
     );
 

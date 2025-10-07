@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 /// 应用主配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// 服务器配置（传统单端口模式）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server: Option<ServerConfig>,
-    /// 双端口服务器配置（推荐模式）
+    /// 双端口服务器配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dual_port: Option<DualPortServerConfig>,
     /// 数据库配置
@@ -20,21 +17,6 @@ pub struct AppConfig {
     pub cache: CacheConfig,
 }
 
-/// 传统服务器配置 - 简化版（仅保留兼容性，推荐使用dual_port）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerConfig {
-    /// HTTP监听地址
-    pub host: String,
-    /// HTTP监听端口
-    pub port: u16,
-    /// 工作线程数
-    #[serde(default = "default_workers")]
-    pub workers: usize,
-}
-
-fn default_workers() -> usize {
-    num_cpus::get()
-}
 
 // PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
 
@@ -114,20 +96,10 @@ impl Default for RedisConfig {
     }
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            host: "0.0.0.0".to_string(),
-            port: 8080,
-            workers: default_workers(),
-        }
-    }
-}
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server: None, // 优先使用双端口配置
             dual_port: Some(DualPortServerConfig::default()),
             database: super::DatabaseConfig::default(),
             redis: RedisConfig::default(),
@@ -137,21 +109,6 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// 获取有效的服务器配置（优先使用双端口配置）- 简化版
-    pub fn get_server_config(&self) -> ServerConfig {
-        if let Some(dual_port) = &self.dual_port {
-            // 从双端口配置转换为传统配置（兼容性）
-            ServerConfig {
-                host: dual_port.management.http.host.clone(),
-                port: dual_port.management.http.port,
-                workers: dual_port.workers,
-            }
-        } else if let Some(server) = &self.server {
-            server.clone()
-        } else {
-            ServerConfig::default()
-        }
-    }
 
     /// 获取双端口配置
     pub fn get_dual_port_config(&self) -> Option<&DualPortServerConfig> {
@@ -165,24 +122,16 @@ impl AppConfig {
 
     /// 获取管理端口
     pub fn get_management_port(&self) -> u16 {
-        if let Some(dual_port) = &self.dual_port {
-            dual_port.management.http.port
-        } else if let Some(server) = &self.server {
-            server.port
-        } else {
-            8080
-        }
+        self.dual_port
+            .as_ref()
+            .map_or(9090, |dual_port| dual_port.management.http.port)
     }
 
     /// 获取代理端口
     pub fn get_proxy_port(&self) -> u16 {
-        if let Some(dual_port) = &self.dual_port {
-            dual_port.proxy.http.port
-        } else if let Some(server) = &self.server {
-            server.port // 单端口模式下，代理和管理共用端口
-        } else {
-            8081
-        }
+        self.dual_port
+            .as_ref()
+            .map_or(8080, |dual_port| dual_port.proxy.http.port)
     }
 
     // 已删除：get_proxy_https_port() 方法
@@ -190,31 +139,13 @@ impl AppConfig {
 
     /// 验证配置的有效性
     pub fn validate(&self) -> Result<(), String> {
-        // 检查配置模式
-        if self.server.is_none() && self.dual_port.is_none() {
-            return Err("Either server or dual_port configuration must be provided".to_string());
-        }
-
-        if self.server.is_some() && self.dual_port.is_some() {
-            return Err(
-                "Cannot use both server and dual_port configurations simultaneously".to_string(),
-            );
-        }
+        // 验证双端口配置 - 必须提供
+        let dual_port = self.dual_port.as_ref().ok_or_else(|| {
+            "dual_port configuration must be provided (single-port mode is no longer supported)".to_string()
+        })?;
 
         // 验证双端口配置
-        if let Some(dual_port) = &self.dual_port {
-            dual_port.validate()?;
-        }
-
-        // 验证传统配置 - 简化版
-        if let Some(server) = &self.server {
-            if server.port == 0 {
-                return Err(format!("Invalid server port: {}", server.port));
-            }
-            if server.workers == 0 {
-                return Err("Worker count must be greater than 0".to_string());
-            }
-        }
+        dual_port.validate()?;
 
         // 验证数据库配置
         if self.database.url.is_empty() {
@@ -232,23 +163,17 @@ impl AppConfig {
         Ok(())
     }
 
-    /// 获取所有监听地址信息 - 简化版（仅HTTP）
+    /// 获取所有监听地址信息 - 双端口模式
     pub fn get_listener_info(&self) -> Vec<(String, String, String)> {
-        if let Some(dual_port) = &self.dual_port {
-            dual_port
-                .get_all_listeners()
-                .into_iter()
-                .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
-                .collect()
-        } else if let Some(server) = &self.server {
-            vec![(
-                "server-http".to_string(),
-                format!("{}:{}", server.host, server.port),
-                "HTTP".to_string(),
-            )]
-        } else {
-            Vec::new()
-        }
+        self.dual_port
+            .as_ref()
+            .map_or_else(Vec::new, |dual_port| {
+                dual_port
+                    .get_all_listeners()
+                    .into_iter()
+                    .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
+                    .collect()
+            })
     }
 
     /// 是否启用追踪

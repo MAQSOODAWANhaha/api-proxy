@@ -211,13 +211,14 @@ impl ProxyServerBuilder {
         })
     }
 
-    /// 获取服务器监听地址
+    /// 获取代理服务器监听地址
     pub fn get_server_address(&self) -> String {
-        format!(
-            "{}:{}",
-            self.config.server.as_ref().map_or("0.0.0.0", |s| &s.host),
-            self.config.server.as_ref().map_or(8080, |s| s.port)
-        )
+        let proxy_port = self.config.get_proxy_port();
+        let host = self.config
+            .dual_port
+            .as_ref()
+            .map_or("0.0.0.0", |d| &d.proxy.http.host);
+        format!("{}:{}", host, proxy_port)
     }
 }
 

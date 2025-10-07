@@ -47,7 +47,8 @@ struct RuntimeInfo {
 
 #[derive(Serialize)]
 struct ConfigurationInfo {
-    server_port: u16,
+    management_port: u16,
+    proxy_port: u16,
     workers: usize,
     database_url: String,
 }
@@ -67,8 +68,9 @@ pub async fn get_system_info(State(state): State<AppState>) -> axum::response::R
             target: std::env::consts::ARCH,
         },
         configuration: ConfigurationInfo {
-            server_port: state.config.server.as_ref().map_or(8080, |s| s.port),
-            workers: state.config.server.as_ref().map_or(1, |s| s.workers),
+            management_port: state.config.get_management_port(),
+            proxy_port: state.config.get_proxy_port(),
+            workers: state.config.dual_port.as_ref().map_or(1, |d| d.workers),
             database_url: mask_sensitive_info(&state.config.database.url),
         },
     };

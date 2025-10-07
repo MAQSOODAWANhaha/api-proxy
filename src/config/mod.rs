@@ -10,7 +10,7 @@ mod manager;
 mod provider_config;
 mod watcher;
 
-pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig, ServerConfig};
+pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig};
 pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use database::DatabaseConfig;
 pub use dual_port_config::{DualPortServerConfig, ManagementPortConfig, ProxyPortConfig};
@@ -46,26 +46,17 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
 
 /// 验证配置有效性
 fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
-    // 验证服务器配置（传统单端口模式）
-    if let Some(server) = &config.server {
-        if server.port == 0 {
-            return Err(crate::error::ProxyError::config(format!(
-                "无效的服务器端口: {}",
-                server.port
-            )));
-        }
-
-        if server.workers == 0 {
-            return Err(crate::error::ProxyError::config("工作线程数必须大于0"));
-        }
-    }
+    // 验证双端口配置 - 必须提供
+    let dual_port = config.dual_port.as_ref().ok_or_else(|| {
+        crate::error::ProxyError::config(
+            "dual_port configuration must be provided (single-port mode is no longer supported)"
+        )
+    })?;
 
     // 验证双端口配置
-    if let Some(dual_port) = &config.dual_port {
-        dual_port
-            .validate()
-            .map_err(|e| crate::error::ProxyError::config(e))?;
-    }
+    dual_port
+        .validate()
+        .map_err(|e| crate::error::ProxyError::config(e))?;
 
     // 验证数据库配置
     if config.database.url.is_empty() {
@@ -82,8 +73,6 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     if config.redis.url.is_empty() {
         return Err(crate::error::ProxyError::config("Redis URL不能为空"));
     }
-
-    // 已移除 TLS 配置校验
 
     Ok(())
 }
