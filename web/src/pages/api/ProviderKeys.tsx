@@ -29,7 +29,13 @@ import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/
 import { api, CreateProviderKeyRequest, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType, UpdateProviderKeyRequest } from '../../lib/api'
 import { toast } from 'sonner'
 import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency } from '../../lib/dataValidation'
-import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip as ReTooltip } from 'recharts'
+import { LineChart, Line, CartesianGrid, XAxis, YAxis } from 'recharts'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 
 /** 账号 API Key 数据结构 - 与后端保持一致 */
 interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
@@ -1904,6 +1910,17 @@ const StatsDialog: React.FC<{
     [stats.successRate]
   )
 
+  const chartConfig = {
+    requests: {
+      label: "请求数",
+      color: "hsl(var(--chart-1))",
+    },
+    cost: {
+      label: "花费",
+      color: "hsl(var(--chart-2))",
+    },
+  } satisfies ChartConfig
+
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
@@ -1967,36 +1984,34 @@ const StatsDialog: React.FC<{
                   暂无趋势数据
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ChartContainer config={chartConfig} className="w-full h-full">
                   <LineChart data={trendChartData}>
-                    <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" />
+                    <CartesianGrid vertical={false} />
                     <XAxis
                       dataKey="label"
-                      tick={{ fontSize: 11, fill: '#6B7280' }}
-                      axisLine={{ stroke: '#D1D5DB' }}
-                      tickLine={{ stroke: '#D1D5DB' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
                     />
                     <YAxis
-                      allowDecimals={false}
-                      tick={{ fontSize: 11, fill: '#6B7280' }}
-                      axisLine={{ stroke: '#D1D5DB' }}
-                      tickLine={{ stroke: '#D1D5DB' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
                     />
-                    <ReTooltip
-                      formatter={(value: any) => [`${value}`, '请求数']}
-                      labelFormatter={(label: any) => `日期: ${label}`}
-                      contentStyle={{ fontSize: 12 }}
+                    <ChartTooltip
+                      cursor={false}
+                      content={<ChartTooltipContent indicator="dot" />}
                     />
                     <Line
                       type="monotone"
                       dataKey="requests"
-                      stroke="#6366F1"
+                      stroke="var(--color-requests)"
                       strokeWidth={2}
-                      dot={{ r: 3, strokeWidth: 2, fill: '#6366F1' }}
+                      dot={{ r: 3, strokeWidth: 2 }}
                       activeDot={{ r: 5 }}
                     />
                   </LineChart>
-                </ResponsiveContainer>
+                </ChartContainer>
               )}
             </div>
           </div>
@@ -2013,36 +2028,35 @@ const StatsDialog: React.FC<{
                   暂无趋势数据
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ChartContainer config={chartConfig} className="w-full h-full">
                   <LineChart data={trendChartData}>
-                    <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" />
+                    <CartesianGrid vertical={false} />
                     <XAxis
                       dataKey="label"
-                      tick={{ fontSize: 11, fill: '#6B7280' }}
-                      axisLine={{ stroke: '#D1D5DB' }}
-                      tickLine={{ stroke: '#D1D5DB' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
                     />
                     <YAxis
                       tickFormatter={(value: number) => `$${Number(value).toFixed(2)}`}
-                      tick={{ fontSize: 11, fill: '#6B7280' }}
-                      axisLine={{ stroke: '#D1D5DB' }}
-                      tickLine={{ stroke: '#D1D5DB' }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
                     />
-                    <ReTooltip
-                      formatter={(value: any) => [`$${Number(value).toFixed(4)}`, '花费']}
-                      labelFormatter={(label: any) => `日期: ${label}`}
-                      contentStyle={{ fontSize: 12 }}
+                    <ChartTooltip
+                      cursor={false}
+                      content={<ChartTooltipContent indicator="dot" />}
                     />
                     <Line
                       type="monotone"
                       dataKey="cost"
-                      stroke="#F97316"
+                      stroke="var(--color-cost)"
                       strokeWidth={2}
-                      dot={{ r: 3, strokeWidth: 2, fill: '#F97316' }}
+                      dot={{ r: 3, strokeWidth: 2 }}
                       activeDot={{ r: 5 }}
                     />
                   </LineChart>
-                </ResponsiveContainer>
+                </ChartContainer>
               )}
             </div>
           </div>

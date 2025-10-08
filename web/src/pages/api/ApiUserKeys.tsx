@@ -41,6 +41,12 @@ import {
   Tooltip as ReTooltip,
   Legend,
 } from 'recharts'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 
 // 使用API中定义的类型，并添加额外需要的字段
 interface ApiKey extends UserServiceApiKey {
@@ -1687,6 +1693,21 @@ const StatsDialog: React.FC<{
     [stats.successRate]
   )
 
+  const chartConfig = {
+    requests: {
+      label: "请求数",
+      color: "hsl(var(--chart-1))",
+    },
+    tokens: {
+      label: "Token消耗",
+      color: "hsl(var(--chart-2))",
+    },
+    successful_requests: {
+      label: "成功请求",
+      color: "hsl(var(--chart-3))",
+    },
+  } satisfies ChartConfig;
+
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <div className="flex items-center justify-between mb-4">
@@ -1743,96 +1764,64 @@ const StatsDialog: React.FC<{
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
               </div>
             ) : detailedTrendData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ChartContainer config={chartConfig} className="w-full h-full">
                 <ComposedChart
                   data={detailedTrendData}
                   margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                  <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="date"
                     tickFormatter={(value) => {
                       const date = new Date(value)
                       return `${date.getMonth() + 1}/${date.getDate()}`
                     }}
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    height={40}
-                    angle={-45}
-                    dx={-8}
-                    dy={8}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
                   />
                   <YAxis
                     yAxisId="left"
-                    tick={{ fontSize: 11, fill: '#6B7280' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    width={40}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
                   />
                   <YAxis
                     yAxisId="right"
                     orientation="right"
-                    tick={{ fontSize: 11, fill: '#10B981' }}
-                    axisLine={{ stroke: '#D1D5DB' }}
-                    tickLine={{ stroke: '#D1D5DB' }}
-                    width={50}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
                   />
-                  <ReTooltip
-                    formatter={(value: any, name: any) => {
-                      const labels: Record<string, string> = {
-                        'requests': '请求数',
-                        'tokens': 'Tokens',
-                        'successful_requests': '成功请求',
-                        'failed_requests': '失败请求',
-                      }
-                      return [`${value}`, labels[name] || name]
-                    }}
-                    labelFormatter={(label: any) => {
-                      return `日期: ${label}`
-                    }}
-                    contentStyle={{ fontSize: 12 }}
+                  <ChartTooltip
+                    cursor={false}
+                    content={<ChartTooltipContent indicator="dot" />}
                   />
-                  <Legend
-                    verticalAlign="top"
-                    height={36}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: '11px' }}
-                  />
+                  <Legend />
                   {/* 柱状图：请求次数 */}
                   <Bar
                     yAxisId="left"
                     dataKey="requests"
-                    fill="#6366F1"
-                    name="请求数"
-                    radius={[2, 2, 0, 0]}
-                    barSize={12}
+                    fill="var(--color-requests)"
+                    radius={[4, 4, 0, 0]}
                   />
                   {/* 折线图：Token消耗 */}
                   <Line
                     yAxisId="right"
                     type="monotone"
                     dataKey="tokens"
-                    stroke="#10B981"
-                    strokeWidth={2}
-                    name="Token消耗"
-                    dot={{ fill: '#10B981', strokeWidth: 2, r: 3 }}
-                    activeDot={{ r: 5 }}
+                    stroke="var(--color-tokens)"
                   />
                   {/* 成功请求率 */}
                   <Line
                     yAxisId="left"
                     type="monotone"
                     dataKey="successful_requests"
-                    stroke="#059669"
-                    strokeWidth={1.5}
-                    name="成功请求"
-                    dot={false}
+                    stroke="var(--color-successful_requests)"
                     strokeDasharray="3 3"
                   />
                 </ComposedChart>
-              </ResponsiveContainer>
+              </ChartContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-neutral-500">
                 <div className="text-center">
