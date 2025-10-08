@@ -3,7 +3,13 @@
  * 统计分析摘要页面（示例图表）。移除页面内部大标题，改由 Topbar 展示。
  */
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
-import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '../components/ui/chart'
+import { LineChart, Line, CartesianGrid, XAxis, YAxis } from 'recharts'
+
+/** 图表配置 */
+const chartConfig = {
+  value: { label: "数值", color: "hsl(var(--chart-1))" },
+} satisfies ChartConfig
 
 /** 模拟图表数据 */
 const data = Array.from({ length: 12 }).map((_, i) => ({
@@ -20,15 +26,15 @@ export default function StatsPage() {
           <CardTitle>年度趋势</CardTitle>
         </CardHeader>
         <CardContent className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
+          <ChartContainer config={chartConfig} className="h-full w-full">
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="m" />
               <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line type="monotone" dataKey="value" strokeWidth={2} dot={false} />
             </LineChart>
-          </ResponsiveContainer>
+          </ChartContainer>
         </CardContent>
       </Card>
     </div>

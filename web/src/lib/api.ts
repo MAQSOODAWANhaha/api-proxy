@@ -175,6 +175,9 @@ export interface ModelUsage {
   model: string
   usage: number
   cost: number
+  successful_requests: number
+  failed_requests: number
+  success_rate: number
 }
 
 export interface ModelsRateResponse {

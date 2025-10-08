@@ -65,6 +65,9 @@ pub struct ModelUsage {
     pub model: String,
     pub usage: i64,
     pub cost: f64,
+    pub successful_requests: i64,
+    pub failed_requests: i64,
+    pub success_rate: f64,
 }
 
 /// 模型使用占比响应
@@ -315,50 +318,84 @@ pub async fn get_models_usage_rate(
         }
     };
 
-    // 按模型统计使用次数和成本
-    let mut model_stats: HashMap<String, (i64, f64)> = HashMap::new();
+    // 按模型统计使用次数、成本和成功失败情况
+    let mut model_stats: HashMap<String, (i64, f64, i64, i64)> = HashMap::new();
     for trace in traces {
         // 过滤空模型数据
         if let Some(model_name) = &trace.model_used {
             // 检查模型名称是否有效（非空、非空白字符）
             if !model_name.trim().is_empty() {
                 let cost = trace.cost.unwrap_or(0.0);
-                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0));
+                let successful = if trace.is_success { 1 } else { 0 };
+                let failed = if trace.is_success { 0 } else { 1 };
+                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0, 0, 0));
                 entry.0 += 1; // usage count
                 entry.1 += cost; // total cost
+                entry.2 += successful; // successful requests
+                entry.3 += failed; // failed requests
             }
         }
     }
 
     // 按使用次数排序
-    let mut model_vec: Vec<(String, i64, f64)> = model_stats
+    let mut model_vec: Vec<(String, i64, f64, i64, i64)> = model_stats
         .into_iter()
-        .map(|(model, (usage, cost))| (model, usage, cost))
+        .map(|(model, (usage, cost, successful, failed))| (model, usage, cost, successful, failed))
         .collect();
     model_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
     // 限制最多6个模型，其余合并为"其他"
     let mut model_usage = Vec::new();
     if model_vec.len() <= 6 {
-        for (model, usage, cost) in model_vec {
-            model_usage.push(ModelUsage { model, usage, cost });
+        for (model, usage, cost, successful, failed) in model_vec {
+            let success_rate = if usage > 0 {
+                (successful as f64 / usage as f64) * 100.0
+            } else {
+                0.0
+            };
+            model_usage.push(ModelUsage {
+                model,
+                usage,
+                cost,
+                successful_requests: successful,
+                failed_requests: failed,
+                success_rate
+            });
         }
     } else {
         // 前5个模型
-        for (model, usage, cost) in model_vec.iter().take(5) {
+        for (model, usage, cost, successful, failed) in model_vec.iter().take(5) {
+            let success_rate = if *usage > 0 {
+                (*successful as f64 / *usage as f64) * 100.0
+            } else {
+                0.0
+            };
             model_usage.push(ModelUsage {
                 model: model.clone(),
                 usage: *usage,
                 cost: *cost,
+                successful_requests: *successful,
+                failed_requests: *failed,
+                success_rate,
             });
         }
         // 其余模型合并为"其他"
-        let other_usage: i64 = model_vec.iter().skip(5).map(|(_, usage, _)| usage).sum();
-        let other_cost: f64 = model_vec.iter().skip(5).map(|(_, _, cost)| cost).sum();
+        let other_usage: i64 = model_vec.iter().skip(5).map(|(_, usage, _, _, _)| usage).sum();
+        let other_cost: f64 = model_vec.iter().skip(5).map(|(_, _, cost, _, _)| cost).sum();
+        let other_successful: i64 = model_vec.iter().skip(5).map(|(_, _, _, successful, _)| successful).sum();
+        let other_failed: i64 = model_vec.iter().skip(5).map(|(_, _, _, _, failed)| failed).sum();
+        let other_success_rate = if other_usage > 0 {
+            (other_successful as f64 / other_usage as f64) * 100.0
+        } else {
+            0.0
+        };
         model_usage.push(ModelUsage {
             model: "其他".to_string(),
             usage: other_usage,
             cost: other_cost,
+            successful_requests: other_successful,
+            failed_requests: other_failed,
+            success_rate: other_success_rate,
         });
     }
 

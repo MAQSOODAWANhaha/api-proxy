@@ -38,6 +38,9 @@ interface ModelUsage {
   percentage: number
   cost: number
   color: string
+  successful_requests: number
+  failed_requests: number
+  success_rate: number
 }
 
 /** 自定义日期范围接口 */
@@ -55,6 +58,7 @@ interface TrendDataPoint {
 
 /** 趋势图显示模式 */
 type TrendViewMode = 'requests' | 'tokens'
+
 
 /** 指标卡片组件 */
 const StatCard: React.FC<{ item: StatItem }> = ({ item }) => {
@@ -82,179 +86,51 @@ const StatCard: React.FC<{ item: StatItem }> = ({ item }) => {
   )
 }
 
-/** 趋势图组件 */
-const TrendChart: React.FC<{ 
-  data: TrendDataPoint[] 
-  viewMode: TrendViewMode
-  onViewModeChange: (mode: TrendViewMode) => void
-  title: string
-  color: string
-}> = ({ data, viewMode, onViewModeChange, title, color }) => {
-  // 安全地处理数据，过滤无效值
-  const validData = data.map(d => ({
-    ...d,
-    requests: Number.isFinite(d.requests) ? d.requests : 0,
-    tokens: Number.isFinite(d.tokens) ? d.tokens : 0
-  }))
-  const maxValue = validData.length > 0 ? Math.max(...validData.map(d => viewMode === 'requests' ? d.requests : d.tokens)) : 0
-  // 确保maxValue不为0（避免除零错误），如果所有值都是0，设置默认值
-  const safeMaxValue = maxValue > 0 ? maxValue : 1
-  
-  // 生成SVG路径
-  const generatePath = (points: number[]) => {
-    if (points.length === 0) return ''
-    
-    const width = 600
-    const height = 200
-    const padding = 40
-    
-    const xStep = (width - padding * 2) / (points.length - 1)
-    const yScale = (height - padding * 2) / safeMaxValue
-    
-    let path = `M ${padding} ${height - padding - points[0] * yScale}`
-    
-    for (let i = 1; i < points.length; i++) {
-      const x = padding + i * xStep
-      const y = height - padding - points[i] * yScale
-      path += ` L ${x} ${y}`
-    }
-    
-    return path
-  }
-  
-  const currentData = validData.map(d => viewMode === 'requests' ? d.requests : d.tokens)
-  const pathData = generatePath(currentData)
-  
-  return (
-    <div className="space-y-4">
-      {/* 标题和切换按钮 */}
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-neutral-900">{title}</h4>
-        <div className="flex rounded-lg border border-neutral-200 bg-white">
-          <button
-            onClick={() => onViewModeChange('requests')}
-            className={`flex items-center gap-1 px-3 py-1 text-xs rounded-l-lg transition-colors ${
-              viewMode === 'requests' 
-                ? 'bg-violet-100 text-violet-700' 
-                : 'text-neutral-600 hover:text-neutral-800'
-            }`}
-          >
-            <BarChart size={12} />
-            请求次数
-          </button>
-          <button
-            onClick={() => onViewModeChange('tokens')}
-            className={`flex items-center gap-1 px-3 py-1 text-xs rounded-r-lg transition-colors ${
-              viewMode === 'tokens' 
-                ? 'bg-violet-100 text-violet-700' 
-                : 'text-neutral-600 hover:text-neutral-800'
-            }`}
-          >
-            <Coins size={12} />
-            Token数量
-          </button>
-        </div>
-      </div>
-      
-      {/* 趋势图 */}
-      <div className="relative">
-        <svg width="600" height="200" className="w-full">
-          {/* 网格线 */}
-          <defs>
-            <pattern id="grid" width="60" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 60 0 L 0 0 0 40" fill="none" stroke="#f3f4f6" strokeWidth="1"/>
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
-          
-          {/* 趋势线 */}
-          <path
-            d={pathData}
-            fill="none"
-            stroke={color}
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="drop-shadow-sm"
-          />
-          
-          {/* 数据点 */}
-          {currentData.map((value, index) => {
-            const width = 600
-            const height = 200
-            const padding = 40
-            const xStep = (width - padding * 2) / (currentData.length - 1)
-            const yScale = (height - padding * 2) / safeMaxValue
-            const x = padding + index * xStep
-            const y = height - padding - value * yScale
-            
-            return (
-              <circle
-                key={index}
-                cx={x}
-                cy={y}
-                r="4"
-                fill={color}
-                className="hover:r-6 transition-all cursor-pointer"
-              >
-                <title>{`${validData[index].date}: ${value.toLocaleString()}`}</title>
-              </circle>
-            )
-          })}
-        </svg>
-        
-        {/* X轴标签 */}
-        <div className="flex justify-between mt-2 px-10 text-xs text-neutral-500">
-          {validData.map((item, index) => (
-            <span key={index} className="text-center">
-              {new Date(item.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-            </span>
-          ))}
-        </div>
-      </div>
-      
-      {/* 统计信息 */}
-      <div className="grid grid-cols-3 gap-4 pt-3 border-t border-neutral-100">
-        <div className="text-center">
-          <div className="text-lg font-bold text-neutral-900">
-            {currentData[currentData.length - 1]?.toLocaleString() || 0}
-          </div>
-          <div className="text-xs text-neutral-500">最新值</div>
-        </div>
-        <div className="text-center">
-          <div className="text-lg font-bold text-neutral-900">
-            {Math.round(currentData.reduce((sum, val) => sum + val, 0) / currentData.length).toLocaleString()}
-          </div>
-          <div className="text-xs text-neutral-500">平均值</div>
-        </div>
-        <div className="text-center">
-          <div className="text-lg font-bold text-neutral-900">
-            {Math.max(...currentData).toLocaleString()}
-          </div>
-          <div className="text-xs text-neutral-500">峰值</div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /** 简化的Token趋势图组件 - 使用Recharts */
 const SimpleTokenChart: React.FC<{
-  data: { date: string; value: number }[]
+  data: {
+    date: string;
+    value: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cache_create?: number;
+    cache_read?: number;
+  }[]
 }> = ({ data }) => {
   // 安全地处理数据，过滤无效值
   const chartData = useMemo(() => {
     return data.map(d => ({
       date: d.date,
       value: Number.isFinite(d.value) ? d.value : 0,
-      displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+      displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+      prompt_tokens: d.prompt_tokens || 0,
+      completion_tokens: d.completion_tokens || 0,
+      cache_create: d.cache_create || 0,
+      cache_read: d.cache_read || 0
     }))
   }, [data])
 
   const chartConfig = {
-    tokens: {
-      label: "Token消耗",
+    value: {
+      label: "总Token",
       color: "hsl(var(--chart-2))",
+    },
+    prompt_tokens: {
+      label: "Prompt",
+      color: "#3b82f6",
+    },
+    completion_tokens: {
+      label: "Completion",
+      color: "#10b981",
+    },
+    cache_create: {
+      label: "缓存创建",
+      color: "#eab308",
+    },
+    cache_read: {
+      label: "缓存读取",
+      color: "#8b5cf6",
     },
   } satisfies ChartConfig
   
@@ -307,7 +183,17 @@ const SimpleTokenChart: React.FC<{
             />
             <ChartTooltip
               cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
+              content={<ChartTooltipContent />}
+              labelFormatter={(label) => {
+                const data = chartData.find(d => d.displayDate === label)
+                return label
+              }}
+              formatter={(value: any, name: string, props: any) => {
+                if (name === 'value') {
+                  return [value.toLocaleString(), '总Token']
+                }
+                return [value.toLocaleString(), name]
+              }}
             />
             <Area
               type="monotone"
@@ -317,6 +203,35 @@ const SimpleTokenChart: React.FC<{
               fill="url(#tokenAreaGradient)"
               dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
               activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
+            />
+            {/* 隐藏的Area用于tooltip显示详细信息 */}
+            <Area
+              type="monotone"
+              dataKey="prompt_tokens"
+              stroke="transparent"
+              fill="transparent"
+              hide
+            />
+            <Area
+              type="monotone"
+              dataKey="completion_tokens"
+              stroke="transparent"
+              fill="transparent"
+              hide
+            />
+            <Area
+              type="monotone"
+              dataKey="cache_create"
+              stroke="transparent"
+              fill="transparent"
+              hide
+            />
+            <Area
+              type="monotone"
+              dataKey="cache_read"
+              stroke="transparent"
+              fill="transparent"
+              hide
             />
           </AreaChart>
         </ChartContainer>
@@ -359,13 +274,16 @@ const TrendChartWithoutControls: React.FC<{
       return {
         date: d.date,
         value: Number.isFinite(value) ? value : 0,
-        displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+        displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
+        // 保留原始数据用于tooltip显示
+        requests: d.requests,
+        tokens: d.tokens
       }
     })
   }, [data, viewMode])
 
   const chartConfig = {
-    [viewMode === 'requests' ? 'requests' : 'tokens']: {
+    value: {
       label: viewMode === 'requests' ? "请求次数" : "Token数量",
       color: "hsl(var(--chart-3))",
     },
@@ -406,7 +324,18 @@ const TrendChartWithoutControls: React.FC<{
             />
             <ChartTooltip
               cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
+              content={<ChartTooltipContent />}
+              labelFormatter={(label) => {
+                return `日期: ${label}`
+              }}
+              formatter={(value: any, name: string) => {
+                if (viewMode === 'requests' && name === 'value') {
+                  return [value.toLocaleString(), '请求次数']
+                } else if (viewMode === 'tokens' && name === 'value') {
+                  return [value.toLocaleString(), 'Token数量']
+                }
+                return [value, name]
+              }}
             />
             <Line
               type="monotone"
@@ -554,8 +483,8 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   const total = data.reduce((sum, item) => sum + item.count, 0)
 
   const chartConfig = {
-    model_usage: {
-      label: "模型使用",
+    count: {
+      label: "请求数",
       color: "hsl(var(--chart-1))",
     },
   } satisfies ChartConfig
@@ -643,7 +572,21 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
             </Pie>
             <ChartTooltip
               cursor={false}
-              content={<ChartTooltipContent indicator="dot" />}
+              content={<ChartTooltipContent />}
+              labelFormatter={(label) => {
+                const data = processedData.find(d => d.name === label)
+                return data?.name || label
+              }}
+              formatter={(value: any, name: string) => {
+                if (name === 'count') {
+                  const data = processedData.find(d => d.count === value)
+                  return [
+                    value.toLocaleString(),
+                    '请求数'
+                  ]
+                }
+                return [value, name]
+              }}
             />
           </RechartsPieChart>
         </ChartContainer>
@@ -793,7 +736,10 @@ const PieChartWithTimeFilter: React.FC = () => {
       count: item.usage,
       percentage: (item.usage / modelsRate.model_usage.reduce((sum, m) => sum + m.usage, 0)) * 100,
       cost: item.cost || 0,
-      color: colors[index % colors.length]
+      color: colors[index % colors.length],
+      successful_requests: item.successful_requests,
+      failed_requests: item.failed_requests,
+      success_rate: item.success_rate
     }))
   }, [modelsRate])
 
@@ -877,7 +823,11 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
       count: item.usage,
       percentage: item.percentage,
       cost: item.cost || 0,
-      color: colors[index % colors.length]
+      color: colors[index % colors.length],
+      // ModelsStatistics接口没有成功失败数据，设置为0
+      successful_requests: 0,
+      failed_requests: 0,
+      success_rate: 0
     }))
   }, [modelsStatistics])
 
@@ -941,7 +891,11 @@ const TokenTrendChart: React.FC = () => {
 
     return tokensTrend.token_usage.map(item => ({
       date: item.timestamp,
-      value: item.tokens_prompt + item.tokens_completion + item.cache_create_tokens + item.cache_read_tokens
+      value: item.tokens_prompt + item.tokens_completion + item.cache_create_tokens + item.cache_read_tokens,
+      prompt_tokens: item.tokens_prompt,
+      completion_tokens: item.tokens_completion,
+      cache_create: item.cache_create_tokens,
+      cache_read: item.cache_read_tokens
     }))
   }, [tokensTrend])
 
