@@ -215,8 +215,18 @@ const SimpleTokenChart: React.FC<{
               stroke="var(--color-value)"
               strokeWidth={3}
               fill="url(#tokenAreaGradient)"
-              dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
-              activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
+              dot={{
+                strokeWidth: 2,
+                stroke: 'var(--color-value)',
+                fill: 'var(--color-value)',
+                r: 4,
+              }}
+              activeDot={{
+                r: 6,
+                strokeWidth: 2,
+                stroke: 'var(--color-value)',
+                fill: 'var(--color-value)',
+              }}
             />
             {/* 隐藏的Area用于tooltip显示详细信息 */}
             <Area type="monotone" dataKey="prompt_tokens" stroke="transparent" fill="transparent" hide />
@@ -356,8 +366,18 @@ const TrendChartWithoutControls: React.FC<{
               dataKey="value"
               stroke="var(--color-value)"
               strokeWidth={3}
-              dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
-              activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
+              dot={{
+                strokeWidth: 2,
+                stroke: 'var(--color-value)',
+                fill: 'var(--color-value)',
+                r: 4,
+              }}
+              activeDot={{
+                r: 6,
+                strokeWidth: 2,
+                stroke: 'var(--color-value)',
+                fill: 'var(--color-value)',
+              }}
             />
           </LineChart>
         </ChartContainer>
