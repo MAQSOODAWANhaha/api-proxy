@@ -10,11 +10,11 @@ import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
 import { useTokensTrend } from '../../hooks/useTokensTrend'
 import { useUserApiKeysTrend } from '../../hooks/useUserApiKeysTrend'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart, PieChart as RechartsPieChart, Pie, Cell } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Area, AreaChart, PieChart as RechartsPieChart, Pie, Cell } from 'recharts'
+import type { TooltipProps } from 'recharts'
 import {
   ChartContainer,
   ChartTooltip,
-  ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart'
 
@@ -90,85 +90,98 @@ const StatCard: React.FC<{ item: StatItem }> = ({ item }) => {
 /** 简化的Token趋势图组件 - 使用Recharts */
 const SimpleTokenChart: React.FC<{
   data: {
-    date: string;
-    value: number;
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    cache_create?: number;
-    cache_read?: number;
+    date: string
+    value: number
+    prompt_tokens?: number
+    completion_tokens?: number
+    cache_create?: number
+    cache_read?: number
   }[]
 }> = ({ data }) => {
+  const accentColor = '#6366f1'
+  const promptColor = '#38bdf8'
+  const completionColor = '#22c55e'
+  const cacheCreateColor = '#f97316'
+  const cacheReadColor = '#a855f7'
+
   // 安全地处理数据，过滤无效值
   const chartData = useMemo(() => {
-    return data.map(d => ({
-      date: d.date,
-      value: Number.isFinite(d.value) ? d.value : 0,
-      displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-      prompt_tokens: d.prompt_tokens || 0,
-      completion_tokens: d.completion_tokens || 0,
-      cache_create: d.cache_create || 0,
-      cache_read: d.cache_read || 0
-    }))
+    return data.map((d) => {
+      const toNumber = (val: number | undefined) =>
+        Number.isFinite(val) ? (val as number) : 0
+
+      return {
+        date: d.date,
+        value: toNumber(d.value),
+        displayDate: new Date(d.date).toLocaleDateString('zh-CN', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        prompt_tokens: toNumber(d.prompt_tokens),
+        completion_tokens: toNumber(d.completion_tokens),
+        cache_create: toNumber(d.cache_create),
+        cache_read: toNumber(d.cache_read),
+      }
+    })
   }, [data])
 
   const chartConfig = {
     value: {
-      label: "总Token",
-      color: "hsl(var(--chart-2))",
+      label: '总 Token',
+      color: accentColor,
     },
     prompt_tokens: {
-      label: "Prompt",
-      color: "#3b82f6",
+      label: 'Prompt Token',
+      color: promptColor,
     },
     completion_tokens: {
-      label: "Completion",
-      color: "#10b981",
+      label: 'Completion Token',
+      color: completionColor,
     },
     cache_create: {
-      label: "缓存创建",
-      color: "#eab308",
+      label: '缓存创建',
+      color: cacheCreateColor,
     },
     cache_read: {
-      label: "缓存读取",
-      color: "#8b5cf6",
+      label: '缓存读取',
+      color: cacheReadColor,
     },
   } satisfies ChartConfig
-  
-  const values = chartData.map(d => d.value)
-  
+
+  const values = chartData.map((d) => d.value)
+
   // 如果没有数据，显示空状态
   if (chartData.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+      <div className="flex h-80 flex-col items-center justify-center text-neutral-400">
         <div className="text-center">
-          <div className="text-4xl mb-2">📈</div>
+          <div className="mb-2 text-4xl">📈</div>
           <div className="text-sm">暂无Token趋势数据</div>
         </div>
       </div>
     )
   }
-  
+
   // 格式化Token数值
   const formatTokenValue = (value: number) => {
-    if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
-    return value.toString()
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
+    return value.toLocaleString('zh-CN')
   }
 
-  
   return (
     <div className="space-y-4">
       {/* 图表 */}
-      <div className="h-52">
-        <ChartContainer config={chartConfig} className="w-full h-full">
+      <div className="h-56">
+        <ChartContainer config={chartConfig} className="h-full w-full">
           <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
             <defs>
               <linearGradient id="tokenAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--color-tokens)" stopOpacity={0.3}/>
-                <stop offset="100%" stopColor="var(--color-tokens)" stopOpacity={0}/>
+                <stop offset="0%" stopColor="var(--color-value)" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="var(--color-value)" stopOpacity={0.05} />
               </linearGradient>
             </defs>
-            <CartesianGrid vertical={false} />
+            <CartesianGrid vertical={false} strokeDasharray="4 4" stroke="rgba(99, 102, 241, 0.08)" />
             <XAxis
               dataKey="displayDate"
               tickLine={false}
@@ -182,78 +195,57 @@ const SimpleTokenChart: React.FC<{
               tickFormatter={formatTokenValue}
             />
             <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent />}
-              labelFormatter={(label) => {
-                const data = chartData.find(d => d.displayDate === label)
-                return label
-              }}
-              formatter={(value: any, name: string, props: any) => {
-                if (name === 'value') {
-                  return [value.toLocaleString(), '总Token']
-                }
-                return [value.toLocaleString(), name]
-              }}
+              cursor={{ stroke: accentColor, strokeOpacity: 0.1, strokeWidth: 1 }}
+              content={(tooltipProps: TooltipProps<number, string>) => (
+                <TokenTrendTooltip
+                  {...tooltipProps}
+                  colors={{
+                    total: accentColor,
+                    prompt: promptColor,
+                    completion: completionColor,
+                    cacheCreate: cacheCreateColor,
+                    cacheRead: cacheReadColor,
+                  }}
+                />
+              )}
             />
             <Area
               type="monotone"
               dataKey="value"
-              stroke="var(--color-tokens)"
+              stroke="var(--color-value)"
               strokeWidth={3}
               fill="url(#tokenAreaGradient)"
               dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
               activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
             />
             {/* 隐藏的Area用于tooltip显示详细信息 */}
-            <Area
-              type="monotone"
-              dataKey="prompt_tokens"
-              stroke="transparent"
-              fill="transparent"
-              hide
-            />
-            <Area
-              type="monotone"
-              dataKey="completion_tokens"
-              stroke="transparent"
-              fill="transparent"
-              hide
-            />
-            <Area
-              type="monotone"
-              dataKey="cache_create"
-              stroke="transparent"
-              fill="transparent"
-              hide
-            />
-            <Area
-              type="monotone"
-              dataKey="cache_read"
-              stroke="transparent"
-              fill="transparent"
-              hide
-            />
+            <Area type="monotone" dataKey="prompt_tokens" stroke="transparent" fill="transparent" hide />
+            <Area type="monotone" dataKey="completion_tokens" stroke="transparent" fill="transparent" hide />
+            <Area type="monotone" dataKey="cache_create" stroke="transparent" fill="transparent" hide />
+            <Area type="monotone" dataKey="cache_read" stroke="transparent" fill="transparent" hide />
           </AreaChart>
         </ChartContainer>
       </div>
-      
+
       {/* 统计信息 */}
-      <div className="grid grid-cols-3 gap-4 pt-3 border-t border-neutral-100">
+      <div className="grid grid-cols-3 gap-4 border-t border-neutral-100 pt-3">
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {formatTokenValue(values[values.length - 1] || 0)}
+            {formatTokenValue(values[values.length - 1] ?? 0)}
           </div>
           <div className="text-xs text-neutral-500">最新值</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {formatTokenValue(Math.round(values.reduce((sum, val) => sum + val, 0) / values.length))}
+            {formatTokenValue(
+              values.length ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length) : 0
+            )}
           </div>
           <div className="text-xs text-neutral-500">平均值</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {formatTokenValue(Math.max(...values))}
+            {formatTokenValue(values.length ? Math.max(...values) : 0)}
           </div>
           <div className="text-xs text-neutral-500">峰值</div>
         </div>
@@ -267,50 +259,74 @@ const TrendChartWithoutControls: React.FC<{
   data: TrendDataPoint[]
   viewMode: TrendViewMode
 }> = ({ data, viewMode }) => {
+  const chartColor = viewMode === 'requests' ? '#6366f1' : '#0ea5e9'
+  const metricLabel = viewMode === 'requests' ? '请求次数' : 'Token数量'
+  const gradientId = `user-api-trend-${viewMode}`
+
+  const chartConfig = {
+    value: {
+      label: metricLabel,
+      color: chartColor,
+    },
+  } satisfies ChartConfig
+
   // 安全地处理数据，过滤无效值
   const chartData = useMemo(() => {
-    return data.map(d => {
-      const value = viewMode === 'requests' ? d.requests : d.tokens
+    return data.map((d, index) => {
+      const rawValue = viewMode === 'requests' ? d.requests : d.tokens
+      const value = Number.isFinite(rawValue) ? (rawValue as number) : 0
+      const prevRaw =
+        index > 0
+          ? viewMode === 'requests'
+            ? data[index - 1].requests
+            : data[index - 1].tokens
+          : null
+      const previousValue =
+        prevRaw !== null && Number.isFinite(prevRaw) ? (prevRaw as number) : null
+
       return {
         date: d.date,
-        value: Number.isFinite(value) ? value : 0,
-        displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }),
-        // 保留原始数据用于tooltip显示
-        requests: d.requests,
-        tokens: d.tokens
+        value,
+        displayDate: new Date(d.date).toLocaleDateString('zh-CN', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        requests: Number.isFinite(d.requests) ? d.requests : 0,
+        tokens: Number.isFinite(d.tokens) ? d.tokens : 0,
+        delta: previousValue !== null ? value - previousValue : null,
       }
     })
   }, [data, viewMode])
 
-  const chartConfig = {
-    value: {
-      label: viewMode === 'requests' ? "请求次数" : "Token数量",
-      color: "hsl(var(--chart-3))",
-    },
-  } satisfies ChartConfig
-  
-  const values = chartData.map(d => d.value)
-  
+  const values = chartData.map((d) => d.value)
+
   // 如果没有数据，显示空状态
   if (chartData.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
+      <div className="flex h-80 flex-col items-center justify-center text-neutral-400">
         <div className="text-center">
-          <div className="text-4xl mb-2">📊</div>
+          <div className="mb-2 text-4xl">📊</div>
           <div className="text-sm">暂无趋势数据</div>
         </div>
       </div>
     )
   }
 
-  
+  const formatValue = (value: number) => Math.round(value).toLocaleString('zh-CN')
+
   return (
     <div className="space-y-4">
       {/* 图表 */}
-      <div className="h-52">
-        <ChartContainer config={chartConfig} className="w-full h-full">
+      <div className="h-56">
+        <ChartContainer config={chartConfig} className="h-full w-full">
           <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-            <CartesianGrid vertical={false} />
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--color-value)" stopOpacity={0.25} />
+                <stop offset="100%" stopColor="var(--color-value)" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid vertical={false} strokeDasharray="4 4" stroke="rgba(99, 102, 241, 0.08)" />
             <XAxis
               dataKey="displayDate"
               tickLine={false}
@@ -321,26 +337,24 @@ const TrendChartWithoutControls: React.FC<{
               tickLine={false}
               axisLine={false}
               tickMargin={8}
+              tickFormatter={formatValue}
             />
             <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent />}
-              labelFormatter={(label) => {
-                return `日期: ${label}`
-              }}
-              formatter={(value: any, name: string) => {
-                if (viewMode === 'requests' && name === 'value') {
-                  return [value.toLocaleString(), '请求次数']
-                } else if (viewMode === 'tokens' && name === 'value') {
-                  return [value.toLocaleString(), 'Token数量']
-                }
-                return [value, name]
-              }}
+              cursor={{ stroke: chartColor, strokeWidth: 1, strokeOpacity: 0.1 }}
+              content={(tooltipProps: TooltipProps<number, string>) => (
+                <UserApiTrendTooltip
+                  {...tooltipProps}
+                  color={chartColor}
+                  metricLabel={metricLabel}
+                  formatValue={formatValue}
+                />
+              )}
             />
+            <Area type="monotone" dataKey="value" stroke="none" fill={`url(#${gradientId})`} />
             <Line
               type="monotone"
               dataKey="value"
-              stroke="var(--color-requests)"
+              stroke="var(--color-value)"
               strokeWidth={3}
               dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
               activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
@@ -348,24 +362,24 @@ const TrendChartWithoutControls: React.FC<{
           </LineChart>
         </ChartContainer>
       </div>
-      
+
       {/* 统计信息 */}
-      <div className="grid grid-cols-3 gap-4 pt-3 border-t border-neutral-100">
+      <div className="grid grid-cols-3 gap-4 border-t border-neutral-100 pt-3">
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {values[values.length - 1]?.toLocaleString() || 0}
+            {formatValue(values[values.length - 1] ?? 0)}
           </div>
-          <div className="text-xs text-neutral-500">最新值</div>
+          <div className="text-xs text-neutral-500">{metricLabel}</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {Math.round(values.reduce((sum, val) => sum + val, 0) / values.length).toLocaleString()}
+            {formatValue(values.length ? values.reduce((sum, val) => sum + val, 0) / values.length : 0)}
           </div>
           <div className="text-xs text-neutral-500">平均值</div>
         </div>
         <div className="text-center">
           <div className="text-lg font-bold text-neutral-900">
-            {Math.max(...values).toLocaleString()}
+            {formatValue(values.length ? Math.max(...values) : 0)}
           </div>
           <div className="text-xs text-neutral-500">峰值</div>
         </div>
@@ -478,14 +492,211 @@ const CompactTimeRangeSelector: React.FC<{
   )
 }
 
+/** 饼图 tooltip，按照官方样式扩展显示请求数与成本 */
+const ModelUsageTooltip: React.FC<TooltipProps<number, string>> = ({
+  active,
+  payload,
+}) => {
+  if (!active || !payload?.length) {
+    return null
+  }
+
+  const [entry] = payload
+  const details = entry.payload as ModelUsage & { percentage: number }
+
+  const rows = [
+    {
+      label: '请求数',
+      value: details.count.toLocaleString(),
+      color: details.color,
+    },
+    {
+      label: '成本',
+      value: `$${details.cost.toFixed(2)}`,
+      color: '#f97316',
+    },
+    {
+      label: '占比',
+      value: `${details.percentage.toFixed(1)}%`,
+      color: '#22c55e',
+    },
+  ]
+
+  return (
+    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+      <div className="flex items-center gap-2">
+        <span
+          className="h-2.5 w-2.5 rounded-sm"
+          style={{ backgroundColor: details.color }}
+        />
+        <span className="font-medium text-foreground">{details.name}</span>
+      </div>
+      <div className="grid gap-1.5">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between">
+            <span className="text-muted-foreground">{row.label}</span>
+            <span className="font-mono font-semibold text-foreground">
+              {row.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+type TokenTrendTooltipProps = TooltipProps<number, string> & {
+  colors: {
+    total: string
+    prompt: string
+    completion: string
+    cacheCreate: string
+    cacheRead: string
+  }
+}
+
+const TokenTrendTooltip: React.FC<TokenTrendTooltipProps> = ({
+  active,
+  payload,
+  colors,
+}) => {
+  const point = payload?.[0]?.payload as
+    | {
+        date: string
+        value: number
+        prompt_tokens: number
+        completion_tokens: number
+        cache_create: number
+        cache_read: number
+      }
+    | undefined
+
+  if (!active || !point) {
+    return null
+  }
+
+  const dateLabel = new Date(point.date).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+
+  const formatNumber = (value: number) =>
+    Math.round(value).toLocaleString('zh-CN')
+
+  const rows = [
+    { label: '总 Token', value: point.value, color: colors.total, always: true },
+    { label: 'Prompt Token', value: point.prompt_tokens, color: colors.prompt },
+    {
+      label: 'Completion Token',
+      value: point.completion_tokens,
+      color: colors.completion,
+    },
+    { label: '缓存创建', value: point.cache_create, color: colors.cacheCreate },
+    { label: '缓存读取', value: point.cache_read, color: colors.cacheRead },
+  ].filter((row) => row.always || row.value > 0)
+
+  return (
+    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+      <div className="font-medium text-foreground">{dateLabel}</div>
+      <div className="grid gap-1.5">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 rounded-sm"
+                style={{ backgroundColor: row.color }}
+              />
+              <span className="text-muted-foreground">{row.label}</span>
+            </div>
+            <span className="font-mono font-semibold text-foreground">
+              {formatNumber(row.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+type UserApiTrendTooltipProps = TooltipProps<number, string> & {
+  color: string
+  metricLabel: string
+  formatValue: (value: number) => string
+}
+
+const UserApiTrendTooltip: React.FC<UserApiTrendTooltipProps> = ({
+  active,
+  payload,
+  color,
+  metricLabel,
+  formatValue,
+}) => {
+  const point = payload?.[0]?.payload as
+    | {
+        date: string
+        value: number
+        delta: number | null
+      }
+    | undefined
+
+  if (!active || !point) {
+    return null
+  }
+
+  const dateLabel = new Date(point.date).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+
+  const delta = point.delta ?? 0
+  const deltaLabel = `${delta >= 0 ? '+' : '-'}${formatValue(Math.abs(delta))}`
+
+  return (
+    <div className="grid min-w-[11rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+      <div className="font-medium text-foreground">{dateLabel}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
+          <span className="text-muted-foreground">{metricLabel}</span>
+        </div>
+        <span className="font-mono font-semibold text-foreground">
+          {formatValue(point.value)}
+        </span>
+      </div>
+      {point.delta !== null && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground">较前一日</span>
+          <span
+            className={`font-mono font-semibold ${
+              delta >= 0 ? 'text-emerald-500' : 'text-red-500'
+            }`}
+          >
+            {deltaLabel}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 饼图组件 - 使用Recharts实现 */
 const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   const total = data.reduce((sum, item) => sum + item.count, 0)
 
   const chartConfig = {
     count: {
-      label: "请求数",
-      color: "hsl(var(--chart-1))",
+      label: '请求数',
+      color: 'hsl(var(--chart-1))',
+    },
+    cost: {
+      label: '成本',
+      color: '#f97316',
+    },
+    percentage: {
+      label: '占比',
+      color: '#22c55e',
     },
   } satisfies ChartConfig
 
@@ -570,24 +781,7 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
                 />
               ))}
             </Pie>
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent />}
-              labelFormatter={(label) => {
-                const data = processedData.find(d => d.name === label)
-                return data?.name || label
-              }}
-              formatter={(value: any, name: string) => {
-                if (name === 'count') {
-                  const data = processedData.find(d => d.count === value)
-                  return [
-                    value.toLocaleString(),
-                    '请求数'
-                  ]
-                }
-                return [value, name]
-              }}
-            />
+            <ChartTooltip cursor={false} content={<ModelUsageTooltip />} />
           </RechartsPieChart>
         </ChartContainer>
         
