@@ -552,8 +552,8 @@ const ApiUserKeysPage: React.FC = () => {
                       </div>
                       <div className="text-xs text-neutral-500">
                         费用/天:{" "}
-                        {item.max_cost_per_day
-                          ? `$${(parseFloat(item.max_cost_per_day as any) || 0).toFixed(2)}`
+                        {parseFloat(item.max_cost_per_day as any) > 0
+                          ? `$${(parseFloat(item.max_cost_per_day as any)).toFixed(2)}`
                           : "无"}
                       </div>
                     </td>
@@ -2228,7 +2228,9 @@ const StatsDialog: React.FC<{
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">费用/天</div>
               <div className="font-medium">
-                ${(parseFloat(item.max_cost_per_day as any) || 0).toFixed(2)}
+                {parseFloat(item.max_cost_per_day as any) > 0
+                  ? `$${(parseFloat(item.max_cost_per_day as any)).toFixed(2)}`
+                  : "无"}
               </div>
             </div>
           </div>
