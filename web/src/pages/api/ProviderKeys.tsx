@@ -1754,6 +1754,34 @@ const EditDialog: React.FC<{
           </div>
         </div>
 
+        {/* 请求限制/天 */}
+        <div>
+          <label className="block text-sm font-medium text-neutral-700 mb-1">请求限制/天</label>
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => handleNumberChange('requestLimitPerDay', -100)}
+              className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
+            >
+              −
+            </button>
+            <input
+              type="number"
+              min="0"
+              value={formData.requestLimitPerDay}
+              onChange={(e) => setFormData({ ...formData, requestLimitPerDay: parseInt(e.target.value) || 0 })}
+              className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            />
+            <button
+              type="button"
+              onClick={() => handleNumberChange('requestLimitPerDay', 100)}
+              className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
         {/* 启用状态 */}
         <div className="flex items-center gap-3">
           <label className="text-sm font-medium text-neutral-700">启用状态</label>
