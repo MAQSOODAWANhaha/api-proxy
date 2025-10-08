@@ -781,7 +781,12 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
                 />
               ))}
             </Pie>
-            <ChartTooltip cursor={false} content={<ModelUsageTooltip />} />
+            <ChartTooltip
+              cursor={false}
+              offset={-40}
+              wrapperStyle={{ pointerEvents: 'none' }}
+              content={<ModelUsageTooltip />}
+            />
           </RechartsPieChart>
         </ChartContainer>
         
