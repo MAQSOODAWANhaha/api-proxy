@@ -674,13 +674,13 @@ const ProviderKeysPage: React.FC = () => {
                       />
                     </div>
                     <div className="text-xs text-neutral-500 mt-1">
-                      请求限制: {item.requestLimitPerMinute}/分钟
+                      请求限制: {item.requestLimitPerMinute ? `${item.requestLimitPerMinute}/分钟` : '无'}
                     </div>
                     <div className="text-xs text-neutral-500">
-                      Token限制: {item.tokenLimitPromptPerMinute.toLocaleString()}/分钟
+                      Token限制: {item.tokenLimitPromptPerMinute ? `${item.tokenLimitPromptPerMinute.toLocaleString()}/分钟` : '无'}
                     </div>
                     <div className="text-xs text-neutral-500">
-                      请求限制: {item.requestLimitPerDay.toLocaleString()}/天
+                      请求限制: {item.requestLimitPerDay ? `${item.requestLimitPerDay.toLocaleString()}/天` : '无'}
                     </div>
                   </td>
                   <td className="px-4 py-3">
