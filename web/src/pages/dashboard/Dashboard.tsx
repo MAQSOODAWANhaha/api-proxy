@@ -606,9 +606,9 @@ const TokenTrendTooltip: React.FC<TokenTrendTooltipProps> = ({
 
   const rows = [
     { label: '总 Token', value: point.value, color: colors.total, always: true },
-    { label: 'Prompt Token', value: point.prompt_tokens, color: colors.prompt },
+    { label: '输入 Token', value: point.prompt_tokens, color: colors.prompt },
     {
-      label: 'Completion Token',
+      label: '输出 Token',
       value: point.completion_tokens,
       color: colors.completion,
     },
