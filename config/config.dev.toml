@@ -34,14 +34,3 @@ query_timeout = 60
 cache_type = "memory"
 memory_max_entries = 10000
 default_ttl = 300
-
-# 开发Redis配置
-[redis]
-url = "redis://localhost:6379"
-pool_size = 10
-host = "localhost"  
-port = 6379
-database = 0
-connection_timeout = 5
-default_ttl = 3600
-max_connections = 10

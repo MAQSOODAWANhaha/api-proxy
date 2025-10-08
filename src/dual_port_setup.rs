@@ -79,8 +79,14 @@ pub async fn run_dual_port_servers() -> Result<()> {
         "proxy_listen_info",
         &format!(
             "🔗 Proxy server will listen on {}:{}",
-            config.dual_port.as_ref().map_or("0.0.0.0", |d| &d.proxy.http.host),
-            config.dual_port.as_ref().map_or(8080, |d| d.proxy.http.port)
+            config
+                .dual_port
+                .as_ref()
+                .map_or("0.0.0.0", |d| &d.proxy.http.host),
+            config
+                .dual_port
+                .as_ref()
+                .map_or(8080, |d| d.proxy.http.port)
         )
     );
 
@@ -272,7 +278,7 @@ pub async fn initialize_shared_services() -> Result<(
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
-        crate::cache::abstract_cache::CacheManager::new(&config_arc.cache, &config_arc.redis.url)
+        crate::cache::abstract_cache::CacheManager::new(&config_arc.cache)
             .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
     );
 
@@ -280,6 +286,7 @@ pub async fn initialize_shared_services() -> Result<(
         db.clone(),
         auth_config.clone(),
         unified_cache_manager.clone(),
+        Arc::new(config_arc.cache.clone()),
     ));
     // 注意：认证服务在后续会统一创建一次
 

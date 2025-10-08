@@ -3,6 +3,7 @@
 //! 提供统一的API密钥数据库查询、缓存管理和格式验证功能
 //! 供代理端认证和管理端认证共同使用
 
+use crate::config::CacheConfig;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lwarn};
 use chrono::{DateTime, Timelike, Utc};
@@ -61,17 +62,19 @@ impl ApiKeyManager {
     /// Create new API key manager
     pub fn new(
         db: Arc<DatabaseConnection>,
-        config: Arc<AuthConfig>,
+        auth_config: Arc<AuthConfig>,
         cache_manager: Arc<CacheManager>,
+        cache_config: Arc<CacheConfig>,
     ) -> Self {
         let auth_cache_manager = Arc::new(UnifiedAuthCacheManager::new(
             cache_manager.clone(),
-            config.clone(),
+            auth_config.clone(),
+            cache_config,
         ));
         let rate_limiter = Arc::new(DistributedRateLimiter::new(cache_manager.clone()));
         Self {
             db,
-            config,
+            config: auth_config,
             cache: auth_cache_manager,
             limiter: rate_limiter,
             raw_cache: cache_manager,

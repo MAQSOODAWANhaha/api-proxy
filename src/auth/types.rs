@@ -230,8 +230,6 @@ pub struct AuthConfig {
     pub max_login_attempts: u32,
     /// 登录锁定时间（秒）
     pub login_lockout_duration: i64,
-    /// 认证缓存TTL（分钟）
-    pub cache_ttl_minutes: u32,
     /// 最大失败尝试次数（可选）
     pub max_failed_attempts: Option<u32>,
 }
@@ -257,7 +255,6 @@ impl AuthConfig {
             session_timeout: 3600,
             max_login_attempts: 10,
             login_lockout_duration: 60, // 较短的锁定时间
-            cache_ttl_minutes: 1,       // 短缓存时间便于测试
             max_failed_attempts: Some(10),
         }
     }
@@ -278,7 +275,6 @@ impl Default for AuthConfig {
             session_timeout: 3600, // 1 小时
             max_login_attempts: 5,
             login_lockout_duration: 900, // 15 分钟
-            cache_ttl_minutes: 10,       // 10 分钟缓存
             max_failed_attempts: Some(5),
         }
     }

@@ -4,7 +4,11 @@
 
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
-use crate::{ ldebug, linfo, logging::{LogComponent, LogStage}, lwarn };
+use crate::{
+    ldebug, linfo,
+    logging::{LogComponent, LogStage},
+    lwarn,
+};
 use dashmap::DashMap;
 use entity::user_provider_keys;
 use std::sync::Arc;
@@ -129,7 +133,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         // 过滤活跃的密钥
         let active_keys: Vec<&user_provider_keys::Model> =
             keys.iter().filter(|key| key.is_active).collect();
-        
+
         let active_key_ids: Vec<i32> = active_keys.iter().map(|k| k.id).collect();
 
         if active_keys.is_empty() {
@@ -145,7 +149,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
             .entry(group_key.clone())
             .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
             .clone();
-        
+
         let previous_counter = counter_arc.load(Ordering::SeqCst);
         let counter = counter_arc.fetch_add(1, Ordering::SeqCst);
         let selected_relative_index = counter % active_keys.len();
@@ -370,7 +374,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
         }
 
         // 过滤活跃的密钥
-        let active_keys: Vec<&user_provider_keys::Model> = 
+        let active_keys: Vec<&user_provider_keys::Model> =
             keys.iter().filter(|key| key.is_active).collect();
 
         if active_keys.is_empty() {

@@ -11,12 +11,9 @@ pub struct AppConfig {
     pub dual_port: Option<DualPortServerConfig>,
     /// 数据库配置
     pub database: super::DatabaseConfig,
-    /// Redis配置
-    pub redis: RedisConfig,
     /// 缓存配置
     pub cache: CacheConfig,
 }
-
 
 // PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
 
@@ -45,6 +42,9 @@ pub struct CacheConfig {
     pub memory_max_entries: usize,
     /// 默认过期时间（秒）
     pub default_ttl: u64,
+    /// Redis 缓存配置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redis: Option<RedisConfig>,
 }
 
 impl Default for CacheConfig {
@@ -53,6 +53,7 @@ impl Default for CacheConfig {
             cache_type: CacheType::Memory,
             memory_max_entries: 10000,
             default_ttl: 300,
+            redis: None,
         }
     }
 }
@@ -74,8 +75,6 @@ pub struct RedisConfig {
     pub password: Option<String>,
     /// 连接超时时间（秒）
     pub connection_timeout: u64,
-    /// 默认 TTL（秒）
-    pub default_ttl: u64,
     /// 最大连接数
     pub max_connections: u32,
 }
@@ -90,26 +89,22 @@ impl Default for RedisConfig {
             database: 0,
             password: None,
             connection_timeout: 10,
-            default_ttl: 3600,
             max_connections: 10,
         }
     }
 }
-
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             dual_port: Some(DualPortServerConfig::default()),
             database: super::DatabaseConfig::default(),
-            redis: RedisConfig::default(),
             cache: CacheConfig::default(),
         }
     }
 }
 
 impl AppConfig {
-
     /// 获取双端口配置
     pub fn get_dual_port_config(&self) -> Option<&DualPortServerConfig> {
         self.dual_port.as_ref()
@@ -141,7 +136,8 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         // 验证双端口配置 - 必须提供
         let dual_port = self.dual_port.as_ref().ok_or_else(|| {
-            "dual_port configuration must be provided (single-port mode is no longer supported)".to_string()
+            "dual_port configuration must be provided (single-port mode is no longer supported)"
+                .to_string()
         })?;
 
         // 验证双端口配置
@@ -155,9 +151,23 @@ impl AppConfig {
             return Err("Database max_connections must be greater than 0".to_string());
         }
 
-        // 验证Redis配置
-        if self.redis.url.is_empty() {
-            return Err("Redis URL cannot be empty".to_string());
+        match self.cache.cache_type {
+            CacheType::Memory => {
+                if self.cache.redis.is_some() {
+                    return Err("cache.redis 配置仅在 cache_type = \"redis\" 时可用".to_string());
+                }
+            }
+            CacheType::Redis => {
+                let redis = self
+                    .cache
+                    .redis
+                    .as_ref()
+                    .ok_or_else(|| "Redis cache configuration must be provided".to_string())?;
+
+                if redis.url.is_empty() {
+                    return Err("Redis URL cannot be empty".to_string());
+                }
+            }
         }
 
         Ok(())
@@ -165,15 +175,13 @@ impl AppConfig {
 
     /// 获取所有监听地址信息 - 双端口模式
     pub fn get_listener_info(&self) -> Vec<(String, String, String)> {
-        self.dual_port
-            .as_ref()
-            .map_or_else(Vec::new, |dual_port| {
-                dual_port
-                    .get_all_listeners()
-                    .into_iter()
-                    .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
-                    .collect()
-            })
+        self.dual_port.as_ref().map_or_else(Vec::new, |dual_port| {
+            dual_port
+                .get_all_listeners()
+                .into_iter()
+                .map(|(name, addr, protocol)| (name, addr.to_string(), protocol))
+                .collect()
+        })
     }
 
     /// 是否启用追踪

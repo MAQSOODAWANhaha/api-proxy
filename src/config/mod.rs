@@ -49,7 +49,7 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     // 验证双端口配置 - 必须提供
     let dual_port = config.dual_port.as_ref().ok_or_else(|| {
         crate::error::ProxyError::config(
-            "dual_port configuration must be provided (single-port mode is no longer supported)"
+            "dual_port configuration must be provided (single-port mode is no longer supported)",
         )
     })?;
 
@@ -69,9 +69,22 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
         ));
     }
 
-    // 验证Redis配置
-    if config.redis.url.is_empty() {
-        return Err(crate::error::ProxyError::config("Redis URL不能为空"));
+    if matches!(config.cache.cache_type, CacheType::Memory) && config.cache.redis.is_some() {
+        return Err(crate::error::ProxyError::config(
+            "cache.redis 仅在 cache_type 为 redis 时允许",
+        ));
+    }
+
+    if matches!(config.cache.cache_type, CacheType::Redis) {
+        let redis_config = config
+            .cache
+            .redis
+            .as_ref()
+            .ok_or_else(|| crate::error::ProxyError::config("需要提供 Redis 缓存配置"))?;
+
+        if redis_config.url.is_empty() {
+            return Err(crate::error::ProxyError::config("Redis URL不能为空"));
+        }
     }
 
     Ok(())

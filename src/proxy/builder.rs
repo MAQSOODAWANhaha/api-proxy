@@ -83,7 +83,7 @@ impl ProxyServerBuilder {
             return Ok(cache.clone());
         }
         let cache = Arc::new(
-            CacheManager::new(&self.config.cache, &self.config.redis.url)
+            CacheManager::new(&self.config.cache)
                 .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {}", e)))?,
         );
         self.cache = Some(cache.clone());
@@ -119,6 +119,7 @@ impl ProxyServerBuilder {
             db.clone(),
             auth_config.clone(),
             cache.clone(),
+            Arc::new(self.config.cache.clone()),
         ));
         let auth_service = Arc::new(AuthService::new(
             jwt_manager,
@@ -214,7 +215,8 @@ impl ProxyServerBuilder {
     /// 获取代理服务器监听地址
     pub fn get_server_address(&self) -> String {
         let proxy_port = self.config.get_proxy_port();
-        let host = self.config
+        let host = self
+            .config
             .dual_port
             .as_ref()
             .map_or("0.0.0.0", |d| &d.proxy.http.host);

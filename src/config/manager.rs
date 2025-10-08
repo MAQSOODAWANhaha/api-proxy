@@ -378,9 +378,22 @@ impl ConfigManager {
                     )
                 })?;
             }
-            ["redis", "url"] => config.redis.url = value.to_string(),
-            ["redis", "pool", "size"] | ["redis", "poolsize"] => {
-                config.redis.pool_size = value.parse().map_err(|e| {
+            ["cache", "redis", "url"] | ["redis", "url"] => {
+                let redis = config
+                    .cache
+                    .redis
+                    .get_or_insert_with(super::RedisConfig::default);
+                redis.url = value.to_string();
+            }
+            ["cache", "redis", "pool", "size"]
+            | ["cache", "redis", "poolsize"]
+            | ["redis", "pool", "size"]
+            | ["redis", "poolsize"] => {
+                let redis = config
+                    .cache
+                    .redis
+                    .get_or_insert_with(super::RedisConfig::default);
+                redis.pool_size = value.parse().map_err(|e| {
                     crate::error::ProxyError::config_with_source(
                         format!("无效的Redis连接池大小: {}", value),
                         e,

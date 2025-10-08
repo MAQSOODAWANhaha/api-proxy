@@ -3,6 +3,7 @@
 //! 提供高级缓存操作和策略集成
 
 use crate::{
+    config::{CacheConfig, CacheType},
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
     lwarn,
@@ -12,10 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
-use crate::{
-    config::RedisConfig,
-    error::{ProxyError, Result},
-};
+use crate::error::{ProxyError, Result};
 use entity::*;
 
 /// 缓存的提供商配置结构
@@ -60,36 +58,48 @@ pub struct CacheFacade {
     client: CacheClient,
     /// 数据库连接（可选，用于预热功能）
     database: Option<Arc<DatabaseConnection>>,
+    /// 缓存配置
+    cache_config: CacheConfig,
 }
 
 impl CacheFacade {
     /// 从应用配置创建缓存管理器
-    pub async fn from_config(redis_config: &RedisConfig) -> Result<Self> {
+    pub async fn from_config(cache_config: &CacheConfig) -> Result<Self> {
+        if !matches!(cache_config.cache_type, CacheType::Redis) {
+            return Err(ProxyError::cache(
+                "CacheFacade 仅在 cache_type 为 redis 时可用",
+            ));
+        }
+
+        let redis_config = cache_config
+            .redis
+            .as_ref()
+            .ok_or_else(|| ProxyError::cache("Redis 缓存配置缺失"))?;
         // 转换配置格式
-        let cache_config = super::client::RedisConfig {
+        let client_redis_config = super::client::RedisConfig {
             host: redis_config.host.clone(),
             port: redis_config.port,
             database: redis_config.database,
             password: redis_config.password.clone(),
             connection_timeout: redis_config.connection_timeout,
-            default_ttl: redis_config.default_ttl,
             max_connections: redis_config.max_connections,
         };
 
-        let client = CacheClient::new(cache_config).await?;
+        let client = CacheClient::new(client_redis_config).await?;
 
         Ok(Self {
             client,
             database: None,
+            cache_config: cache_config.clone(),
         })
     }
 
     /// 创建带数据库连接的缓存管理器
     pub async fn with_database(
-        redis_config: &RedisConfig,
+        cache_config: &CacheConfig,
         database: Arc<DatabaseConnection>,
     ) -> Result<Self> {
-        let mut manager = Self::from_config(redis_config).await?;
+        let mut manager = Self::from_config(cache_config).await?;
         manager.database = Some(database);
         Ok(manager)
     }
@@ -115,23 +125,21 @@ impl CacheFacade {
             return Ok(());
         }
 
-        if let Some(ttl_seconds) = strategy.ttl.as_seconds() {
-            self.client
-                .set_with_ttl(&key.build(), &json_value, ttl_seconds)
-                .await?;
-        } else {
-            // 永不过期的情况，使用一个很大的TTL值
-            self.client
-                .set_with_ttl(&key.build(), &json_value, u64::MAX)
-                .await?;
-        }
+        let ttl_seconds = strategy
+            .ttl
+            .as_seconds()
+            .unwrap_or(self.cache_config.default_ttl);
+
+        self.client
+            .set_with_ttl(&key.build(), &json_value, ttl_seconds)
+            .await?;
 
         ldebug!(
             "system",
             LogStage::Cache,
             LogComponent::Cache,
             "set_with_strategy",
-            &format!("使用策略设置缓存成功: key={}, ttl={:?}", key, strategy.ttl)
+            &format!("使用策略设置缓存成功: key={}, ttl={}s", key, ttl_seconds)
         );
         Ok(())
     }
@@ -578,14 +586,19 @@ impl<'a> CacheDecorator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::keys::CacheKeyBuilder;
+    use crate::{
+        cache::keys::CacheKeyBuilder,
+        config::{CacheType, RedisConfig},
+    };
 
     // 注意：这些测试需要 Redis 服务器运行
     #[tokio::test]
     #[ignore] // 默认忽略，需要手动运行
     async fn test_cache_manager_basic_operations() {
-        let redis_config = RedisConfig::default();
-        let cache_manager = CacheFacade::from_config(&redis_config).await.unwrap();
+        let mut cache_config = CacheConfig::default();
+        cache_config.cache_type = CacheType::Redis;
+        cache_config.redis = Some(RedisConfig::default());
+        let cache_manager = CacheFacade::from_config(&cache_config).await.unwrap();
 
         // 测试连接
         cache_manager.ping().await.unwrap();
@@ -610,8 +623,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_cache_decorator() {
-        let redis_config = RedisConfig::default();
-        let cache_manager = CacheFacade::from_config(&redis_config).await.unwrap();
+        let mut cache_config = CacheConfig::default();
+        cache_config.cache_type = CacheType::Redis;
+        cache_config.redis = Some(RedisConfig::default());
+        let cache_manager = CacheFacade::from_config(&cache_config).await.unwrap();
 
         let key = CacheKeyBuilder::config("decorator_test");
         let decorator = CacheDecorator::new(&cache_manager, key.clone());

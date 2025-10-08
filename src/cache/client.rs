@@ -25,8 +25,6 @@ pub struct RedisConfig {
     pub password: Option<String>,
     /// 连接超时时间（秒）
     pub connection_timeout: u64,
-    /// 默认 TTL（秒）
-    pub default_ttl: u64,
     /// 最大连接数
     pub max_connections: u32,
 }
@@ -39,7 +37,6 @@ impl Default for RedisConfig {
             database: 0,
             password: None,
             connection_timeout: 10,
-            default_ttl: 3600, // 1 小时
             max_connections: 10,
         }
     }
@@ -100,15 +97,14 @@ impl CacheClient {
     }
 
     /// 设置缓存值
-    pub async fn set<T>(&self, key: &str, value: &T) -> Result<()>
+    pub async fn set<T>(&self, key: &str, value: &T, ttl_seconds: u64) -> Result<()>
     where
         T: Serialize,
     {
         let json_value = serde_json::to_string(value)
             .map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))?;
 
-        self.set_with_ttl(key, &json_value, self.config.default_ttl)
-            .await
+        self.set_with_ttl(key, &json_value, ttl_seconds).await
     }
 
     /// 设置缓存值并指定 TTL

@@ -14,6 +14,7 @@ port = 8080
 [database]
 url = "sqlite://./data/api_proxy.db"
 
-[redis]
-url = "redis://127.0.0.1:6379/0"
-
+[cache]
+cache_type = "memory"
+memory_max_entries = 10000
+default_ttl = 300

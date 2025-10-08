@@ -565,7 +565,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config).unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 
@@ -592,7 +592,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config).unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 
@@ -621,7 +621,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config).unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 
@@ -662,7 +662,7 @@ mod tests {
         use crate::config::CacheConfig;
 
         let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config, "test").unwrap();
+        let cache = CacheManager::new(&cache_config).unwrap();
         let manager =
             ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
 

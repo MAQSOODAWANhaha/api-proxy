@@ -1,50 +1,69 @@
 //! # 缓存抽象层
 //!
-//! 提供统一的缓存接口，支持内存缓存和Redis缓存
+//! 提供统一的缓存接口，支持内存缓存和 Redis 缓存
 
-use crate::config::{CacheConfig, CacheType};
+use crate::config::{CacheConfig, CacheType, RedisConfig};
 use crate::error::{ProxyError, Result};
 use crate::{
     linfo,
     logging::{LogComponent, LogStage},
 };
 use async_trait::async_trait;
+use dashmap::DashMap;
+use moka::future::Cache;
+use redis::AsyncCommands;
 use serde::{Serialize, de::DeserializeOwned};
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, OnceCell};
 
-/// 缓存项
-#[derive(Debug, Clone)]
-struct CacheEntry<T> {
-    value: T,
+#[derive(Clone)]
+struct CacheEntry {
+    data: Arc<Vec<u8>>,
     expires_at: Option<Instant>,
 }
 
-impl<T> CacheEntry<T> {
-    fn new(value: T, ttl: Option<Duration>) -> Self {
+impl CacheEntry {
+    fn new(bytes: Vec<u8>, ttl: Option<Duration>) -> Self {
+        let now = Instant::now();
+        let expires_at = ttl.and_then(|duration| {
+            if duration.is_zero() {
+                Some(now)
+            } else {
+                now.checked_add(duration)
+            }
+        });
+
         Self {
-            value,
-            expires_at: ttl.map(|t| Instant::now() + t),
+            data: Arc::new(bytes),
+            expires_at,
         }
+    }
+
+    fn from_parts(data: Arc<Vec<u8>>, expires_at: Option<Instant>) -> Self {
+        Self { data, expires_at }
     }
 
     fn is_expired(&self) -> bool {
-        if let Some(expires_at) = self.expires_at {
-            Instant::now() > expires_at
-        } else {
-            false
-        }
+        self.expires_at
+            .map(|deadline| Instant::now() >= deadline)
+            .unwrap_or(false)
+    }
+
+    fn remaining_ttl(&self) -> Option<Duration> {
+        self.expires_at
+            .and_then(|deadline| deadline.checked_duration_since(Instant::now()))
     }
 }
 
-/// 缓存抽象trait
+/// 缓存抽象 trait
 #[async_trait]
 pub trait CacheProvider: Send + Sync {
     /// 设置缓存值
-    async fn set<T>(&self, key: &str, value: T, ttl: Option<Duration>) -> Result<()>
+    async fn set<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
-        T: Serialize + Send;
+        T: Serialize + Send + Sync;
 
     /// 获取缓存值
     async fn get<T>(&self, key: &str) -> Result<Option<T>>
@@ -91,69 +110,60 @@ impl CacheStats {
     }
 }
 
-/// 内存缓存实现
+/// 基于 moka 的内存缓存实现
 pub struct MemoryCache {
-    data: Arc<RwLock<HashMap<String, CacheEntry<Vec<u8>>>>>,
-    max_entries: usize,
-    hit_count: Arc<RwLock<u64>>,
-    miss_count: Arc<RwLock<u64>>,
+    cache: Cache<String, CacheEntry>,
+    hit_count: AtomicU64,
+    miss_count: AtomicU64,
+    key_guards: DashMap<String, Arc<Mutex<()>>>,
+    default_ttl: Option<Duration>,
 }
 
 impl MemoryCache {
-    pub fn new(max_entries: usize) -> Self {
+    pub fn new(max_entries: usize, default_ttl: Option<Duration>) -> Self {
+        let cache = Cache::builder().max_capacity(max_entries as u64).build();
+
         Self {
-            data: Arc::new(RwLock::new(HashMap::new())),
-            max_entries,
-            hit_count: Arc::new(RwLock::new(0)),
-            miss_count: Arc::new(RwLock::new(0)),
+            cache,
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
+            key_guards: DashMap::new(),
+            default_ttl,
         }
     }
 
-    fn cleanup_expired(&self) {
-        let mut data = self.data.write().unwrap();
-        data.retain(|_, entry| !entry.is_expired());
+    fn guard_for(&self, key: &str) -> Arc<Mutex<()>> {
+        self.key_guards
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
-    fn ensure_capacity(&self) {
-        let mut data = self.data.write().unwrap();
-        if data.len() >= self.max_entries {
-            // 简单的LRU：移除第一个找到的过期项，如果没有则移除第一个项
-            let mut to_remove = None;
+    fn encode<T>(&self, value: &T) -> Result<Vec<u8>>
+    where
+        T: Serialize + Send + Sync,
+    {
+        serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
+    }
 
-            // 先尝试移除过期项
-            for (key, entry) in data.iter() {
-                if entry.is_expired() {
-                    to_remove = Some(key.clone());
-                    break;
-                }
-            }
-
-            // 如果没有过期项，移除第一个项（简化的LRU）
-            if to_remove.is_none() {
-                to_remove = data.keys().next().cloned();
-            }
-
-            if let Some(key) = to_remove {
-                data.remove(&key);
-            }
-        }
+    fn decode<T>(&self, value: &[u8]) -> Result<T>
+    where
+        T: DeserializeOwned + Send,
+    {
+        serde_json::from_slice(value)
+            .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))
     }
 }
 
 #[async_trait]
 impl CacheProvider for MemoryCache {
-    async fn set<T>(&self, key: &str, value: T, ttl: Option<Duration>) -> Result<()>
+    async fn set<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
-        T: Serialize + Send,
+        T: Serialize + Send + Sync,
     {
-        let serialized = serde_json::to_vec(&value)
-            .map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))?;
-
-        self.ensure_capacity();
-
-        let entry = CacheEntry::new(serialized, ttl);
-        let mut data = self.data.write().unwrap();
-        data.insert(key.to_string(), entry);
+        let encoded = self.encode(value)?;
+        let entry = CacheEntry::new(encoded, ttl.or(self.default_ttl));
+        self.cache.insert(key.to_string(), entry).await;
 
         Ok(())
     }
@@ -162,138 +172,175 @@ impl CacheProvider for MemoryCache {
     where
         T: DeserializeOwned + Send,
     {
-        self.cleanup_expired();
-
-        let data = self.data.read().unwrap();
-        if let Some(entry) = data.get(key) {
+        if let Some(entry) = self.cache.get(key).await {
             if entry.is_expired() {
-                *self.miss_count.write().unwrap() += 1;
+                self.cache.invalidate(key).await;
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
                 Ok(None)
             } else {
-                *self.hit_count.write().unwrap() += 1;
-                let value = serde_json::from_slice(&entry.value)
-                    .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))?;
-                Ok(Some(value))
+                self.hit_count.fetch_add(1, Ordering::Relaxed);
+                self.decode(entry.data.as_ref()).map(Some)
             }
         } else {
-            *self.miss_count.write().unwrap() += 1;
+            self.miss_count.fetch_add(1, Ordering::Relaxed);
             Ok(None)
         }
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let mut data = self.data.write().unwrap();
-        data.remove(key);
+        self.cache.invalidate(key).await;
         Ok(())
     }
 
     async fn exists(&self, key: &str) -> Result<bool> {
-        self.cleanup_expired();
-        let data = self.data.read().unwrap();
-        Ok(data.get(key).map_or(false, |entry| !entry.is_expired()))
+        if let Some(entry) = self.cache.get(key).await {
+            if entry.is_expired() {
+                self.cache.invalidate(key).await;
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
-        let mut data = self.data.write().unwrap();
-        if let Some(entry) = data.get_mut(key) {
-            entry.expires_at = Some(Instant::now() + ttl);
+        if let Some(entry) = self.cache.get(key).await {
+            if entry.is_expired() {
+                self.cache.invalidate(key).await;
+            } else {
+                let new_deadline = if ttl.is_zero() {
+                    Some(Instant::now())
+                } else {
+                    Instant::now().checked_add(ttl)
+                };
+                let new_entry = CacheEntry::from_parts(Arc::clone(&entry.data), new_deadline);
+                self.cache.insert(key.to_string(), new_entry).await;
+            }
         }
         Ok(())
     }
 
     async fn incr(&self, key: &str, delta: i64) -> Result<i64> {
-        let mut data = self.data.write().unwrap();
+        let lock = self.guard_for(key);
+        let _guard = lock.lock().await;
 
-        let current_value = if let Some(entry) = data.get(key) {
-            if entry.is_expired() {
-                0
-            } else {
-                serde_json::from_slice::<i64>(&entry.value).unwrap_or(0)
+        let mut ttl = None;
+        let current_value: i64 = match self.cache.get(key).await {
+            Some(entry) => {
+                if entry.is_expired() {
+                    self.cache.invalidate(key).await;
+                    0
+                } else {
+                    ttl = entry.remaining_ttl();
+                    self.decode::<i64>(entry.data.as_ref()).unwrap_or(0)
+                }
             }
-        } else {
-            0
+            None => 0,
         };
 
-        let new_value = current_value + delta;
-        let serialized = serde_json::to_vec(&new_value)
-            .map_err(|e| ProxyError::cache_with_source("序列化数字值失败", e))?;
-
-        let entry = CacheEntry::new(serialized, None);
-        data.insert(key.to_string(), entry);
-
+        let new_value = current_value.saturating_add(delta);
+        let encoded = self.encode(&new_value)?;
+        let entry = CacheEntry::new(encoded, ttl);
+        self.cache.insert(key.to_string(), entry).await;
         Ok(new_value)
     }
 
     async fn clear(&self) -> Result<()> {
-        let mut data = self.data.write().unwrap();
-        data.clear();
+        self.cache.invalidate_all();
         Ok(())
     }
 
     async fn stats(&self) -> Result<CacheStats> {
-        self.cleanup_expired();
-
-        let data = self.data.read().unwrap();
-        let total_keys = data.len();
-        let expired_keys = data.values().filter(|entry| entry.is_expired()).count();
-
         Ok(CacheStats {
-            total_keys,
-            expired_keys,
-            hit_count: *self.hit_count.read().unwrap(),
-            miss_count: *self.miss_count.read().unwrap(),
-            cache_type: "Memory".to_string(),
+            total_keys: self.cache.entry_count() as usize,
+            expired_keys: 0,
+            hit_count: self.hit_count.load(Ordering::Relaxed),
+            miss_count: self.miss_count.load(Ordering::Relaxed),
+            cache_type: "Memory(moka/json)".to_string(),
         })
     }
 }
 
-/// Redis缓存实现
+/// Redis 缓存实现
 pub struct RedisCache {
     client: redis::Client,
-    hit_count: Arc<RwLock<u64>>,
-    miss_count: Arc<RwLock<u64>>,
+    connection_manager: OnceCell<redis::aio::ConnectionManager>,
+    hit_count: AtomicU64,
+    miss_count: AtomicU64,
 }
 
 impl RedisCache {
-    pub fn new(redis_url: &str) -> Result<Self> {
-        let client = redis::Client::open(redis_url)
-            .map_err(|e| ProxyError::cache_with_source("创建Redis客户端失败", e))?;
+    pub fn new(redis_config: &RedisConfig) -> Result<Self> {
+        let client = redis::Client::open(redis_config.url.as_str())
+            .map_err(|e| ProxyError::cache_with_source("创建 Redis 客户端失败", e))?;
 
         Ok(Self {
             client,
-            hit_count: Arc::new(RwLock::new(0)),
-            miss_count: Arc::new(RwLock::new(0)),
+            connection_manager: OnceCell::new(),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
         })
+    }
+
+    async fn connection(&self) -> Result<redis::aio::ConnectionManager> {
+        let client = self.client.clone();
+        let manager = self
+            .connection_manager
+            .get_or_try_init(|| async {
+                redis::aio::ConnectionManager::new(client)
+                    .await
+                    .map_err(|e| ProxyError::cache_with_source("建立 Redis 连接失败", e))
+            })
+            .await?;
+        Ok(manager.clone())
+    }
+
+    fn encode<T>(&self, value: &T) -> Result<Vec<u8>>
+    where
+        T: Serialize + Send + Sync,
+    {
+        serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
+    }
+
+    fn decode<T>(&self, bytes: &[u8]) -> Result<T>
+    where
+        T: DeserializeOwned + Send,
+    {
+        serde_json::from_slice(bytes)
+            .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))
     }
 }
 
 #[async_trait]
 impl CacheProvider for RedisCache {
-    async fn set<T>(&self, key: &str, value: T, ttl: Option<Duration>) -> Result<()>
+    async fn set<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
-        T: Serialize + Send,
+        T: Serialize + Send + Sync,
     {
-        let serialized = serde_json::to_string(&value)
-            .map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))?;
+        let serialized = self.encode(value)?;
+        let mut conn = self.connection().await?;
 
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        if let Some(ttl) = ttl {
-            redis::cmd("SETEX")
-                .arg(key)
-                .arg(ttl.as_secs())
-                .arg(&serialized)
-                .exec(&mut conn)
-                .unwrap();
-        } else {
-            redis::cmd("SET")
-                .arg(key)
-                .arg(&serialized)
-                .exec(&mut conn)
-                .unwrap();
+        match ttl {
+            Some(duration) if duration.is_zero() => {
+                let _: () = conn
+                    .set(key, serialized)
+                    .await
+                    .map_err(|e| ProxyError::cache_with_source("Redis SET 失败", e))?;
+            }
+            Some(duration) => {
+                let _: () = conn
+                    .set_ex(key, serialized, duration.as_secs())
+                    .await
+                    .map_err(|e| ProxyError::cache_with_source("Redis SETEX 失败", e))?;
+            }
+            None => {
+                let _: () = conn
+                    .set(key, serialized)
+                    .await
+                    .map_err(|e| ProxyError::cache_with_source("Redis SET 失败", e))?;
+            }
         }
 
         Ok(())
@@ -303,128 +350,92 @@ impl CacheProvider for RedisCache {
     where
         T: DeserializeOwned + Send,
     {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        let result: Option<String> = redis::cmd("GET")
-            .arg(key)
-            .query(&mut conn)
-            .map_err(|e| ProxyError::cache_with_source("Redis GET失败", e))?;
+        let mut conn = self.connection().await?;
+        let result: Option<Vec<u8>> = conn
+            .get(key)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis GET 失败", e))?;
 
         if let Some(data) = result {
-            *self.hit_count.write().unwrap() += 1;
-            let value = serde_json::from_str(&data)
-                .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))?;
-            Ok(Some(value))
+            self.hit_count.fetch_add(1, Ordering::Relaxed);
+            self.decode(&data).map(Some)
         } else {
-            *self.miss_count.write().unwrap() += 1;
+            self.miss_count.fetch_add(1, Ordering::Relaxed);
             Ok(None)
         }
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        redis::cmd("DEL").arg(key).exec(&mut conn).unwrap();
-
+        let mut conn = self.connection().await?;
+        let _: usize = conn
+            .del(key)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis DEL 失败", e))?;
         Ok(())
     }
 
     async fn exists(&self, key: &str) -> Result<bool> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        let exists: bool = redis::cmd("EXISTS")
-            .arg(key)
-            .query(&mut conn)
-            .map_err(|e| ProxyError::cache_with_source("Redis EXISTS失败", e))?;
-
-        Ok(exists)
+        let mut conn = self.connection().await?;
+        conn.exists(key)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis EXISTS 失败", e))
     }
 
     async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        redis::cmd("EXPIRE")
-            .arg(key)
-            .arg(ttl.as_secs())
-            .exec(&mut conn)
-            .unwrap();
-
+        let mut conn = self.connection().await?;
+        let _: bool = conn
+            .expire(key, ttl.as_secs() as i64)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis EXPIRE 失败", e))?;
         Ok(())
     }
 
     async fn incr(&self, key: &str, delta: i64) -> Result<i64> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        let result: i64 = redis::cmd("INCRBY")
-            .arg(key)
-            .arg(delta)
-            .query(&mut conn)
-            .map_err(|e| ProxyError::cache_with_source("Redis INCRBY失败", e))?;
-
-        Ok(result)
+        let mut conn = self.connection().await?;
+        conn.incr(key, delta)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis INCRBY 失败", e))
     }
 
     async fn clear(&self) -> Result<()> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
-        redis::cmd("FLUSHDB").exec(&mut conn).unwrap();
-
+        let mut conn = self.connection().await?;
+        let _: () = conn
+            .flushdb()
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis FLUSHDB 失败", e))?;
         Ok(())
     }
 
     async fn stats(&self) -> Result<CacheStats> {
-        let mut conn = self
-            .client
-            .get_connection()
-            .map_err(|e| ProxyError::cache_with_source("获取Redis连接失败", e))?;
-
+        let mut conn = self.connection().await?;
         let info: String = redis::cmd("INFO")
             .arg("keyspace")
-            .query(&mut conn)
-            .map_err(|e| ProxyError::cache_with_source("Redis INFO失败", e))?;
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| ProxyError::cache_with_source("Redis INFO 失败", e))?;
 
-        // 简化的Redis统计解析
         let total_keys = info
             .lines()
             .filter(|line| line.starts_with("db"))
-            .map(|line| {
+            .filter_map(|line| {
                 line.split("keys=")
                     .nth(1)
                     .and_then(|s| s.split(',').next())
                     .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(0)
             })
             .sum();
 
         Ok(CacheStats {
             total_keys,
-            expired_keys: 0, // Redis自动清理过期键
-            hit_count: *self.hit_count.read().unwrap(),
-            miss_count: *self.miss_count.read().unwrap(),
-            cache_type: "Redis".to_string(),
+            expired_keys: 0,
+            hit_count: self.hit_count.load(Ordering::Relaxed),
+            miss_count: self.miss_count.load(Ordering::Relaxed),
+            cache_type: "Redis(json)".to_string(),
         })
     }
 }
 
-/// 缓存提供者枚举 - 避免 trait object 兼容性问题
+/// 缓存提供者类型 - 封装具体实现
 pub enum CacheProviderType {
     Memory(MemoryCache),
     Redis(RedisCache),
@@ -432,9 +443,9 @@ pub enum CacheProviderType {
 
 impl CacheProviderType {
     /// 设置缓存值
-    pub async fn set<T>(&self, key: &str, value: T, ttl: Option<Duration>) -> Result<()>
+    pub async fn set<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
-        T: Serialize + Send,
+        T: Serialize + Send + Sync,
     {
         match self {
             CacheProviderType::Memory(cache) => cache.set(key, value, ttl).await,
@@ -505,11 +516,13 @@ impl CacheProviderType {
 /// 缓存管理器
 pub struct CacheManager {
     provider: CacheProviderType,
+    default_ttl: Duration,
 }
 
 impl CacheManager {
     /// 根据配置创建缓存管理器
-    pub fn new(config: &CacheConfig, redis_url: &str) -> Result<Self> {
+    pub fn new(config: &CacheConfig) -> Result<Self> {
+        let default_ttl = Duration::from_secs(config.default_ttl.max(1));
         let provider = match config.cache_type {
             CacheType::Memory => {
                 linfo!(
@@ -517,29 +530,46 @@ impl CacheManager {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "use_memory_cache",
-                    &format!("使用内存缓存，最大条目数: {}", config.memory_max_entries)
+                    &format!(
+                        "使用内存缓存 (moka)，最大条目数: {}，默认 TTL: {}s",
+                        config.memory_max_entries, config.default_ttl
+                    )
                 );
-                CacheProviderType::Memory(MemoryCache::new(config.memory_max_entries))
+                CacheProviderType::Memory(MemoryCache::new(
+                    config.memory_max_entries,
+                    Some(default_ttl),
+                ))
             }
             CacheType::Redis => {
+                let redis_config = config
+                    .redis
+                    .as_ref()
+                    .ok_or_else(|| ProxyError::cache("Redis 缓存未提供配置"))?;
                 linfo!(
                     "system",
                     LogStage::Cache,
                     LogComponent::Cache,
                     "use_redis_cache",
-                    &format!("使用Redis缓存，URL: {}", redis_url)
+                    &format!("使用 Redis 缓存，URL: {}", redis_config.url)
                 );
-                CacheProviderType::Redis(RedisCache::new(redis_url)?)
+                CacheProviderType::Redis(RedisCache::new(redis_config)?)
             }
         };
 
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            default_ttl,
+        })
     }
 
     /// 创建仅内存缓存管理器（用于测试）
     pub fn memory_only() -> Self {
         Self {
-            provider: CacheProviderType::Memory(MemoryCache::new(1000)),
+            provider: CacheProviderType::Memory(MemoryCache::new(
+                1000,
+                Some(Duration::from_secs(300)),
+            )),
+            default_ttl: Duration::from_secs(300),
         }
     }
 
@@ -554,9 +584,9 @@ impl CacheManager {
     }
 
     /// 设置缓存值
-    pub async fn set<T>(&self, key: &str, value: T, ttl: Option<Duration>) -> Result<()>
+    pub async fn set<T>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()>
     where
-        T: Serialize + Send,
+        T: Serialize + Send + Sync,
     {
         self.provider.set(key, value, ttl).await
     }
@@ -599,17 +629,19 @@ impl CacheManager {
         self.provider.stats().await
     }
 
-    /// 使用策略设置缓存（兼容原有API）
+    /// 使用策略设置缓存（兼容原有 API）
     pub async fn set_with_strategy<T>(
         &self,
         key: &crate::cache::keys::CacheKey,
         value: &T,
     ) -> Result<()>
     where
-        T: Serialize + Send + Sync + Clone,
+        T: Serialize + Send + Sync,
     {
-        // 使用默认TTL，可以根据key类型优化
-        let ttl = Some(Duration::from_secs(300)); // 5分钟默认TTL
-        self.provider.set(&key.build(), value.clone(), ttl).await
+        let ttl = crate::cache::strategies::CacheStrategies::for_key(key)
+            .ttl
+            .as_duration()
+            .unwrap_or(self.default_ttl);
+        self.provider.set(&key.build(), value, Some(ttl)).await
     }
 }

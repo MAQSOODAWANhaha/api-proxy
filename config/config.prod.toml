@@ -34,21 +34,3 @@ query_timeout = 60
 cache_type = "memory"
 memory_max_entries = 50000
 default_ttl = 300
-
-# 生产Redis配置 - 更大的连接池
-[redis]
-url = "redis://redis:6379"  # Docker容器中的Redis
-pool_size = 50
-host = "redis"  
-port = 6379
-database = 0
-connection_timeout = 5
-default_ttl = 3600
-max_connections = 50
-
-# 生产OAuth清理配置
-[oauth_cleanup]
-pending_expire_minutes = 15
-cleanup_interval_seconds = 180
-max_cleanup_records = 5000
-expired_records_retention_days = 30

@@ -2,6 +2,7 @@
 //!
 //! 为认证系统提供统一、优化的缓存策略，确保一致性和性能
 
+use crate::config::CacheConfig;
 use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
 use std::time::Duration;
@@ -89,15 +90,22 @@ pub struct UnifiedAuthCacheManager {
     /// 底层缓存管理器
     cache_manager: Arc<CacheManager>,
     /// 认证配置
-    config: Arc<AuthConfig>,
+    auth_config: Arc<AuthConfig>,
+    /// 缓存配置
+    cache_config: Arc<CacheConfig>,
 }
 
 impl UnifiedAuthCacheManager {
     /// 创建新的统一认证缓存管理器
-    pub fn new(cache_manager: Arc<CacheManager>, config: Arc<AuthConfig>) -> Self {
+    pub fn new(
+        cache_manager: Arc<CacheManager>,
+        auth_config: Arc<AuthConfig>,
+        cache_config: Arc<CacheConfig>,
+    ) -> Self {
         Self {
             cache_manager,
-            config,
+            auth_config,
+            cache_config,
         }
     }
 
@@ -169,7 +177,11 @@ impl UnifiedAuthCacheManager {
         let result = self
             .cache_manager
             .provider()
-            .set(&cache_key, Option::<()>::None, Some(Duration::from_secs(1)))
+            .set(
+                &cache_key,
+                &Option::<()>::None,
+                Some(Duration::from_secs(1)),
+            )
             .await;
 
         ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_invalidate", "Auth cache invalidated", cache_key = %cache_key, success = result.is_ok());
@@ -196,15 +208,30 @@ impl UnifiedAuthCacheManager {
     ///
     /// 考虑配置覆盖和默认值
     fn get_effective_ttl(&self, key: &AuthCacheKey) -> Duration {
-        // 根据配置调整TTL
-        let base_ttl = key.default_ttl();
-
-        match key {
-            AuthCacheKey::JwtAuth(_) => {
-                Duration::from_secs((self.config.cache_ttl_minutes * 60) as u64).min(base_ttl) // 不超过默认值
-            }
-            _ => base_ttl,
-        }
+        let cache_key = match key {
+            AuthCacheKey::JwtAuth(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+            AuthCacheKey::JwtBlacklist(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+            AuthCacheKey::ApiKeyAuth(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+            AuthCacheKey::BasicFailure(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+            AuthCacheKey::BasicAuth(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+            AuthCacheKey::OAuthSession(token) => crate::cache::keys::CacheKey::AuthToken {
+                token_hash: token.clone(),
+            },
+        };
+        let strategy_ttl = crate::cache::strategies::CacheStrategies::for_key(&cache_key)
+            .ttl
+            .as_duration();
+        strategy_ttl.unwrap_or(Duration::from_secs(self.cache_config.default_ttl))
     }
 
     /// 批量缓存操作
