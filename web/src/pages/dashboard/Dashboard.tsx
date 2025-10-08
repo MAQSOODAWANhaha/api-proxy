@@ -10,7 +10,13 @@ import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
 import { useTokensTrend } from '../../hooks/useTokensTrend'
 import { useUserApiKeysTrend } from '../../hooks/useUserApiKeysTrend'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, PieChart as RechartsPieChart, Pie, Cell } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart, PieChart as RechartsPieChart, Pie, Cell } from 'recharts'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 
 /** 指标项接口 */
 interface StatItem {
@@ -244,6 +250,13 @@ const SimpleTokenChart: React.FC<{
       displayDate: new Date(d.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
     }))
   }, [data])
+
+  const chartConfig = {
+    tokens: {
+      label: "Token消耗",
+      color: "hsl(var(--chart-2))",
+    },
+  } satisfies ChartConfig
   
   const values = chartData.map(d => d.value)
   
@@ -266,60 +279,47 @@ const SimpleTokenChart: React.FC<{
     return value.toString()
   }
 
-  // 自定义Tooltip
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1.5 shadow-xl">
-          <div className="font-semibold text-blue-600 text-xs leading-tight">
-            {formatTokenValue(payload[0].value)}
-          </div>
-          <div className="text-neutral-500 text-xs leading-tight mt-0.5">
-            {payload[0].payload.displayDate}
-          </div>
-        </div>
-      )
-    }
-    return null
-  }
-
+  
   return (
     <div className="space-y-4">
       {/* 图表 */}
       <div className="h-52">
-        <ResponsiveContainer width="100%" height="100%">
+        <ChartContainer config={chartConfig} className="w-full h-full">
           <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
             <defs>
               <linearGradient id="tokenAreaGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3}/>
-                <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0}/>
+                <stop offset="0%" stopColor="var(--color-tokens)" stopOpacity={0.3}/>
+                <stop offset="100%" stopColor="var(--color-tokens)" stopOpacity={0}/>
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-            <XAxis 
-              dataKey="displayDate" 
-              axisLine={false}
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="displayDate"
               tickLine={false}
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              axisLine={false}
+              tickMargin={8}
             />
-            <YAxis 
-              axisLine={false}
+            <YAxis
               tickLine={false}
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              axisLine={false}
+              tickMargin={8}
               tickFormatter={formatTokenValue}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent indicator="dot" />}
+            />
             <Area
               type="monotone"
               dataKey="value"
-              stroke="#0ea5e9"
+              stroke="var(--color-tokens)"
               strokeWidth={3}
               fill="url(#tokenAreaGradient)"
-              dot={{ fill: '#0ea5e9', strokeWidth: 2, stroke: 'white', r: 4 }}
-              activeDot={{ r: 6, fill: '#0ea5e9', strokeWidth: 2, stroke: 'white' }}
+              dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
+              activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
             />
           </AreaChart>
-        </ResponsiveContainer>
+        </ChartContainer>
       </div>
       
       {/* 统计信息 */}
@@ -351,8 +351,7 @@ const SimpleTokenChart: React.FC<{
 const TrendChartWithoutControls: React.FC<{
   data: TrendDataPoint[]
   viewMode: TrendViewMode
-  color: string
-}> = ({ data, viewMode, color }) => {
+}> = ({ data, viewMode }) => {
   // 安全地处理数据，过滤无效值
   const chartData = useMemo(() => {
     return data.map(d => {
@@ -364,6 +363,13 @@ const TrendChartWithoutControls: React.FC<{
       }
     })
   }, [data, viewMode])
+
+  const chartConfig = {
+    [viewMode === 'requests' ? 'requests' : 'tokens']: {
+      label: viewMode === 'requests' ? "请求次数" : "Token数量",
+      color: "hsl(var(--chart-3))",
+    },
+  } satisfies ChartConfig
   
   const values = chartData.map(d => d.value)
   
@@ -379,52 +385,39 @@ const TrendChartWithoutControls: React.FC<{
     )
   }
 
-  // 自定义Tooltip
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white border border-neutral-200 text-neutral-800 text-xs rounded-md px-2 py-1.5 shadow-xl">
-          <div className="font-semibold text-purple-600 text-xs leading-tight">
-            {payload[0].value.toLocaleString()}
-          </div>
-          <div className="text-neutral-500 text-xs leading-tight mt-0.5">
-            {payload[0].payload.displayDate}
-          </div>
-        </div>
-      )
-    }
-    return null
-  }
-
+  
   return (
     <div className="space-y-4">
       {/* 图表 */}
       <div className="h-52">
-        <ResponsiveContainer width="100%" height="100%">
+        <ChartContainer config={chartConfig} className="w-full h-full">
           <LineChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-            <XAxis 
-              dataKey="displayDate" 
-              axisLine={false}
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="displayDate"
               tickLine={false}
-              tick={{ fontSize: 12, fill: '#6b7280' }}
-            />
-            <YAxis 
               axisLine={false}
-              tickLine={false}
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              tickMargin={8}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+            />
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent indicator="dot" />}
+            />
             <Line
               type="monotone"
               dataKey="value"
-              stroke={color}
+              stroke="var(--color-requests)"
               strokeWidth={3}
-              dot={{ fill: color, strokeWidth: 2, stroke: 'white', r: 4 }}
-              activeDot={{ r: 6, fill: color, strokeWidth: 2, stroke: 'white' }}
+              dot={{ strokeWidth: 2, stroke: 'white', r: 4 }}
+              activeDot={{ r: 6, strokeWidth: 2, stroke: 'white' }}
             />
           </LineChart>
-        </ResponsiveContainer>
+        </ChartContainer>
       </div>
       
       {/* 统计信息 */}
@@ -560,6 +553,13 @@ const CompactTimeRangeSelector: React.FC<{
 const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   const total = data.reduce((sum, item) => sum + item.count, 0)
 
+  const chartConfig = {
+    model_usage: {
+      label: "模型使用",
+      color: "hsl(var(--chart-1))",
+    },
+  } satisfies ChartConfig
+
   // 智能处理模型数据显示
   const processedData = useMemo(() => {
     // 按使用量排序
@@ -613,46 +613,12 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
   // 动态调整图例布局：少量模型用单列，多模型用双列
   const legendCols = processedData.length <= 3 ? 1 : 2
 
-  // 自定义Tooltip
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload
-      return (
-        <div className="bg-white border border-neutral-200 rounded-lg p-3 shadow-lg">
-          <div className="flex items-center gap-2 mb-2">
-            <div 
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: data.color }}
-            />
-            <span className="font-medium text-neutral-900">{data.name}</span>
-          </div>
-          <div className="text-sm space-y-1">
-            <div className="flex justify-between gap-4">
-              <span className="text-neutral-600">请求次数:</span>
-              <span className="font-medium">{data.count.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-neutral-600">占比:</span>
-              <span className="font-medium">{data.percentage.toFixed(1)}%</span>
-            </div>
-            {data.cost > 0 && (
-              <div className="flex justify-between gap-4">
-                <span className="text-neutral-600">成本:</span>
-                <span className="font-medium">${data.cost.toFixed(2)}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )
-    }
-    return null
-  }
-
+  
   return (
     <div className="flex flex-col items-center gap-6">
       {/* Recharts 饼图 */}
       <div className="relative">
-        <ResponsiveContainer width={320} height={320}>
+        <ChartContainer config={chartConfig} className="h-80 w-80">
           <RechartsPieChart>
             <Pie
               data={processedData}
@@ -665,8 +631,8 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
               stroke="none"
             >
               {processedData.map((entry, index) => (
-                <Cell 
-                  key={`cell-${index}`} 
+                <Cell
+                  key={`cell-${index}`}
                   fill={entry.color}
                   style={{
                     filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))',
@@ -675,9 +641,12 @@ const PieChart: React.FC<{ data: ModelUsage[] }> = ({ data }) => {
                 />
               ))}
             </Pie>
-            <Tooltip content={<CustomTooltip />} />
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent indicator="dot" />}
+            />
           </RechartsPieChart>
-        </ResponsiveContainer>
+        </ChartContainer>
         
         {/* 中心显示总数 */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1117,7 +1086,6 @@ const UserApiKeysTrendChart: React.FC = () => {
           <TrendChartWithoutControls
             data={chartData}
             viewMode={viewMode}
-            color="#7c3aed"
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-80 text-neutral-400">
@@ -1134,7 +1102,7 @@ const UserApiKeysTrendChart: React.FC = () => {
 
 const DashboardPage: React.FC = () => {
   // 使用自定义hook获取仪表板数据
-  const { cards, isLoading, error, refresh, lastUpdated } = useDashboardCards()
+  const { cards, isLoading, error, refresh } = useDashboardCards()
 
   // 图标映射
   const iconMap: Record<string, React.ReactNode> = {
