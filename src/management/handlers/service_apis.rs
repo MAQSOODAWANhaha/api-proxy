@@ -145,6 +145,20 @@ pub struct UserServiceKeyResponse {
     pub created_at: String,
     /// 过期时间
     pub expires_at: Option<String>,
+    /// 调度策略
+    pub scheduling_strategy: Option<String>,
+    /// 重试次数
+    pub retry_count: Option<i32>,
+    /// 超时时间(秒)
+    pub timeout_seconds: Option<i32>,
+    /// 每分钟最大请求数
+    pub max_request_per_min: Option<i32>,
+    /// 每日最大请求数
+    pub max_requests_per_day: Option<i32>,
+    /// 每日最大Token数
+    pub max_tokens_per_day: Option<i64>,
+    /// 每日最大费用
+    pub max_cost_per_day: Option<Decimal>,
 }
 
 /// 详细的API Key响应
@@ -469,6 +483,13 @@ pub async fn list_user_service_keys(
             expires_at: api
                 .expires_at
                 .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+            scheduling_strategy: api.scheduling_strategy,
+            retry_count: api.retry_count,
+            timeout_seconds: api.timeout_seconds,
+            max_request_per_min: api.max_request_per_min,
+            max_requests_per_day: api.max_requests_per_day,
+            max_tokens_per_day: api.max_tokens_per_day,
+            max_cost_per_day: api.max_cost_per_day,
         };
 
         service_api_keys.push(response_api);
