@@ -1253,26 +1253,41 @@ const AddDialog: React.FC<{
               </button>
             </div>
           </div>
-        </div>
-
-        {/* 费用限制 */}
-        <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">
-            费用限制/天 (USD)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={formData.max_cost_per_day}
-            onChange={(e) =>
-              setFormData({
-                ...formData,
-                max_cost_per_day: parseFloat(e.target.value) || 0,
-              })
-            }
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-          />
+          {/* 费用限制 */}
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              费用限制/天 (USD)
+            </label>
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => handleNumberChange("max_cost_per_day", -1)}
+                className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.max_cost_per_day}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    max_cost_per_day: parseFloat(e.target.value) || 0,
+                  })
+                }
+                className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+              />
+              <button
+                type="button"
+                onClick={() => handleNumberChange("max_cost_per_day", 1)}
+                className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
+              >
+                +
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* 过期时间 */}
@@ -1822,26 +1837,42 @@ const EditDialog: React.FC<{
                 </button>
               </div>
             </div>
-          </div>
 
-          {/* 费用限制 */}
-          <div>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">
-              费用限制/天 (USD)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={formData.max_cost_per_day}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  max_cost_per_day: parseFloat(e.target.value) || 0,
-                })
-              }
-              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-            />
+            {/* 费用限制 */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
+                费用限制/天 (USD)
+              </label>
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => handleNumberChange("max_cost_per_day", -1)}
+                  className="px-3 py-2 border border-neutral-200 rounded-l-lg text-neutral-600 hover:bg-neutral-50"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.max_cost_per_day}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      max_cost_per_day: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  className="w-full px-3 py-2 border-t border-b border-neutral-200 text-center text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleNumberChange("max_cost_per_day", 1)}
+                  className="px-3 py-2 border border-neutral-200 rounded-r-lg text-neutral-600 hover:bg-neutral-50"
+                >
+                  +
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* 过期时间 */}
