@@ -160,7 +160,7 @@ export function useDashboardCards(): UseDashboardCardsReturn {
       }
       fetchingRef.current = false
     }
-  }, [cards.length])
+  }, [])
 
   const refresh = useCallback(async () => {
     await fetchCards()

@@ -1043,29 +1043,6 @@ export const api = {
     },
   },
   
-  // Dashboard相关API
-  dashboard: {
-    /**
-     * 获取仪表板卡片数据
-     */
-    async getCards(): Promise<ApiResponse<DashboardCardsResponse>> {
-      try {
-        return await apiClient.get<DashboardCardsResponse>('/statistics/today/cards')
-      } catch (error) {
-        console.error('[Dashboard] Failed to fetch cards:', error)
-        return {
-          success: false,
-          error: {
-            code: 'DASHBOARD_CARDS_ERROR',
-            message: '获取仪表板数据失败'
-          }
-        }
-      }
-    },
-
-
-  },
-
   // 新的统计接口调用
   statistics: {
     /**
