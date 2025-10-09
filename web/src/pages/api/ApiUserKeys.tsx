@@ -2210,19 +2210,19 @@ const StatsDialog: React.FC<{
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">速率限制/分钟</div>
               <div className="font-medium">
-                {(item.max_request_per_min || 0).toLocaleString()}
+                {item.max_request_per_min ? `${item.max_request_per_min.toLocaleString()} 次/分钟` : '无'}
               </div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">速率限制/天</div>
               <div className="font-medium">
-                {(item.max_requests_per_day || 0).toLocaleString()}
+                {item.max_requests_per_day ? `${item.max_requests_per_day.toLocaleString()} 次/天` : "无"}
               </div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">Token/天</div>
               <div className="font-medium">
-                {(item.max_tokens_per_day || 0).toLocaleString()}
+                {item.max_tokens_per_day ? `${item.max_tokens_per_day.toLocaleString()} Token/天` : "无"}
               </div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">

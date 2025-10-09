@@ -2117,16 +2117,16 @@ const StatsDialog: React.FC<{
           <h4 className="text-sm font-medium text-neutral-900 mb-3">限制配置</h4>
           <div className="grid grid-cols-3 gap-4">
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">请求限制/分钟</div>
-              <div className="font-medium">{item.requestLimitPerMinute} 次/分钟</div>
+              <div className="text-sm text-neutral-600">速率限制/分钟</div>
+              <div className="font-medium">{item.requestLimitPerMinute ? `${item.requestLimitPerMinute.toLocaleString()} 次/分钟` : '无'}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">Token限制/分钟</div>
-              <div className="font-medium">{(item.tokenLimitPromptPerMinute || 0).toLocaleString()} Token/分钟</div>
+              <div className="font-medium">{item.tokenLimitPromptPerMinute ? `${item.tokenLimitPromptPerMinute.toLocaleString()} Token/分钟` : '无'}</div>
             </div>
             <div className="p-3 bg-neutral-50 rounded-lg">
-              <div className="text-sm text-neutral-600">请求限制/天</div>
-              <div className="font-medium">{(item.requestLimitPerDay || 0).toLocaleString()} 次/天</div>
+              <div className="text-sm text-neutral-600">速率限制/天</div>
+              <div className="font-medium">{item.requestLimitPerDay ? `${item.requestLimitPerDay.toLocaleString()} 次/天` : '无'}</div>
             </div>
           </div>
         </div>
