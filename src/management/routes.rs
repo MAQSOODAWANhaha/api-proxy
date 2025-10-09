@@ -191,6 +191,10 @@ fn user_routes() -> Router<AppState> {
             "/auth/validate",
             get(crate::management::handlers::auth::validate_token),
         )
+        .route(
+            "/auth/refresh",
+            post(crate::management::handlers::auth::refresh_token),
+        )
 }
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能

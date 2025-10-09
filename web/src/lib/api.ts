@@ -57,6 +57,7 @@ export interface LoginRequest {
 // 登录响应接口
 export interface LoginResponse {
   token: string
+  refresh_token: string
   user: {
     id: number
     username: string
@@ -74,6 +75,18 @@ export interface ValidateTokenResponse {
     email: string
     is_admin: boolean
   }
+}
+
+// 刷新token请求接口
+export interface RefreshTokenRequest {
+  refresh_token: string
+}
+
+// 刷新token响应接口
+export interface RefreshTokenResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
 }
 
 // OAuth相关类型定义
@@ -902,6 +915,13 @@ class ApiClient {
   async validateToken(): Promise<ApiResponse<ValidateTokenResponse>> {
     return this.get<ValidateTokenResponse>('/users/auth/validate')
   }
+
+  /**
+   * 刷新access token
+   */
+  async refreshToken(refreshToken: string): Promise<ApiResponse<RefreshTokenResponse>> {
+    return this.post<RefreshTokenResponse>('/users/auth/refresh', { refresh_token: refreshToken })
+  }
 }
 
 // 创建API客户端实例
@@ -964,6 +984,7 @@ export const api = {
   login: (credentials: LoginRequest) => apiClient.login(credentials),
   logout: () => apiClient.logout(),
   validateToken: () => apiClient.validateToken(),
+  refreshToken: (refreshToken: string) => apiClient.refreshToken(refreshToken),
   users: {
     ...userApi,
 

@@ -28,6 +28,8 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     /// JWT token
     pub token: String,
+    /// 刷新token
+    pub refresh_token: String,
     /// 用户信息
     pub user: UserInfo,
 }
@@ -160,6 +162,7 @@ pub async fn login(
 
     let response = LoginResponse {
         token: token_pair.access_token,
+        refresh_token: token_pair.refresh_token,
         user: UserInfo {
             id: auth_user.id,
             username: auth_user.username,
@@ -179,6 +182,24 @@ pub struct ValidateTokenResponse {
     /// 用户信息（如果token有效）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<UserInfo>,
+}
+
+/// 刷新token请求
+#[derive(Debug, Deserialize)]
+pub struct RefreshTokenRequest {
+    /// 刷新token
+    pub refresh_token: String,
+}
+
+/// 刷新token响应
+#[derive(Debug, Serialize)]
+pub struct RefreshTokenResponse {
+    /// 新的access token
+    pub access_token: String,
+    /// token类型
+    pub token_type: String,
+    /// 过期时间（秒）
+    pub expires_in: i64,
 }
 
 /// 用户登出
@@ -439,4 +460,106 @@ pub async fn validate_token(
         user: Some(user_info),
     };
     response::success(response_data)
+}
+
+/// 刷新access token
+pub async fn refresh_token(
+    State(state): State<AppState>,
+    Json(request): Json<RefreshTokenRequest>,
+) -> axum::response::Response {
+    // 验证refresh token
+    let refresh_claims = match state.auth_service.jwt_manager.validate_token(&request.refresh_token) {
+        Ok(claims) => claims,
+        Err(err) => {
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_invalid",
+                &format!("Invalid refresh token: {}", err)
+            );
+            return crate::manage_error!(crate::proxy_err!(auth, "刷新令牌无效或已过期"));
+        }
+    };
+
+    // 获取用户信息
+    let user_id = match refresh_claims.user_id() {
+        Ok(id) => id,
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_user_id_parse_fail",
+                &format!("Failed to parse user id from refresh token: {}", err)
+            );
+            return crate::manage_error!(err);
+        }
+    };
+
+    // 获取用户最新的权限信息
+    let auth_user = match state.auth_service.get_user_info(user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_user_not_found",
+                &format!("User {} not found during token refresh", user_id)
+            );
+            return crate::manage_error!(crate::proxy_err!(auth, "用户不存在"));
+        }
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_user_info_fail",
+                &format!("Failed to load user info for {}: {}", user_id, err)
+            );
+            return crate::manage_error!(err);
+        }
+    };
+
+    // 生成新的access token
+    let permissions = auth_user.permissions
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+
+    let new_access_token = match state.auth_service.jwt_manager.generate_access_token(
+        user_id,
+        auth_user.username.clone(),
+        auth_user.is_admin,
+        permissions,
+    ) {
+        Ok(token) => token,
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_generation_fail",
+                &format!("Failed to generate new access token: {}", err)
+            );
+            return crate::manage_error!(err);
+        }
+    };
+
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::Auth,
+        "token_refresh_success",
+        &format!("Access token refreshed for user {}", auth_user.username)
+    );
+
+    let response = RefreshTokenResponse {
+        access_token: new_access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: state.auth_service.jwt_manager.get_config().jwt_expires_in,
+    };
+
+    response::success_with_message(response, "Token refreshed successfully")
 }

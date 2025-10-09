@@ -212,26 +212,6 @@ pub struct AuthConfig {
     pub jwt_expires_in: i64,
     /// 刷新令牌过期时间（秒）
     pub refresh_expires_in: i64,
-    /// 是否启用速率限制
-    pub enable_rate_limiting: bool,
-    /// 默认请求速率限制
-    pub default_request_rate_limit: u32,
-    /// 默认 Token 速率限制
-    pub default_token_rate_limit: u32,
-    /// 密码最小长度
-    pub min_password_length: usize,
-    /// 是否要求密码包含数字
-    pub require_password_numbers: bool,
-    /// 是否要求密码包含特殊字符
-    pub require_password_special_chars: bool,
-    /// 会话超时时间（秒）
-    pub session_timeout: i64,
-    /// 最大登录尝试次数
-    pub max_login_attempts: u32,
-    /// 登录锁定时间（秒）
-    pub login_lockout_duration: i64,
-    /// 最大失败尝试次数（可选）
-    pub max_failed_attempts: Option<u32>,
 }
 
 impl AuthConfig {
@@ -244,18 +224,8 @@ impl AuthConfig {
     pub fn test() -> Self {
         Self {
             jwt_secret: "test-secret-key".to_string(),
-            jwt_expires_in: 3600,
+            jwt_expires_in: 86400,
             refresh_expires_in: 604_800,
-            enable_rate_limiting: false, // 测试时禁用速率限制
-            default_request_rate_limit: 1000,
-            default_token_rate_limit: 1_000_000,
-            min_password_length: 4, // 测试时放宽密码要求
-            require_password_numbers: false,
-            require_password_special_chars: false,
-            session_timeout: 3600,
-            max_login_attempts: 10,
-            login_lockout_duration: 60, // 较短的锁定时间
-            max_failed_attempts: Some(10),
         }
     }
 }
@@ -264,18 +234,8 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             jwt_secret: "your-secret-key".to_string(),
-            jwt_expires_in: 3600,        // 1 小时
+            jwt_expires_in: 86400,       // 1 天
             refresh_expires_in: 604_800, // 7 天
-            enable_rate_limiting: true,
-            default_request_rate_limit: 100,   // 每分钟 100 请求
-            default_token_rate_limit: 100_000, // 每日 100k tokens
-            min_password_length: 8,
-            require_password_numbers: true,
-            require_password_special_chars: true,
-            session_timeout: 3600, // 1 小时
-            max_login_attempts: 5,
-            login_lockout_duration: 900, // 15 分钟
-            max_failed_attempts: Some(5),
         }
     }
 }

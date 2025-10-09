@@ -161,6 +161,11 @@ impl JwtManager {
         }
     }
 
+    /// Get configuration reference
+    pub fn get_config(&self) -> &AuthConfig {
+        &self.config
+    }
+
     /// Generate token pair (access + refresh tokens)
     pub fn generate_token_pair(
         &self,
