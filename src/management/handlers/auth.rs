@@ -48,7 +48,7 @@ pub struct UserInfo {
 }
 
 /// JWT Claims
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     /// 用户ID
     pub sub: String,

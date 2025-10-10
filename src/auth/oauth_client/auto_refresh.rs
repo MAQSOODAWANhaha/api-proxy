@@ -1,4 +1,4 @@
-//! # OAuth令牌自动刷新模块
+//! # `OAuth令牌自动刷新模块`
 //!
 //! 实现智能token生命周期管理，当token即将过期时自动刷新
 //! 提供对调用者透明的token获取接口
@@ -51,6 +51,7 @@ impl Default for RefreshPolicy {
 
 impl AutoRefreshManager {
     /// 创建自动刷新管理器
+    #[must_use]
     pub fn new(
         session_manager: SessionManager,
         provider_manager: OAuthProviderManager,
@@ -99,7 +100,7 @@ impl AutoRefreshManager {
         }
 
         // 检查是否需要刷新token
-        if !self.should_refresh_token(&session, &policy)? {
+        if !Self::should_refresh_token(&session, &policy) {
             // token仍然有效，直接返回
             return Ok(session.access_token);
         }
@@ -109,7 +110,7 @@ impl AutoRefreshManager {
             LogStage::Authentication,
             LogComponent::OAuth,
             "token_needs_refresh",
-            &format!("Token for session {} needs refresh", session_id)
+            &format!("Token for session {session_id} needs refresh")
         );
 
         // 检查是否有refresh_token
@@ -119,11 +120,9 @@ impl AutoRefreshManager {
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "no_refresh_token",
-                &format!(
-                    "Session {} has no refresh token, cannot auto-refresh",
-                    session_id
-                )
-            );
+                                  &format!(
+                                    "Session {session_id} has no refresh token, cannot auto-refresh"
+                                )            );
             return Ok(None);
         }
 
@@ -132,7 +131,7 @@ impl AutoRefreshManager {
             LogStage::Authentication,
             LogComponent::OAuth,
             "start_token_refresh",
-            &format!("Session {} 通过关联验证，开始执行token刷新", session_id)
+            &format!("Session {session_id} 通过关联验证，开始执行token刷新")
         );
 
         // 执行自动刷新
@@ -143,11 +142,9 @@ impl AutoRefreshManager {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "token_refresh_ok",
-                    &format!(
-                        "Successfully auto-refreshed token for session {}",
-                        session_id
-                    )
-                );
+                                          &format!(
+                                            "Successfully auto-refreshed token for session {session_id}"
+                                        )                );
                 Ok(Some(token_response.access_token))
             }
             Err(e) => {
@@ -156,11 +153,9 @@ impl AutoRefreshManager {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "token_refresh_fail",
-                    &format!(
-                        "Failed to auto-refresh token for session {}: {}",
-                        session_id, e
-                    )
-                );
+                                          &format!(
+                                            "Failed to auto-refresh token for session {session_id}: {e}"
+                                        )                );
                 // 刷新失败：如已过期则返回None，否则返回当前token
                 let now = Utc::now().naive_utc();
                 if session.expires_at <= now {
@@ -225,7 +220,7 @@ impl AutoRefreshManager {
                 continue;
             }
 
-            if self.should_refresh_token(&session, &policy)? && session.refresh_token.is_some() {
+            if Self::should_refresh_token(&session, &policy) && session.refresh_token.is_some() {
                 let result = self.auto_refresh_token(&session.session_id, &policy).await;
                 results.push((session.session_id, result));
             }
@@ -238,13 +233,12 @@ impl AutoRefreshManager {
 
     /// 判断是否需要刷新token
     fn should_refresh_token(
-        &self,
         session: &oauth_client_sessions::Model,
         policy: &RefreshPolicy,
-    ) -> OAuthResult<bool> {
+    ) -> bool {
         // 检查会话是否已过期
         if session.is_expired() {
-            return Ok(true);
+            return true;
         }
 
         // 检查是否在刷新阈值范围内
@@ -253,7 +247,7 @@ impl AutoRefreshManager {
         let threshold = Duration::try_seconds(policy.refresh_threshold_seconds).unwrap_or_default();
 
         // 如果token将在阈值时间内过期，则需要刷新
-        Ok(expires_at <= now + threshold)
+        expires_at <= now + threshold
     }
 
     /// 执行自动token刷新
@@ -283,25 +277,21 @@ impl AutoRefreshManager {
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "session_orphaned",
-                &format!(
-                    "Session {} 没有对应的user_provider_keys关联，跳过刷新",
-                    session_id
-                )
-            );
+                                  &format!(
+                                    "Session {session_id} 没有对应的user_provider_keys关联，跳过刷新"
+                                )            );
             // 不在刷新路径进行删除，交由后台清理任务处理
-            return Err(OAuthError::InvalidSession(format!(
-                "Session {} is orphaned",
-                session_id
-            )));
-        }
+                          return Err(OAuthError::InvalidSession(format!(
+                            "Session {session_id} is orphaned"
+                        )));        }
 
-        if !self.should_refresh_token(&current_session, policy)? {
+        if !Self::should_refresh_token(&current_session, policy) {
             ldebug!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "token_already_refreshed",
-                &format!("Token for session {} was already refreshed", session_id)
+                &format!("Token for session {session_id} was already refreshed")
             );
             if let Some(token) = current_session.access_token {
                 // 清理锁映射
@@ -314,7 +304,7 @@ impl AutoRefreshManager {
                     access_token: token,
                     refresh_token: current_session.refresh_token,
                     id_token: current_session.id_token,
-                    token_type: current_session.token_type.unwrap_or("Bearer".to_string()),
+                    token_type: current_session.token_type.unwrap_or_else(|| "Bearer".to_string()),
                     expires_in: current_session.expires_in,
                     scopes: Vec::new(), // TODO: 从session中解析scopes
                 });
@@ -347,11 +337,9 @@ impl AutoRefreshManager {
                         LogStage::Authentication,
                         LogComponent::OAuth,
                         "token_refresh_ok",
-                        &format!(
-                            "Successfully refreshed token for session {} on attempt {}",
-                            session_id, attempt
-                        )
-                    );
+                                                  &format!(
+                                                    "Successfully refreshed token for session {session_id} on attempt {attempt}"
+                                                )                    );
                     // 成功后清理锁映射
                     {
                         let mut locks = self.refresh_locks.lock().await;
@@ -365,11 +353,9 @@ impl AutoRefreshManager {
                         LogStage::Authentication,
                         LogComponent::OAuth,
                         "token_refresh_attempt_fail",
-                        &format!(
-                            "Token refresh attempt {} failed for session {}: {}",
-                            attempt, session_id, e
-                        )
-                    );
+                                                  &format!(
+                                                    "Token refresh attempt {attempt} failed for session {session_id}: {e}"
+                                                )                    );
                     last_error = e;
 
                     // 如果不是最后一次尝试，则等待重试间隔
@@ -392,7 +378,7 @@ impl AutoRefreshManager {
         Err(last_error)
     }
 
-    /// 验证会话是否有对应的user_provider_keys关联
+    /// `验证会话是否有对应的user_provider_keys关联`
     /// 如果没有关联且创建超过5分钟，说明这是一个孤立的会话，会被自动删除
     async fn validate_session_association(
         &self,
@@ -415,7 +401,7 @@ impl AutoRefreshManager {
                     session_age.num_minutes()
                 )
             );
-            return Ok(true); // 新会话暂时视为有效，等待后续处理
+            return Ok(true);
         }
 
         // 查找是否有user_provider_keys记录引用了这个session_id
@@ -425,11 +411,22 @@ impl AutoRefreshManager {
             .filter(user_provider_keys::Column::ApiKey.eq(&session.session_id)) // OAuth类型的api_key存储session_id
             .one(&self.db)
             .await
-            .map_err(|e| OAuthError::DatabaseError(format!("验证会话关联失败: {}", e)))?;
+            .map_err(|e| OAuthError::DatabaseError(format!("验证会话关联失败: {e}")))?;
 
         let has_association = associated_key.is_some();
 
-        if !has_association {
+        if has_association {
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "session_association_ok",
+                &format!(
+                    "Session {} 有有效的user_provider_keys关联",
+                    session.session_id
+                )
+            );
+        } else {
             linfo!(
                 "system",
                 LogStage::Authentication,
@@ -464,28 +461,17 @@ impl AutoRefreshManager {
                     &format!("成功删除孤立会话 {}", session.session_id)
                 );
             }
-        } else {
-            ldebug!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "session_association_ok",
-                &format!(
-                    "Session {} 有有效的user_provider_keys关联",
-                    session.session_id
-                )
-            );
         }
 
         Ok(has_association)
     }
 }
 
-/// 扩展SessionManager以支持智能token获取
+/// `扩展SessionManager以支持智能token获取`
 impl SessionManager {
     /// 智能获取有效访问令牌（自动刷新版本）
     ///
-    /// 替代原有的get_valid_access_token方法
+    /// `替代原有的get_valid_access_token方法`
     /// 当token即将过期时会自动刷新
     pub async fn get_valid_access_token_auto_refresh(
         &self,

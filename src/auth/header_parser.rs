@@ -15,10 +15,11 @@ pub struct AuthHeader {
 
 impl AuthHeader {
     /// 创建新的认证头
-    pub fn new(name: String, value: String) -> Self {
+    #[must_use]
+    pub fn new(name: &str, value: &str) -> Self {
         Self {
-            name: name.to_lowercase(),
-            value,
+            name: name.to_string(),
+            value: value.to_string(),
         }
     }
 }
@@ -90,7 +91,7 @@ impl AuthHeaderParser {
         // 替换占位符
         let header_value = value_template.replace("{key}", api_key);
 
-        Ok(AuthHeader::new(header_name.to_string(), header_value))
+        Ok(AuthHeader::new(&header_name.to_lowercase(), &header_value))
     }
 
     /// 分割头格式为名称和值模板
@@ -134,7 +135,7 @@ impl AuthHeaderParser {
     ) -> Result<Vec<AuthHeader>, AuthParseError> {
         // 尝试解析为JSON数组
         let formats: Vec<String> = serde_json::from_str(formats_json).map_err(|_| {
-            AuthParseError::InvalidFormat(format!("Invalid JSON array: {}", formats_json))
+            AuthParseError::InvalidFormat(format!("Invalid JSON array: {formats_json}"))
         })?;
 
         let mut headers = Vec::new();
@@ -159,7 +160,7 @@ impl AuthHeaderParser {
     ) -> Result<Vec<String>, AuthParseError> {
         // 尝试解析为JSON数组
         let formats: Vec<String> = serde_json::from_str(formats_json).map_err(|_| {
-            AuthParseError::InvalidFormat(format!("Invalid JSON array: {}", formats_json))
+            AuthParseError::InvalidFormat(format!("Invalid JSON array: {formats_json}"))
         })?;
 
         let mut header_names = Vec::new();
@@ -209,15 +210,16 @@ impl AuthHeaderParser {
     /// # 示例
     /// ```rust
     /// use api_proxy::auth::header_parser::AuthHeaderParser;
-    /// let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-    ///     "Authorization: Bearer {key}",
-    ///     "Bearer sk-123456"
+    /// let api_key = AuthHeaderParser.parse_api_key_from_value(
+    ///     "Bearer sk-123456",
+    ///     "Authorization: Bearer {key}"
     /// ).unwrap();
     /// assert_eq!(api_key, "sk-123456");
     /// ```
-    pub fn parse_api_key_from_inbound_header_value(
-        format: &str,
+    pub fn parse_api_key_from_value(
+        &self,
         header_value: &str,
+        format: &str,
     ) -> Result<String, AuthParseError> {
         let (_, value_template) = Self::split_header_format(format)?;
 
@@ -257,8 +259,7 @@ impl AuthHeaderParser {
         }
 
         Err(AuthParseError::InvalidFormat(format!(
-            "Could not extract API key from header value '{}' using format '{}'",
-            header_value, format
+            "Could not extract API key from header value '{header_value}' using format '{format}'"
         )))
     }
 
@@ -280,18 +281,15 @@ impl AuthHeaderParser {
         header_value: &str,
     ) -> Result<String, AuthParseError> {
         // 尝试解析为JSON数组格式
-        let formats: Vec<String> = match serde_json::from_str(formats_json) {
-            Ok(formats) => formats,
-            Err(_) => vec![formats_json.to_string()], // 单一格式回退
-        };
-
+        let formats: Vec<String> = serde_json::from_str(formats_json)
+            .map_or_else(|_| vec![formats_json.to_string()], |formats| formats);
         // 遍历所有格式，找到匹配的格式并提取密钥
         for format in formats {
             if let Ok(format_header_name) = Self::extract_header_name(&format) {
                 if format_header_name == header_name {
                     // 找到匹配格式，进行反向解析
                     if let Ok(api_key) =
-                        Self::parse_api_key_from_inbound_header_value(&format, header_value)
+                        AuthHeaderParser.parse_api_key_from_value(&header_value, &format)
                     {
                         return Ok(api_key);
                     }
@@ -300,8 +298,7 @@ impl AuthHeaderParser {
         }
 
         Err(AuthParseError::InvalidFormat(format!(
-            "No matching auth format found for header '{}' in configured formats: {}",
-            header_name, formats_json
+            "No matching auth format found for header '{header_name}' in configured formats: {formats_json}"
         )))
     }
 }
@@ -414,9 +411,9 @@ mod tests {
     // 反向解析功能测试
     #[test]
     fn test_parse_api_key_from_inbound_header_value_direct() {
-        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-            "Authorization: {key}",
+        let api_key = AuthHeaderParser.parse_api_key_from_value(
             "sk-123456789",
+            "Authorization: {key}",
         )
         .unwrap();
         assert_eq!(api_key, "sk-123456789");
@@ -424,9 +421,9 @@ mod tests {
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_bearer() {
-        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-            "Authorization: Bearer {key}",
+        let api_key = AuthHeaderParser.parse_api_key_from_value(
             "Bearer sk-abcdef123",
+            "Authorization: Bearer {key}",
         )
         .unwrap();
         assert_eq!(api_key, "sk-abcdef123");
@@ -434,9 +431,9 @@ mod tests {
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_google() {
-        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-            "X-goog-api-key: {key}",
+        let api_key = AuthHeaderParser.parse_api_key_from_value(
             "AIza_google_key_xyz",
+            "X-goog-api-key: {key}",
         )
         .unwrap();
         assert_eq!(api_key, "AIza_google_key_xyz");
@@ -444,9 +441,9 @@ mod tests {
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_custom_prefix() {
-        let api_key = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-            "X-API-Key: Token {key}",
+        let api_key = AuthHeaderParser.parse_api_key_from_value(
             "Token custom_token_456",
+            "X-API-Key: Token {key}",
         )
         .unwrap();
         assert_eq!(api_key, "custom_token_456");
@@ -488,9 +485,9 @@ mod tests {
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_invalid_format() {
-        let result = AuthHeaderParser::parse_api_key_from_inbound_header_value(
-            "Authorization: Bearer {key}",
+        let result = AuthHeaderParser.parse_api_key_from_value(
             "Token sk-123456", // 不匹配格式
+            "Authorization: Bearer {key}",
         );
         assert!(result.is_err());
     }

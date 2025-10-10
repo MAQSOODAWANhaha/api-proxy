@@ -231,7 +231,6 @@ impl AuthManager {
     // pub fn get_oauth_session_manager(&self) -> &Arc<OAuthSessionManager> {
     //     &self.oauth_session_manager
     // } // 已删除，使用oauth_client替代
-
     /// 获取认证统计信息
     pub async fn get_auth_stats(&self) -> Result<std::collections::HashMap<String, String>> {
         Ok(self.auth_service.health_check().await)
@@ -357,9 +356,9 @@ mod tests {
     #[test]
     fn test_is_public_path() {
         // 测试公开路径识别逻辑
-        let _public_paths = vec!["/health", "/metrics", "/api/health", "/api/version"];
+        let _public_paths = ["/health", "/metrics", "/api/health", "/api/version"];
 
-        let _private_paths = vec!["/api/admin", "/proxy/openai", "/api/users"];
+        let _private_paths = ["/api/admin", "/proxy/openai", "/api/users"];
 
         // 实际测试逻辑
     }

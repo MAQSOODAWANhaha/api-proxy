@@ -4,11 +4,10 @@
 
 pub mod api_key;
 pub mod cache_strategy; // 统一缓存策略
-pub mod dual_auth_boundary; // 双认证机制边界控制
+
 pub mod gemini_code_assist_client; // Gemini Code Assist API客户端
 pub mod header_parser;
 pub mod jwt;
-pub mod management;
 // pub mod oauth; // 已删除，使用oauth_client替代
 pub mod oauth_client; // 新的OAuth客户端模块
 pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
@@ -27,7 +26,6 @@ pub mod utils;
 pub use api_key::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
 pub use jwt::JwtManager;
-pub use management::{check_is_admin_from_headers, extract_user_id_from_headers};
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
 pub use oauth_token_refresh_service::{
@@ -51,11 +49,7 @@ pub use cache_strategy::{
     hash_token,
 };
 
-// 双认证边界控制
-pub use dual_auth_boundary::{
-    AuthBoundaryRule, AuthRequestContext, BoundaryViolationStats, DualAuthBoundaryController,
-    PortType, get_violation_stats, validate_auth_boundary,
-};
+
 
 /// 统一认证结果
 /// 表示用户认证成功后的完整信息，包括用户身份、权限和可选的令牌信息

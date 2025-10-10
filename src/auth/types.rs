@@ -359,7 +359,6 @@ impl fmt::Display for PkceMethod {
 }
 
 /// 认证头格式
-
 /// 多认证配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiAuthConfig {

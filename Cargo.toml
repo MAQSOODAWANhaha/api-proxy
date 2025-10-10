@@ -37,7 +37,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 cargo_common_metadata = "allow"
 
-[dependencies]
+[workspace.dependencies]
 # 工作空间内依赖
 entity = { path = "entity" }
 migration = { path = "migration" }
@@ -57,7 +57,7 @@ base64 = "0.22"
 aes-gcm = "0.10"
 hex = "0.4"
 sha2 = "0.10"
-md5 = "0.7"
+md5 = "0.8.0"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 brotli-decompressor = "5.0"
 dashmap = "6"
@@ -81,15 +81,15 @@ clap = { version = "4.5", features = ["derive"] }
 regex = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"] }
 oauth2 = "5"
 bytes = "1"
-bcrypt = "0.15"
+bcrypt = "0.17.1"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 num_cpus = "1"
 sysinfo = "0.37"
-ipnetwork = "0.20"
+ipnetwork = "0.21.1"
 serde_with = { version = "3", features = ["chrono"] }
 urlencoding = "2"
 
@@ -110,25 +110,108 @@ event-listener = "5.4"
 foldhash = "0.2"
 
 
+# dev-dependencies
+tokio-test = "0.4"
+rstest = "0.26.1"
+criterion = "0.7.0"
+proptest = "1.5"
+serial_test = "3"
+once_cell = "1"
+pretty_assertions = "1"
+
+[dependencies]
+# 工作空间内依赖
+entity = { workspace = true }
+migration = { workspace = true }
+
+# 基础依赖（Phase 1 需要的）
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+notify = { workspace = true }
+base64 = { workspace = true }
+aes-gcm = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+md5 = { workspace = true }
+flate2 = { workspace = true }
+brotli-decompressor = { workspace = true }
+dashmap = { workspace = true }
+moka = { workspace = true }
+
+# 核心依赖 - Pingora 和 Web 框架（使用最新版本）
+pingora-core = { workspace = true }
+pingora-proxy = { workspace = true }
+pingora-load-balancing = { workspace = true }
+pingora-http = { workspace = true }
+axum = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+redis = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+futures = { workspace = true }
+fastrand = { workspace = true }
+clap = { workspace = true }
+regex = { workspace = true }
+uuid = { workspace = true }
+url = { workspace = true }
+jsonwebtoken = { workspace = true }
+oauth2 = { workspace = true }
+bytes = { workspace = true }
+bcrypt = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+num_cpus = { workspace = true }
+sysinfo = { workspace = true }
+ipnetwork = { workspace = true }
+serde_with = { workspace = true }
+urlencoding = { workspace = true }
+
+# 统一依赖版本，减少版本冲突
+ahash = { workspace = true }
+async-channel = { workspace = true }
+bitflags = { workspace = true }
+hashbrown = { workspace = true }
+indexmap = { workspace = true }
+rand = { workspace = true }
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+heck = { workspace = true }
+strsim = { workspace = true }
+syn = { workspace = true }
+darling = { workspace = true }
+event-listener = { workspace = true }
+foldhash = { workspace = true }
+
+
 # 测试框架依赖（条件编译）
 tempfile = { version = "3", optional = true }
-mockall = { version = "0.12", optional = true }
+mockall = { version = "0.13.1", optional = true }
 wiremock = { version = "0.6", optional = true }
 
 [dev-dependencies]
 # 测试框架依赖
-tokio-test = "0.4"
-tempfile = "3"
-rstest = "0.18"
-mockall = "0.12"
-wiremock = "0.6"
-criterion = "0.5"
-proptest = "1.5"
-serial_test = "3"
-once_cell = "1"
+tokio-test = { workspace = true }
+tempfile = { version = "3" }
+rstest = { workspace = true }
+mockall = { version = "0.13.1" }
+wiremock = { version = "0.6" }
+criterion = { workspace = true }
+proptest = { workspace = true }
+serial_test = { workspace = true }
+once_cell = { workspace = true }
 # 测试工具
-pretty_assertions = "1"
+pretty_assertions = { workspace = true }
 # Note: reqwest 和 env_logger 已在主依赖中定义，无需重复
+
 
 [features]
 default = []

@@ -790,15 +790,3 @@ impl std::fmt::Debug for ApiKeyPoolManager {
             .finish()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use tokio;
-
-    #[tokio::test]
-    async fn test_pool_manager_creation() {
-        // 基本测试，需要真实数据库连接
-        // 实际测试需要设置测试环境
-        assert!(true);
-    }
-}

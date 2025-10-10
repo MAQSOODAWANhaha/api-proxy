@@ -1,7 +1,7 @@
-//! # OpenAI JWT 解析器
+//! # `OpenAI` JWT 解析器
 //!
-//! 专门用于解析 OpenAI access_token 中的用户信息
-//! 从 JWT payload 中提取 chatgpt_account_id 等关键信息
+//! 专门用于解析 `OpenAI` `access_token` 中的用户信息
+//! 从 JWT payload 中提取 `chatgpt_account_id` 等关键信息
 
 use crate::auth::oauth_client::OAuthError;
 use crate::logging::{LogComponent, LogStage};
@@ -10,25 +10,25 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// OpenAI JWT 中的认证信息结构
+/// `OpenAI` JWT 中的认证信息结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAIAuthInfo {
-    /// ChatGPT 账户 ID
+    /// `ChatGPT` 账户 ID
     pub chatgpt_account_id: String,
-    /// ChatGPT 账户用户 ID
+    /// `ChatGPT` 账户用户 ID
     pub chatgpt_account_user_id: Option<String>,
-    /// ChatGPT 计划类型
+    /// `ChatGPT` 计划类型
     pub chatgpt_plan_type: Option<String>,
-    /// ChatGPT 用户 ID
+    /// `ChatGPT` 用户 ID
     pub chatgpt_user_id: Option<String>,
     /// 用户 ID
     pub user_id: Option<String>,
 }
 
-/// OpenAI JWT Payload 结构
+/// `OpenAI` JWT Payload 结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAIJWTPayload {
-    /// OpenAI 特定声明
+    /// `OpenAI` 特定声明
     #[serde(rename = "https://api.openai.com/auth")]
     pub openai_auth: Option<OpenAIAuthInfo>,
     /// 其他声明
@@ -38,7 +38,7 @@ pub struct OpenAIJWTPayload {
 
 /// JWT 解析器
 pub struct JWTParser {
-    /// 解码密钥（对于 OpenAI JWT，通常使用公开的验证密钥）
+    /// 解码密钥（对于 `OpenAI` JWT，通常使用公开的验证密钥）
     decoding_key: DecodingKey,
     /// 验证配置
     validation: Validation,
@@ -65,7 +65,7 @@ impl JWTParser {
         })
     }
 
-    /// 从 access_token 中解析 OpenAI 用户信息
+    /// 从 `access_token` 中解析 `OpenAI` 用户信息
     pub fn extract_openai_info(
         &self,
         access_token: &str,
@@ -73,7 +73,7 @@ impl JWTParser {
         // 解析 JWT token
         let token_data =
             decode::<OpenAIJWTPayload>(access_token, &self.decoding_key, &self.validation)
-                .map_err(|e| OAuthError::InvalidToken(format!("JWT 解析失败: {}", e)))?;
+                .map_err(|e| OAuthError::InvalidToken(format!("JWT 解析失败: {e}")))?;
 
         // 提取 OpenAI 认证信息
         if let Some(openai_auth) = token_data.claims.openai_auth {
@@ -99,7 +99,7 @@ impl JWTParser {
         }
     }
 
-    /// 从 access_token 中提取 chatgpt_account_id
+    /// 从 `access_token` 中提取 `chatgpt_account_id`
     pub fn extract_chatgpt_account_id(
         &self,
         access_token: &str,
@@ -111,7 +111,8 @@ impl JWTParser {
         }
     }
 
-    /// 验证 JWT 是否为 OpenAI token
+    /// 验证 JWT 是否为 `OpenAI` token
+    #[must_use]
     pub fn is_openai_token(&self, access_token: &str) -> bool {
         self.extract_openai_info(access_token)
             .map(|_| true)

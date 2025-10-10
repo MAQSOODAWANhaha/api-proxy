@@ -23,7 +23,6 @@ pub struct StatisticsService {
 
 impl StatisticsService {
     /// 在任意层级查找并归一化 usageMetadata 到顶层，便于通用提取器工作
-
     /// 创建新的统计服务
     pub fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
         Self { pricing_calculator }
@@ -80,7 +79,6 @@ impl StatisticsService {
     }
 
     /// 从 JSON 响应中提取 token 统计（通用提取器）
-
     /// 从响应体中提取模型信息
     ///
     /// 支持多种AI API响应格式的模型提取，包括数组索引访问
@@ -107,7 +105,6 @@ impl StatisticsService {
                         if let Ok(index) = index_str.parse::<usize>() {
                             if let Some(element) = array.get(index) {
                                 current = element;
-                                continue;
                             } else {
                                 ldebug!(
                                     "system",
@@ -165,7 +162,6 @@ impl StatisticsService {
                     if let Ok(index) = part.parse::<usize>() {
                         if let Some(element) = array.get(index) {
                             current = element;
-                            continue;
                         } else {
                             ldebug!(
                                 "system",
@@ -263,9 +259,7 @@ impl StatisticsService {
     }
 
     /// 从上下文响应体中提取统计信息（统一实现）
-
     // ========== 请求阶段模型提取方法 ==========
-
     /// 统一的请求阶段模型提取入口点
     pub fn extract_model_from_request(
         &self,

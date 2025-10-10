@@ -49,9 +49,8 @@ impl EventStreamData {
                 self.has_any = false;
                 self.buffer.clear();
                 return Some(ev);
-            } else {
-                return None;
             }
+            return None;
         }
         if line.starts_with(':') {
             return None;

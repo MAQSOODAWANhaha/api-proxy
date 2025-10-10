@@ -694,9 +694,7 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
 }
 
 /// 环境变量设置指南
-
 // ================ 日志格式验证机制 ================
-
 /// 日志格式验证器
 ///
 /// 提供日志格式的一致性检查和验证功能

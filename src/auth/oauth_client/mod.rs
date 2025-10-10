@@ -1,6 +1,6 @@
-//! # OAuth客户端模块
+//! # `OAuth客户端模块`
 //!
-//! 实现基于客户端轮询的OAuth 2.0 + PKCE流程
+//! `实现基于客户端轮询的OAuth` 2.0 + PKCE流程
 //! 参考 Wei-Shaw/claude-relay-service 的实现方式
 //!
 //! ## 核心特性
@@ -8,7 +8,7 @@
 //! - 标准化重定向URI，不依赖部署域名
 //! - 客户端侧轮询机制，避免服务器回调依赖
 //! - PKCE安全保护，适合公共客户端场景
-//! - 支持多提供商的统一OAuth接口
+//! - `支持多提供商的统一OAuth接口`
 
 pub mod auto_refresh;
 pub mod jwt_extractor;

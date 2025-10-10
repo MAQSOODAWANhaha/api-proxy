@@ -121,7 +121,7 @@ impl AuthenticationService {
     /// 1. 仅进行入口 API Key 认证
     async fn authenticate_entry_api(
         &self,
-        session: &mut Session,
+        session: &Session,
         request_id: &str,
     ) -> Result<user_service_apis::Model> {
         let user_auth = self.detect_user_auth_from_request(session)?;
@@ -167,7 +167,7 @@ impl AuthenticationService {
                                 location: key.to_string(),
                             });
                         }
-                        _ => continue,
+                        _ => {},
                     }
                 }
             }

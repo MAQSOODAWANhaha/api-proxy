@@ -318,7 +318,7 @@ impl RequestTrace {
 
         if prompt_tokens > 0 {
             self.token_usage.efficiency_ratio =
-                Some(completion_tokens as f64 / prompt_tokens as f64);
+                Some(f64::from(completion_tokens) / f64::from(prompt_tokens));
         }
     }
 

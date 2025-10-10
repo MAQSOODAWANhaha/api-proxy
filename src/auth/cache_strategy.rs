@@ -13,7 +13,7 @@ use crate::error::Result;
 use std::sync::Arc;
 
 /// 认证缓存键类型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthCacheKey {
     /// JWT认证结果缓存
     JwtAuth(String),
@@ -25,37 +25,40 @@ pub enum AuthCacheKey {
     BasicFailure(String),
     /// Basic认证结果缓存
     BasicAuth(String),
-    /// OAuth会话缓存
+    /// `OAuth会话缓存`
     OAuthSession(String),
 }
 
 impl AuthCacheKey {
     /// 生成缓存键字符串
+    #[must_use]
     pub fn to_key(&self) -> String {
         match self {
-            Self::JwtAuth(hash) => format!("auth:jwt:{}", hash),
-            Self::JwtBlacklist(hash) => format!("auth:jwt:blacklist:{}", hash),
-            Self::ApiKeyAuth(hash) => format!("auth:apikey:{}", hash),
-            Self::BasicFailure(hash) => format!("auth:basic:failure:{}", hash),
-            Self::BasicAuth(hash) => format!("auth:basic:{}", hash),
-            Self::OAuthSession(session_id) => format!("auth:oauth:session:{}", session_id),
+            Self::JwtAuth(hash) => format!("auth:jwt:{hash}"),
+            Self::JwtBlacklist(hash) => format!("auth:jwt:blacklist:{hash}"),
+            Self::ApiKeyAuth(hash) => format!("auth:apikey:{hash}"),
+            Self::BasicFailure(hash) => format!("auth:basic:failure:{hash}"),
+            Self::BasicAuth(hash) => format!("auth:basic:{hash}"),
+            Self::OAuthSession(session_id) => format!("auth:oauth:session:{session_id}"),
         }
     }
 
     /// 获取推荐的TTL
-    pub fn default_ttl(&self) -> Duration {
+    #[must_use]
+    pub const fn default_ttl(&self) -> Duration {
         match self {
             // JWT认证结果：15分钟（JWT token通常较长期有效）
             Self::JwtAuth(_) => Duration::from_secs(900),
 
-            // JWT黑名单：1小时（安全相关，需要较长时间生效）
-            Self::JwtBlacklist(_) => Duration::from_secs(3600),
+            // JWT黑名单和Basic失败计数：1小时（安全相关，需要较长时间生效）
+            Self::JwtBlacklist(_) | Self::BasicFailure(_) => {
+                Duration::from_secs(3600)
+            }
 
-            // API密钥认证：5分钟（平衡性能和安全性）
-            Self::ApiKeyAuth(_) => Duration::from_secs(300),
-
-            // Basic认证失败计数：1小时（防止暴力破解）
-            Self::BasicFailure(_) => Duration::from_secs(3600),
+            // API密钥认证：5分钟（相对较短，便于快速更新权限）
+            Self::ApiKeyAuth(_) => {
+                Duration::from_secs(300)
+            }
 
             // Basic认证结果：10分钟（包含密码信息，较短TTL）
             Self::BasicAuth(_) => Duration::from_secs(600),
@@ -66,19 +69,11 @@ impl AuthCacheKey {
     }
 
     /// 判断是否应该缓存
-    pub fn should_cache(&self) -> bool {
+    #[must_use]
+    pub const fn should_cache(&self) -> bool {
         match self {
             // 安全相关的缓存
-            Self::JwtAuth(_) | Self::JwtBlacklist(_) | Self::ApiKeyAuth(_) => true,
-
-            // Basic认证失败计数总是缓存（安全需要）
-            Self::BasicFailure(_) => true,
-
-            // Basic认证结果可配置缓存（包含敏感信息）
-            Self::BasicAuth(_) => true, // 可以通过配置禁用
-
-            // OAuth会话缓存
-            Self::OAuthSession(_) => true,
+            Self::JwtAuth(_) | Self::JwtBlacklist(_) | Self::ApiKeyAuth(_) | Self::BasicFailure(_) | Self::BasicAuth(_) | Self::OAuthSession(_) => true,
         }
     }
 }
@@ -97,7 +92,7 @@ pub struct UnifiedAuthCacheManager {
 
 impl UnifiedAuthCacheManager {
     /// 创建新的统一认证缓存管理器
-    pub fn new(
+    pub const fn new(
         cache_manager: Arc<CacheManager>,
         auth_config: Arc<AuthConfig>,
         cache_config: Arc<CacheConfig>,
@@ -120,7 +115,7 @@ impl UnifiedAuthCacheManager {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "skip_cache",
-                &format!("Skipping cache for key type: {:?}", key)
+                &format!("Skipping cache for key type: {key:?}")
             );
             return Ok(());
         }
@@ -134,7 +129,7 @@ impl UnifiedAuthCacheManager {
             .set(&cache_key, value, Some(ttl))
             .await
         {
-            Ok(_) => {
+            Ok(()) => {
                 ldebug!("system", LogStage::Cache, LogComponent::Cache, "cache_set", "Cached auth result", cache_key = %cache_key, ttl_seconds = ttl.as_secs());
                 Ok(())
             }
@@ -193,15 +188,11 @@ impl UnifiedAuthCacheManager {
     pub async fn cache_exists(&self, key: &AuthCacheKey) -> bool {
         let cache_key = key.to_key();
 
-        match self
+        matches!(self
             .cache_manager
             .provider()
             .get::<serde_json::Value>(&cache_key)
-            .await
-        {
-            Ok(Some(_)) => true,
-            _ => false,
-        }
+            .await, Ok(Some(_)))
     }
 
     /// 获取有效的TTL
@@ -209,29 +200,19 @@ impl UnifiedAuthCacheManager {
     /// 考虑配置覆盖和默认值
     fn get_effective_ttl(&self, key: &AuthCacheKey) -> Duration {
         let cache_key = match key {
-            AuthCacheKey::JwtAuth(token) => crate::cache::keys::CacheKey::AuthToken {
-                token_hash: token.clone(),
-            },
-            AuthCacheKey::JwtBlacklist(token) => crate::cache::keys::CacheKey::AuthToken {
-                token_hash: token.clone(),
-            },
-            AuthCacheKey::ApiKeyAuth(token) => crate::cache::keys::CacheKey::AuthToken {
-                token_hash: token.clone(),
-            },
-            AuthCacheKey::BasicFailure(token) => crate::cache::keys::CacheKey::AuthToken {
-                token_hash: token.clone(),
-            },
-            AuthCacheKey::BasicAuth(token) => crate::cache::keys::CacheKey::AuthToken {
-                token_hash: token.clone(),
-            },
-            AuthCacheKey::OAuthSession(token) => crate::cache::keys::CacheKey::AuthToken {
+            AuthCacheKey::JwtAuth(token)
+            | AuthCacheKey::JwtBlacklist(token)
+            | AuthCacheKey::ApiKeyAuth(token)
+            | AuthCacheKey::BasicFailure(token)
+            | AuthCacheKey::BasicAuth(token)
+            | AuthCacheKey::OAuthSession(token) => crate::cache::keys::CacheKey::AuthToken {
                 token_hash: token.clone(),
             },
         };
         let strategy_ttl = crate::cache::strategies::CacheStrategies::for_key(&cache_key)
             .ttl
             .as_duration();
-        strategy_ttl.unwrap_or(Duration::from_secs(self.cache_config.default_ttl))
+        strategy_ttl.unwrap_or_else(|| Duration::from_secs(self.cache_config.default_ttl))
     }
 
     /// 批量缓存操作
@@ -244,7 +225,7 @@ impl UnifiedAuthCacheManager {
 
         for (key, value) in operations {
             match self.cache_auth_result(&key, &value).await {
-                Ok(_) => successful += 1,
+                Ok(()) => successful += 1,
                 Err(_) => failed += 1,
             }
         }
@@ -265,7 +246,7 @@ impl UnifiedAuthCacheManager {
     /// 预热缓存
     ///
     /// 为常用的认证结果预填充缓存
-    pub async fn warm_cache(&self, _warm_entries: Vec<AuthCacheKey>) -> Result<()> {
+    pub fn warm_cache(&self, _warm_entries: Vec<AuthCacheKey>) -> Result<()> {
         // 预热逻辑可以根据实际需要实现
         // 例如：预加载常用的API密钥验证结果
         ldebug!(
@@ -279,7 +260,8 @@ impl UnifiedAuthCacheManager {
     }
 
     /// 获取缓存统计信息
-    pub async fn get_cache_stats(&self) -> AuthCacheStats {
+    #[must_use]
+    pub const fn get_cache_stats(&self) -> AuthCacheStats {
         // 这里可以集成更详细的缓存统计
         AuthCacheStats {
             jwt_cache_entries: 0,
@@ -293,7 +275,7 @@ impl UnifiedAuthCacheManager {
     }
 
     /// 清理过期缓存
-    pub async fn cleanup_expired(&self) -> Result<u64> {
+    pub fn cleanup_expired(&self) -> Result<u64> {
         // CacheManager基于TTL自动清理
         ldebug!(
             "system",
@@ -315,7 +297,7 @@ pub struct AuthCacheStats {
     pub api_key_cache_entries: u64,
     /// Basic认证缓存条目数
     pub basic_auth_cache_entries: u64,
-    /// OAuth缓存条目数
+    /// `OAuth缓存条目数`
     pub oauth_cache_entries: u64,
     /// 总缓存命中数
     pub total_cache_hits: u64,
@@ -350,6 +332,7 @@ impl Default for CacheStrategyConfig {
 }
 
 /// 哈希工具函数
+#[must_use]
 pub fn hash_token(token: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -358,10 +341,11 @@ pub fn hash_token(token: &str) -> String {
 }
 
 /// 哈希用户凭据
+#[must_use]
 pub fn hash_credentials(username: &str, password: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}", username, password).as_bytes());
+    hasher.update(format!("{username}:{password}").as_bytes());
     format!("{:x}", hasher.finalize())
 }
 

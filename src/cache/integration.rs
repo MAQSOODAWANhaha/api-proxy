@@ -593,7 +593,7 @@ mod tests {
 
     // 注意：这些测试需要 Redis 服务器运行
     #[tokio::test]
-    #[ignore] // 默认忽略，需要手动运行
+    #[ignore = "requires Redis instance"] // 默认忽略，需要手动运行
     async fn test_cache_manager_basic_operations() {
         let mut cache_config = CacheConfig::default();
         cache_config.cache_type = CacheType::Redis;
@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires Redis instance"]
     async fn test_cache_decorator() {
         let mut cache_config = CacheConfig::default();
         cache_config.cache_type = CacheType::Redis;

@@ -67,7 +67,7 @@ impl RequestTransformService {
     fn build_and_inject_auth_headers(
         &self,
         upstream_request: &mut RequestHeader,
-        ctx: &mut ProxyContext,
+        ctx: &ProxyContext,
     ) -> Result<()> {
         let credential = ctx
             .resolved_credential

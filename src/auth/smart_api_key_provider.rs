@@ -429,18 +429,17 @@ impl SmartApiKeyProvider {
                         let buffer_time = Duration::minutes(5);
                         if Utc::now() + buffer_time < expires_at {
                             return Ok(Some(cached.clone()));
-                        } else {
-                            ldebug!(
-                                "system",
-                                LogStage::Cache,
-                                LogComponent::Auth,
-                                "token_expired",
-                                &format!(
-                                    "Cached OAuth token expired or expiring soon for provider_key_id: {}",
-                                    provider_key_id
-                                )
-                            );
                         }
+                        ldebug!(
+                            "system",
+                            LogStage::Cache,
+                            LogComponent::Auth,
+                            "token_expired",
+                            &format!(
+                                "Cached OAuth token expired or expiring soon for provider_key_id: {}",
+                                provider_key_id
+                            )
+                        );
                     }
                 }
             }

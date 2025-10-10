@@ -21,7 +21,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub fn new(
+    pub const fn new(
         config: Arc<AppConfig>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,

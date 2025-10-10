@@ -159,12 +159,12 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
 
     // SSE：text/event-stream
     if content_type.contains("text/event-stream") {
-        let mut decoder = crate::utils::event_stream::EventStreamData::new();
+        let mut event_stream_decoder = crate::utils::event_stream::EventStreamData::new();
         let mut buf = BytesMut::new();
         buf.extend_from_slice(body_str.as_bytes());
         let mut last_json: Option<serde_json::Value> = None;
         loop {
-            match decoder.decode(&mut buf) {
+            match event_stream_decoder.decode(&mut buf) {
                 Ok(Some(ev)) => {
                     let json = ev.data;
                     if !json.is_null() {
@@ -194,7 +194,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                 }
                 Ok(None) => {
                     // flush EOF
-                    if let Ok(Some(ev)) = decoder.decode_eof(&mut buf) {
+                    if let Ok(Some(ev)) = event_stream_decoder.decode_eof(&mut buf) {
                         let json = ev.data;
                         if !json.is_null() {
                             let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
@@ -298,35 +298,34 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         stats.usage = usage;
         stats.model_name = extract_model_from_json(&json).or_else(|| ctx.requested_model.clone());
         return stats;
-    } else {
-        // 尝试窗口：逐行扫描最后一段 JSON 或查找最后一个平衡的 JSON
-        let mut last_json: Option<serde_json::Value> = None;
-        for line in body_str.lines() {
-            let t = line.trim_start_matches("data:").trim();
-            if let Some(pos) = t.find('{') {
-                if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
-                    last_json = Some(j);
-                }
+    }
+    // 尝试窗口：逐行扫描最后一段 JSON 或查找最后一个平衡的 JSON
+    let mut last_json: Option<serde_json::Value> = None;
+    for line in body_str.lines() {
+        let t = line.trim_start_matches("data:").trim();
+        if let Some(pos) = t.find('{') {
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+                last_json = Some(j);
             }
         }
-        if last_json.is_none() {
-            last_json = find_last_balanced_json(body_str);
-        }
-        if let Some(j) = last_json {
-            let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &j);
-            stats.usage = usage;
-            stats.model_name = extract_model_from_json(&j);
-        }
-        if stats.usage.total_tokens.is_none() {
-            stats.usage.prompt_tokens = Some(0);
-            stats.usage.completion_tokens = Some(0);
-            stats.usage.total_tokens = Some(0);
-        }
-        if stats.model_name.is_none() {
-            stats.model_name = ctx.requested_model.clone();
-        }
-        return stats;
     }
+    if last_json.is_none() {
+        last_json = find_last_balanced_json(body_str);
+    }
+    if let Some(j) = last_json {
+        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &j);
+        stats.usage = usage;
+        stats.model_name = extract_model_from_json(&j);
+    }
+    if stats.usage.total_tokens.is_none() {
+        stats.usage.prompt_tokens = Some(0);
+        stats.usage.completion_tokens = Some(0);
+        stats.usage.total_tokens = Some(0);
+    }
+    if stats.model_name.is_none() {
+        stats.model_name = ctx.requested_model.clone();
+    }
+    return stats;
 }
 
 // 注意：不再提供 finalize_streaming 别名，统一使用 finalize_eos。

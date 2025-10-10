@@ -1,4 +1,4 @@
-//! # OAuth轮询状态机制
+//! # `OAuth轮询状态机制`
 //!
 //! 实现客户端侧OAuth轮询机制，替代传统的服务器回调方式
 //! 客户端定期轮询服务器检查OAuth授权状态，避免对特定域名的依赖
@@ -7,7 +7,7 @@
 //! 1. 客户端获取授权URL并开始轮询
 //! 2. 服务器检查会话状态（pending/authorized/error/expired）
 //! 3. 授权完成后，自动进行Token交换
-//! 4. 返回最终的OAuth令牌或错误信息
+//! 4. `返回最终的OAuth令牌或错误信息`
 
 use super::session_manager::SessionManager;
 use super::{OAuthError, OAuthResult, OAuthTokenResponse};
@@ -17,10 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
-/// 统一的OAuth轮询响应
+/// `统一的OAuth轮询响应`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthPollingResponse {
-    /// 会话状态（直接使用 AuthStatus）
+    /// 会话状态（直接使用 `AuthStatus`）
     pub status: AuthStatus,
     /// 访问令牌（已授权时存在）
     pub access_token: Option<String>,
@@ -39,6 +39,7 @@ pub struct OAuthPollingResponse {
 }
 
 impl OAuthPollingResponse {
+    #[must_use]
     pub fn pending(session: &oauth_client_sessions::Model, interval: u32) -> Self {
         let expires_in =
             (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
@@ -54,6 +55,7 @@ impl OAuthPollingResponse {
         }
     }
 
+    #[must_use]
     pub fn authorized(session: &oauth_client_sessions::Model) -> Self {
         let expires_in =
             (session.expires_at.and_utc().timestamp() - chrono::Utc::now().timestamp()).max(0);
@@ -69,6 +71,7 @@ impl OAuthPollingResponse {
         }
     }
 
+    #[must_use]
     pub fn error(session: &oauth_client_sessions::Model) -> Self {
         Self {
             status: AuthStatus::Error,
@@ -82,6 +85,7 @@ impl OAuthPollingResponse {
         }
     }
 
+    #[must_use]
     pub fn expired() -> Self {
         Self {
             status: AuthStatus::Expired,
@@ -95,6 +99,7 @@ impl OAuthPollingResponse {
         }
     }
 
+    #[must_use]
     pub fn revoked() -> Self {
         Self {
             status: AuthStatus::Revoked,
@@ -139,7 +144,7 @@ impl Default for PollingConfig {
     }
 }
 
-/// OAuth轮询客户端
+/// `OAuth轮询客户端`
 #[derive(Debug)]
 pub struct OAuthPollingClient {
     config: PollingConfig,
@@ -260,9 +265,8 @@ impl OAuthPollingClient {
                                     expires_in: response.expires_in.map(|x| x as i32),
                                     scopes: Vec::new(),
                                 });
-                            } else {
-                                // Token交换中，继续轮询
                             }
+                            // Token交换中，继续轮询
                         }
                         AuthStatus::Error => {
                             return Err(OAuthError::TokenExchangeFailed(format!(

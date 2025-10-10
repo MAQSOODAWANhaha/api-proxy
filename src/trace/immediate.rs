@@ -395,7 +395,7 @@ impl ImmediateProxyTracer {
                     LogStage::Response,
                     LogComponent::Tracing,
                     "trace_complete_batch_failed",
-                    &format!("Failed to complete trace with batch statistics: {}", e)
+                    &format!("Failed to complete trace with batch statistics: {e}")
                 );
             }
         }

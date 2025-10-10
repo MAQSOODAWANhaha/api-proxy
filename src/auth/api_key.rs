@@ -127,7 +127,7 @@ impl ApiKeyManager {
             provider_type_id: api_key_model.provider_type_id,
             auth_type: api_key_model.auth_type.clone(),
             name: api_key_model.name,
-            api_key: self.sanitize_api_key(&api_key_model.api_key),
+            api_key: Self::sanitize_api_key(&api_key_model.api_key),
             weight: api_key_model.weight,
             max_requests_per_minute: api_key_model.max_requests_per_minute,
             max_tokens_prompt_per_minute: api_key_model.max_tokens_prompt_per_minute,
@@ -156,7 +156,7 @@ impl ApiKeyManager {
                 LogStage::Cache,
                 LogComponent::ApiKey,
                 "cache_fail",
-                &format!("Failed to cache API key info: {}", e)
+                &format!("Failed to cache API key info: {e}")
             );
         }
 
@@ -170,13 +170,14 @@ impl ApiKeyManager {
     }
 
     /// Check if API key format is valid
+    #[must_use]
     pub fn is_valid_api_key_format(&self, api_key: &str) -> bool {
         // Basic format check: starts with sk- and at least 20 characters
         api_key.starts_with("sk-") && api_key.len() >= 20
     }
 
     /// Sanitize API key for logging（委托统一工具，避免重复实现）
-    fn sanitize_api_key(&self, api_key: &str) -> String {
+    fn sanitize_api_key(api_key: &str) -> String {
         crate::auth::AuthUtils::sanitize_api_key(api_key)
     }
 
@@ -192,15 +193,12 @@ impl ApiKeyManager {
             .one(self.db.as_ref())
             .await
             .map_err(|e| {
-                crate::error::ProxyError::database(format!("Failed to query user: {}", e))
+                crate::error::ProxyError::database(format!("Failed to query user: {e}"))
             })?;
 
-        let user = match user {
-            Some(u) => u,
-            None => {
-                // 用户不存在或未激活，返回最小权限
-                return Ok(vec![Permission::UseApi]);
-            }
+        let Some(user) = user else {
+            // 用户不存在或未激活，返回最小权限
+            return Ok(vec![Permission::UseApi]);
         };
 
         // 根据用户类型确定权限
@@ -274,6 +272,7 @@ impl ApiKeyManager {
     }
 
     /// Check API key rate limit (requests per minute only)
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn check_rate_limit(&self, api_key: &str) -> Result<RateLimitStatus> {
         let api_key_model = self
             .find_api_key_record(api_key)
@@ -281,7 +280,7 @@ impl ApiKeyManager {
             .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
 
         // Check request rate limit
-        let rpm_limit = api_key_model.max_requests_per_minute.unwrap_or(i32::MAX) as i64;
+        let rpm_limit = i64::from(api_key_model.max_requests_per_minute.unwrap_or(i32::MAX));
         let rpm_outcome = self
             .limiter
             .check_per_minute(api_key_model.user_id, "proxy", rpm_limit)
@@ -301,7 +300,7 @@ impl ApiKeyManager {
 
         let remaining_tokens = api_key_model
             .max_requests_per_day
-            .map(|max| (max as i64 - current_tokens).max(0));
+            .map(|max| (i64::from(max) - current_tokens).max(0));
 
         let reset_time = Utc::now()
             .with_second(0)
@@ -319,6 +318,7 @@ impl ApiKeyManager {
     }
 
     /// Record API key usage (tokens)
+    #[allow(clippy::cast_sign_loss)]
     pub async fn record_usage(&self, api_key: &str, tokens_used: i32) -> Result<()> {
         let api_key_model = self
             .find_api_key_record(api_key)
@@ -340,12 +340,12 @@ impl ApiKeyManager {
             let new_total = self
                 .raw_cache
                 .provider()
-                .incr(&token_key, tokens_used as i64)
+                .incr(&token_key, i64::from(tokens_used))
                 .await
                 .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?;
 
             // Set TTL on first increment of the day
-            if new_total == tokens_used as i64 {
+            if new_total == i64::from(tokens_used) {
                 let now = Utc::now();
                 let tomorrow = (now.date_naive() + chrono::Duration::days(1))
                     .and_hms_opt(0, 0, 0)
@@ -364,17 +364,15 @@ impl ApiKeyManager {
             LogStage::Internal,
             LogComponent::ApiKey,
             "usage_recorded",
-            &format!(
-                "Recorded usage for API key: {}, tokens: {}",
-                self.sanitize_api_key(api_key),
-                tokens_used
-            )
-        );
+                                            &format!("Recorded usage for API key: {}, tokens: {tokens_used}",
+                                                Self::sanitize_api_key(api_key),
+                                            )        );
 
         Ok(())
     }
 
     /// Get rate limit information for API key
+    #[allow(clippy::cast_possible_truncation)]
     async fn get_rate_limit_info(
         &self,
         _api_key: &str,
@@ -392,7 +390,7 @@ impl ApiKeyManager {
             .unwrap_or(0);
         let remaining_requests = api_key_info
             .max_requests_per_minute
-            .map(|max| (max as i64 - current_requests).max(0) as i32);
+            .map(|max| (i64::from(max) - current_requests).max(0) as i32);
 
         // Get TPD from cache
         let date = chrono::Utc::now().format("%Y%m%d").to_string();
@@ -406,7 +404,7 @@ impl ApiKeyManager {
             .unwrap_or(0);
         let remaining_tokens = api_key_info
             .max_requests_per_day
-            .map(|max| (max as i64 - current_tokens).max(0) as i32);
+            .map(|max| (i64::from(max) - current_tokens).max(0) as i32);
 
         Ok((remaining_requests, remaining_tokens))
     }
@@ -429,6 +427,7 @@ impl ApiKeyManager {
     }
 
     /// 验证API密钥格式（共享方法）
+    #[must_use]
     pub fn validate_api_key_format(&self, api_key: &str) -> bool {
         self.is_valid_api_key_format(api_key)
     }
@@ -461,7 +460,7 @@ impl ApiKeyManager {
                 provider_type_id: record.provider_type_id,
                 auth_type: record.auth_type.clone(),
                 name: record.name,
-                api_key: self.sanitize_api_key(&record.api_key),
+                api_key: Self::sanitize_api_key(&record.api_key),
                 weight: record.weight,
                 max_requests_per_minute: record.max_requests_per_minute,
                 max_tokens_prompt_per_minute: record.max_tokens_prompt_per_minute,
@@ -483,7 +482,7 @@ impl ApiKeyManager {
                     LogStage::Cache,
                     LogComponent::ApiKey,
                     "cache_fail",
-                    &format!("Failed to cache API key info: {}", e)
+                    &format!("Failed to cache API key info: {e}")
                 );
             }
 

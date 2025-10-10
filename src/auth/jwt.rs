@@ -121,6 +121,7 @@ impl JwtManager {
     }
 
     /// Extract user info from token (unsafe - doesn't verify signature)
+    #[must_use]
     pub fn extract_claims_unsafe(&self, token: &str) -> Option<JwtClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.insecure_disable_signature_validation();
@@ -132,6 +133,7 @@ impl JwtManager {
     }
 
     /// Get remaining token TTL
+    #[must_use]
     pub fn get_token_ttl(&self, token: &str) -> Option<Duration> {
         self.extract_claims_unsafe(token).and_then(|claims| {
             let exp_time = DateTime::<Utc>::from_timestamp(claims.exp, 0)?;
@@ -145,10 +147,10 @@ impl JwtManager {
     }
 
     /// Check if token is expiring soon
+    #[must_use]
     pub fn is_token_expiring_soon(&self, token: &str, threshold_seconds: i64) -> bool {
         self.get_token_ttl(token)
-            .map(|ttl| ttl.num_seconds() < threshold_seconds)
-            .unwrap_or(true)
+            .map_or(true, |ttl| ttl.num_seconds() < threshold_seconds)
     }
 
     /// Revoke token (add to blacklist)
@@ -162,6 +164,7 @@ impl JwtManager {
     }
 
     /// Get configuration reference
+    #[must_use]
     pub fn get_config(&self) -> &AuthConfig {
         &self.config
     }
