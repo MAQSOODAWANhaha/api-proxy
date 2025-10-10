@@ -97,6 +97,7 @@ pub enum LogComponent {
     GeminiStrategy,
     OpenAIStrategy,
     Sse,
+    ClaudeStrategy,
 }
 
 impl LogComponent {
@@ -125,6 +126,7 @@ impl LogComponent {
             LogComponent::GeminiStrategy => "gemini_strategy",
             LogComponent::OpenAIStrategy => "openai_strategy",
             LogComponent::Sse => "sse",
+            LogComponent::ClaudeStrategy => "claude_strategy",
         }
     }
 }

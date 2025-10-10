@@ -24,7 +24,7 @@ enum GeminiProxyMode {
 }
 
 impl GeminiProxyMode {
-    fn upstream_host(&self) -> &'static str {
+    const fn upstream_host(&self) -> &'static str {
         match self {
             Self::OAuthWithoutProject => "cloudcode-pa.googleapis.com",
             Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
@@ -33,15 +33,11 @@ impl GeminiProxyMode {
     }
 }
 
+#[derive(Default)]
 pub struct GeminiStrategy {
     db: Option<Arc<DatabaseConnection>>,
 }
 
-impl Default for GeminiStrategy {
-    fn default() -> Self {
-        Self { db: None }
-    }
-}
 
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
@@ -63,10 +59,10 @@ impl ProviderStrategy for GeminiStrategy {
         let mode = match backend.auth_type.as_str() {
             "oauth" => {
                 if let Some(pid) = &backend.project_id {
-                    if !pid.is_empty() {
-                        GeminiProxyMode::OAuthWithProject(pid.clone())
-                    } else {
+                    if pid.is_empty() {
                         GeminiProxyMode::OAuthWithoutProject
+                    } else {
+                        GeminiProxyMode::OAuthWithProject(pid.clone())
                     }
                 } else {
                     GeminiProxyMode::OAuthWithoutProject
@@ -105,18 +101,15 @@ impl ProviderStrategy for GeminiStrategy {
         }
 
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
-        if let Some(backend) = &ctx.selected_backend {
-            if backend.auth_type.as_str() == "oauth" {
-                if let Some(pid) = &backend.project_id {
-                    if !pid.is_empty() {
+        if let Some(backend) = &ctx.selected_backend
+            && backend.auth_type.as_str() == "oauth"
+                && let Some(pid) = &backend.project_id
+                    && !pid.is_empty() {
                         let path = session.req_header().uri.path();
                         let need = path.contains("streamGenerateContent")
                             || path.contains("generateContent");
                         ctx.will_modify_body = need;
                     }
-                }
-            }
-        }
         Ok(())
     }
 
@@ -140,10 +133,10 @@ impl ProviderStrategy for GeminiStrategy {
         // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
         let modified = if ctx.will_modify_body {
             if let Some(project_id) = &backend.project_id {
-                if !project_id.is_empty() {
-                    inject_generatecontent_fields(json_value, project_id)
-                } else {
+                if project_id.is_empty() {
                     false
+                } else {
+                    inject_generatecontent_fields(json_value, project_id)
                 }
             } else {
                 false
@@ -170,7 +163,7 @@ impl ProviderStrategy for GeminiStrategy {
     fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)> {
         // Gemini支持两种认证方式
         let auth_headers = vec![
-            ("Authorization".to_string(), format!("Bearer {}", api_key)),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
             ("X-goog-api-key".to_string(), api_key.to_string()),
         ];
 
@@ -238,8 +231,8 @@ mod tests {
             name: "key1".to_string(),
             weight: Some(1),
             max_requests_per_minute: Some(1000),
-            max_tokens_prompt_per_minute: Some(100000),
-            max_requests_per_day: Some(100000),
+            max_tokens_prompt_per_minute: Some(100_000),
+            max_requests_per_day: Some(100_000),
             is_active: true,
             health_status: "healthy".to_string(),
             health_status_detail: None,
@@ -248,7 +241,7 @@ mod tests {
             auth_status: Some(AuthStatus::Authorized.to_string()),
             expires_at: None,
             last_auth_check: Some(now),
-            project_id: project_id.map(|s| s.to_string()),
+            project_id: project_id.map(std::string::ToString::to_string),
             created_at: now,
             updated_at: now,
         }
@@ -323,7 +316,7 @@ mod tests {
 
         // 创建一个project_id为空字符串的backend
         let mut backend = dummy_key("oauth", None);
-        backend.project_id = Some("".to_string()); // 显式设置为空字符串
+        backend.project_id = Some(String::new()); // 显式设置为空字符串
         ctx.selected_backend = Some(backend);
 
         // 测试JSON数据
@@ -462,7 +455,7 @@ mod tests {
         let backend_with_project = dummy_key("oauth", Some("test-project"));
         let backend_empty_project = {
             let mut b = dummy_key("oauth", None);
-            b.project_id = Some("".to_string());
+            b.project_id = Some(String::new());
             b
         };
         let backend_no_project = dummy_key("oauth", None);
