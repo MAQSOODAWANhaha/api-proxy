@@ -20,7 +20,7 @@ impl ResponseTransformService {
     }
 
     /// 过滤并转换上游响应
-    pub async fn filter_response(
+    pub fn filter_response(
         &self,
         _session: &Session,
         upstream_response: &mut ResponseHeader,

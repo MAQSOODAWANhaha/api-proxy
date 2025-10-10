@@ -125,7 +125,7 @@ impl ApiKeyPoolManager {
         );
 
         // 应用更智能的筛选逻辑，考虑认证状态和过期时间
-        let user_keys = self.filter_valid_keys(&all_candidate_keys).await;
+        let user_keys = self.filter_valid_keys(&all_candidate_keys);
 
         if user_keys.is_empty() {
             return Err(ProxyError::internal(
@@ -155,7 +155,7 @@ impl ApiKeyPoolManager {
         );
 
         // 记录密钥限制信息用于调试
-        self.log_key_limits(&user_keys).await;
+        self.log_key_limits(&user_keys);
 
         if healthy_keys.is_empty() {
             // 如果没有健康的密钥，记录警告并使用所有密钥（降级模式）
@@ -399,7 +399,7 @@ impl ApiKeyPoolManager {
     }
 
     /// 过滤有效的API密钥 - 综合考虑认证状态、过期时间等条件
-    async fn filter_valid_keys(
+    fn filter_valid_keys(
         &self,
         keys: &[user_provider_keys::Model],
     ) -> Vec<user_provider_keys::Model> {
@@ -556,7 +556,7 @@ impl ApiKeyPoolManager {
     }
 
     /// 记录密钥限制信息
-    async fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
+    fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
         for key in keys {
             ldebug!(
                 "system",

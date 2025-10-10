@@ -122,8 +122,7 @@ impl PricingCalculatorService {
         // 计算prompt tokens费用
         if let Some(prompt_tokens) = token_usage.prompt_tokens {
             let cost = self
-                .calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id)
-                .await;
+                .calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id);
             cost_breakdown.insert("prompt_tokens".to_string(), cost);
             total_cost += cost;
         }
@@ -131,8 +130,7 @@ impl PricingCalculatorService {
         // 计算completion tokens费用
         if let Some(completion_tokens) = token_usage.completion_tokens {
             let cost = self
-                .calculate_tiered_cost("completion", completion_tokens, &pricing_tiers, request_id)
-                .await;
+                .calculate_tiered_cost("completion", completion_tokens, &pricing_tiers, request_id);
             cost_breakdown.insert("completion_tokens".to_string(), cost);
             total_cost += cost;
         }
@@ -145,8 +143,7 @@ impl PricingCalculatorService {
                     cache_create_tokens,
                     &pricing_tiers,
                     request_id,
-                )
-                .await;
+                );
             cost_breakdown.insert("cache_create_tokens".to_string(), cost);
             total_cost += cost;
         }
@@ -154,8 +151,7 @@ impl PricingCalculatorService {
         // 计算cache read tokens费用
         if let Some(cache_read_tokens) = token_usage.cache_read_tokens {
             let cost = self
-                .calculate_tiered_cost("cache_read", cache_read_tokens, &pricing_tiers, request_id)
-                .await;
+                .calculate_tiered_cost("cache_read", cache_read_tokens, &pricing_tiers, request_id);
             cost_breakdown.insert("cache_read_tokens".to_string(), cost);
             total_cost += cost;
         }
@@ -247,7 +243,7 @@ impl PricingCalculatorService {
     }
 
     /// 计算特定token类型的阶梯费用
-    async fn calculate_tiered_cost(
+    fn calculate_tiered_cost(
         &self,
         token_type: &str,
         token_count: u32,

@@ -37,6 +37,7 @@ pub struct ClientMetadata {
 
 impl ClientMetadata {
     /// 创建没有 `project_id` 的客户端元数据
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ideType: "IDE_UNSPECIFIED".to_string(),
@@ -165,6 +166,7 @@ impl GeminiCodeAssistClient {
     }
 
     /// 带重试机制的HTTP请求
+    #[allow(clippy::cognitive_complexity)]
     async fn execute_with_retry<F, Fut, R>(
         &self,
         operation: &str,
@@ -188,8 +190,7 @@ impl GeminiCodeAssistClient {
                         LogComponent::GeminiClient,
                         "retry_success",
                         &format!(
-                            "{}在第{attempt}次尝试中成功完成，耗时: {:?}",
-                            operation, duration
+                            "{operation}在第{attempt}次尝试中成功完成，耗时: {duration:?}"
                         )
                     );
                     return Ok(response);
@@ -202,8 +203,7 @@ impl GeminiCodeAssistClient {
                         LogComponent::GeminiClient,
                         "retry_fail",
                         &format!(
-                            "{}第{attempt}次尝试失败，耗时: {:?}，错误: {e}",
-                            operation, duration
+                            "{operation}第{attempt}次尝试失败，耗时: {duration:?}，错误: {e}"
                         )
                     );
 
@@ -270,6 +270,7 @@ impl GeminiCodeAssistClient {
     /// # 参数
     /// * `access_token` - `OAuth访问令牌`
     /// * `_client_metadata` - 客户端元数据，包含平台和IDE信息（当前未使用）
+    #[allow(clippy::too_many_lines)]
     pub async fn load_code_assist(
         &self,
         access_token: &str,
@@ -409,6 +410,7 @@ impl GeminiCodeAssistClient {
     /// * `project_id` - 可选的项目ID，免费层通常不携带
     /// * `tier_id` - tier ID，从loadCodeAssist响应中获取
     /// * `_client_metadata` - 客户端元数据，包含平台和IDE信息（当前未使用）
+    #[allow(clippy::too_many_lines)]
     pub async fn onboard_user(
         &self,
         access_token: &str,
@@ -548,6 +550,7 @@ impl GeminiCodeAssistClient {
     /// 带重试机制的onboardUser调用
     ///
     /// 最多重试5次，使用指数退避算法
+    #[allow(clippy::cognitive_complexity)]
     pub async fn onboard_user_with_retry(
         &self,
         access_token: &str,
@@ -626,6 +629,7 @@ impl GeminiCodeAssistClient {
     /// 1. `调用loadCodeAssist检查是否已有project`
     /// 2. 如果没有cloudaicompanionProject，调用onboardUser初始化新项目（带重试）
     /// 3. `返回获取到的project_id`
+    #[allow(clippy::cognitive_complexity)]
     pub async fn auto_get_project_id_with_retry(
         &self,
         access_token: &str,
@@ -705,9 +709,9 @@ impl GeminiCodeAssistClient {
     /// `从loadCodeAssist响应中获取tierId`
     ///
     /// `参考JavaScript实现中的getOnboardTier逻辑`
-    fn get_tier_id_from_load_response<'a>(
-        load_response: &'a LoadCodeAssistResponse,
-    ) -> &'a str {
+    fn get_tier_id_from_load_response(
+        load_response: &LoadCodeAssistResponse,
+    ) -> &str {
         // 使用currentTier的id
         if let Some(current_tier) = &load_response.currentTier {
             return &current_tier.id;
@@ -724,6 +728,7 @@ impl GeminiCodeAssistClient {
     /// 2. `如果有cloudaicompanionProject，直接使用该值作为project_id`
     /// 3. 如果没有cloudaicompanionProject，调用onboardUser初始化新项目
     /// 4. `返回获取到的project_id`
+    #[allow(clippy::cognitive_complexity)]
     pub async fn auto_get_project_id(
         &self,
         access_token: &str,

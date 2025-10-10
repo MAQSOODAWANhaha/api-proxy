@@ -282,17 +282,17 @@ impl AuthHeaderParser {
     ) -> Result<String, AuthParseError> {
         // 尝试解析为JSON数组格式
         let formats: Vec<String> = serde_json::from_str(formats_json)
-            .map_or_else(|_| vec![formats_json.to_string()], |formats| formats);
+            .unwrap_or_else(|_| vec![formats_json.to_string()]);
         // 遍历所有格式，找到匹配的格式并提取密钥
         for format in formats {
-            if let Ok(format_header_name) = Self::extract_header_name(&format) {
-                if format_header_name == header_name {
-                    // 找到匹配格式，进行反向解析
-                    if let Ok(api_key) =
-                        AuthHeaderParser.parse_api_key_from_value(&header_value, &format)
-                    {
-                        return Ok(api_key);
-                    }
+            if let Ok(format_header_name) = Self::extract_header_name(&format)
+                && format_header_name == header_name
+            {
+                // 找到匹配格式，进行反向解析
+                if let Ok(api_key) =
+                    AuthHeaderParser.parse_api_key_from_value(&header_value, &format)
+                {
+                    return Ok(api_key);
                 }
             }
         }

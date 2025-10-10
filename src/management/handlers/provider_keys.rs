@@ -2198,7 +2198,7 @@ struct DailyStats {
 }
 
 /// 获取API密钥健康状态列表
-pub async fn get_provider_key_health_statuses() -> axum::response::Response {
+pub fn get_provider_key_health_statuses() -> axum::response::Response {
     use crate::scheduler::types::ApiKeyHealthStatus;
 
     let mut statuses = vec![json!({"value": "all", "label": "全部"})];

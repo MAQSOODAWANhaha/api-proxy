@@ -287,7 +287,7 @@ impl AuthManager {
     // }
 
     /// 获取OAuth认证URL
-    pub async fn get_oauth_auth_url(
+    pub fn get_oauth_auth_url(
         &self,
         _auth_type: &AuthType,
         _redirect_uri: &str,
@@ -299,7 +299,7 @@ impl AuthManager {
     }
 
     /// 处理OAuth回调
-    pub async fn handle_oauth_callback(
+    pub fn handle_oauth_callback(
         &self,
         _auth_type: &AuthType,
         _code: &str,

@@ -337,7 +337,6 @@ impl ProxyHttp for ProxyService {
         crate::pingora_try!(
             self.resp_transform_service
                 .filter_response(session, upstream_response, ctx)
-                .await
         );
 
         let resp_stats = self

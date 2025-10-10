@@ -89,7 +89,7 @@ impl AuthService {
             .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
 
         let auth_result = match token_type {
-            TokenType::Bearer(token) => self.authenticate_jwt(&token, context).await,
+            TokenType::Bearer(token) => self.authenticate_jwt(&token, context),
             TokenType::ApiKey(api_key) => self.authenticate_api_key(&api_key, context).await,
             TokenType::Basic { username, password } => {
                 self.authenticate_basic(&username, &password, context).await
@@ -112,7 +112,7 @@ impl AuthService {
     }
 
     /// Authenticate using JWT token
-    pub async fn authenticate_jwt(
+    pub fn authenticate_jwt(
         &self,
         token: &str,
         _context: &AuthContext,
@@ -297,7 +297,7 @@ impl AuthService {
         }
 
         // Get user permissions based on admin status and user configuration
-        let permissions = self.get_user_permissions(&user).await;
+        let permissions = self.get_user_permissions(&user);
 
         let token_pair = self.jwt_manager.generate_token_pair(
             user.id,
@@ -330,7 +330,7 @@ impl AuthService {
         }
 
         // Get current user permissions
-        let permissions = self.get_user_permissions(&user).await;
+        let permissions = self.get_user_permissions(&user);
 
         self.jwt_manager
             .refresh_access_token(refresh_token, permissions, user.is_admin)
@@ -442,7 +442,7 @@ impl AuthService {
             .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
 
         if let Some(user) = user {
-            let permission_strings = self.get_user_permissions(&user).await;
+            let permission_strings = self.get_user_permissions(&user);
             let permissions: Vec<Permission> = permission_strings
                 .iter()
                 .filter_map(|s| Permission::from_str(s))
@@ -551,7 +551,7 @@ impl AuthService {
     }
 
     /// Get user permissions based on database configuration
-    async fn get_user_permissions(&self, user: &users::Model) -> Vec<String> {
+    fn get_user_permissions(&self, user: &users::Model) -> Vec<String> {
         if user.is_admin {
             vec![
                 "super_admin".to_string(),

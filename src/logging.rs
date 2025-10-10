@@ -913,7 +913,7 @@ pub fn log_proxy_failure_details(
 }
 
 /// 记录 Gemini 完整请求信息
-pub async fn log_complete_request(
+pub fn log_complete_request(
     request_id: &str,
     path: &str,
     session: &Session,
