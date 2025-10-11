@@ -22,6 +22,7 @@ pub struct TraceSystem {
 
 impl TraceSystem {
     /// 创建新的即时写入追踪系统
+    #[must_use]
     pub fn new_immediate(
         db: Arc<sea_orm::DatabaseConnection>,
         config: ImmediateTracerConfig,
@@ -32,6 +33,7 @@ impl TraceSystem {
     }
 
     /// 获取即时写入追踪器
+    #[must_use]
     pub fn immediate_tracer(&self) -> Option<Arc<ImmediateProxyTracer>> {
         Some(self.tracer.clone())
     }

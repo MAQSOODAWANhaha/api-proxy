@@ -21,8 +21,8 @@ pub struct UserInfo {
     pub is_admin: bool,
     /// 是否激活
     pub is_active: bool,
-    /// 权限列表
-    pub permissions: Vec<crate::auth::permissions::Permission>,
+    /// 权限列表（现在使用UserRole）
+    pub permissions: Vec<crate::auth::permissions::UserRole>,
     /// 创建时间
     pub created_at: DateTime<Utc>,
     /// 最后登录时间
@@ -38,7 +38,7 @@ pub struct ApiKeyInfo {
     pub user_id: i32,
     /// 提供商类型ID
     pub provider_type_id: i32,
-    /// 认证类型 (api_key, oauth)
+    /// 认证类型 (`api_key`, oauth)
     pub auth_type: String,
     /// 密钥名称
     pub name: String,
@@ -85,6 +85,7 @@ pub struct JwtClaims {
 
 impl JwtClaims {
     /// 创建新的 JWT 载荷
+    #[must_use]
     pub fn new(
         user_id: i32,
         username: String,
@@ -107,6 +108,7 @@ impl JwtClaims {
     }
 
     /// 检查 JWT 是否过期
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Utc::now().timestamp() > self.exp
     }
@@ -131,7 +133,7 @@ pub struct ProxyAuthResult {
 }
 
 /// 认证令牌类型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenType {
     /// Bearer 令牌
     Bearer(String),
@@ -143,36 +145,36 @@ pub enum TokenType {
 
 impl TokenType {
     /// 从 Authorization 头解析令牌
+    #[must_use]
     pub fn from_auth_header(auth_header: &str) -> Option<Self> {
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
-            Some(TokenType::Bearer(token.to_string()))
+            Some(Self::Bearer(token.to_string()))
         } else if let Some(encoded) = auth_header.strip_prefix("Basic ") {
             // 解析基础认证
             use base64::{Engine as _, engine::general_purpose};
-            if let Ok(decoded) = general_purpose::STANDARD.decode(encoded) {
-                if let Ok(credentials) = String::from_utf8(decoded) {
-                    if let Some((username, password)) = credentials.split_once(':') {
-                        return Some(TokenType::Basic {
-                            username: username.to_string(),
-                            password: password.to_string(),
-                        });
-                    }
+            if let Ok(decoded) = general_purpose::STANDARD.decode(encoded)
+                && let Ok(credentials) = String::from_utf8(decoded)
+                && let Some((username, password)) = credentials.split_once(':') {
+                    return Some(Self::Basic {
+                        username: username.to_string(),
+                        password: password.to_string(),
+                    });
                 }
-            }
             None
         } else if auth_header.starts_with("sk-") {
             // 直接的 API 密钥
-            Some(TokenType::ApiKey(auth_header.to_string()))
+            Some(Self::ApiKey(auth_header.to_string()))
         } else {
             None
         }
     }
 
     /// 获取令牌的字符串表示
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
-            TokenType::Bearer(token) | TokenType::ApiKey(token) => token,
-            TokenType::Basic { username, .. } => username,
+            Self::Bearer(token) | Self::ApiKey(token) => token,
+            Self::Basic { username, .. } => username,
         }
     }
 }
@@ -216,11 +218,13 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     /// 开发环境配置
+    #[must_use]
     pub fn development() -> Self {
         Self::default()
     }
 
     /// 测试配置
+    #[must_use]
     pub fn test() -> Self {
         Self {
             jwt_secret: "test-secret-key".to_string(),
@@ -259,18 +263,19 @@ pub enum AuthType {
 impl fmt::Display for AuthType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AuthType::ApiKey => write!(f, "api_key"),
-            AuthType::OAuth => write!(f, "oauth"),
+            Self::ApiKey => write!(f, "api_key"),
+            Self::OAuth => write!(f, "oauth"),
         }
     }
 }
 
 impl AuthType {
     /// 安全解析认证类型字符串，未知类型返回 None
+    #[must_use]
     pub fn from(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "api_key" => Some(AuthType::ApiKey),
-            "oauth" => Some(AuthType::OAuth),
+            "api_key" => Some(Self::ApiKey),
+            "oauth" => Some(Self::OAuth),
             _ => None,
         }
     }
@@ -295,11 +300,11 @@ pub enum AuthStatus {
 impl fmt::Display for AuthStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AuthStatus::Pending => write!(f, "pending"),
-            AuthStatus::Authorized => write!(f, "authorized"),
-            AuthStatus::Expired => write!(f, "expired"),
-            AuthStatus::Error => write!(f, "error"),
-            AuthStatus::Revoked => write!(f, "revoked"),
+            Self::Pending => write!(f, "pending"),
+            Self::Authorized => write!(f, "authorized"),
+            Self::Expired => write!(f, "expired"),
+            Self::Error => write!(f, "error"),
+            Self::Revoked => write!(f, "revoked"),
         }
     }
 }
@@ -307,17 +312,16 @@ impl fmt::Display for AuthStatus {
 impl From<&str> for AuthStatus {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "pending" => AuthStatus::Pending,
-            "authorized" => AuthStatus::Authorized,
-            "expired" => AuthStatus::Expired,
-            "error" => AuthStatus::Error,
-            "revoked" => AuthStatus::Revoked,
-            _ => AuthStatus::Pending,
+            "authorized" => Self::Authorized,
+            "expired" => Self::Expired,
+            "error" => Self::Error,
+            "revoked" => Self::Revoked,
+            _ => Self::Pending,
         }
     }
 }
 
-/// OAuth2授权类型
+/// `OAuth2授权类型`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OAuth2GrantType {
@@ -332,9 +336,9 @@ pub enum OAuth2GrantType {
 impl fmt::Display for OAuth2GrantType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OAuth2GrantType::AuthorizationCode => write!(f, "authorization_code"),
-            OAuth2GrantType::ClientCredentials => write!(f, "client_credentials"),
-            OAuth2GrantType::RefreshToken => write!(f, "refresh_token"),
+            Self::AuthorizationCode => write!(f, "authorization_code"),
+            Self::ClientCredentials => write!(f, "client_credentials"),
+            Self::RefreshToken => write!(f, "refresh_token"),
         }
     }
 }
@@ -352,8 +356,8 @@ pub enum PkceMethod {
 impl fmt::Display for PkceMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PkceMethod::Plain => write!(f, "plain"),
-            PkceMethod::S256 => write!(f, "S256"),
+            Self::Plain => write!(f, "plain"),
+            Self::S256 => write!(f, "S256"),
         }
     }
 }
@@ -371,14 +375,16 @@ pub struct MultiAuthConfig {
 
 impl MultiAuthConfig {
     /// 创建API密钥认证配置
-    pub fn api_key() -> Self {
+    #[must_use]
+    pub const fn api_key() -> Self {
         Self {
             auth_type: AuthType::ApiKey,
             extra_config: None,
         }
     }
 
-    /// 创建OAuth认证配置
+    /// `创建OAuth认证配置`
+    #[must_use]
     pub fn oauth(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
         let mut config = serde_json::Map::new();
         config.insert(

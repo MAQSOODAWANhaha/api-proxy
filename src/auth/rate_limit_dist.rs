@@ -1,7 +1,7 @@
 //! 分布式速率限制器（Redis/CacheManager 后端）
 //!
 //! 使用 CacheManager（UnifiedCacheManager） 的 `incr` + `expire` 实现跨实例一致的 QPS/日配额计数。
-//! 先提供最小实现与接口；集成到 ApiKeyManager 可作为后续任务。
+//! 先提供最小实现与接口；集成到 `ApiKeyManager` 可作为后续任务。
 
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ pub struct DistributedRateLimiter {
 }
 
 impl DistributedRateLimiter {
-    pub fn new(cache: std::sync::Arc<CacheManager>) -> Self {
+    pub const fn new(cache: std::sync::Arc<CacheManager>) -> Self {
         Self { cache }
     }
 
@@ -74,6 +74,7 @@ impl DistributedRateLimiter {
         let tomorrow = (now.date_naive() + chrono::Duration::days(1))
             .and_hms_opt(0, 0, 0)
             .unwrap();
+        #[allow(clippy::cast_sign_loss)]
         let ttl = (tomorrow.and_utc() - now).num_seconds().max(60) as u64;
         if current == 1 {
             let _ = self.cache.expire(&key, Duration::from_secs(ttl)).await;
@@ -83,6 +84,7 @@ impl DistributedRateLimiter {
             allowed: current <= limit,
             current,
             limit,
+            #[allow(clippy::cast_possible_wrap)]
             ttl_seconds: ttl as i64,
         })
     }

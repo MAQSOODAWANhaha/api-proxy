@@ -184,7 +184,7 @@ impl PkceChallenge {
 
     /// 获取Challenge方法的字符串表示
     #[must_use]
-    pub fn method_str(&self) -> &'static str {
+    pub const fn method_str(&self) -> &'static str {
         self.method.as_str()
     }
 
@@ -214,6 +214,7 @@ impl PkceParams {
     }
 
     /// 生成指定长度的PKCE参数对
+    #[must_use]
     pub fn with_length(length: usize) -> Self {
         let verifier = PkceVerifier::with_length(length);
         let challenge = verifier.create_challenge();

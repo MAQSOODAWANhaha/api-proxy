@@ -18,8 +18,15 @@ pub struct EventStreamData {
     buffer: String,
 }
 
+impl Default for EventStreamData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventStreamData {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             current: EventStream {
                 event: None,
@@ -56,17 +63,14 @@ impl EventStreamData {
             return None;
         }
 
-        let (field, value) = match line.find(':') {
-            Some(idx) => {
-                let f = &line[..idx];
-                let mut v = &line[idx + 1..];
-                if v.starts_with(' ') {
-                    v = &v[1..];
-                }
-                (f, v)
+        let (field, value) = line.find(':').map_or((line, ""), |idx| {
+            let f = &line[..idx];
+            let mut v = &line[idx + 1..];
+            if v.starts_with(' ') {
+                v = &v[1..];
             }
-            None => (line, ""),
-        };
+            (f, v)
+        });
 
         match field {
             "data" => {

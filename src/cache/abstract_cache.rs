@@ -41,14 +41,13 @@ impl CacheEntry {
         }
     }
 
-    fn from_parts(data: Arc<Vec<u8>>, expires_at: Option<Instant>) -> Self {
+    const fn from_parts(data: Arc<Vec<u8>>, expires_at: Option<Instant>) -> Self {
         Self { data, expires_at }
     }
 
     fn is_expired(&self) -> bool {
         self.expires_at
-            .map(|deadline| Instant::now() >= deadline)
-            .unwrap_or(false)
+            .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
     fn remaining_ttl(&self) -> Option<Duration> {
@@ -100,11 +99,16 @@ pub struct CacheStats {
 }
 
 impl CacheStats {
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // 对于比率计算，精度损失是可接受的
     pub fn hit_rate(&self) -> f64 {
         let total = self.hit_count + self.miss_count;
         if total == 0 {
             0.0
         } else {
+            // 对于缓存命中比率，精度损失是可以接受的
+            // 缓存命中次数通常不会达到会导致精度问题的数量级（一般不会超过 2^52）
+            // 这里使用 as 转换是合理的，因为这是一个比率计算，不是精确的数值计算
             self.hit_count as f64 / total as f64
         }
     }
@@ -120,6 +124,7 @@ pub struct MemoryCache {
 }
 
 impl MemoryCache {
+    #[must_use]
     pub fn new(max_entries: usize, default_ttl: Option<Duration>) -> Self {
         let cache = Cache::builder().max_capacity(max_entries as u64).build();
 
@@ -139,14 +144,14 @@ impl MemoryCache {
             .clone()
     }
 
-    fn encode<T>(&self, value: &T) -> Result<Vec<u8>>
+    fn encode<T>(value: &T) -> Result<Vec<u8>>
     where
         T: Serialize + Send + Sync,
     {
         serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
     }
 
-    fn decode<T>(&self, value: &[u8]) -> Result<T>
+    fn decode<T>(value: &[u8]) -> Result<T>
     where
         T: DeserializeOwned + Send,
     {
@@ -161,7 +166,7 @@ impl CacheProvider for MemoryCache {
     where
         T: Serialize + Send + Sync,
     {
-        let encoded = self.encode(value)?;
+        let encoded = Self::encode(value)?;
         let entry = CacheEntry::new(encoded, ttl.or(self.default_ttl));
         self.cache.insert(key.to_string(), entry).await;
 
@@ -179,7 +184,7 @@ impl CacheProvider for MemoryCache {
                 Ok(None)
             } else {
                 self.hit_count.fetch_add(1, Ordering::Relaxed);
-                self.decode(entry.data.as_ref()).map(Some)
+                Self::decode(entry.data.as_ref()).map(Some)
             }
         } else {
             self.miss_count.fetch_add(1, Ordering::Relaxed);
@@ -234,14 +239,14 @@ impl CacheProvider for MemoryCache {
                     0
                 } else {
                     ttl = entry.remaining_ttl();
-                    self.decode::<i64>(entry.data.as_ref()).unwrap_or(0)
+                    Self::decode::<i64>(entry.data.as_ref()).unwrap_or(0)
                 }
             }
             None => 0,
         };
 
         let new_value = current_value.saturating_add(delta);
-        let encoded = self.encode(&new_value)?;
+        let encoded = Self::encode(&new_value)?;
         let entry = CacheEntry::new(encoded, ttl);
         self.cache.insert(key.to_string(), entry).await;
         Ok(new_value)
@@ -254,7 +259,7 @@ impl CacheProvider for MemoryCache {
 
     async fn stats(&self) -> Result<CacheStats> {
         Ok(CacheStats {
-            total_keys: self.cache.entry_count() as usize,
+            total_keys: self.cache.entry_count().try_into().unwrap_or(usize::MAX),
             expired_keys: 0,
             hit_count: self.hit_count.load(Ordering::Relaxed),
             miss_count: self.miss_count.load(Ordering::Relaxed),
@@ -297,14 +302,14 @@ impl RedisCache {
         Ok(manager.clone())
     }
 
-    fn encode<T>(&self, value: &T) -> Result<Vec<u8>>
+    fn encode<T>(value: &T) -> Result<Vec<u8>>
     where
         T: Serialize + Send + Sync,
     {
         serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
     }
 
-    fn decode<T>(&self, bytes: &[u8]) -> Result<T>
+    fn decode<T>(bytes: &[u8]) -> Result<T>
     where
         T: DeserializeOwned + Send,
     {
@@ -319,7 +324,7 @@ impl CacheProvider for RedisCache {
     where
         T: Serialize + Send + Sync,
     {
-        let serialized = self.encode(value)?;
+        let serialized = Self::encode(value)?;
         let mut conn = self.connection().await?;
 
         match ttl {
@@ -356,13 +361,16 @@ impl CacheProvider for RedisCache {
             .await
             .map_err(|e| ProxyError::cache_with_source("Redis GET 失败", e))?;
 
-        if let Some(data) = result {
-            self.hit_count.fetch_add(1, Ordering::Relaxed);
-            self.decode(&data).map(Some)
-        } else {
-            self.miss_count.fetch_add(1, Ordering::Relaxed);
-            Ok(None)
-        }
+        result.map_or_else(
+            || {
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
+                Ok(None)
+            },
+            |data| {
+                self.hit_count.fetch_add(1, Ordering::Relaxed);
+                Self::decode(&data).map(Some)
+            },
+        )
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
@@ -383,8 +391,11 @@ impl CacheProvider for RedisCache {
 
     async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
         let mut conn = self.connection().await?;
+        // Redis 的 EXPIRE 命令期望 i64 类型，这里转换是安全的
+        let expire_seconds = i64::try_from(ttl.as_secs())
+            .map_err(|_| ProxyError::cache("TTL 转换失败，超出 i64 范围"))?;
         let _: bool = conn
-            .expire(key, ttl.as_secs() as i64)
+            .expire(key, expire_seconds)
             .await
             .map_err(|e| ProxyError::cache_with_source("Redis EXPIRE 失败", e))?;
         Ok(())
@@ -448,8 +459,8 @@ impl CacheProviderType {
         T: Serialize + Send + Sync,
     {
         match self {
-            CacheProviderType::Memory(cache) => cache.set(key, value, ttl).await,
-            CacheProviderType::Redis(cache) => cache.set(key, value, ttl).await,
+            Self::Memory(cache) => cache.set(key, value, ttl).await,
+            Self::Redis(cache) => cache.set(key, value, ttl).await,
         }
     }
 
@@ -459,56 +470,56 @@ impl CacheProviderType {
         T: DeserializeOwned + Send,
     {
         match self {
-            CacheProviderType::Memory(cache) => cache.get(key).await,
-            CacheProviderType::Redis(cache) => cache.get(key).await,
+            Self::Memory(cache) => cache.get(key).await,
+            Self::Redis(cache) => cache.get(key).await,
         }
     }
 
     /// 删除缓存值
     pub async fn delete(&self, key: &str) -> Result<()> {
         match self {
-            CacheProviderType::Memory(cache) => cache.delete(key).await,
-            CacheProviderType::Redis(cache) => cache.delete(key).await,
+            Self::Memory(cache) => cache.delete(key).await,
+            Self::Redis(cache) => cache.delete(key).await,
         }
     }
 
     /// 检查键是否存在
     pub async fn exists(&self, key: &str) -> Result<bool> {
         match self {
-            CacheProviderType::Memory(cache) => cache.exists(key).await,
-            CacheProviderType::Redis(cache) => cache.exists(key).await,
+            Self::Memory(cache) => cache.exists(key).await,
+            Self::Redis(cache) => cache.exists(key).await,
         }
     }
 
     /// 设置过期时间
     pub async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
         match self {
-            CacheProviderType::Memory(cache) => cache.expire(key, ttl).await,
-            CacheProviderType::Redis(cache) => cache.expire(key, ttl).await,
+            Self::Memory(cache) => cache.expire(key, ttl).await,
+            Self::Redis(cache) => cache.expire(key, ttl).await,
         }
     }
 
     /// 增加数字值
     pub async fn incr(&self, key: &str, delta: i64) -> Result<i64> {
         match self {
-            CacheProviderType::Memory(cache) => cache.incr(key, delta).await,
-            CacheProviderType::Redis(cache) => cache.incr(key, delta).await,
+            Self::Memory(cache) => cache.incr(key, delta).await,
+            Self::Redis(cache) => cache.incr(key, delta).await,
         }
     }
 
     /// 清空所有缓存
     pub async fn clear(&self) -> Result<()> {
         match self {
-            CacheProviderType::Memory(cache) => cache.clear().await,
-            CacheProviderType::Redis(cache) => cache.clear().await,
+            Self::Memory(cache) => cache.clear().await,
+            Self::Redis(cache) => cache.clear().await,
         }
     }
 
     /// 获取缓存统计信息
     pub async fn stats(&self) -> Result<CacheStats> {
         match self {
-            CacheProviderType::Memory(cache) => cache.stats().await,
-            CacheProviderType::Redis(cache) => cache.stats().await,
+            Self::Memory(cache) => cache.stats().await,
+            Self::Redis(cache) => cache.stats().await,
         }
     }
 }
@@ -563,6 +574,7 @@ impl CacheManager {
     }
 
     /// 创建仅内存缓存管理器（用于测试）
+    #[must_use]
     pub fn memory_only() -> Self {
         Self {
             provider: CacheProviderType::Memory(MemoryCache::new(
@@ -574,12 +586,12 @@ impl CacheManager {
     }
 
     /// 获取缓存提供者的引用
-    pub fn provider(&self) -> &CacheProviderType {
+    pub const fn provider(&self) -> &CacheProviderType {
         &self.provider
     }
 
     /// 检查缓存是否启用 - 缓存现在始终启用
-    pub fn is_enabled(&self, _config: &CacheConfig) -> bool {
+    pub const fn is_enabled(&self, _config: &CacheConfig) -> bool {
         true
     }
 

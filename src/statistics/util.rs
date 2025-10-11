@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 /// 判断 content-type 是否为 JSON（application/json 或 application/*+json）
+#[must_use]
 pub fn content_type_is_json(content_type: &str) -> bool {
     let ct = content_type.to_ascii_lowercase();
     ct.starts_with("application/json") || ct.contains("+json")
@@ -10,6 +11,7 @@ pub fn content_type_is_json(content_type: &str) -> bool {
 
 /// 仅用于统计侧的限量解压（不影响下游透传）
 /// 支持 gzip/deflate/br；对于逗号分隔的多编码，选择首个可识别的编码处理
+#[must_use]
 pub fn decompress_for_stats<'a>(
     encoding: Option<&'a str>,
     input: &'a [u8],
@@ -32,7 +34,7 @@ pub fn decompress_for_stats<'a>(
             let mut buf = [0u8; 8192];
             while out.len() < max_out {
                 match dec.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
@@ -40,7 +42,6 @@ pub fn decompress_for_stats<'a>(
                             break;
                         }
                     }
-                    Err(_) => break,
                 }
             }
             Cow::Owned(out)
@@ -51,7 +52,7 @@ pub fn decompress_for_stats<'a>(
             let mut buf = [0u8; 8192];
             while out.len() < max_out {
                 match dec.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
@@ -59,7 +60,6 @@ pub fn decompress_for_stats<'a>(
                             break;
                         }
                     }
-                    Err(_) => break,
                 }
             }
             Cow::Owned(out)
@@ -70,7 +70,7 @@ pub fn decompress_for_stats<'a>(
             let mut buf = [0u8; 8192];
             while out.len() < max_out {
                 match reader.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let take = n.min(max_out - out.len());
                         out.extend_from_slice(&buf[..take]);
@@ -78,7 +78,6 @@ pub fn decompress_for_stats<'a>(
                             break;
                         }
                     }
-                    Err(_) => break,
                 }
             }
             Cow::Owned(out)
@@ -88,14 +87,14 @@ pub fn decompress_for_stats<'a>(
 }
 
 /// 从字符串中提取最后一个 JSON 对象（容错：优先逐行 data:{...}，其次括号平衡回溯）
+#[must_use]
 pub fn find_last_balanced_json(s: &str) -> Option<serde_json::Value> {
     // 先尝试逐行 data: {...}
     for line in s.lines().rev() {
         let t = line.trim_start_matches("data: ").trim();
-        if let Some(pos) = t.find('{') {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
-                return Some(v);
-            }
+        if let Some(pos) = t.find('{')
+            && let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+            return Some(v);
         }
     }
 
@@ -116,10 +115,9 @@ pub fn find_last_balanced_json(s: &str) -> Option<serde_json::Value> {
             _ => {}
         }
     }
-    if let Some(idx) = start_idx {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[idx..]) {
-            return Some(v);
-        }
+    if let Some(idx) = start_idx
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[idx..]) {
+        return Some(v);
     }
     None
 }

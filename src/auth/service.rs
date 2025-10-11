@@ -13,7 +13,7 @@ use crate::auth::{
     AuthContext, AuthMethod, AuthResult,
     api_key::ApiKeyManager,
     jwt::{JwtManager, TokenPair},
-    permissions::{Permission, PermissionChecker},
+    permissions::UserRole,
     types::{AuditEventType, AuditLogEntry, AuditResult, AuthConfig, TokenType, UserInfo},
 };
 use crate::cache::abstract_cache::CacheManager;
@@ -44,6 +44,7 @@ pub struct AuthService {
 
 impl AuthService {
     /// Create new authentication service
+    #[must_use]
     pub fn new(
         jwt_manager: Arc<JwtManager>,
         api_key_manager: Arc<ApiKeyManager>,
@@ -121,19 +122,20 @@ impl AuthService {
 
         let user_id = claims.user_id()?;
 
-        let permissions = claims
-            .permissions
-            .iter()
-            .filter_map(|p| crate::auth::permissions::Permission::from_str(p))
-            .collect();
+        // 确定用户角色
+        let role = if claims.is_admin {
+            UserRole::Admin
+        } else {
+            UserRole::RegularUser
+        };
 
         Ok(AuthResult {
             user_id,
             username: claims.username,
             is_admin: claims.is_admin,
-            permissions,
+            role,
             auth_method: AuthMethod::Jwt,
-            token_preview: self.sanitize_token(token),
+            token_preview: Self::sanitize_token(token),
             token_info: None, // JWT认证不需要OAuth token信息
             expires_at: Some(
                 chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(chrono::Utc::now),
@@ -154,7 +156,7 @@ impl AuthService {
             user_id: validation_result.api_key_info.user_id,
             username: format!("api_key_{}", validation_result.api_key_info.id),
             is_admin: false, // API keys are typically not admin accounts
-            permissions: validation_result.permissions,
+            role: UserRole::RegularUser,
             auth_method: AuthMethod::ApiKey,
             token_preview: validation_result.api_key_info.api_key,
             token_info: None, // API key认证不需要OAuth token信息
@@ -166,7 +168,7 @@ impl AuthService {
         })
     }
 
-    /// Authenticate user service API key - 直接返回user_service_apis模型
+    /// Authenticate user service API key - `直接返回user_service_apis模型`
     pub async fn authenticate_user_service_api(
         &self,
         api_key: &str,
@@ -181,11 +183,10 @@ impl AuthService {
             .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
 
         // 检查API密钥是否过期
-        if let Some(expires_at) = user_api.expires_at {
-            if expires_at < chrono::Utc::now().naive_utc() {
+        if let Some(expires_at) = user_api.expires_at
+            && expires_at < chrono::Utc::now().naive_utc() {
                 return Err(crate::proxy_err!(auth, "无效的认证凭据"));
             }
-        }
 
         Ok(user_api)
     }
@@ -215,20 +216,20 @@ impl AuthService {
             return Err(crate::proxy_err!(auth, "无效的认证凭据"));
         }
 
-        // Get user permissions based on admin status
-        let permissions = if user.is_admin {
-            vec![Permission::SuperAdmin]
+        // 确定用户角色
+        let role = if user.is_admin {
+            UserRole::Admin
         } else {
-            vec![Permission::UseApi] // 基本权限
+            UserRole::RegularUser
         };
 
         Ok(AuthResult {
             user_id: user.id,
             username: user.username.clone(),
             is_admin: user.is_admin,
-            permissions,
+            role,
             auth_method: AuthMethod::BasicAuth,
-            token_preview: self.sanitize_token(&format!("{}:{}", username, "***")),
+            token_preview: Self::sanitize_token(&format!("{}:{}", username, "***")),
             token_info: None, // Basic认证不需要OAuth token信息
             expires_at: None, // Basic认证通常无过期时间
             session_info: Some(serde_json::json!({
@@ -238,44 +239,7 @@ impl AuthService {
         })
     }
 
-    /// Authorize request based on permissions
-    pub async fn authorize(&self, auth_result: &AuthResult, context: &AuthContext) -> Result<bool> {
-        let permission_checker = PermissionChecker::new(auth_result.permissions.clone());
-
-        let is_authorized =
-            permission_checker.can_access_path(&context.resource_path, &context.method);
-
-        if !is_authorized {
-            // Log authorization failure
-            self.log_audit_event(
-                context,
-                AuditEventType::PermissionCheck,
-                AuditResult::PermissionDenied,
-                Some(format!(
-                    "Access denied to {} {}",
-                    context.method, context.resource_path
-                )),
-            )
-            .await;
-
-            return Err(crate::proxy_err!(auth, "权限不足"));
-        }
-
-        // Log successful authorization
-        self.log_audit_event(
-            context,
-            AuditEventType::PermissionCheck,
-            AuditResult::Success,
-            Some(format!(
-                "Access granted to {} {}",
-                context.method, context.resource_path
-            )),
-        )
-        .await;
-
-        Ok(true)
-    }
-
+    
     /// Generate token pair for user login
     pub async fn login(&self, username: &str, password: &str) -> Result<TokenPair> {
         // Query user from database
@@ -296,14 +260,18 @@ impl AuthService {
             return Err(crate::proxy_err!(auth, "无效的认证凭据"));
         }
 
-        // Get user permissions based on admin status and user configuration
-        let permissions = self.get_user_permissions(&user);
+        // 确定用户角色
+        let role = if user.is_admin {
+            UserRole::Admin
+        } else {
+            UserRole::RegularUser
+        };
 
         let token_pair = self.jwt_manager.generate_token_pair(
             user.id,
             user.username.clone(),
             user.is_admin,
-            permissions,
+            role,
         )?;
 
         // Update last login time
@@ -329,11 +297,15 @@ impl AuthService {
             return Err(crate::proxy_err!(auth, "无效的认证凭据"));
         }
 
-        // Get current user permissions
-        let permissions = self.get_user_permissions(&user);
+        // 确定用户角色
+        let role = if user.is_admin {
+            UserRole::Admin
+        } else {
+            UserRole::RegularUser
+        };
 
         self.jwt_manager
-            .refresh_access_token(refresh_token, permissions, user.is_admin)
+            .refresh_access_token(refresh_token, role, user.is_admin)
     }
 
     /// Logout user (revoke tokens)
@@ -358,7 +330,7 @@ impl AuthService {
                     LogStage::Cache,
                     LogComponent::Auth,
                     "blacklist_cache_fail",
-                    &format!("Failed to add token to blacklist cache: {}", e)
+                    &format!("Failed to add token to blacklist cache: {e}")
                 );
             } else {
                 ldebug!(
@@ -366,7 +338,7 @@ impl AuthService {
                     LogStage::Cache,
                     LogComponent::Auth,
                     "token_blacklisted",
-                    &format!("Token added to blacklist: {}", jti)
+                    &format!("Token added to blacklist: {jti}")
                 );
             }
         }
@@ -376,7 +348,7 @@ impl AuthService {
             LogStage::Authentication,
             LogComponent::Auth,
             "token_revoked",
-            &format!("Token revoked: {}", jti)
+            &format!("Token revoked: {jti}")
         );
         Ok(())
     }
@@ -393,7 +365,7 @@ impl AuthService {
                             LogStage::Cache,
                             LogComponent::Auth,
                             "token_found_in_blacklist",
-                            &format!("Token found in blacklist: {}", jti)
+                            &format!("Token found in blacklist: {jti}")
                         );
                         true
                     } else {
@@ -406,7 +378,7 @@ impl AuthService {
                         LogStage::Cache,
                         LogComponent::Auth,
                         "blacklist_check_fail",
-                        &format!("Failed to check token blacklist: {}", e)
+                        &format!("Failed to check token blacklist: {e}")
                     );
                     // 在缓存不可用时，为了安全起见，不允许访问
                     false
@@ -418,22 +390,7 @@ impl AuthService {
         }
     }
 
-    /// Check if user has specific permission
-    pub fn check_permission(&self, auth_result: &AuthResult, permission: &Permission) -> bool {
-        auth_result.permissions.contains(permission)
-            || auth_result.permissions.contains(&Permission::SuperAdmin)
-    }
-
-    /// Check if user has any of the specified permissions
-    pub fn check_any_permission(
-        &self,
-        auth_result: &AuthResult,
-        permissions: &[Permission],
-    ) -> bool {
-        let permission_checker = PermissionChecker::new(auth_result.permissions.clone());
-        permission_checker.has_any(permissions)
-    }
-
+    
     /// Get user information by user ID
     pub async fn get_user_info(&self, user_id: i32) -> Result<Option<UserInfo>> {
         let user = Users::find_by_id(user_id)
@@ -442,11 +399,11 @@ impl AuthService {
             .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
 
         if let Some(user) = user {
-            let permission_strings = self.get_user_permissions(&user);
-            let permissions: Vec<Permission> = permission_strings
-                .iter()
-                .filter_map(|s| Permission::from_str(s))
-                .collect();
+            let role = if user.is_admin {
+                UserRole::Admin
+            } else {
+                UserRole::RegularUser
+            };
 
             Ok(Some(UserInfo {
                 id: user.id,
@@ -454,7 +411,7 @@ impl AuthService {
                 email: user.email,
                 is_admin: user.is_admin,
                 is_active: user.is_active,
-                permissions,
+                permissions: vec![role], // 简化权限列表
                 created_at: user.created_at.and_utc(),
                 last_login: user.last_login.map(|dt| dt.and_utc()),
             }))
@@ -474,7 +431,7 @@ impl AuthService {
         let audit_entry = AuditLogEntry {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: context.get_user_id(),
-            username: context.get_username().map(|s| s.to_string()),
+            username: context.get_username().map(std::string::ToString::to_string),
             event_type,
             resource_path: context.resource_path.clone(),
             method: context.method.clone(),
@@ -506,7 +463,7 @@ impl AuthService {
     }
 
     /// Sanitize token for logging
-    fn sanitize_token(&self, token: &str) -> String {
+    fn sanitize_token(token: &str) -> String {
         if token.len() > 20 {
             format!("{}***{}", &token[..8], &token[token.len() - 8..])
         } else if token.len() > 8 {
@@ -524,7 +481,7 @@ impl AuthService {
         status.insert("api_key_manager".to_string(), "healthy".to_string());
         // Real database health check
         let db_status = match self.test_database_connection().await {
-            Ok(_) => "healthy",
+            Ok(()) => "healthy",
             Err(_) => "unhealthy",
         };
         status.insert("database".to_string(), db_status.to_string());
@@ -550,27 +507,7 @@ impl AuthService {
         cache.retain(|entry| entry.timestamp > one_day_ago);
     }
 
-    /// Get user permissions based on database configuration
-    fn get_user_permissions(&self, user: &users::Model) -> Vec<String> {
-        if user.is_admin {
-            vec![
-                "super_admin".to_string(),
-                "use_openai".to_string(),
-                "use_claude".to_string(),
-                "use_gemini".to_string(),
-                "manage_users".to_string(),
-                "view_stats".to_string(),
-            ]
-        } else {
-            // Default user permissions - could be extended to query from user_permissions table
-            vec![
-                "use_openai".to_string(),
-                "use_claude".to_string(),
-                "use_gemini".to_string(),
-            ]
-        }
-    }
-
+    
     /// Update user's last login time
     async fn update_last_login(&self, user_id: i32) -> Result<()> {
         use sea_orm::ActiveModelTrait;

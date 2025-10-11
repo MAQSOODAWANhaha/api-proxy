@@ -31,11 +31,12 @@ use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
 };
+use entity::oauth_client_sessions;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// OAuth错误类型
+/// `OAuth错误类型`
 #[derive(Debug, thiserror::Error)]
 pub enum OAuthError {
     #[error("Provider not found: {0}")]
@@ -71,26 +72,26 @@ pub enum OAuthError {
 
 impl From<reqwest::Error> for OAuthError {
     fn from(err: reqwest::Error) -> Self {
-        OAuthError::NetworkError(err.to_string())
+        Self::NetworkError(err.to_string())
     }
 }
 
 impl From<sea_orm::DbErr> for OAuthError {
     fn from(err: sea_orm::DbErr) -> Self {
-        OAuthError::DatabaseError(err.to_string())
+        Self::DatabaseError(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for OAuthError {
     fn from(err: serde_json::Error) -> Self {
-        OAuthError::SerdeError(err.to_string())
+        Self::SerdeError(err.to_string())
     }
 }
 
-/// OAuth结果类型
+/// `OAuth结果类型`
 pub type OAuthResult<T> = Result<T, OAuthError>;
 
-/// OAuth授权URL响应
+/// `OAuth授权URL响应`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizeUrlResponse {
     /// 授权URL
@@ -105,7 +106,7 @@ pub struct AuthorizeUrlResponse {
     pub expires_at: i64,
 }
 
-/// OAuth令牌响应
+/// `OAuth`令牌响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokenResponse {
     /// 会话ID（用于后续创建provider key）
@@ -124,7 +125,7 @@ pub struct OAuthTokenResponse {
     pub scopes: Vec<String>,
 }
 
-/// OAuth会话信息
+/// `OAuth`会话信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthSessionInfo {
     /// 会话ID
@@ -147,7 +148,7 @@ pub struct OAuthSessionInfo {
     pub completed_at: Option<chrono::NaiveDateTime>,
 }
 
-/// OAuth配置信息
+/// `OAuth`配置信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthProviderConfig {
     /// 提供商名称
@@ -170,7 +171,7 @@ pub struct OAuthProviderConfig {
     pub extra_params: HashMap<String, String>,
 }
 
-/// OAuth客户端主入口
+/// `OAuth`客户端主入口
 #[derive(Debug)]
 pub struct OAuthClient {
     provider_manager: OAuthProviderManager,
@@ -181,10 +182,11 @@ pub struct OAuthClient {
 }
 
 impl OAuthClient {
-    /// 创建新的OAuth客户端
+    /// 创建新的`OAuth`客户端
+    #[must_use]
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
-        let provider_manager = OAuthProviderManager::new((*db).clone());
-        let session_manager = SessionManager::new((*db).clone());
+        let provider_manager = OAuthProviderManager::new(db.clone());
+        let session_manager = SessionManager::new(db.clone());
         let polling_client = OAuthPollingClient::new();
         let token_exchange_client = TokenExchangeClient::new();
 
@@ -193,7 +195,7 @@ impl OAuthClient {
             session_manager.clone(),
             provider_manager.clone(),
             token_exchange_client.clone(),
-            (*db).clone(),
+            db.clone(),
         );
 
         Self {
@@ -205,7 +207,7 @@ impl OAuthClient {
         }
     }
 
-    /// 开始OAuth授权流程
+    /// 开始`OAuth`授权流程
     pub async fn start_authorization(
         &self,
         user_id: i32,
@@ -213,52 +215,14 @@ impl OAuthClient {
         name: &str,
         description: Option<&str>,
     ) -> OAuthResult<AuthorizeUrlResponse> {
-        linfo!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "start_authorization",
-            &format!(
-                "🚀 [OAuth] 开始授权流程: user_id={}, provider_name={}, name={}",
-                user_id, provider_name, name
-            )
-        );
+        Self::log_authorization_start(user_id, provider_name, name);
 
-        // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
+        Self::log_provider_config_success(provider_name, &config);
 
-        ldebug!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "get_provider_config_ok",
-            &format!(
-                "✅ [OAuth] 提供商配置获取成功: provider_name={}, client_id={}",
-                provider_name, config.client_id
-            )
-        );
+        let provider_type_id = Self::extract_provider_type_id(provider_name);
+        Self::log_session_creation_start(user_id, provider_name, provider_type_id);
 
-        // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
-        let provider_type_id = if provider_name.contains(':') {
-            // 这里可以通过数据库查询获取真正的provider_type_id
-            // 现在暂时设为None，后续可以完善
-            None
-        } else {
-            None
-        };
-
-        ldebug!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "create_session",
-            &format!(
-                "📝 [OAuth] 创建会话: user_id={}, provider_name={}, provider_type_id={:?}",
-                user_id, provider_name, provider_type_id
-            )
-        );
-
-        // 创建会话
         let session = self
             .session_manager
             .create_session(
@@ -271,32 +235,13 @@ impl OAuthClient {
             )
             .await?;
 
-        linfo!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "session_created",
-            &format!(
-                "✅ [OAuth] 会话创建成功: session_id={}, state={}",
-                session.session_id, session.state
-            )
-        );
+        Self::log_session_created(&session);
 
-        // 生成授权URL
         let authorize_url = self
             .provider_manager
             .build_authorize_url(&config, &session)?;
 
-        linfo!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "authorization_started",
-            &format!(
-                "🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s",
-                session.session_id
-            )
-        );
+        Self::log_authorization_completed(&session);
 
         Ok(AuthorizeUrlResponse {
             authorize_url,
@@ -307,7 +252,81 @@ impl OAuthClient {
         })
     }
 
-    /// 开始OAuth授权流程（带provider_type_id）
+    /// 记录授权开始日志
+    fn log_authorization_start(user_id: i32, provider_name: &str, name: &str) {
+        linfo!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "start_authorization",
+            &format!("🚀 [OAuth] 开始授权流程: user_id={user_id}, provider_name={provider_name}, name={name}")
+        );
+    }
+
+    /// 记录提供商配置成功日志
+    fn log_provider_config_success(provider_name: &str, config: &OAuthProviderConfig) {
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "get_provider_config_ok",
+            &format!(
+                "✅ [OAuth] 提供商配置获取成功: provider_name={provider_name}, client_id={}",
+                config.client_id
+            )
+        );
+    }
+
+    /// 提取提供商类型ID
+    const fn extract_provider_type_id(_provider_name: &str) -> Option<i32> {
+        // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
+        // 这里可以通过数据库查询获取真正的provider_type_id
+        // 现在暂时设为None，后续可以完善
+        None
+    }
+
+    /// 记录会话创建开始日志
+    fn log_session_creation_start(user_id: i32, provider_name: &str, provider_type_id: Option<i32>) {
+        ldebug!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "create_session",
+            &format!(
+                "📝 [OAuth] 创建会话: user_id={user_id}, provider_name={provider_name}, provider_type_id={provider_type_id:?}"
+            )
+        );
+    }
+
+    /// 记录会话创建成功日志
+    fn log_session_created(session: &oauth_client_sessions::Model) {
+        linfo!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "session_created",
+            &format!(
+                "✅ [OAuth] 会话创建成功: session_id={}, state={}",
+                session.session_id, session.state
+            )
+        );
+    }
+
+    /// 记录授权完成日志
+    fn log_authorization_completed(session: &oauth_client_sessions::Model) {
+        linfo!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "authorization_started",
+            &format!(
+                "🎯 [OAuth] 授权流程启动完成: session_id={}, polling_interval=2s",
+                session.session_id
+            )
+        );
+    }
+
+    /// 开始`OAuth`授权流程（带`provider_type_id`）
     pub async fn start_authorization_with_provider_id(
         &self,
         user_id: i32,
@@ -346,7 +365,7 @@ impl OAuthClient {
         })
     }
 
-    /// 开始OAuth授权流程（支持用户提供的额外参数）
+    /// 开始`OAuth`授权流程（支持用户提供的额外参数）
     pub async fn start_authorization_with_extra_params(
         &self,
         user_id: i32,
@@ -395,7 +414,7 @@ impl OAuthClient {
             .await
     }
 
-    /// 完成Token交换
+    /// 完成`Token`交换
     pub async fn exchange_token(
         &self,
         session_id: &str,
@@ -411,7 +430,7 @@ impl OAuthClient {
             .await
     }
 
-    /// 获取用户的OAuth会话列表
+    /// 获取用户的`OAuth`会话列表
     pub async fn list_user_sessions(&self, user_id: i32) -> OAuthResult<Vec<OAuthSessionInfo>> {
         self.session_manager.list_user_sessions(user_id).await
     }
@@ -454,7 +473,7 @@ impl OAuthClient {
             .await
     }
 
-    /// 列出支持的OAuth提供商
+    /// 列出支持的`OAuth`提供商
     pub async fn list_providers(&self) -> OAuthResult<Vec<OAuthProviderConfig>> {
         self.provider_manager.list_active_configs().await
     }
@@ -464,7 +483,7 @@ impl OAuthClient {
     /// 智能获取有效的访问令牌
     ///
     /// 如果token即将过期，会自动刷新后返回新token
-    /// 推荐使用此方法替代直接访问session.access_token
+    /// 推荐使用此方法替代直接访问`session.access_token`
     pub async fn get_valid_access_token(&self, session_id: &str) -> OAuthResult<Option<String>> {
         self.auto_refresh_manager
             .get_valid_access_token(session_id, None)
@@ -484,7 +503,7 @@ impl OAuthClient {
 
     /// 批量刷新用户的即将过期token
     ///
-    /// 用于主动维护用户的所有OAuth会话
+    /// 用于主动维护用户的所有`OAuth`会话
     pub async fn refresh_user_expiring_tokens(
         &self,
         user_id: i32,

@@ -16,6 +16,7 @@ impl AuthUtils {
     ///
     /// # 返回
     /// 脱敏后的API密钥字符串，格式: "sk-1***2345"
+    #[must_use]
     pub fn sanitize_api_key(api_key: &str) -> String {
         if api_key.len() > 10 {
             format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
@@ -24,7 +25,7 @@ impl AuthUtils {
         }
     }
 
-    /// 从HTTP头中提取Authorization头的值
+    /// `从HTTP头中提取Authorization头的值`
     ///
     /// # 参数
     /// - `headers`: HTTP请求头
@@ -32,14 +33,15 @@ impl AuthUtils {
     /// # 返回
     /// - `Some(String)`: Authorization头的值
     /// - `None`: 未找到Authorization头
+    #[must_use]
     pub fn extract_authorization_header(headers: &HeaderMap) -> Option<String> {
         headers
             .get("authorization")
             .and_then(|value| value.to_str().ok())
-            .map(|s| s.to_string())
+            .map(str::to_string)
     }
 
-    /// 从Authorization头中提取Bearer token
+    /// `从Authorization头中提取Bearer` token
     ///
     /// # 参数
     /// - `auth_header`: Authorization头的完整值，如 "Bearer eyJ..."
@@ -47,6 +49,7 @@ impl AuthUtils {
     /// # 返回
     /// - `Some(String)`: Bearer token部分
     /// - `None`: 不是Bearer类型的认证头
+    #[must_use]
     pub fn extract_bearer_token(auth_header: &str) -> Option<String> {
         if auth_header.starts_with("Bearer ") && auth_header.len() > 7 {
             Some(auth_header[7..].to_string())
@@ -69,6 +72,7 @@ impl AuthUtils {
     /// # 返回
     /// - `Some(String)`: 提取的API Key
     /// - `None`: 未找到任何API Key
+    #[must_use]
     pub fn extract_api_key_from_headers(headers: &HeaderMap) -> Option<String> {
         // 1. 尝试从 Authorization 头提取
         if let Some(auth_value) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
@@ -78,7 +82,7 @@ impl AuthUtils {
             }
             // 直接的API Key
             if !auth_value.is_empty() {
-                return Some(auth_value.to_string());
+                return Some(auth_value.to_owned());
             }
         }
 
@@ -88,7 +92,7 @@ impl AuthUtils {
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
         {
-            return Some(api_key.to_string());
+            return Some(api_key.to_owned());
         }
 
         // 3. 尝试从 API-Key 头提取
@@ -97,19 +101,20 @@ impl AuthUtils {
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
         {
-            return Some(api_key.to_string());
+            return Some(api_key.to_owned());
         }
 
         None
     }
 
-    /// 解析URL查询参数为HashMap
+    /// `解析URL查询参数为HashMap`
     ///
     /// # 参数
     /// - `query_string`: URL查询字符串，不包含'?'
     ///
     /// # 返回
     /// 解析后的键值对映射
+    #[must_use]
     pub fn parse_query_string(query_string: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
 
@@ -125,23 +130,25 @@ impl AuthUtils {
         params
     }
 
-    /// 从路径中提取查询参数
+    /// `从路径中提取查询参数`
     ///
     /// # 参数
     /// - `path`: 包含查询参数的完整路径，如 "/api/chat?model=gpt-4"
     ///
     /// # 返回
     /// 解析后的查询参数映射
+    #[must_use]
     pub fn extract_query_params_from_path(path: &str) -> HashMap<String, String> {
-        if let Some(query_start) = path.find('?') {
-            let query = &path[query_start + 1..];
-            Self::parse_query_string(query)
-        } else {
-            HashMap::new()
-        }
+        path.find('?').map_or_else(
+            HashMap::new,
+            |query_start| {
+                let query = &path[query_start + 1..];
+                Self::parse_query_string(query)
+            }
+        )
     }
 
-    /// 验证API Key的基本格式
+    /// `验证API Key的基本格式`
     ///
     /// # 参数
     /// - `api_key`: 要验证的API Key
@@ -149,26 +156,28 @@ impl AuthUtils {
     /// # 返回
     /// - `true`: 格式有效（以sk-开头，长度>=20字符）
     /// - `false`: 格式无效
+    #[must_use]
     pub fn is_valid_api_key_format(api_key: &str) -> bool {
         // 基础格式检查：以sk-开头且至少20字符
         api_key.starts_with("sk-") && api_key.len() >= 20
     }
 
-    /// 生成缓存键
+    /// `生成缓存键`
     ///
     /// 为认证相关的数据生成标准化的缓存键
     ///
     /// # 参数
-    /// - `prefix`: 缓存键前缀，如 "jwt", "api_key"
+    /// - `prefix`: 缓存键前缀，如 `"jwt"`, `"api_key"`
     /// - `identifier`: 标识符，如用户ID、API Key hash等
     ///
     /// # 返回
     /// 标准化的缓存键
+    #[must_use]
     pub fn generate_cache_key(prefix: &str, identifier: &str) -> String {
-        format!("auth:{}:{}", prefix, identifier)
+        format!("auth:{prefix}:{identifier}")
     }
 
-    /// 计算字符串的SHA256哈希值
+    /// `计算字符串的SHA256哈希值`
     ///
     /// 用于API Key或Token的哈希，用于缓存键或记录
     ///
@@ -177,6 +186,7 @@ impl AuthUtils {
     ///
     /// # 返回
     /// 十六进制格式的哈希值
+    #[must_use]
     pub fn sha256_hash(input: &str) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -184,7 +194,7 @@ impl AuthUtils {
         format!("{:x}", hasher.finalize())
     }
 
-    /// 从请求中提取客户端IP地址（考虑代理）
+    /// `从请求中提取客户端IP地址（考虑代理）`
     ///
     /// 按优先级检查以下头部：
     /// 1. X-Forwarded-For (第一个IP)
@@ -198,6 +208,7 @@ impl AuthUtils {
     ///
     /// # 返回
     /// 真实的客户端IP地址
+    #[must_use]
     pub fn extract_real_client_ip(headers: &HeaderMap, connection_ip: Option<String>) -> String {
         // 1. 优先检查 X-Forwarded-For 头
         if let Some(forwarded_for) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
@@ -205,7 +216,7 @@ impl AuthUtils {
             if let Some(first_ip) = forwarded_for.split(',').next() {
                 let ip = first_ip.trim();
                 if !ip.is_empty() && ip != "unknown" {
-                    return ip.to_string();
+                    return ip.to_owned();
                 }
             }
         }
@@ -214,7 +225,7 @@ impl AuthUtils {
         if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
             let ip = real_ip.trim();
             if !ip.is_empty() && ip != "unknown" {
-                return ip.to_string();
+                return ip.to_owned();
             }
         }
 
@@ -225,15 +236,15 @@ impl AuthUtils {
         {
             let ip = cf_ip.trim();
             if !ip.is_empty() && ip != "unknown" {
-                return ip.to_string();
+                return ip.to_owned();
             }
         }
 
         // 4. 最后使用直接连接的客户端地址
-        connection_ip.unwrap_or_else(|| "unknown".to_string())
+        connection_ip.unwrap_or_else(|| "unknown".to_owned())
     }
 
-    /// 提取User-Agent字符串
+    /// `提取User-Agent字符串`
     ///
     /// # 参数
     /// - `headers`: HTTP请求头
@@ -241,14 +252,15 @@ impl AuthUtils {
     /// # 返回
     /// - `Some(String)`: User-Agent字符串
     /// - `None`: 未找到User-Agent头
+    #[must_use]
     pub fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
         headers
             .get("user-agent")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(str::to_string)
     }
 
-    /// 提取Referer字符串
+    /// `提取Referer字符串`
     ///
     /// 支持 "referer" 和 "referrer" 两种拼写
     ///
@@ -258,21 +270,23 @@ impl AuthUtils {
     /// # 返回
     /// - `Some(String)`: Referer字符串
     /// - `None`: 未找到Referer头
+    #[must_use]
     pub fn extract_referer(headers: &HeaderMap) -> Option<String> {
         headers
             .get("referer")
             .or_else(|| headers.get("referrer")) // 支持两种拼写
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(str::to_string)
     }
 
-    /// 净化用户名用于日志记录（管理端和代理端共享）
+    /// `净化用户名用于日志记录（管理端和代理端共享）`
     ///
     /// # 参数
     /// - `username`: 原始用户名
     ///
     /// # 返回
     /// 脱敏后的用户名字符串，用于安全日志记录
+    #[must_use]
     pub fn sanitize_username(username: &str) -> String {
         if username.len() > 6 {
             format!("{}***{}", &username[..2], &username[username.len() - 2..])

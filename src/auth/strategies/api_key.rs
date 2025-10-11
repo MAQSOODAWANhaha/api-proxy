@@ -1,7 +1,7 @@
 //! # API密钥认证策略
 //!
-//! 实现管理端OAuth风格的API密钥认证逻辑
-//! 集成共享的ApiKeyManager进行数据库验证
+//! `实现管理端OAuth风格的API密钥认证逻辑`
+//! `集成共享的ApiKeyManager进行数据库验证`
 
 use super::traits::{AuthStrategy, OAuthTokenResult};
 use crate::auth::{ApiKeyManager, types::AuthType};
@@ -37,6 +37,7 @@ impl Default for ApiKeyStrategy {
 
 impl ApiKeyStrategy {
     /// 创建新的API密钥认证策略
+    #[must_use]
     pub fn new(header_name: &str, value_format: &str) -> Self {
         Self {
             header_name: header_name.to_string(),
@@ -48,6 +49,7 @@ impl ApiKeyStrategy {
     /// 创建带有API密钥管理器的认证策略
     ///
     /// 用于实际的数据库验证，适用于生产环境
+    #[must_use]
     pub fn with_manager(
         header_name: &str,
         value_format: &str,
@@ -83,6 +85,7 @@ impl ApiKeyStrategy {
     }
 
     /// 格式化认证头值
+    #[must_use]
     pub fn format_header_value(&self, api_key: &str) -> String {
         self.value_format.replace("{key}", api_key)
     }
@@ -91,7 +94,7 @@ impl ApiKeyStrategy {
     pub fn extract_api_key(&self, header_value: &str) -> Option<String> {
         // 如果格式是 "Bearer {key}"
         if self.value_format.starts_with("Bearer ") {
-            header_value.strip_prefix("Bearer ").map(|s| s.to_string())
+            header_value.strip_prefix("Bearer ").map(std::string::ToString::to_string)
         }
         // 如果格式是 "{key}"
         else if self.value_format == "{key}" {
@@ -100,11 +103,9 @@ impl ApiKeyStrategy {
         // 其他格式需要更复杂的解析
         else {
             // 简单实现：假设{key}在最后
-            if let Some(prefix) = self.value_format.strip_suffix("{key}") {
-                header_value.strip_prefix(prefix).map(|s| s.to_string())
-            } else {
-                None
-            }
+            self.value_format.strip_suffix("{key}").and_then(|prefix| {
+                header_value.strip_prefix(prefix).map(std::string::ToString::to_string)
+            })
         }
     }
 }
@@ -146,7 +147,7 @@ impl AuthStrategy for ApiKeyStrategy {
                             validation_result
                                 .permissions
                                 .into_iter()
-                                .map(|p| format!("{:?}", p))
+                                .map(|p| format!("{p:?}"))
                                 .collect::<Vec<_>>()
                                 .join(" "),
                         ),
@@ -196,10 +197,9 @@ impl AuthStrategy for ApiKeyStrategy {
 
     fn validate_config(&self, config: &serde_json::Value) -> Result<()> {
         // 验证必需的配置字段
-        if let Some(header_name) = config.get("header_name") {
-            if !header_name.is_string() {
+        if let Some(header_name) = config.get("header_name")
+            && !header_name.is_string() {
                 return Err(crate::proxy_err!(config, "header_name必须是字符串"));
-            }
         }
 
         if let Some(value_format) = config.get("value_format") {
@@ -289,7 +289,7 @@ mod tests {
                 assert!(r.refresh_token.is_none());
             }
             Err(e) => {
-                panic!("Authentication failed: {:?}", e);
+                panic!("Authentication failed: {e:?}");
             }
         }
     }

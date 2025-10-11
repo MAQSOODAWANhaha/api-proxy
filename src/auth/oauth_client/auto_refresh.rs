@@ -25,7 +25,7 @@ pub struct AutoRefreshManager {
     /// 防止同一session并发刷新的锁
     refresh_locks: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
     /// 数据库连接（用于验证关联）
-    db: sea_orm::DatabaseConnection,
+    db: Arc<sea_orm::DatabaseConnection>,
 }
 
 /// Token刷新策略配置
@@ -56,7 +56,7 @@ impl AutoRefreshManager {
         session_manager: SessionManager,
         provider_manager: OAuthProviderManager,
         token_exchange_client: TokenExchangeClient,
-        db: sea_orm::DatabaseConnection,
+        db: Arc<sea_orm::DatabaseConnection>,
     ) -> Self {
         Self {
             session_manager,
@@ -69,6 +69,7 @@ impl AutoRefreshManager {
 
     /// 智能获取有效的访问令牌
     /// 如果token即将过期，会自动刷新后返回新token
+    #[allow(clippy::cognitive_complexity)]
     pub async fn get_valid_access_token(
         &self,
         session_id: &str,
@@ -120,9 +121,8 @@ impl AutoRefreshManager {
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "no_refresh_token",
-                                  &format!(
-                                    "Session {session_id} has no refresh token, cannot auto-refresh"
-                                )            );
+                &format!("Session {session_id} has no refresh token, cannot auto-refresh")
+            );
             return Ok(None);
         }
 
@@ -142,9 +142,8 @@ impl AutoRefreshManager {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "token_refresh_ok",
-                                          &format!(
-                                            "Successfully auto-refreshed token for session {session_id}"
-                                        )                );
+                    &format!("Successfully auto-refreshed token for session {session_id}")
+                );
                 Ok(Some(token_response.access_token))
             }
             Err(e) => {
@@ -153,9 +152,8 @@ impl AutoRefreshManager {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "token_refresh_fail",
-                                          &format!(
-                                            "Failed to auto-refresh token for session {session_id}: {e}"
-                                        )                );
+                    &format!("Failed to auto-refresh token for session {session_id}: {e}")
+                );
                 // 刷新失败：如已过期则返回None，否则返回当前token
                 let now = Utc::now().naive_utc();
                 if session.expires_at <= now {
@@ -251,6 +249,8 @@ impl AutoRefreshManager {
     }
 
     /// 执行自动token刷新
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
     async fn auto_refresh_token(
         &self,
         session_id: &str,
@@ -277,13 +277,13 @@ impl AutoRefreshManager {
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "session_orphaned",
-                                  &format!(
-                                    "Session {session_id} 没有对应的user_provider_keys关联，跳过刷新"
-                                )            );
+                &format!("Session {session_id} 没有对应的user_provider_keys关联，跳过刷新")
+            );
             // 不在刷新路径进行删除，交由后台清理任务处理
-                          return Err(OAuthError::InvalidSession(format!(
-                            "Session {session_id} is orphaned"
-                        )));        }
+            return Err(OAuthError::InvalidSession(format!(
+                "Session {session_id} is orphaned"
+            )));
+        }
 
         if !Self::should_refresh_token(&current_session, policy) {
             ldebug!(
@@ -304,7 +304,9 @@ impl AutoRefreshManager {
                     access_token: token,
                     refresh_token: current_session.refresh_token,
                     id_token: current_session.id_token,
-                    token_type: current_session.token_type.unwrap_or_else(|| "Bearer".to_string()),
+                    token_type: current_session
+                        .token_type
+                        .unwrap_or_else(|| "Bearer".to_string()),
                     expires_in: current_session.expires_in,
                     scopes: Vec::new(), // TODO: 从session中解析scopes
                 });
@@ -337,9 +339,10 @@ impl AutoRefreshManager {
                         LogStage::Authentication,
                         LogComponent::OAuth,
                         "token_refresh_ok",
-                                                  &format!(
-                                                    "Successfully refreshed token for session {session_id} on attempt {attempt}"
-                                                )                    );
+                        &format!(
+                            "Successfully refreshed token for session {session_id} on attempt {attempt}"
+                        )
+                    );
                     // 成功后清理锁映射
                     {
                         let mut locks = self.refresh_locks.lock().await;
@@ -353,9 +356,10 @@ impl AutoRefreshManager {
                         LogStage::Authentication,
                         LogComponent::OAuth,
                         "token_refresh_attempt_fail",
-                                                  &format!(
-                                                    "Token refresh attempt {attempt} failed for session {session_id}: {e}"
-                                                )                    );
+                        &format!(
+                            "Token refresh attempt {attempt} failed for session {session_id}: {e}"
+                        )
+                    );
                     last_error = e;
 
                     // 如果不是最后一次尝试，则等待重试间隔
@@ -380,6 +384,7 @@ impl AutoRefreshManager {
 
     /// `验证会话是否有对应的user_provider_keys关联`
     /// 如果没有关联且创建超过5分钟，说明这是一个孤立的会话，会被自动删除
+    #[allow(clippy::cognitive_complexity)]
     async fn validate_session_association(
         &self,
         session: &oauth_client_sessions::Model,
@@ -409,7 +414,7 @@ impl AutoRefreshManager {
             .filter(user_provider_keys::Column::UserId.eq(session.user_id))
             .filter(user_provider_keys::Column::AuthType.eq("oauth"))
             .filter(user_provider_keys::Column::ApiKey.eq(&session.session_id)) // OAuth类型的api_key存储session_id
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await
             .map_err(|e| OAuthError::DatabaseError(format!("验证会话关联失败: {e}")))?;
 
@@ -483,7 +488,7 @@ impl SessionManager {
             self.clone(),
             provider_manager.clone(),
             token_exchange_client.clone(),
-            self.get_db().clone(),
+            self.db.clone(),
         );
 
         auto_refresh_manager
@@ -503,7 +508,7 @@ impl SessionManager {
             self.clone(),
             provider_manager.clone(),
             token_exchange_client.clone(),
-            self.get_db().clone(),
+            self.db.clone(),
         );
 
         auto_refresh_manager

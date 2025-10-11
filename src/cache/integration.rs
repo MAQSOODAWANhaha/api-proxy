@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
 use crate::error::{ProxyError, Result};
-use entity::*;
+use entity::{ProviderTypes, provider_types, UserServiceApis, user_service_apis};
 
 /// 缓存的提供商配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ pub struct UserApiConfig {
     pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
 }
 
-/// 高级缓存门面（避免与基础 CacheManager 混淆）
+/// 高级缓存门面（避免与基础 `CacheManager` 混淆）
 #[derive(Clone)]
 pub struct CacheFacade {
     /// Redis 客户端
@@ -107,7 +107,7 @@ impl CacheFacade {
     /// 使用策略设置缓存
     pub async fn set_with_strategy<T>(&self, key: &CacheKey, value: &T) -> Result<()>
     where
-        T: Serialize,
+        T: Serialize + Sync,
     {
         let strategy = CacheStrategies::for_key(key);
         let json_value = serde_json::to_string(value)
@@ -120,7 +120,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "invalid_value",
-                &format!("缓存值不符合策略要求: key={}", key)
+                &format!("缓存值不符合策略要求: key={key}")
             );
             return Ok(());
         }
@@ -139,7 +139,7 @@ impl CacheFacade {
             LogStage::Cache,
             LogComponent::Cache,
             "set_with_strategy",
-            &format!("使用策略设置缓存成功: key={}, ttl={}s", key, ttl_seconds)
+            &format!("使用策略设置缓存成功: key={key}, ttl={ttl_seconds}s")
         );
         Ok(())
     }
@@ -197,8 +197,7 @@ impl CacheFacade {
             LogComponent::Cache,
             "clear_user_cache_complete",
             &format!(
-                "清空用户缓存完成: user_id={}, deleted={}",
-                user_id, total_deleted
+                "清空用户缓存完成: user_id={user_id}, deleted={total_deleted}"
             )
         );
         Ok(total_deleted)
@@ -235,7 +234,7 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_provider_configs_ok",
-                    &format!("成功预热 {} 个提供商配置到缓存", count)
+                    &format!("成功预热 {count} 个提供商配置到缓存")
                 );
                 warmup_count += count;
             }
@@ -244,7 +243,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_provider_configs_fail",
-                &format!("预热提供商配置失败: {}", e)
+                &format!("预热提供商配置失败: {e}")
             ),
         }
 
@@ -256,7 +255,7 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_user_configs_ok",
-                    &format!("成功预热 {} 个用户API配置到缓存", count)
+                    &format!("成功预热 {count} 个用户API配置到缓存")
                 );
                 warmup_count += count;
             }
@@ -265,7 +264,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_user_configs_fail",
-                &format!("预热用户API配置失败: {}", e)
+                &format!("预热用户API配置失败: {e}")
             ),
         }
 
@@ -277,7 +276,7 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_system_configs_ok",
-                    &format!("成功预热 {} 个系统配置到缓存", count)
+                    &format!("成功预热 {count} 个系统配置到缓存")
                 );
                 warmup_count += count;
             }
@@ -286,7 +285,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_system_configs_fail",
-                &format!("预热系统配置失败: {}", e)
+                &format!("预热系统配置失败: {e}")
             ),
         }
 
@@ -295,7 +294,7 @@ impl CacheFacade {
             LogStage::Cache,
             LogComponent::Cache,
             "warmup_complete",
-            &format!("缓存预热完成，共预热 {} 个配置项", warmup_count)
+            &format!("缓存预热完成，共预热 {warmup_count} 个配置项")
         );
         Ok(())
     }
@@ -315,7 +314,7 @@ impl CacheFacade {
             .filter(provider_types::Column::IsActive.eq(true))
             .all(db)
             .await
-            .map_err(|e| ProxyError::database(format!("查询提供商类型失败: {}", e)))?;
+            .map_err(|e| ProxyError::database(format!("查询提供商类型失败: {e}")))?;
 
         let mut cached_count = 0;
 
@@ -359,7 +358,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_provider_config",
-                &format!("已缓存提供商配置: {}", provider.name)
+                &format!("已缓存提供商配置: {name}", name = provider.name)
             );
         }
 
@@ -385,7 +384,7 @@ impl CacheFacade {
             // TODO: 可以考虑从proxy_tracing表查询最近使用的API ID列表
             .all(db)
             .await
-            .map_err(|e| ProxyError::database(format!("查询用户API配置失败: {}", e)))?;
+            .map_err(|e| ProxyError::database(format!("查询用户API配置失败: {e}")))?;
 
         let mut cached_count = 0;
 
@@ -494,7 +493,7 @@ impl CacheFacade {
                     LogStage::Cache,
                     LogComponent::Cache,
                     "warmup_system_config_fail",
-                    &format!("缓存系统配置失败: config={}, error={}", config_name, e)
+                    &format!("缓存系统配置失败: config={config_name}, error={e}")
                 );
                 continue;
             }
@@ -505,7 +504,7 @@ impl CacheFacade {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "warmup_system_config",
-                &format!("已缓存系统配置: {}", config_name)
+                &format!("已缓存系统配置: {config_name}")
             );
         }
 
@@ -538,7 +537,7 @@ impl<'a> CacheDecorator<'a> {
     /// 获取或计算值
     pub async fn get_or_compute<T, F, Fut>(&self, compute_fn: F) -> Result<T>
     where
-        T: Serialize + for<'de> Deserialize<'de> + Clone,
+        T: Serialize + for<'de> Deserialize<'de> + Clone + Sync,
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
@@ -549,7 +548,7 @@ impl<'a> CacheDecorator<'a> {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "cache_hit",
-                &format!("缓存命中: key={}", self.key)
+                &format!("缓存命中: key={key}", key = self.key)
             );
             return Ok(cached_value);
         }
@@ -560,7 +559,7 @@ impl<'a> CacheDecorator<'a> {
             LogStage::Cache,
             LogComponent::Cache,
             "cache_miss",
-            &format!("缓存未命中，计算新值: key={}", self.key)
+            &format!("缓存未命中，计算新值: key={key}", key = self.key)
         );
         let computed_value = compute_fn().await?;
 
@@ -575,7 +574,7 @@ impl<'a> CacheDecorator<'a> {
                 LogStage::Cache,
                 LogComponent::Cache,
                 "set_cache_fail",
-                &format!("设置缓存失败: key={}, error={}", self.key, e)
+                &format!("设置缓存失败: key={key}, error={e}", key = self.key)
             );
         }
 

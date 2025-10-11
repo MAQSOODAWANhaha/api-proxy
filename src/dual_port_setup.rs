@@ -322,7 +322,7 @@ pub async fn initialize_shared_services() -> Result<(
             db.clone(),
             unified_cache_manager.clone(),
         )
-        .await?,
+        ?,
     );
 
     // unified_auth_manager已经是Arc类型
@@ -377,7 +377,9 @@ pub async fn initialize_shared_services() -> Result<(
         "init_oauth_client",
         "🔐 Initializing OAuth client..."
     );
-    let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
+    let oauth_client = Arc::new(
+        crate::auth::oauth_client::OAuthClient::new(db.clone()),
+    );
     linfo!(
         "system",
         LogStage::Startup,

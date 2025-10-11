@@ -32,7 +32,7 @@ pub use oauth_token_refresh_service::{
     OAuthTokenRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
 };
 pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
-pub use permissions::{Permission, Role};
+pub use permissions::UserRole;
 pub use service::AuthService;
 pub use smart_api_key_provider::{
     AuthCredentialType, CredentialResult, SmartApiKeyProvider, SmartApiKeyProviderConfig,
@@ -52,7 +52,7 @@ pub use cache_strategy::{
 
 
 /// 统一认证结果
-/// 表示用户认证成功后的完整信息，包括用户身份、权限和可选的令牌信息
+/// 表示用户认证成功后的完整信息，包括用户身份、角色和可选的令牌信息
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuthResult {
     /// 用户ID
@@ -61,8 +61,8 @@ pub struct AuthResult {
     pub username: String,
     /// 是否为管理员
     pub is_admin: bool,
-    /// 权限列表
-    pub permissions: Vec<Permission>,
+    /// 用户角色
+    pub role: UserRole,
     /// 认证方式
     pub auth_method: AuthMethod,
     /// 原始令牌（脱敏）
@@ -92,7 +92,7 @@ pub enum AuthMethod {
     BasicAuth,
     /// 内部服务调用认证
     Internal,
-    /// 通过OAuth流程完成认证
+    /// `通过OAuth流程完成认证`
     OAuth,
 }
 
@@ -113,7 +113,8 @@ pub struct AuthContext {
 
 impl AuthContext {
     /// 创建新的认证上下文
-    pub fn new(resource_path: String, method: String) -> Self {
+    #[must_use]
+    pub const fn new(resource_path: String, method: String) -> Self {
         Self {
             auth_result: None,
             resource_path,
@@ -129,39 +130,35 @@ impl AuthContext {
     }
 
     /// 检查是否已认证
-    pub fn is_authenticated(&self) -> bool {
+    #[must_use]
+    pub const fn is_authenticated(&self) -> bool {
         self.auth_result.is_some()
     }
 
     /// 检查是否为管理员
+    #[must_use]
     pub fn is_admin(&self) -> bool {
         self.auth_result
             .as_ref()
-            .map(|r| r.is_admin)
-            .unwrap_or(false)
+            .is_some_and(|r| r.is_admin)
     }
 
-    /// 检查是否有特定权限
-    pub fn has_permission(&self, permission: &Permission) -> bool {
-        self.auth_result
-            .as_ref()
-            .map(|r| r.permissions.contains(permission))
-            .unwrap_or(false)
-    }
-
+    
     /// 获取用户ID
+    #[must_use]
     pub fn get_user_id(&self) -> Option<i32> {
         self.auth_result.as_ref().map(|r| r.user_id)
     }
 
     /// 获取用户名
+    #[must_use]
     pub fn get_username(&self) -> Option<&str> {
         self.auth_result.as_ref().map(|r| r.username.as_str())
     }
 }
 
-/// OAuth令牌信息
-/// 包含在AuthResult中的令牌相关信息
+/// `OAuth令牌信息`
+/// `包含在AuthResult中的令牌相关信息`
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TokenInfo {
     /// 访问令牌

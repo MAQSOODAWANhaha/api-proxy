@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
-use crate::auth::permissions::{Permission, PermissionChecker, Role};
+use crate::auth::permissions::UserRole;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::cache::CacheManager;
@@ -26,10 +26,8 @@ use entity::user_provider_keys;
 pub struct ApiKeyValidationResult {
     /// API key information
     pub api_key_info: ApiKeyInfo,
-    /// User permissions
-    pub permissions: Vec<Permission>,
-    /// Permission checker
-    pub permission_checker: PermissionChecker,
+    /// User permissions (简化为角色)
+    pub permissions: Vec<UserRole>,
     /// Remaining requests per minute
     pub remaining_requests: Option<i32>,
     /// Remaining tokens per day
@@ -40,7 +38,7 @@ pub struct ApiKeyValidationResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ApiKeyCacheData {
     api_key_info: ApiKeyInfo,
-    permissions: Vec<Permission>,
+    permissions: Vec<UserRole>,
 }
 
 /// API key manager
@@ -103,7 +101,6 @@ impl ApiKeyManager {
             return Ok(ApiKeyValidationResult {
                 api_key_info: cached.api_key_info.clone(),
                 permissions: cached.permissions.clone(),
-                permission_checker: PermissionChecker::new(cached.permissions.clone()),
                 remaining_requests,
                 remaining_tokens,
             });
@@ -163,7 +160,6 @@ impl ApiKeyManager {
         Ok(ApiKeyValidationResult {
             api_key_info,
             permissions: permissions.clone(),
-            permission_checker: PermissionChecker::new(permissions),
             remaining_requests,
             remaining_tokens,
         })
@@ -181,10 +177,10 @@ impl ApiKeyManager {
         crate::auth::AuthUtils::sanitize_api_key(api_key)
     }
 
-    /// Get user permissions from database
-    async fn get_user_permissions(&self, user_id: i32) -> Result<Vec<Permission>> {
+    /// Get user permissions from database (简化版本)
+    async fn get_user_permissions(&self, user_id: i32) -> Result<Vec<UserRole>> {
         use entity::{users, users::Entity as Users};
-        use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
         // 从数据库查询用户信息
         let user = Users::find()
@@ -197,60 +193,16 @@ impl ApiKeyManager {
             })?;
 
         let Some(user) = user else {
-            // 用户不存在或未激活，返回最小权限
-            return Ok(vec![Permission::UseApi]);
+            // 用户不存在或未激活，返回普通用户权限
+            return Ok(vec![UserRole::RegularUser]);
         };
 
-        // 根据用户类型确定权限
-        let mut permissions = Vec::new();
-
-        // 基础权限：所有激活用户都有的权限
-        permissions.push(Permission::UseApi);
-
-        // 管理员权限
+        // 简化的权限逻辑：只根据是否管理员来确定角色
         if user.is_admin {
-            permissions.extend(Role::Admin.permissions());
-            return Ok(permissions);
-        }
-
-        // 检查用户是否有活跃的API密钥（表示是付费用户）
-        let api_count = entity::user_service_apis::Entity::find()
-            .filter(entity::user_service_apis::Column::UserId.eq(user_id))
-            .filter(entity::user_service_apis::Column::IsActive.eq(true))
-            .count(self.db.as_ref())
-            .await
-            .unwrap_or(0);
-
-        if api_count > 0 {
-            // 有活跃API密钥的用户，给予更多权限
-            permissions.extend(vec![
-                Permission::ViewApiKeys,
-                Permission::UseOpenAI,
-                Permission::UseAnthropic,
-                Permission::UseGemini,
-            ]);
-
-            // 根据API密钥数量给予不同权限等级
-            if api_count >= 5 {
-                // 高级用户
-                permissions.push(Permission::ViewStatistics);
-                permissions.push(Permission::UseAllProviders);
-            }
+            Ok(vec![UserRole::Admin])
         } else {
-            // 没有API密钥的用户，只有基础权限
-            permissions.extend(vec![Permission::ViewApiKeys]);
+            Ok(vec![UserRole::RegularUser])
         }
-
-        // 根据用户注册时间给予一些额外权限
-        let now = chrono::Utc::now().naive_utc();
-        let user_age_days = (now - user.created_at).num_days();
-
-        if user_age_days >= 30 {
-            // 注册超过30天的用户，给予查看健康状态权限
-            permissions.push(Permission::ViewHealth);
-        }
-
-        Ok(permissions)
     }
 
     /// Force refresh cache for specific API key

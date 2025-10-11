@@ -42,19 +42,18 @@ impl TracingService {
         user_agent: Option<String>,
     ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            tracer
-                .start_trace(
-                    request_id.to_string(),
-                    user_service_api_id,
-                    user_id,
-                    provider_type_id,
-                    user_provider_key_id,
-                    method.to_string(),
-                    path,
-                    client_ip,
-                    user_agent,
-                )
-                .await
+            let start_params = crate::trace::immediate::StartTraceParams {
+                request_id: request_id.to_string(),
+                user_service_api_id,
+                user_id,
+                provider_type_id,
+                user_provider_key_id,
+                method: method.to_string(),
+                path,
+                client_ip,
+                user_agent,
+            };
+            tracer.start_trace(start_params).await
                 .map_err(|e| {
                     lwarn!(
                         request_id,
@@ -145,21 +144,19 @@ impl TracingService {
         cost_currency: Option<String>,
     ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            tracer
-                .complete_trace_with_stats(
-                    request_id,
-                    status_code,
-                    true, // success
-                    tokens_prompt,
-                    tokens_completion,
-                    None, // no error type for success
-                    None, // no error message for success
-                    cache_create_tokens,
-                    cache_read_tokens,
-                    cost,
-                    cost_currency.clone(),
-                )
-                .await
+            let complete_params = crate::trace::immediate::CompleteTraceParams {
+                status_code,
+                is_success: true,
+                tokens_prompt,
+                tokens_completion,
+                error_type: None, // no error type for success
+                error_message: None, // no error message for success
+                cache_create_tokens,
+                cache_read_tokens,
+                cost,
+                cost_currency: cost_currency.clone(),
+            };
+            tracer.complete_trace_with_stats(request_id, complete_params).await
                 .map_err(|e| {
                     lwarn!(
                         request_id,
@@ -204,17 +201,16 @@ impl TracingService {
         error_message: Option<String>,
     ) -> Result<()> {
         if let Some(tracer) = &self.tracer {
-            tracer
-                .complete_trace(
-                    request_id,
-                    status_code,
-                    false, // not success
-                    None,  // no token info for failures
-                    None,  // no token info for failures
-                    error_type.clone(),
-                    error_message.clone(),
-                )
-                .await
+            let params = crate::trace::immediate::SimpleCompleteTraceParams {
+                request_id: request_id.to_string(),
+                status_code,
+                is_success: false,
+                tokens_prompt: None,
+                tokens_completion: None,
+                error_type: error_type.clone(),
+                error_message: error_message.clone(),
+            };
+            tracer.complete_trace(params).await
                 .map_err(|e| {
                     lwarn!(
                         request_id,

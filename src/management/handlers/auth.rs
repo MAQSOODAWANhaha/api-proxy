@@ -523,16 +523,17 @@ pub async fn refresh_token(
     };
 
     // 生成新的access token
-    let permissions = auth_user.permissions
-        .iter()
-        .map(|p| p.to_string())
-        .collect();
+    let role = if auth_user.is_admin {
+        crate::auth::permissions::UserRole::Admin
+    } else {
+        crate::auth::permissions::UserRole::RegularUser
+    };
 
     let new_access_token = match state.auth_service.jwt_manager.generate_access_token(
         user_id,
         auth_user.username.clone(),
         auth_user.is_admin,
-        permissions,
+        role,
     ) {
         Ok(token) => token,
         Err(err) => {

@@ -80,7 +80,7 @@ pub struct TracePhase {
 }
 
 /// 请求处理阶段枚举
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RequestPhase {
     /// 认证阶段
     Authentication,
@@ -101,7 +101,7 @@ pub enum RequestPhase {
 }
 
 /// 阶段状态
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PhaseStatus {
     /// 进行中
     InProgress,
@@ -170,7 +170,7 @@ pub struct TokenStats {
 }
 
 /// 健康状态枚举
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HealthStatus {
     /// 健康
     Healthy,
@@ -224,6 +224,7 @@ pub enum TraceEventType {
 
 impl RequestTrace {
     /// 创建新的请求追踪
+    #[must_use]
     pub fn new(
         request_id: String,
         user_id: i32,
@@ -257,9 +258,9 @@ impl RequestTrace {
     }
 
     /// 开始新阶段
-    pub fn start_phase(&mut self, phase: RequestPhase) {
+    pub fn start_phase(&mut self, phase: &RequestPhase) {
         self.phases.push(TracePhase {
-            phase,
+            phase: phase.clone(),
             start_time: Utc::now(),
             end_time: None,
             duration_ms: None,
@@ -271,7 +272,7 @@ impl RequestTrace {
     /// 完成当前阶段
     pub fn complete_phase(
         &mut self,
-        phase: RequestPhase,
+        phase: &RequestPhase,
         status: PhaseStatus,
         details: Option<String>,
     ) {
@@ -279,15 +280,17 @@ impl RequestTrace {
             .phases
             .iter_mut()
             .rev()
-            .find(|p| p.phase == phase && p.status == PhaseStatus::InProgress)
+            .find(|p| p.phase == *phase && p.status == PhaseStatus::InProgress)
         {
             current_phase.end_time = Some(Utc::now());
             current_phase.status = status;
             current_phase.details = details;
 
             if let Some(end_time) = current_phase.end_time {
-                current_phase.duration_ms =
-                    Some((end_time - current_phase.start_time).num_milliseconds() as u64);
+                let duration_ms = end_time.signed_duration_since(current_phase.start_time).num_milliseconds();
+                if duration_ms >= 0 {
+                    current_phase.duration_ms = Some(duration_ms.try_into().unwrap_or(u64::MAX));
+                }
             }
         }
     }
@@ -299,7 +302,10 @@ impl RequestTrace {
         self.is_success = is_success;
 
         if let Some(end_time) = self.end_time {
-            self.duration_ms = Some((end_time - self.start_time).num_milliseconds() as u64);
+            let duration_ms = end_time.signed_duration_since(self.start_time).num_milliseconds();
+            if duration_ms >= 0 {
+                self.duration_ms = Some(duration_ms.try_into().unwrap_or(u64::MAX));
+            }
         }
     }
 
@@ -332,13 +338,14 @@ impl TokenUsage {
     /// 计算使用效率
     pub fn calculate_efficiency(&mut self) {
         if self.prompt_tokens > 0 {
-            self.efficiency_ratio = Some(self.completion_tokens as f64 / self.prompt_tokens as f64);
+            self.efficiency_ratio = Some(f64::from(self.completion_tokens) / f64::from(self.prompt_tokens));
         }
     }
 }
 
 impl HealthMetrics {
     /// 计算健康评分
+    #[allow(clippy::cast_precision_loss)] // 对于错误类型数量的精度损失是可接受的
     pub fn calculate_health_score(&mut self) {
         let mut score = 100.0;
 
@@ -359,10 +366,11 @@ impl HealthMetrics {
 
         // 错误多样性权重 10%
         if self.error_distribution.len() > 3 {
-            score -= (self.error_distribution.len() as f64 - 3.0) * 2.5;
+            // 错误类型数量通常不会很多，精度损失是可接受的
+            score += (self.error_distribution.len() as f64 - 3.0) * -2.5;
         }
 
-        self.health_score = score.max(0.0).min(100.0);
+        self.health_score = score.clamp(0.0, 100.0);
 
         // 确定健康状态
         self.health_status = match self.health_score {

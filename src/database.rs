@@ -132,7 +132,7 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     );
 
     match ::migration::Migrator::up(db, None).await {
-        Ok(_) => {
+        Ok(()) => {
             linfo!(
                 "system",
                 LogStage::Startup,
@@ -349,7 +349,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
     for model in filtered_models {
         if let Some(&provider_id) = provider_mappings.get(&model.provider_name) {
             match insert_model_with_pricing(db, &model, provider_id).await {
-                Ok(_) => success_count += 1,
+                Ok(()) => success_count += 1,
                 Err(e) => {
                     lerror!(
                         "system",

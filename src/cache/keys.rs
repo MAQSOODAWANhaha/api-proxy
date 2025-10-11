@@ -46,19 +46,19 @@ impl CacheKey {
     /// 生成缓存键字符串
     pub fn build(&self) -> String {
         match self {
-            CacheKey::UserSession {
+            Self::UserSession {
                 user_id,
                 session_id,
             } => {
                 format!("user:session:{}:{}", user_id, session_id)
             }
-            CacheKey::UserApiKey { user_id, key_id } => {
+            Self::UserApiKey { user_id, key_id } => {
                 format!("user:apikey:{}:{}", user_id, key_id)
             }
-            CacheKey::UserApiConfig { user_id, api_id } => {
+            Self::UserApiConfig { user_id, api_id } => {
                 format!("user:apiconfig:{}:{}", user_id, api_id)
             }
-            CacheKey::ApiHealth { provider, api_name } => {
+            Self::ApiHealth { provider, api_name } => {
                 format!("health:api:{}:{}", provider, api_name)
             }
             CacheKey::RequestStats { date, hour } => {

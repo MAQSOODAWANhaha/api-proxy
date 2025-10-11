@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::types::AuthType;
 use crate::error::Result;
 
-/// OAuth认证返回结果
+/// `OAuth认证返回结果`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokenResult {
     /// 访问令牌

@@ -105,7 +105,7 @@ impl ProxyServerBuilder {
     }
 
     /// 创建统一认证管理器
-    async fn create_auth_manager(
+    fn create_auth_manager(
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
@@ -127,7 +127,7 @@ impl ProxyServerBuilder {
             db.clone(),
             auth_config.clone(),
         ));
-        let auth_manager = AuthManager::new(auth_service, auth_config, db, cache).await?;
+        let auth_manager = AuthManager::new(auth_service, auth_config, db, cache)?;
         linfo!(
             "system",
             LogStage::Startup,
@@ -139,7 +139,7 @@ impl ProxyServerBuilder {
     }
 
     /// 创建代理服务实例
-    pub async fn create_proxy_service(
+    pub fn create_proxy_service(
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
@@ -155,7 +155,6 @@ impl ProxyServerBuilder {
 
         let auth_manager = self
             .create_auth_manager(db.clone(), cache.clone())
-            .await
             .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
 
         // --- 服务依赖组装 ---
@@ -199,7 +198,6 @@ impl ProxyServerBuilder {
 
         let proxy_service = self
             .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
-            .await
             .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {}", e)))?;
 
         Ok(ProxyServerComponents {

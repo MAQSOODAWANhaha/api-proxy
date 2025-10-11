@@ -216,6 +216,7 @@ impl AuthHeaderParser {
     /// ).unwrap();
     /// assert_eq!(api_key, "sk-123456");
     /// ```
+    #[allow(clippy::literal_string_with_formatting_args)]
     pub fn parse_api_key_from_value(
         &self,
         header_value: &str,
@@ -275,6 +276,8 @@ impl AuthHeaderParser {
     /// # 返回
     /// - `Ok(String)`: 成功提取的API密钥
     /// - `Err(AuthParseError)`: 解析失败
+    #[allow(clippy::use_self)]
+    #[allow(clippy::needless_borrow)]
     pub fn parse_api_key_from_inbound_headers_smart(
         formats_json: &str,
         header_name: &str,

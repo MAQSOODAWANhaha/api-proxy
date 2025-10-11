@@ -30,6 +30,7 @@ pub struct AuthStrategyManager {
 
 impl AuthStrategyManager {
     /// 创建新的认证策略管理器
+    #[must_use]
     pub fn new() -> Self {
         let mut manager = Self {
             strategies: HashMap::new(),
@@ -63,6 +64,7 @@ impl AuthStrategyManager {
     }
 
     /// 获取支持的认证类型列表
+    #[must_use]
     pub fn supported_auth_types(&self) -> Vec<AuthType> {
         self.strategies.keys().cloned().collect()
     }
@@ -73,6 +75,7 @@ impl AuthStrategyManager {
     }
 
     /// 获取默认配置
+    #[must_use]
     pub fn get_default_config(&self, auth_type: &AuthType) -> Option<&MultiAuthConfig> {
         self.default_configs.get(auth_type)
     }
@@ -125,7 +128,7 @@ impl AuthStrategyManager {
         strategy.revoke(token).await
     }
 
-    /// 获取OAuth认证URL
+    /// `获取OAuth认证URL`
     pub async fn get_oauth_auth_url(
         &self,
         auth_type: &AuthType,
@@ -140,7 +143,7 @@ impl AuthStrategyManager {
         strategy.get_auth_url(state, redirect_uri).await
     }
 
-    /// 处理OAuth回调
+    /// `处理OAuth回调`
     pub async fn handle_oauth_callback(
         &self,
         auth_type: &AuthType,

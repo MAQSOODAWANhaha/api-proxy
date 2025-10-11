@@ -153,11 +153,13 @@ pub struct OAuthPollingClient {
 
 impl OAuthPollingClient {
     /// 创建新的轮询客户端
+    #[must_use]
     pub fn new() -> Self {
         Self::with_config(PollingConfig::default())
     }
 
     /// 使用指定配置创建轮询客户端
+    #[must_use]
     pub fn with_config(config: PollingConfig) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -233,13 +235,15 @@ impl OAuthPollingClient {
     }
 
     /// 持续轮询直到完成或超时
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     pub async fn poll_until_completion(
         &self,
         session_manager: &SessionManager,
         session_id: &str,
     ) -> OAuthResult<OAuthTokenResponse> {
         let start_time = Instant::now();
-        let timeout_duration = Duration::from_secs(self.config.timeout as u64);
+        let timeout_duration = Duration::from_secs(u64::from(self.config.timeout));
         let mut current_interval = self.config.default_interval;
         let mut retry_count = 0;
 
@@ -262,7 +266,7 @@ impl OAuthPollingClient {
                                     refresh_token: response.refresh_token,
                                     id_token: response.id_token,
                                     token_type: "Bearer".to_string(),
-                                    expires_in: response.expires_in.map(|x| x as i32),
+                                    expires_in: response.expires_in.and_then(|x| i32::try_from(x).ok()),
                                     scopes: Vec::new(),
                                 });
                             }
@@ -297,13 +301,13 @@ impl OAuthPollingClient {
                     }
                     // 指数退避
                     current_interval =
-                        ((current_interval as f64) * self.config.backoff_factor) as u32;
+                        (f64::from(current_interval) * self.config.backoff_factor) as u32;
                     current_interval = current_interval.min(self.config.max_interval);
                 }
             }
 
             // 等待下次轮询
-            sleep(Duration::from_secs(current_interval as u64)).await;
+            sleep(Duration::from_secs(u64::from(current_interval))).await;
         }
     }
 
@@ -373,6 +377,7 @@ pub struct PollingMonitor {
 
 impl PollingMonitor {
     /// 创建新的监控器
+    #[must_use]
     pub fn new() -> Self {
         Self {
             stats: std::sync::Arc::new(std::sync::Mutex::new(PollingStats::default())),
@@ -404,6 +409,7 @@ impl PollingMonitor {
     }
 
     /// 获取统计信息
+    #[must_use]
     pub fn get_stats(&self) -> PollingStats {
         self.stats
             .lock()

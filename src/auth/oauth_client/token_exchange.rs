@@ -1,6 +1,6 @@
 //! # Token交换逻辑
 //!
-//! 实现OAuth 2.0授权码到访问令牌的交换流程
+//! `实现OAuth 2.0授权码到访问令牌的交换流程`
 //! 支持PKCE验证、刷新令牌、多提供商兼容等功能
 
 use super::providers::OAuthProviderManager;
@@ -25,7 +25,7 @@ pub struct TokenResponse {
     pub scope: Option<String>,
 }
 
-/// OAuth错误响应结构
+/// `OAuth错误响应结构`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthErrorResponse {
     pub error: String,
@@ -50,6 +50,7 @@ pub struct TokenExchangeClient {
 
 impl TokenExchangeClient {
     /// 创建新的Token交换客户端
+    #[must_use]
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -76,8 +77,7 @@ impl TokenExchangeClient {
         // 验证会话状态
         if session.status != "pending" {
             return Err(OAuthError::InvalidSession(format!(
-                "Session {} is not in pending state",
-                session_id
+                "Session {session_id} is not in pending state"
             )));
         }
 
@@ -97,8 +97,8 @@ impl TokenExchangeClient {
                 LogComponent::OAuth,
                 "auth_code_fragment",
                 &format!(
-                    "Authorization code contains fragment, using code part: {} -> {}",
-                    authorization_code, parts[0]
+                    "Authorization code contains fragment, using code part: {authorization_code} -> {}",
+                    parts[0]
                 )
             );
             parts[0].to_string()
@@ -124,10 +124,10 @@ impl TokenExchangeClient {
         }
 
         // 添加提供商特定参数
-        self.add_provider_specific_params(&mut form_params, &session.provider_name, &session);
+        Self::add_provider_specific_params(&mut form_params, &session.provider_name, &session);
 
         // 添加OAuth配置中的额外参数
-        self.add_config_based_params(&mut form_params, provider_manager, &session.provider_name)
+        Self::add_config_based_params(&mut form_params, provider_manager, &session.provider_name)
             .await?;
 
         // 发送Token交换请求
@@ -136,7 +136,7 @@ impl TokenExchangeClient {
             .await?;
 
         // 处理响应
-        let token_response = self.process_token_response(response, session_id).await?;
+        let token_response = Self::process_token_response(response, session_id);
 
         // 更新会话状态
         session_manager
@@ -181,7 +181,7 @@ impl TokenExchangeClient {
             .await?;
 
         // 处理响应
-        let token_response = self.process_token_response(response, session_id).await?;
+        let token_response = Self::process_token_response(response, session_id);
 
         // 更新会话状态
         session_manager
@@ -226,10 +226,7 @@ impl TokenExchangeClient {
                     LogStage::Authentication,
                     LogComponent::OAuth,
                     "revocation_unsupported",
-                    &format!(
-                        "Provider {} does not support token revocation",
-                        base_provider
-                    )
+                    &format!("Provider {base_provider} does not support token revocation")
                 );
                 return Ok(());
             }
@@ -280,29 +277,21 @@ impl TokenExchangeClient {
             "claude" => self.validate_claude_token(access_token).await,
             _ => {
                 // 对于未知提供商，执行基础HTTP验证
-                self.validate_generic_token(base_provider, access_token)
-                    .await
+                Ok(Self::validate_generic_token(base_provider, access_token))
             }
         }
     }
 
     /// 验证Google/Gemini令牌
     async fn validate_google_token(&self, access_token: &str) -> OAuthResult<bool> {
-        let validation_url = format!(
-            "https://oauth2.googleapis.com/tokeninfo?access_token={}",
-            access_token
-        );
+        let validation_url = format!("https://oauth2.googleapis.com/tokeninfo?access_token={access_token}");
         let response = self.http_client.get(&validation_url).send().await?;
 
         Ok(response.status().is_success())
     }
 
     /// 通用令牌验证
-    async fn validate_generic_token(
-        &self,
-        provider_name: &str,
-        _access_token: &str,
-    ) -> OAuthResult<bool> {
+    fn validate_generic_token(provider_name: &str, _access_token: &str) -> bool {
         // 对于没有特定验证端点的提供商，默认认为令牌有效
         // 实际应用中可以根据需要实现更复杂的验证逻辑
         ldebug!(
@@ -310,9 +299,9 @@ impl TokenExchangeClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "generic_token_validation",
-            &format!("Generic token validation for provider: {}", provider_name)
+            &format!("Generic token validation for provider: {provider_name}")
         );
-        Ok(true)
+        true
     }
 
     // 私有方法
@@ -323,126 +312,161 @@ impl TokenExchangeClient {
         token_url: &str,
         form_params: HashMap<String, String>,
     ) -> OAuthResult<TokenResponse> {
-        // Claude需要使用JSON格式，其他提供商使用form格式
+        let response = self.send_http_request(token_url, form_params).await?;
+        self.process_response(response).await
+    }
+
+    /// 发送HTTP请求
+    async fn send_http_request(
+        &self,
+        token_url: &str,
+        form_params: HashMap<String, String>,
+    ) -> OAuthResult<reqwest::Response> {
         let is_claude_token_url = token_url.contains("console.anthropic.com");
 
         let response = if is_claude_token_url {
-            // Claude使用JSON格式 - 根据Wei-Shaw项目实现
-            ldebug!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::OAuth,
-                "claude_token_exchange",
-                &format!(
-                    "🌟 发送Claude token exchange请求: url={}, params={:?}",
-                    token_url, form_params
-                )
-            );
-
-            self.http_client
-                .post(token_url)
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/plain, */*")
-                .header("User-Agent", "claude-cli/1.0.56 (external, cli)")
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .header("Referer", "https://claude.ai/")
-                .header("Origin", "https://claude.ai")
-                .json(&form_params)
-                .send()
-                .await?
+            self.send_claude_request(token_url, &form_params).await?
         } else {
-            // 其他提供商使用标准form格式
-            self.http_client
-                .post(token_url)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Accept", "application/json")
-                .form(&form_params)
-                .send()
-                .await?
+            self.send_standard_request(token_url, &form_params).await?
         };
 
+        Ok(response)
+    }
+
+    /// 发送Claude专用请求
+    async fn send_claude_request(
+        &self,
+        token_url: &str,
+        form_params: &HashMap<String, String>,
+    ) -> OAuthResult<reqwest::Response> {
+        ldebug!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::OAuth,
+            "claude_token_exchange",
+            &format!("🌟 发送Claude token exchange请求: url={token_url}, params={form_params:?}")
+        );
+
+        Ok(self
+            .http_client
+            .post(token_url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/plain, */*")
+            .header("User-Agent", "claude-cli/1.0.56 (external, cli)")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Referer", "https://claude.ai/")
+            .header("Origin", "https://claude.ai")
+            .json(form_params)
+            .send()
+            .await?)
+    }
+
+    /// 发送标准`OAuth`请求
+    async fn send_standard_request(
+        &self,
+        token_url: &str,
+        form_params: &HashMap<String, String>,
+    ) -> OAuthResult<reqwest::Response> {
+        Ok(self
+            .http_client
+            .post(token_url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .form(form_params)
+            .send()
+            .await?)
+    }
+
+    /// 处理HTTP响应
+    async fn process_response(&self, response: reqwest::Response) -> OAuthResult<TokenResponse> {
         let status = response.status();
 
         if !status.is_success() {
-            // 对于错误响应，先尝试解析为JSON，如果失败则获取文本内容
-            let error_text = response.text().await?;
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::OAuth,
-                "token_exchange_error",
-                &format!(
-                    "🌟 Token exchange error response: status={}, body={}",
-                    status, error_text
-                )
-            );
-
-            // 尝试解析错误响应
-            if let Ok(error_response) = serde_json::from_str::<OAuthErrorResponse>(&error_text) {
-                return Err(OAuthError::TokenExchangeFailed(format!(
-                    "{}: {}",
-                    error_response.error,
-                    error_response.error_description.unwrap_or_default()
-                )));
-            }
-            return Err(OAuthError::TokenExchangeFailed(format!(
-                "HTTP {}: {}",
-                status, error_text
-            )));
+            return Err(self.handle_error_response(response, status).await?);
         }
 
-        // 先获取原始响应文本以便打印所有数据
-        let data = response
+        let data = self.extract_response_text(response).await?;
+        Self::parse_token_response(&data, status)
+    }
+
+    /// 处理错误响应
+    async fn handle_error_response(
+        &self,
+        response: reqwest::Response,
+        status: reqwest::StatusCode,
+    ) -> OAuthResult<OAuthError> {
+        let error_text = response.text().await.unwrap_or_default();
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::OAuth,
+            "token_exchange_error",
+            &format!("🌟 Token exchange error response: status={status}, body={error_text}")
+        );
+
+        // 尝试解析错误响应
+        if let Ok(error_response) = serde_json::from_str::<OAuthErrorResponse>(&error_text) {
+            Ok(OAuthError::TokenExchangeFailed(format!(
+                "{}: {}",
+                error_response.error,
+                error_response.error_description.unwrap_or_default()
+            )))
+        } else {
+            Ok(OAuthError::TokenExchangeFailed(format!(
+                "HTTP {status}: {error_text}"
+            )))
+        }
+    }
+
+    /// 提取响应文本
+    async fn extract_response_text(&self, response: reqwest::Response) -> OAuthResult<String> {
+        response
             .text()
             .await
-            .map_err(|e| OAuthError::SerdeError(format!("Failed to read response text: {}", e)))?;
+            .map_err(|e| OAuthError::SerdeError(format!("Failed to read response text: {e}")))
+    }
 
+    /// 解析Token响应
+    fn parse_token_response(data: &str, status: reqwest::StatusCode) -> OAuthResult<TokenResponse> {
         // 打印完整的原始JSON响应（注意：生产环境中应该小心处理敏感信息）
         linfo!(
             "system",
             LogStage::ExternalApi,
             LogComponent::OAuth,
             "token_exchange_complete",
-            &format!(
-                "🌟 Token exchange complete: status={}, body={}",
-                status, data
-            )
+            &format!("🌟 Token exchange complete: status={status}, body={data}")
         );
 
         // 解析为我们定义的TokenResponse结构体
-        let response = serde_json::from_str::<TokenResponse>(&data).map_err(|e| {
-            OAuthError::SerdeError(format!("Failed to parse token response: {}", e))
-        })?;
-
-        Ok(response)
+        serde_json::from_str::<TokenResponse>(data).map_err(|e| {
+            OAuthError::SerdeError(format!("Failed to parse token response: {e}"))
+        })
     }
 
     /// 处理Token响应
-    async fn process_token_response(
-        &self,
+    fn process_token_response(
         response: TokenResponse,
         session_id: &str,
-    ) -> OAuthResult<OAuthTokenResponse> {
+    ) -> super::OAuthTokenResponse {
         // 解析作用域
         let scopes = response
             .scope
-            .map(|s| s.split_whitespace().map(|s| s.to_string()).collect())
+            .map(|s| s.split_whitespace().map(std::string::ToString::to_string).collect())
             .unwrap_or_default();
 
-        Ok(OAuthTokenResponse {
+        super::OAuthTokenResponse {
             session_id: session_id.to_string(),
             access_token: response.access_token,
             refresh_token: response.refresh_token,
             id_token: response.id_token,
             token_type: response.token_type,
-            expires_in: response.expires_in.map(|e| e as i32),
+            expires_in: response.expires_in.and_then(|e| i32::try_from(e).ok()),
             scopes,
-        })
+        }
     }
 
     /// 添加提供商特定参数（从OAuth配置中读取）
     fn add_provider_specific_params(
-        &self,
         form_params: &mut HashMap<String, String>,
         provider_name: &str,
         session: &oauth_client_sessions::Model,
@@ -456,10 +480,7 @@ impl TokenExchangeClient {
 
         // 为不同提供商添加特定参数
         match base_provider {
-            "google" => {
-                form_params.insert("access_type".to_string(), "offline".to_string());
-            }
-            "gemini" => {
+            "google" | "gemini" => {
                 form_params.insert("access_type".to_string(), "offline".to_string());
             }
             "openai" => {
@@ -475,9 +496,8 @@ impl TokenExchangeClient {
         }
     }
 
-    /// 从OAuth配置中添加额外参数
+    /// `从OAuth配置中添加额外参数`
     async fn add_config_based_params(
-        &self,
         form_params: &mut HashMap<String, String>,
         provider_manager: &OAuthProviderManager,
         provider_name: &str,
@@ -496,12 +516,12 @@ impl TokenExchangeClient {
         Ok(())
     }
 
-    /// 验证OpenAI令牌
+    /// `验证OpenAI令牌`
     async fn validate_openai_token(&self, access_token: &str) -> OAuthResult<bool> {
         let response = self
             .http_client
             .get("https://api.openai.com/v1/me")
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .send()
             .await?;
 
@@ -513,7 +533,7 @@ impl TokenExchangeClient {
         let response = self
             .http_client
             .get("https://api.anthropic.com/v1/me")
-            .header("Authorization", format!("Bearer {}", access_token))
+            .header("Authorization", format!("Bearer {access_token}"))
             .send()
             .await?;
 
@@ -599,6 +619,6 @@ mod tests {
     #[test]
     fn test_token_exchange_client_creation() {
         let client = TokenExchangeClient::new();
-        assert!(format!("{:?}", client).contains("TokenExchangeClient"));
+        assert!(format!("{client:?}").contains("TokenExchangeClient"));
     }
 }

@@ -1,4 +1,4 @@
-//! # OAuth会话管理器
+//! # `OAuth会话管理器`
 //!
 //! 管理OAuth客户端会话的完整生命周期，包括创建、更新、查询和删除
 //! 提供会话状态跟踪、自动过期清理和安全验证功能
@@ -29,21 +29,17 @@ pub struct CreateSessionParams {
 /// 会话管理器
 #[derive(Debug, Clone)]
 pub struct SessionManager {
-    db: DatabaseConnection,
+    pub db: std::sync::Arc<DatabaseConnection>,
 }
 
 impl SessionManager {
     /// 创建新的会话管理器
-    pub fn new(db: DatabaseConnection) -> Self {
+    #[must_use]
+    pub fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 
-    /// 获取数据库连接的引用
-    pub fn get_db(&self) -> &DatabaseConnection {
-        &self.db
-    }
-
-    /// 创建新的OAuth会话
+    /// `创建新的OAuth会话`
     pub async fn create_session(
         &self,
         user_id: i32,
@@ -74,7 +70,7 @@ impl SessionManager {
             code_challenge: Set(pkce.challenge.as_str().to_string()),
             state: Set(state),
             name: Set(name.to_string()),
-            description: Set(description.map(|s| s.to_string())),
+            description: Set(description.map(std::string::ToString::to_string)),
             status: Set(AuthStatus::Pending.to_string()),
             expires_at: Set(expires_at),
             created_at: Set(now),
@@ -82,11 +78,11 @@ impl SessionManager {
             ..Default::default()
         };
 
-        let inserted_session = session.insert(&self.db).await?;
+        let inserted_session = session.insert(self.db.as_ref()).await?;
         Ok(inserted_session)
     }
 
-    /// 使用参数结构创建OAuth会话
+    /// `使用参数结构创建OAuth会话`
     pub async fn create_session_with_params(
         &self,
         params: &CreateSessionParams,
@@ -107,16 +103,12 @@ impl SessionManager {
     pub async fn get_session(&self, session_id: &str) -> OAuthResult<oauth_client_sessions::Model> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await?;
 
-        match session {
-            Some(session) => Ok(session),
-            None => Err(OAuthError::InvalidSession(format!(
-                "Session {} not found",
-                session_id
-            ))),
-        }
+        session.ok_or_else(|| OAuthError::InvalidSession(format!(
+                "Session {session_id} not found"
+            )))
     }
 
     /// 根据状态参数获取会话
@@ -126,16 +118,12 @@ impl SessionManager {
     ) -> OAuthResult<oauth_client_sessions::Model> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::State.eq(state))
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await?;
 
-        match session {
-            Some(session) => Ok(session),
-            None => Err(OAuthError::InvalidSession(format!(
-                "Session with state {} not found",
-                state
-            ))),
-        }
+        session.ok_or_else(|| OAuthError::InvalidSession(format!(
+                "Session with state {state} not found"
+            )))
     }
 
     /// 更新会话状态
@@ -159,7 +147,7 @@ impl SessionManager {
             active_model.completed_at = Set(Some(Utc::now().naive_utc()));
         }
 
-        active_model.update(&self.db).await?;
+        active_model.update(self.db.as_ref()).await?;
         Ok(())
     }
 
@@ -176,7 +164,7 @@ impl SessionManager {
         active_model.status = Set(AuthStatus::Pending.to_string()); // 临时状态，使用pending
         active_model.updated_at = Set(Utc::now().naive_utc());
 
-        active_model.update(&self.db).await?;
+        active_model.update(self.db.as_ref()).await?;
         Ok(())
     }
 
@@ -189,12 +177,10 @@ impl SessionManager {
         let session = self.get_session(session_id).await?;
 
         // 计算令牌过期时间
-        let expires_at = if let Some(expires_in) = token_response.expires_in {
-            Utc::now().naive_utc() + Duration::try_seconds(expires_in as i64).unwrap_or_default()
-        } else {
-            // 默认1小时过期
-            Utc::now().naive_utc() + Duration::try_hours(1).unwrap_or_default()
-        };
+        let expires_at = token_response.expires_in.map_or_else(
+            || Utc::now().naive_utc() + Duration::try_hours(1).unwrap_or_default(),
+            |expires_in| Utc::now().naive_utc() + Duration::try_seconds(i64::from(expires_in)).unwrap_or_default()
+        );
 
         // 先保存会话中的原 refresh_token，再转换为 ActiveModel
         let existing_refresh = session.refresh_token.clone();
@@ -215,7 +201,7 @@ impl SessionManager {
         active_model.completed_at = Set(Some(Utc::now().naive_utc()));
         active_model.updated_at = Set(Utc::now().naive_utc());
 
-        active_model.update(&self.db).await?;
+        active_model.update(self.db.as_ref()).await?;
         Ok(())
     }
 
@@ -224,7 +210,7 @@ impl SessionManager {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         let session_infos = sessions
@@ -257,13 +243,13 @@ impl SessionManager {
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.gt(Utc::now().naive_utc()))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         Ok(sessions)
     }
 
-    /// 根据provider_type_id获取用户的活跃会话
+    /// `根据provider_type_id获取用户的活跃会话`
     pub async fn list_user_active_sessions_by_provider_id(
         &self,
         user_id: i32,
@@ -275,13 +261,13 @@ impl SessionManager {
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::ExpiresAt.gt(Utc::now().naive_utc()))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         Ok(sessions)
     }
 
-    /// 根据provider_name或provider_type_id获取用户的活跃会话
+    /// `根据provider_name或provider_type_id获取用户的活跃会话`
     pub async fn list_user_active_sessions_flexible(
         &self,
         user_id: i32,
@@ -302,7 +288,7 @@ impl SessionManager {
 
         let sessions = query
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         Ok(sessions)
@@ -320,7 +306,7 @@ impl SessionManager {
         }
 
         let active_model: oauth_client_sessions::ActiveModel = session.into();
-        active_model.delete(&self.db).await?;
+        active_model.delete(self.db.as_ref()).await?;
 
         Ok(())
     }
@@ -333,7 +319,7 @@ impl SessionManager {
         let expired_sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::ExpiresAt.lt(now))
             .filter(oauth_client_sessions::Column::Status.ne(AuthStatus::Authorized.to_string()))
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         let mut deleted_count = 0;
@@ -363,29 +349,39 @@ impl SessionManager {
             query = query.filter(oauth_client_sessions::Column::UserId.eq(uid));
         }
 
-        let sessions = query.all(&self.db).await?;
+        let sessions = query.all(self.db.as_ref()).await?;
+        let total_sessions = sessions.len() as u64;
 
-        let mut stats = SessionStatistics::default();
-        stats.total_sessions = sessions.len() as u64;
+        let mut provider_counts = std::collections::HashMap::new();
+        let mut pending_sessions = 0;
+        let mut completed_sessions = 0;
+        let mut failed_sessions = 0;
+        let mut expired_sessions = 0;
 
-        for session in sessions {
+        for session in &sessions {
             match session.status.as_str() {
-                s if s == AuthStatus::Pending.to_string() => stats.pending_sessions += 1,
-                s if s == AuthStatus::Authorized.to_string() => stats.completed_sessions += 1,
-                s if s == AuthStatus::Error.to_string() => stats.failed_sessions += 1,
-                s if s == AuthStatus::Expired.to_string() => stats.expired_sessions += 1,
+                s if s == AuthStatus::Pending.to_string() => pending_sessions += 1,
+                s if s == AuthStatus::Authorized.to_string() => completed_sessions += 1,
+                s if s == AuthStatus::Error.to_string() => failed_sessions += 1,
+                s if s == AuthStatus::Expired.to_string() => expired_sessions += 1,
                 _ => {}
             }
 
             // 统计各提供商
-            *stats
-                .provider_counts
-                .entry(session.provider_name)
+            *provider_counts
+                .entry(session.provider_name.clone())
                 .or_insert(0) += 1;
         }
 
-        stats.last_updated = Utc::now();
-        Ok(stats)
+        Ok(SessionStatistics {
+            total_sessions,
+            pending_sessions,
+            completed_sessions,
+            failed_sessions,
+            expired_sessions,
+            provider_counts,
+            last_updated: Utc::now(),
+        })
     }
 
     /// 验证会话访问权限

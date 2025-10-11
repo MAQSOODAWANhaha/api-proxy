@@ -38,15 +38,14 @@ impl ConfigManager {
             format!("config/config.{env}.toml")
         };
 
-        Self::from_file(&config_file).await
+        Self::from_file(Path::new(&config_file)).await
     }
 
     /// 从指定文件创建配置管理器
-    pub async fn from_file(config_path: impl AsRef<Path>) -> crate::error::Result<Self> {
-        let config_path = config_path.as_ref();
-
-        // 加载初始配置
-        let mut config = Self::load_config_file(config_path)?;
+    #[allow(clippy::unused_async)]
+    pub async fn from_file(config_path: &Path) -> crate::error::Result<Self> {
+            // 加载初始配置
+            let mut config = Self::load_config_file(config_path)?;
 
         // 创建配置加密器（如果需要）
         let crypto = if env::var("PROXY_ENABLE_CONFIG_ENCRYPTION").unwrap_or_default() == "true" {

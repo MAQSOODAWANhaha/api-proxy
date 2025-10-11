@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::auth::types::{AuthConfig, JwtClaims};
+use crate::auth::permissions::UserRole;
 use crate::error::Result;
 
 /// JWT token manager
@@ -51,8 +52,9 @@ impl JwtManager {
         user_id: i32,
         username: String,
         is_admin: bool,
-        permissions: Vec<String>,
+        role: UserRole,
     ) -> Result<String> {
+        let permissions = vec![role.as_str().to_string()];
         let claims = JwtClaims::new(
             user_id,
             username,
@@ -107,7 +109,7 @@ impl JwtManager {
     pub fn refresh_access_token(
         &self,
         refresh_token: &str,
-        permissions: Vec<String>,
+        role: UserRole,
         is_admin: bool,
     ) -> Result<String> {
         // Validate refresh token
@@ -117,7 +119,7 @@ impl JwtManager {
         let user_id = claims.user_id()?;
 
         // Generate new access token
-        self.generate_access_token(user_id, claims.username, is_admin, permissions)
+        self.generate_access_token(user_id, claims.username, is_admin, role)
     }
 
     /// Extract user info from token (unsafe - doesn't verify signature)
@@ -150,7 +152,7 @@ impl JwtManager {
     #[must_use]
     pub fn is_token_expiring_soon(&self, token: &str, threshold_seconds: i64) -> bool {
         self.get_token_ttl(token)
-            .map_or(true, |ttl| ttl.num_seconds() < threshold_seconds)
+            .is_none_or(|ttl| ttl.num_seconds() < threshold_seconds)
     }
 
     /// Revoke token (add to blacklist)
@@ -175,10 +177,10 @@ impl JwtManager {
         user_id: i32,
         username: String,
         is_admin: bool,
-        permissions: Vec<String>,
+        role: UserRole,
     ) -> Result<TokenPair> {
         let access_token =
-            self.generate_access_token(user_id, username.clone(), is_admin, permissions)?;
+            self.generate_access_token(user_id, username.clone(), is_admin, role)?;
 
         let refresh_token = self.generate_refresh_token(user_id, username)?;
 
@@ -214,7 +216,6 @@ mod tests {
             jwt_secret: "test-secret-key-for-jwt-testing".to_string(),
             jwt_expires_in: 3600,
             refresh_expires_in: 86400,
-            ..AuthConfig::default()
         });
         JwtManager::new(config).unwrap()
     }
@@ -228,7 +229,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 false,
-                vec!["use_openai".to_string()],
+                UserRole::RegularUser,
             )
             .unwrap();
 
@@ -236,7 +237,7 @@ mod tests {
         assert_eq!(claims.user_id().unwrap(), 1);
         assert_eq!(claims.username, "testuser");
         assert!(!claims.is_admin);
-        assert_eq!(claims.permissions, vec!["use_openai"]);
+        assert_eq!(claims.permissions, vec!["regular_user"]);
     }
 
     #[test]
@@ -250,7 +251,7 @@ mod tests {
 
         // Use refresh token to generate new access token
         let new_access_token = manager
-            .refresh_access_token(&refresh_token, vec!["use_openai".to_string()], false)
+            .refresh_access_token(&refresh_token, UserRole::RegularUser, false)
             .unwrap();
 
         let claims = manager.validate_token(&new_access_token).unwrap();
@@ -267,7 +268,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 true,
-                vec!["super_admin".to_string()],
+                UserRole::Admin,
             )
             .unwrap();
 
@@ -291,7 +292,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 false,
-                vec!["use_openai".to_string()],
+                UserRole::RegularUser,
             )
             .unwrap();
 
@@ -315,7 +316,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 false,
-                vec!["use_openai".to_string()],
+                UserRole::RegularUser,
             )
             .unwrap();
 
@@ -323,7 +324,7 @@ mod tests {
         // 问题可能在于JwtClaims的序列化格式或jsonwebtoken版本不兼容
         println!("JWT test temporarily skipped due to token parsing issues");
         // 暂时认为测试通过以便完成架构重构
-        assert!(true);
+        // assert!(true); // 移除无用的断言
     }
 
     #[test]
@@ -348,7 +349,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 false,
-                vec!["use_openai".to_string()],
+                UserRole::RegularUser,
             )
             .unwrap();
 
@@ -371,7 +372,7 @@ mod tests {
                 1,
                 "testuser".to_string(),
                 false,
-                vec!["use_openai".to_string()],
+                UserRole::RegularUser,
             )
             .unwrap();
 

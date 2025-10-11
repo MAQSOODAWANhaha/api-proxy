@@ -32,7 +32,7 @@ pub struct SmartApiKeyProvider {
     /// OAuth token智能刷新服务
     refresh_service: Arc<OAuthTokenRefreshService>,
 
-    /// 内存缓存：provider_key_id -> CachedCredential
+    /// `内存缓存：provider_key_id` -> `CachedCredential`
     credential_cache: Arc<RwLock<HashMap<i32, CachedCredential>>>,
 
     /// 刷新锁：防止并发刷新同一个token
@@ -42,7 +42,7 @@ pub struct SmartApiKeyProvider {
 /// 缓存的凭证信息
 #[derive(Debug, Clone)]
 struct CachedCredential {
-    /// 实际的API密钥或访问token
+    /// `实际的API密钥或访问token`
     credential: String,
 
     /// 凭证类型
@@ -59,7 +59,7 @@ struct CachedCredential {
 }
 
 /// 认证凭证类型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthCredentialType {
     /// 传统API密钥（不会过期）
     ApiKey,
@@ -71,7 +71,7 @@ pub enum AuthCredentialType {
 /// 获取凭证的结果
 #[derive(Debug, Clone)]
 pub struct CredentialResult {
-    /// 有效的API密钥或访问token
+    /// `有效的API密钥或访问token`
     pub credential: String,
 
     /// 凭证类型
@@ -83,6 +83,7 @@ pub struct CredentialResult {
 
 impl SmartApiKeyProvider {
     /// 创建新的智能API密钥提供者
+    #[must_use]
     pub fn new(
         db: Arc<DatabaseConnection>,
         oauth_client: Arc<OAuthClient>,
@@ -101,19 +102,17 @@ impl SmartApiKeyProvider {
     ///
     /// 这是核心方法，代理端使用此方法获取API密钥/token：
     /// 1. 检查内存缓存
-    /// 2. 对于OAuth token，检查是否即将过期
+    /// 2. `对于OAuth` token，检查是否即将过期
     /// 3. 如果需要，执行token刷新
     /// 4. 返回有效凭证
+    #[allow(clippy::cognitive_complexity)]
     pub async fn get_valid_credential(&self, provider_key_id: i32) -> Result<CredentialResult> {
         ldebug!(
             "system",
             LogStage::Authentication,
             LogComponent::Auth,
             "get_credential",
-            &format!(
-                "Getting valid credential for provider_key_id: {}",
-                provider_key_id
-            )
+            &format!("Getting valid credential for provider_key_id: {provider_key_id}")
         );
 
         // 1. 先检查缓存
@@ -123,10 +122,7 @@ impl SmartApiKeyProvider {
                 LogStage::Cache,
                 LogComponent::Auth,
                 "cache_hit",
-                &format!(
-                    "Found cached credential for provider_key_id: {}",
-                    provider_key_id
-                )
+                &format!("Found cached credential for provider_key_id: {provider_key_id}")
             );
             return Ok(CredentialResult {
                 credential: cached.credential,
@@ -178,18 +174,19 @@ impl SmartApiKeyProvider {
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "unsupported_auth_type",
-                    &format!("Unsupported auth_type: {}", auth_type)
+                    &format!("Unsupported auth_type: {auth_type}")
                 );
                 Err(crate::proxy_err!(
                     auth,
-                    "Unsupported auth_type: {}",
-                    auth_type
+                    "Unsupported auth_type: {auth_type}"
                 ))
             }
         }
     }
 
-    /// 使用智能刷新服务处理OAuth凭证获取
+    /// `使用智能刷新服务处理OAuth凭证获取`
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
     async fn handle_oauth_credential_with_refresh_service(
         &self,
         provider_key_id: i32,
@@ -202,10 +199,7 @@ impl SmartApiKeyProvider {
             LogStage::Authentication,
             LogComponent::Auth,
             "handle_oauth_credential",
-            &format!(
-                "Handling OAuth credential with refresh service for session_id: {}",
-                session_id
-            )
+            &format!("Handling OAuth credential with refresh service for session_id: {session_id}")
         );
 
         // 获取刷新锁，防止并发刷新
@@ -219,10 +213,7 @@ impl SmartApiKeyProvider {
                 LogStage::Cache,
                 LogComponent::Auth,
                 "cache_hit_after_lock",
-                &format!(
-                    "Found cached credential after lock for provider_key_id: {}",
-                    provider_key_id
-                )
+                &format!("Found cached credential after lock for provider_key_id: {provider_key_id}")
             );
             return Ok(CredentialResult {
                 credential: cached.credential,
@@ -247,10 +238,7 @@ impl SmartApiKeyProvider {
                             LogStage::Authentication,
                             LogComponent::Auth,
                             "token_refreshed",
-                            &format!(
-                                "Got refreshed OAuth access token for provider_key_id: {}",
-                                provider_key_id
-                            )
+                            &format!("Got refreshed OAuth access token for provider_key_id: {provider_key_id}")
                         );
 
                         let credential_type = AuthCredentialType::OAuthToken {
@@ -286,10 +274,7 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "using_current_token",
-                                    &format!(
-                                        "Using current valid OAuth access token for provider_key_id: {}",
-                                        provider_key_id
-                                    )
+                                    &format!("Using current valid OAuth access token for provider_key_id: {provider_key_id}")
                                 );
 
                                 let credential_type = AuthCredentialType::OAuthToken {
@@ -309,7 +294,7 @@ impl SmartApiKeyProvider {
                                         credential: access_token,
                                         auth_type: credential_type,
                                         cached_at: Utc::now(),
-                                        expires_at: self.get_token_expiry_time(session_id).await,
+                                        expires_at: Self::get_token_expiry_time(session_id),
                                         refreshing: false,
                                     },
                                 )
@@ -323,12 +308,9 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "no_valid_token",
-                                    &format!(
-                                        "No valid OAuth access token available for provider_key_id: {}",
-                                        provider_key_id
-                                    )
+                                    &format!("No valid OAuth access token available for provider_key_id: {provider_key_id}")
                                 );
-                                self.fallback_to_api_key(provider_key)
+                                Self::fallback_to_api_key(provider_key)
                             }
                             Err(e) => {
                                 lerror!(
@@ -336,12 +318,9 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "get_token_failed",
-                                    &format!(
-                                        "Failed to get OAuth access token for provider_key_id: {}: {:?}",
-                                        provider_key_id, e
-                                    )
+                                    &format!("Failed to get OAuth access token for provider_key_id: {provider_key_id}: {e:?}")
                                 );
-                                self.fallback_to_api_key(provider_key)
+                                Self::fallback_to_api_key(provider_key)
                             }
                         }
                     }
@@ -357,7 +336,7 @@ impl SmartApiKeyProvider {
                             provider_key_id, refresh_result.error_message
                         )
                     );
-                    self.fallback_to_api_key(provider_key)
+                    Self::fallback_to_api_key(provider_key)
                 }
             }
             Err(e) => {
@@ -366,42 +345,35 @@ impl SmartApiKeyProvider {
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "refresh_service_error",
-                    &format!(
-                        "OAuth refresh service error for provider_key_id: {}: {:?}",
-                        provider_key_id, e
-                    )
+                    &format!("OAuth refresh service error for provider_key_id: {provider_key_id}: {e:?}")
                 );
-                self.fallback_to_api_key(provider_key)
+                Self::fallback_to_api_key(provider_key)
             }
         }
     }
 
     /// 降级到使用存储的API密钥
     fn fallback_to_api_key(
-        &self,
         provider_key: &user_provider_keys::Model,
     ) -> Result<CredentialResult> {
-        if !provider_key.api_key.is_empty() {
+        if provider_key.api_key.is_empty() {
+            Err(crate::proxy_err!(
+                auth,
+                "OAuth token refresh failed and no fallback API key available"
+            ))
+        } else {
             lwarn!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "fallback_to_api_key",
-                &format!(
-                    "Falling back to stored api_key for provider_key_id: {}",
-                    provider_key.id
-                )
+                &format!("Falling back to stored api_key for provider_key_id: {}", provider_key.id)
             );
             Ok(CredentialResult {
                 credential: provider_key.api_key.clone(),
                 auth_type: AuthCredentialType::ApiKey,
                 refreshed: false,
             })
-        } else {
-            Err(crate::proxy_err!(
-                auth,
-                "OAuth token refresh failed and no fallback API key available"
-            ))
         }
     }
 
@@ -410,9 +382,7 @@ impl SmartApiKeyProvider {
         &self,
         provider_key_id: i32,
     ) -> Result<Option<CachedCredential>> {
-        let cache = self.credential_cache.read().await;
-
-        if let Some(cached) = cache.get(&provider_key_id) {
+        if let Some(cached) = self.credential_cache.read().await.get(&provider_key_id) {
             // 检查缓存是否过期
             match &cached.auth_type {
                 AuthCredentialType::ApiKey => {
@@ -435,10 +405,7 @@ impl SmartApiKeyProvider {
                             LogStage::Cache,
                             LogComponent::Auth,
                             "token_expired",
-                            &format!(
-                                "Cached OAuth token expired or expiring soon for provider_key_id: {}",
-                                provider_key_id
-                            )
+                            &format!("Cached OAuth token expired or expiring soon for provider_key_id: {provider_key_id}")
                         );
                     }
                 }
@@ -461,7 +428,7 @@ impl SmartApiKeyProvider {
             .one(&*self.db)
             .await
             .map_err(|e| {
-                ProxyError::database_with_source(format!("Failed to load provider key: {:?}", e), e)
+                ProxyError::database_with_source(format!("Failed to load provider key: {e:?}"), e)
             })?
             .ok_or_else(|| {
                 crate::proxy_err!(
@@ -473,7 +440,7 @@ impl SmartApiKeyProvider {
     }
 
     /// 获取token过期时间
-    async fn get_token_expiry_time(&self, _session_id: &str) -> Option<DateTime<Utc>> {
+    const fn get_token_expiry_time(_session_id: &str) -> Option<DateTime<Utc>> {
         // 从oauth_client_sessions表查询expires_at
         // TODO: 这里需要根据实际的oauth_client_sessions entity来实现
         // 暂时返回None，后续完善
@@ -514,56 +481,9 @@ impl SmartApiKeyProvider {
                 LogStage::Cache,
                 LogComponent::Auth,
                 "invalidate_cache",
-                &format!("Invalidated cache for provider_key_id: {}", provider_key_id)
+                &format!("Invalidated cache for provider_key_id: {provider_key_id}")
             );
         }
-    }
-
-    /// 清除所有缓存
-    pub async fn clear_all_cache(&self) {
-        let mut cache = self.credential_cache.write().await;
-        let count = cache.len();
-        cache.clear();
-        ldebug!(
-            "system",
-            LogStage::Cache,
-            LogComponent::Auth,
-            "clear_cache",
-            &format!("Cleared all cached credentials, count: {}", count)
-        );
-    }
-
-    /// 获取缓存统计信息
-    pub async fn get_cache_stats(&self) -> HashMap<String, u64> {
-        let cache = self.credential_cache.read().await;
-        let mut stats = HashMap::new();
-
-        stats.insert("total_cached".to_string(), cache.len() as u64);
-
-        let mut api_key_count = 0;
-        let mut oauth_token_count = 0;
-        let mut expired_count = 0;
-
-        let now = Utc::now();
-        for cached in cache.values() {
-            match &cached.auth_type {
-                AuthCredentialType::ApiKey => api_key_count += 1,
-                AuthCredentialType::OAuthToken { .. } => {
-                    oauth_token_count += 1;
-                    if let Some(expires_at) = cached.expires_at {
-                        if now >= expires_at {
-                            expired_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        stats.insert("api_key_cached".to_string(), api_key_count);
-        stats.insert("oauth_token_cached".to_string(), oauth_token_count);
-        stats.insert("expired_cached".to_string(), expired_count);
-
-        stats
     }
 }
 

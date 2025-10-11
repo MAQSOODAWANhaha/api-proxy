@@ -1,7 +1,7 @@
 //! # OAuth Token刷新后台任务
 //!
 //! 提供定期执行的后台任务，实现OAuth token的主动刷新策略：
-//! - 定期扫描即将过期的OAuth token并提前刷新
+//! - `定期扫描即将过期的OAuth` token并提前刷新
 //! - 支持灵活的调度策略（固定间隔、cron表达式等）
 //! - 监控和统计刷新任务的执行情况
 //! - 提供任务控制接口（启动、停止、暂停）
@@ -50,7 +50,7 @@ pub struct OAuthTokenRefreshTask {
 }
 
 /// 任务状态
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskState {
     /// 未启动
     NotStarted,
@@ -94,7 +94,8 @@ enum RefreshCommand {
 }
 
 impl OAuthTokenRefreshTask {
-    /// 创建新的OAuth Token刷新后台任务
+    /// `创建新的OAuth` Token刷新后台任务
+    #[must_use]
     pub fn new(refresh_service: Arc<OAuthTokenRefreshService>) -> Self {
         let (control_sender, _) = broadcast::channel(10);
 
@@ -124,7 +125,7 @@ impl OAuthTokenRefreshTask {
                     LogStage::Startup,
                     LogComponent::OAuth,
                     "init_schedule_fail",
-                    &format!("Failed to initialize OAuth token refresh schedule: {:?}", e)
+                    &format!("Failed to initialize OAuth token refresh schedule: {e:?}")
                 );
                 Vec::new()
             }
@@ -132,12 +133,12 @@ impl OAuthTokenRefreshTask {
 
         // 启动任务
         *state = TaskState::Running;
+        drop(state);
 
         // 启动任务循环
         let (command_sender, command_receiver) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
         let task_handle = self
-            .spawn_task_loop(initial_schedule, command_receiver)
-            .await;
+            .spawn_task_loop(initial_schedule, command_receiver);
         *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
@@ -164,12 +165,14 @@ impl OAuthTokenRefreshTask {
         let _ = self.control_sender.send(TaskControl::Stop);
 
         // 等待任务结束
-        if let Some(handle) = self.task_handle.write().await.take() {
+        let handle = self.task_handle.write().await.take();
+        if let Some(handle) = handle {
             let _ = handle.await;
         }
 
         *self.command_sender.write().await = None;
         *state = TaskState::Stopped;
+        drop(state);
         linfo!(
             "system",
             LogStage::Shutdown,
@@ -189,6 +192,7 @@ impl OAuthTokenRefreshTask {
         }
 
         *state = TaskState::Paused;
+        drop(state);
         let _ = self.control_sender.send(TaskControl::Pause);
 
         linfo!(
@@ -210,6 +214,7 @@ impl OAuthTokenRefreshTask {
         }
 
         *state = TaskState::Running;
+        drop(state);
         let _ = self.control_sender.send(TaskControl::Resume);
 
         linfo!(
@@ -223,7 +228,7 @@ impl OAuthTokenRefreshTask {
     }
 
     /// 立即执行一次刷新
-    pub async fn execute_now(&self) -> Result<()> {
+    pub fn execute_now(&self) -> Result<()> {
         let _ = self.control_sender.send(TaskControl::ExecuteNow);
         linfo!(
             "system",
@@ -255,7 +260,7 @@ impl OAuthTokenRefreshTask {
         sender
             .send(RefreshCommand::Add(schedule))
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to enqueue refresh schedule: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Failed to enqueue refresh schedule: {e}")))
     }
 
     /// 注册会话刷新（计算计划并入队）
@@ -277,7 +282,7 @@ impl OAuthTokenRefreshTask {
         sender
             .send(RefreshCommand::Remove(session_id.to_string()))
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to remove refresh schedule: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Failed to remove refresh schedule: {e}")))
     }
 
     /// 获取任务状态
@@ -291,7 +296,8 @@ impl OAuthTokenRefreshTask {
     }
 
     /// 生成任务循环
-    async fn spawn_task_loop(
+    #[allow(clippy::too_many_lines)]
+    fn spawn_task_loop(
         &self,
         initial_schedule: Vec<ScheduledTokenRefresh>,
         command_receiver: mpsc::Receiver<RefreshCommand>,
@@ -312,7 +318,7 @@ impl OAuthTokenRefreshTask {
                     &mut queue,
                     &mut session_keys,
                     &mut session_schedules,
-                    entry,
+                    &entry,
                 );
             }
 
@@ -344,7 +350,7 @@ impl OAuthTokenRefreshTask {
                                             &mut queue,
                                             &mut session_keys,
                                             &mut session_schedules,
-                                            schedule,
+                                            &schedule,
                                         );
                                     }
                                     continue;
@@ -377,8 +383,7 @@ impl OAuthTokenRefreshTask {
                                     lwarn!("system", LogStage::BackgroundTask, LogComponent::OAuth, "too_many_errors", "Too many consecutive errors, pausing task");
                                     *task_state.write().await =
                                         TaskState::Error(format!(
-                                            "Too many consecutive errors: {}",
-                                            consecutive_errors
+                                            "Too many consecutive errors: {consecutive_errors}"
                                         ));
                                 }
                             }
@@ -394,7 +399,7 @@ impl OAuthTokenRefreshTask {
                                     .await;
                                 let had_error = rescan_result.is_err();
                                 if let Err(e) = rescan_result {
-                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "resync_failed", &format!("Failed to resync OAuth refresh schedule: {:?}", e));
+                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "resync_failed", &format!("Failed to resync OAuth refresh schedule: {e:?}"));
                                 }
 
                                 Self::schedule_rescan(&mut queue, &mut rescan_key);
@@ -412,8 +417,7 @@ impl OAuthTokenRefreshTask {
                                     lwarn!("system", LogStage::BackgroundTask, LogComponent::OAuth, "too_many_errors", "Too many consecutive errors, pausing task");
                                     *task_state.write().await =
                                         TaskState::Error(format!(
-                                            "Too many consecutive errors: {}",
-                                            consecutive_errors
+                                            "Too many consecutive errors: {consecutive_errors}"
                                         ));
                                 }
                             }
@@ -427,16 +431,16 @@ impl OAuthTokenRefreshTask {
                                     &mut queue,
                                     &mut session_keys,
                                     &mut session_schedules,
-                                    schedule,
+                                    &schedule,
                                 );
-                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_scheduled", &format!("Scheduled OAuth session {} for refresh", session_id));
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_scheduled", &format!("Scheduled OAuth session {session_id} for refresh"));
                             }
                             Some(RefreshCommand::Remove(session_id)) => {
                                 if let Some(key) = session_keys.remove(&session_id) {
                                     let _ = queue.remove(&key);
                                 }
                                 session_schedules.remove(&session_id);
-                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_removed", &format!("Removed OAuth session {} from refresh queue", session_id));
+                                ldebug!("system", LogStage::BackgroundTask, LogComponent::OAuth, "session_removed", &format!("Removed OAuth session {session_id} from refresh queue"));
                             }
                             None => {
                                 // 命令通道已关闭，继续处理现有队列
@@ -465,7 +469,7 @@ impl OAuthTokenRefreshTask {
                                     &mut session_schedules,
                                 )
                                 .await {
-                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "rescan_failed", &format!("Immediate rescan failed: {:?}", e));
+                                    lerror!("system", LogStage::BackgroundTask, LogComponent::OAuth, "rescan_failed", &format!("Immediate rescan failed: {e:?}"));
                                 }
                                 Self::schedule_rescan(&mut queue, &mut rescan_key);
                                 consecutive_errors = 0;
@@ -500,7 +504,7 @@ impl OAuthTokenRefreshTask {
     }
 
     fn schedule_rescan(queue: &mut DelayQueue<RefreshQueueItem>, rescan_key: &mut Option<Key>) {
-        let next_rescan_at = Utc::now() + Duration::seconds(FALLBACK_RESCAN_INTERVAL_SECS as i64);
+        let next_rescan_at = Utc::now() + Duration::seconds(i64::try_from(FALLBACK_RESCAN_INTERVAL_SECS).unwrap_or(i64::MAX));
         let delay = Self::duration_until(next_rescan_at);
         if let Some(key) = rescan_key.as_ref() {
             queue.reset(key, delay);
@@ -514,12 +518,12 @@ impl OAuthTokenRefreshTask {
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
         session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
-        entry: ScheduledTokenRefresh,
+        entry: &ScheduledTokenRefresh,
     ) {
         let delay = Self::duration_until(entry.next_refresh_at);
         let session_id = entry.session_id.clone();
         session_schedules.insert(session_id.clone(), entry.clone());
-        if let Some(existing_key) = session_keys.get(&session_id).cloned() {
+        if let Some(existing_key) = session_keys.get(&session_id).copied() {
             queue.reset(&existing_key, delay);
             session_keys.insert(session_id, existing_key);
         } else {
@@ -540,7 +544,7 @@ impl OAuthTokenRefreshTask {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_failed",
-                &format!("Failed to cleanup stale OAuth sessions: {:?}", err)
+                &format!("Failed to cleanup stale OAuth sessions: {err:?}")
             );
         }
 
@@ -551,7 +555,7 @@ impl OAuthTokenRefreshTask {
             let session_id = session.session_id.clone();
             active_ids.insert(session_id.clone());
             if let Some(schedule) = refresh_service.build_schedule_for_session(&session) {
-                Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
             } else if let Some(key) = session_keys.remove(&session_id) {
                 queue.remove(&key);
                 session_schedules.remove(&session_id);
@@ -598,8 +602,7 @@ impl OAuthTokenRefreshTask {
                     LogComponent::OAuth,
                     "refresh_failed",
                     &format!(
-                        "Failed to refresh token for session {}: {:?}",
-                        session_id, e
+                        "Failed to refresh token for session {session_id}: {e:?}"
                     )
                 );
                 let failure = TokenRefreshResult {
@@ -651,7 +654,7 @@ impl OAuthTokenRefreshTask {
             .await
         {
             Ok(Some(schedule)) => {
-                Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
             }
             Ok(None) => {
                 session_keys.remove(session_id);
@@ -664,27 +667,26 @@ impl OAuthTokenRefreshTask {
                     LogComponent::OAuth,
                     "next_refresh_fail",
                     &format!(
-                        "Failed to determine next refresh for session {}: {:?}",
-                        session_id, e
+                        "Failed to determine next refresh for session {session_id}: {e:?}"
                     )
                 );
                 if result.should_retry {
                     let retry_at = Utc::now()
-                        + Duration::seconds(refresh_service.retry_interval_seconds() as i64);
+                        + Duration::seconds(i64::try_from(OAuthTokenRefreshService::retry_interval_seconds()).unwrap_or(i64::MAX));
                     let schedule = ScheduledTokenRefresh {
                         session_id: session_id.to_string(),
                         next_refresh_at: retry_at,
                         expires_at: retry_at,
                     };
-                    Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                    Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
                 } else {
-                    let retry_at = Utc::now() + Duration::seconds(ERROR_RETRY_INTERVAL_SECS as i64);
+                    let retry_at = Utc::now() + Duration::seconds(i64::try_from(ERROR_RETRY_INTERVAL_SECS).unwrap_or(i64::MAX));
                     let schedule = ScheduledTokenRefresh {
                         session_id: session_id.to_string(),
                         next_refresh_at: retry_at,
                         expires_at: retry_at,
                     };
-                    Self::insert_or_update_entry(queue, session_keys, session_schedules, schedule);
+                    Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
                 }
             }
         }

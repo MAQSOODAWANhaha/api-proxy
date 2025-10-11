@@ -26,12 +26,12 @@ use sea_orm::DatabaseConnection;
 ///
 /// 职责：
 /// - 提供向后兼容的API接口
-/// - 委托给核心AuthService处理认证逻辑
-/// - 管理OAuth会话
+/// - `委托给核心AuthService处理认证逻辑`
+/// - `管理OAuth会话`
 pub struct AuthManager {
     /// 核心认证服务
     auth_service: Arc<AuthService>,
-    /// OAuth会话管理器
+    /// `OAuth会话管理器`
     // oauth_session_manager: Arc<OAuthSessionManager>, // 已删除，使用oauth_client替代
     /// 认证配置
     config: Arc<AuthConfig>,
@@ -56,7 +56,7 @@ pub struct AuthRequest {
 
 impl AuthManager {
     /// 创建重构后的统一认证管理器
-    pub async fn new(
+    pub fn new(
         auth_service: Arc<AuthService>,
         config: Arc<AuthConfig>,
         _db: Arc<DatabaseConnection>,
@@ -73,7 +73,7 @@ impl AuthManager {
 
     /// 统一认证接口（保持向后兼容）
     ///
-    /// 现在委托给核心AuthService处理认证逻辑
+    /// `现在委托给核心AuthService处理认证逻辑`
     pub async fn authenticate(&self, request: AuthRequest) -> Result<AuthResult> {
         ldebug!(
             "system",
@@ -101,8 +101,8 @@ impl AuthManager {
         }
 
         // 检查是否为公开路径
-        if self.is_public_path(&request.path) {
-            return Ok(self.create_anonymous_auth_result());
+        if Self::is_public_path(&request.path) {
+            return Ok(Self::create_anonymous_auth_result());
         }
 
         Err(crate::proxy_err!(auth, "缺少认证凭据"))
@@ -114,7 +114,7 @@ impl AuthManager {
         auth_header: &str,
         request: &AuthRequest,
     ) -> Result<AuthResult> {
-        let mut context = self.create_auth_context(request);
+        let mut context = Self::create_auth_context(request);
 
         // 直接使用AuthService进行认证
         self.auth_service
@@ -124,29 +124,29 @@ impl AuthManager {
 
     /// API Key认证（重构版本）
     ///
-    /// 统一使用AuthService处理API密钥认证
+    /// `统一使用AuthService处理API密钥认证`
     async fn authenticate_api_key(
         &self,
         api_key: &str,
         request: &AuthRequest,
     ) -> Result<AuthResult> {
-        let auth_header = format!("ApiKey {}", api_key);
-        let mut context = self.create_auth_context(request);
+        let auth_header = format!("ApiKey {api_key}");
+        let mut context = Self::create_auth_context(request);
         self.auth_service
             .authenticate(&auth_header, &mut context)
             .await
     }
 
     /// 创建认证上下文
-    fn create_auth_context(&self, request: &AuthRequest) -> AuthContext {
+    fn create_auth_context(request: &AuthRequest) -> AuthContext {
         let mut context = AuthContext::new(request.path.clone(), request.method.clone());
-        context.client_ip = request.client_ip.clone();
-        context.user_agent = request.user_agent.clone();
+        context.client_ip.clone_from(&request.client_ip);
+        context.user_agent.clone_from(&request.user_agent);
         context
     }
 
     /// 检查是否为公开路径
-    fn is_public_path(&self, path: &str) -> bool {
+    fn is_public_path(path: &str) -> bool {
         let public_patterns = ["/health", "/metrics", "/api/health", "/api/version"];
         public_patterns
             .iter()
@@ -154,12 +154,12 @@ impl AuthManager {
     }
 
     /// 创建匿名认证结果
-    fn create_anonymous_auth_result(&self) -> AuthResult {
+    fn create_anonymous_auth_result() -> AuthResult {
         AuthResult {
             user_id: 0,
             username: "anonymous".to_string(),
             is_admin: false,
-            permissions: vec![],
+            role: crate::auth::permissions::UserRole::RegularUser,
             auth_method: AuthMethod::Internal,
             token_preview: "anonymous".to_string(),
             token_info: None,
@@ -187,12 +187,13 @@ impl AuthManager {
     }
 
     /// 验证代理端API密钥格式（保持向后兼容）
+    #[must_use]
     pub fn validate_proxy_api_key_format(&self, api_key: &str) -> bool {
         crate::auth::AuthUtils::is_valid_api_key_format(api_key)
     }
 
     /// 清理代理端API密钥缓存（保持向后兼容）
-    pub async fn invalidate_proxy_cache(&self, _api_key: &str) -> Result<()> {
+    pub const fn invalidate_proxy_cache(&self, _api_key: &str) -> Result<()> {
         // 简化：缓存清理现在由AuthService内部管理
         Ok(())
     }
@@ -205,7 +206,7 @@ impl AuthManager {
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "blacklist_fail",
-                &format!("Failed to blacklist token: {}", e)
+                &format!("Failed to blacklist token: {e}")
             );
         }
     }
@@ -244,7 +245,7 @@ impl AuthManager {
     // === OAuth相关方法（保持向后兼容） ===
 
     /// 多认证接口
-    pub async fn multi_authenticate(
+    pub fn multi_authenticate(
         &self,
         auth_type: &AuthType,
         _credentials: &Value,
@@ -286,7 +287,7 @@ impl AuthManager {
     //     self.oauth_session_manager.complete_session(request).await
     // }
 
-    /// 获取OAuth认证URL
+    /// `获取OAuth认证URL`
     pub fn get_oauth_auth_url(
         &self,
         _auth_type: &AuthType,
@@ -298,7 +299,7 @@ impl AuthManager {
         Err(crate::proxy_err!(internal, "OAuth URL生成需要专门实现"))
     }
 
-    /// 处理OAuth回调
+    /// `处理OAuth回调`
     pub fn handle_oauth_callback(
         &self,
         _auth_type: &AuthType,
@@ -341,13 +342,13 @@ impl AuthManager {
 }
 
 /// 便捷的工厂函数，用于创建统一认证管理器（AuthManager）
-pub async fn create_auth_manager(
+pub fn create_auth_manager(
     auth_service: Arc<AuthService>,
     config: Arc<AuthConfig>,
     db: Arc<DatabaseConnection>,
     cache_manager: Arc<CacheManager>,
 ) -> Result<AuthManager> {
-    AuthManager::new(auth_service, config, db, cache_manager).await
+    AuthManager::new(auth_service, config, db, cache_manager)
 }
 
 #[cfg(test)]

@@ -1,7 +1,10 @@
-//! # OAuth提供商配置管理
+//! # `OAuth提供商配置管理`
 //!
 //! 管理公共OAuth配置，包括Google/Gemini、Claude、OpenAI等服务商的公共客户端凭据
 //! 实现动态配置加载、授权URL生成和PKCE参数管理
+
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::doc_markdown)]
 
 use super::{OAuthError, OAuthProviderConfig, OAuthResult};
 use crate::ldebug;
@@ -13,16 +16,17 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use url::Url;
 
-/// OAuth提供商管理器
+/// `OAuth提供商管理器`
 #[derive(Debug, Clone)]
 pub struct OAuthProviderManager {
-    db: DatabaseConnection,
+    db: std::sync::Arc<DatabaseConnection>,
     cache: std::sync::Arc<std::sync::RwLock<HashMap<String, OAuthProviderConfig>>>,
 }
 
 impl OAuthProviderManager {
     /// 创建新的提供商管理器
-    pub fn new(db: DatabaseConnection) -> Self {
+    #[must_use]
+    pub fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {
         Self {
             db,
             cache: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -30,6 +34,7 @@ impl OAuthProviderManager {
     }
 
     /// 获取提供商配置
+    #[allow(clippy::cognitive_complexity)]
     pub async fn get_config(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
         ldebug!(
             "system",
@@ -89,7 +94,7 @@ impl OAuthProviderManager {
     pub async fn list_active_configs(&self) -> OAuthResult<Vec<OAuthProviderConfig>> {
         let models = ProviderTypes::find()
             .filter(provider_types::Column::IsActive.eq(true))
-            .all(&self.db)
+            .all(self.db.as_ref())
             .await?;
 
         let mut configs = Vec::new();
@@ -98,7 +103,7 @@ impl OAuthProviderManager {
             let oauth_types = model.get_oauth_types();
             for oauth_type in oauth_types {
                 if let Ok(Some(oauth_config)) = model.get_oauth_config(&oauth_type) {
-                    let config = self.oauth_model_to_config(&model, &oauth_type, oauth_config)?;
+                    let config = Self::oauth_model_to_config(&model, &oauth_type, oauth_config);
                     configs.push(config);
                 }
             }
@@ -107,7 +112,9 @@ impl OAuthProviderManager {
         Ok(configs)
     }
 
-    /// 构建授权URL
+    /// `构建授权URL`
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::map_unwrap_or)]
     pub fn build_authorize_url(
         &self,
         config: &OAuthProviderConfig,
@@ -140,7 +147,7 @@ impl OAuthProviderManager {
         let response_type = config
             .extra_params
             .get("response_type")
-            .map(|s| s.as_str())
+            .map(String::as_str)
             .unwrap_or("code");
         params.push(("response_type", response_type));
 
@@ -211,6 +218,7 @@ impl OAuthProviderManager {
     }
 
     /// 刷新缓存
+    #[allow(clippy::significant_drop_tightening)]
     pub async fn refresh_cache(&self) -> OAuthResult<()> {
         let configs = self.list_active_configs().await?;
         let mut cache = self
@@ -226,7 +234,7 @@ impl OAuthProviderManager {
         Ok(())
     }
 
-    /// 验证提供商是否支持OAuth
+    /// `验证提供商是否支持OAuth`
     pub async fn is_oauth_supported(&self, provider_name: &str) -> OAuthResult<bool> {
         match self.get_config(provider_name).await {
             Ok(_) => Ok(true),
@@ -263,21 +271,21 @@ impl OAuthProviderManager {
         let model = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(base_provider))
             .filter(provider_types::Column::IsActive.eq(true))
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await?;
 
         match model {
             Some(model) => {
                 // 先尝试指定的OAuth类型
                 if let Ok(Some(oauth_config)) = model.get_oauth_config(oauth_type) {
-                    return self.oauth_model_to_config(&model, oauth_type, oauth_config);
+                    return Ok(Self::oauth_model_to_config(&model, oauth_type, oauth_config));
                 }
 
                 // 如果指定类型不存在，尝试其他OAuth类型
                 let oauth_types = model.get_oauth_types();
                 for available_type in oauth_types {
                     if let Ok(Some(oauth_config)) = model.get_oauth_config(&available_type) {
-                        return self.oauth_model_to_config(&model, &available_type, oauth_config);
+                        return Ok(Self::oauth_model_to_config(&model, &available_type, oauth_config));
                     }
                 }
 
@@ -297,18 +305,17 @@ impl OAuthProviderManager {
         }
     }
 
-    /// 将OAuth配置转换为OAuthProviderConfig
+    /// `将OAuth配置转换为OAuthProviderConfig`
     fn oauth_model_to_config(
-        &self,
         model: &provider_types::Model,
         oauth_type: &str,
         oauth_config: entity::provider_types::OAuthConfig,
-    ) -> OAuthResult<OAuthProviderConfig> {
+    ) -> OAuthProviderConfig {
         // 解析作用域
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(str::to_string)
             .collect();
 
         // 构建额外参数 - 完全数据库驱动
@@ -339,7 +346,7 @@ impl OAuthProviderManager {
         }
 
         // 创建最终配置对象
-        Ok(OAuthProviderConfig {
+        OAuthProviderConfig {
             provider_name: format!("{}:{}", model.name, oauth_type),
             client_id: oauth_config.client_id,
             client_secret: oauth_config.client_secret,
@@ -349,12 +356,12 @@ impl OAuthProviderManager {
             scopes,
             pkce_required: oauth_config.pkce_required,
             extra_params,
-        })
+        }
     }
 
     /// 保留原有的build_extra_params方法用于向后兼容
     /// 现在从数据库配置中读取，而不是硬编码
-    fn build_extra_params(&self, config: &OAuthProviderConfig) -> HashMap<String, String> {
+    fn build_extra_params(config: &OAuthProviderConfig) -> HashMap<String, String> {
         // 直接从配置中返回 extra_params，实现数据库驱动
         config.extra_params.clone()
     }
@@ -368,6 +375,7 @@ pub struct ProviderConfigBuilder {
 
 impl ProviderConfigBuilder {
     /// 创建新的配置构建器
+    #[must_use]
     pub fn new(provider_name: &str) -> Self {
         Self {
             provider_name: provider_name.to_string(),
@@ -386,48 +394,57 @@ impl ProviderConfigBuilder {
     }
 
     /// 设置客户端ID
+    #[must_use]
     pub fn client_id(mut self, client_id: &str) -> Self {
         self.config.client_id = client_id.to_string();
         self
     }
 
     /// 设置客户端密钥
+    #[must_use]
     pub fn client_secret(mut self, client_secret: Option<&str>) -> Self {
-        self.config.client_secret = client_secret.map(|s| s.to_string());
+        self.config.client_secret = client_secret.map(str::to_string);
         self
     }
 
     /// 设置授权URL
+    #[must_use]
     pub fn authorize_url(mut self, authorize_url: &str) -> Self {
         self.config.authorize_url = authorize_url.to_string();
         self
     }
 
     /// 设置令牌URL
+    #[must_use]
     pub fn token_url(mut self, token_url: &str) -> Self {
         self.config.token_url = token_url.to_string();
         self
     }
 
     /// 设置重定向URI
+    #[must_use]
     pub fn redirect_uri(mut self, redirect_uri: &str) -> Self {
         self.config.redirect_uri = redirect_uri.to_string();
         self
     }
 
     /// 设置作用域
+    #[must_use]
     pub fn scopes(mut self, scopes: Vec<&str>) -> Self {
-        self.config.scopes = scopes.into_iter().map(|s| s.to_string()).collect();
+        self.config.scopes = scopes.into_iter().map(str::to_string).collect();
         self
     }
 
     /// 设置是否需要PKCE
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn pkce_required(mut self, required: bool) -> Self {
         self.config.pkce_required = required;
         self
     }
 
     /// 添加额外参数
+    #[must_use]
     pub fn extra_param(mut self, key: &str, value: &str) -> Self {
         self.config
             .extra_params
@@ -436,6 +453,7 @@ impl ProviderConfigBuilder {
     }
 
     /// 构建配置
+    #[must_use]
     pub fn build(self) -> OAuthProviderConfig {
         self.config
     }

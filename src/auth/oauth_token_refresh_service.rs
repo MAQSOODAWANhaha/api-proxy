@@ -1,6 +1,6 @@
 //! # OAuth Token智能刷新服务
 //!
-//! 实现OAuth token的智能刷新逻辑，支持主动和被动两种刷新策略：
+//! `实现OAuth` token的智能刷新逻辑，支持主动和被动两种刷新策略：
 //! - 被动刷新：在获取token时检查过期状态并自动刷新
 //! - 主动刷新：后台定期检查即将过期的token并提前刷新
 
@@ -33,7 +33,7 @@ pub struct OAuthTokenRefreshService {
     db: Arc<DatabaseConnection>,
     oauth_client: Arc<OAuthClient>,
 
-    /// 刷新锁：session_id -> Mutex，防止并发刷新同一个token
+    /// `刷新锁：session_id` -> Mutex，防止并发刷新同一个token
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
 
     /// 刷新统计信息
@@ -102,7 +102,7 @@ pub struct TokenRefreshResult {
 }
 
 /// 刷新类型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshType {
     /// 被动刷新：使用时检查过期并刷新
     Passive,
@@ -111,7 +111,8 @@ pub enum RefreshType {
 }
 
 impl OAuthTokenRefreshService {
-    /// 创建新的OAuth Token智能刷新服务
+    /// `创建新的OAuth` Token智能刷新服务
+    #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, oauth_client: Arc<OAuthClient>) -> Self {
         Self {
             db,
@@ -131,13 +132,14 @@ impl OAuthTokenRefreshService {
             .await
             .map_err(|e| {
                 ProxyError::database_with_source(
-                    format!("Failed to list authorized OAuth sessions: {:?}", e),
+                    format!("Failed to list authorized OAuth sessions: {e:?}"),
                     e,
                 )
             })
     }
 
     /// 清理过期或孤立的 OAuth 会话记录
+    #[allow(clippy::cognitive_complexity)]
     pub async fn cleanup_stale_sessions(&self) -> Result<()> {
         // 删除超时 pending 会话
         let pending_cutoff = Utc::now() - chrono::Duration::minutes(PENDING_EXPIRE_MINUTES);
@@ -261,14 +263,13 @@ impl OAuthTokenRefreshService {
             .await
             .map_err(|e| {
                 ProxyError::database_with_source(
-                    format!("Failed to load OAuth session: {:?}", e),
+                    format!("Failed to load OAuth session: {e:?}"),
                     e,
                 )
             })
     }
 
     fn should_refresh_session(
-        &self,
         session: &oauth_client_sessions::Model,
         now: DateTime<Utc>,
     ) -> bool {
@@ -282,7 +283,6 @@ impl OAuthTokenRefreshService {
     }
 
     fn compute_next_from_expiry(
-        &self,
         expires_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> DateTime<Utc> {
@@ -307,7 +307,6 @@ impl OAuthTokenRefreshService {
     }
 
     fn compute_next_refresh_at(
-        &self,
         session: &oauth_client_sessions::Model,
         now: DateTime<Utc>,
     ) -> Option<DateTime<Utc>> {
@@ -316,16 +315,17 @@ impl OAuthTokenRefreshService {
         }
 
         let expires_at = DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc);
-        Some(self.compute_next_from_expiry(expires_at, now))
+        Some(Self::compute_next_from_expiry(expires_at, now))
     }
 
     /// 基于会话构建下一次刷新计划
+    #[must_use]
     pub fn build_schedule_for_session(
         &self,
         session: &oauth_client_sessions::Model,
     ) -> Option<ScheduledTokenRefresh> {
         let now = Utc::now();
-        self.compute_next_refresh_at(session, now)
+        Self::compute_next_refresh_at(session, now)
             .map(|next| ScheduledTokenRefresh {
                 session_id: session.session_id.clone(),
                 next_refresh_at: next,
@@ -334,6 +334,7 @@ impl OAuthTokenRefreshService {
     }
 
     /// 构建启动时的刷新计划，并针对需要立即刷新的会话进行刷新
+    #[allow(clippy::cognitive_complexity)]
     pub async fn initialize_refresh_schedule(&self) -> Result<Vec<ScheduledTokenRefresh>> {
         if let Err(e) = self.cleanup_stale_sessions().await {
             lwarn!(
@@ -341,10 +342,7 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "cleanup_failed",
-                &format!(
-                    "Failed to cleanup OAuth sessions before scheduling: {:?}",
-                    e
-                )
+                &format!("Failed to cleanup OAuth sessions before scheduling: {e:?}")
             );
         }
 
@@ -354,7 +352,7 @@ impl OAuthTokenRefreshService {
         for mut session in sessions {
             let now = Utc::now();
 
-            if self.should_refresh_session(&session, now) {
+            if Self::should_refresh_session(&session, now) {
                 match self
                     .refresh_token_with_lock(&session.session_id, RefreshType::Active)
                     .await
@@ -381,7 +379,7 @@ impl OAuthTokenRefreshService {
                                 session.session_id, e
                             )
                         );
-                        let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+                        let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
                         schedule.push(ScheduledTokenRefresh {
                             session_id: session.session_id.clone(),
                             next_refresh_at: retry_at,
@@ -395,7 +393,7 @@ impl OAuthTokenRefreshService {
                 }
             }
 
-            if let Some(next) = self.compute_next_refresh_at(&session, now) {
+            if let Some(next) = Self::compute_next_refresh_at(&session, now) {
                 schedule.push(ScheduledTokenRefresh {
                     session_id: session.session_id.clone(),
                     next_refresh_at: next,
@@ -413,26 +411,24 @@ impl OAuthTokenRefreshService {
         session_id: &str,
     ) -> Result<ScheduledTokenRefresh> {
         let mut session = self.load_session(session_id).await?.ok_or_else(|| {
-            ProxyError::authentication(format!("OAuth session not found: {}", session_id))
+            ProxyError::authentication(format!("OAuth session not found: {session_id}"))
         })?;
 
         if session.status != AuthStatus::Authorized.to_string() {
             return Err(ProxyError::authentication(format!(
-                "OAuth session {} is not authorized",
-                session_id
+                "OAuth session {session_id} is not authorized"
             )));
         }
 
         if session.refresh_token.is_none() || session.access_token.is_none() {
             return Err(ProxyError::authentication(format!(
-                "OAuth session {} missing refresh credentials",
-                session_id
+                "OAuth session {session_id} missing refresh credentials"
             )));
         }
 
         let now = Utc::now();
 
-        if self.should_refresh_session(&session, now) {
+        if Self::should_refresh_session(&session, now) {
             match self
                 .refresh_token_with_lock(&session.session_id, RefreshType::Active)
                 .await
@@ -458,7 +454,7 @@ impl OAuthTokenRefreshService {
                             session.session_id, e
                         )
                     );
-                    let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+                    let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
                     return Ok(ScheduledTokenRefresh {
                         session_id: session.session_id.clone(),
                         next_refresh_at: retry_at,
@@ -471,7 +467,7 @@ impl OAuthTokenRefreshService {
             }
         }
 
-        if let Some(next) = self.compute_next_refresh_at(&session, now) {
+        if let Some(next) = Self::compute_next_refresh_at(&session, now) {
             Ok(ScheduledTokenRefresh {
                 session_id: session.session_id.clone(),
                 next_refresh_at: next,
@@ -479,8 +475,7 @@ impl OAuthTokenRefreshService {
             })
         } else {
             Err(ProxyError::business(format!(
-                "Unable to compute refresh schedule for session {}",
-                session_id
+                "Unable to compute refresh schedule for session {session_id}"
             )))
         }
     }
@@ -493,29 +488,26 @@ impl OAuthTokenRefreshService {
     ) -> Result<Option<ScheduledTokenRefresh>> {
         let now = Utc::now();
 
-        if result.success {
-            if let Some(expires_at) = result.new_expires_at {
-                let next = self.compute_next_from_expiry(expires_at, now);
-                return Ok(Some(ScheduledTokenRefresh {
-                    session_id: session_id.to_string(),
-                    next_refresh_at: next,
-                    expires_at,
-                }));
-            }
+        if let Some(expires_at) = result.new_expires_at.filter(|_| result.success) {
+            let next = Self::compute_next_from_expiry(expires_at, now);
+            return Ok(Some(ScheduledTokenRefresh {
+                session_id: session_id.to_string(),
+                next_refresh_at: next,
+                expires_at,
+            }));
         }
 
-        if let Some(session) = self.load_session(session_id).await? {
-            if let Some(next) = self.compute_next_refresh_at(&session, now) {
+        if let Some(session) = self.load_session(session_id).await?
+            && let Some(next) = Self::compute_next_refresh_at(&session, now) {
                 return Ok(Some(ScheduledTokenRefresh {
                     session_id: session.session_id.clone(),
                     next_refresh_at: next,
                     expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
                 }));
             }
-        }
 
         if !result.success && result.should_retry {
-            let retry_at = now + Duration::seconds(RETRY_INTERVAL_SECONDS as i64);
+            let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
             return Ok(Some(ScheduledTokenRefresh {
                 session_id: session_id.to_string(),
                 next_refresh_at: retry_at,
@@ -537,14 +529,14 @@ impl OAuthTokenRefreshService {
 
     /// 被动刷新：检查token是否需要刷新，如果需要则刷新
     ///
-    /// 这个方法通常在SmartApiKeyProvider中使用时调用
+    /// `这个方法通常在SmartApiKeyProvider中使用时调用`
     pub async fn passive_refresh_if_needed(&self, session_id: &str) -> Result<TokenRefreshResult> {
         ldebug!(
             "system",
             LogStage::BackgroundTask,
             LogComponent::OAuth,
             "passive_refresh_check",
-            &format!("Checking passive refresh for session_id: {}", session_id)
+            &format!("Checking passive refresh for session_id: {session_id}")
         );
 
         // 检查是否需要刷新
@@ -554,7 +546,7 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "passive_refresh_not_needed",
-                &format!("Token for session_id {} does not need refresh", session_id)
+                &format!("Token for session_id {session_id} does not need refresh")
             );
             return Ok(TokenRefreshResult {
                 success: true,
@@ -580,12 +572,12 @@ impl OAuthTokenRefreshService {
             .await
             .map_err(|e| {
                 ProxyError::database_with_source(
-                    format!("Failed to find OAuth session: {:?}", e),
+                    format!("Failed to find OAuth session: {e:?}"),
                     e,
                 )
             })?
             .ok_or_else(|| {
-                ProxyError::authentication(format!("OAuth session not found: {}", session_id))
+                ProxyError::authentication(format!("OAuth session not found: {session_id}"))
             })?;
 
         // 检查是否有有效的访问token
@@ -595,13 +587,13 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "no_access_token",
-                &format!("Session {} has no access token", session_id)
+                &format!("Session {session_id} has no access token")
             );
             return Ok(false); // 没有token，无需刷新
         }
 
         let now = Utc::now();
-        let should_refresh = self.should_refresh_session(&session, now);
+        let should_refresh = Self::should_refresh_session(&session, now);
 
         ldebug!(
             "system",
@@ -635,8 +627,7 @@ impl OAuthTokenRefreshService {
                 LogComponent::OAuth,
                 "already_refreshed",
                 &format!(
-                    "Token already refreshed by another thread for session: {}",
-                    session_id
+                    "Token already refreshed by another thread for session: {session_id}"
                 )
             );
             return Ok(TokenRefreshResult {
@@ -667,6 +658,7 @@ impl OAuthTokenRefreshService {
     }
 
     /// 执行实际的token刷新
+    #[allow(clippy::cognitive_complexity)]
     async fn perform_token_refresh(
         &self,
         session_id: &str,
@@ -678,8 +670,7 @@ impl OAuthTokenRefreshService {
             LogComponent::OAuth,
             "perform_token_refresh",
             &format!(
-                "Performing token refresh for session: {}, type: {:?}",
-                session_id, refresh_type
+                "Performing token refresh for session: {session_id}, type: {refresh_type:?}"
             )
         );
 
@@ -691,7 +682,7 @@ impl OAuthTokenRefreshService {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "token_refresh_ok",
-                    &format!("Successfully refreshed token for session: {}", session_id)
+                    &format!("Successfully refreshed token for session: {session_id}")
                 );
 
                 // 获取新的过期时间
@@ -713,7 +704,7 @@ impl OAuthTokenRefreshService {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "no_valid_token_after_refresh",
-                    &format!("No valid access token returned for session: {}", session_id)
+                    &format!("No valid access token returned for session: {session_id}")
                 );
                 Ok(TokenRefreshResult {
                     success: false,
@@ -732,15 +723,14 @@ impl OAuthTokenRefreshService {
                     LogComponent::OAuth,
                     "token_refresh_fail",
                     &format!(
-                        "Failed to refresh token for session {}: {:?}",
-                        session_id, e
+                        "Failed to refresh token for session {session_id}: {e:?}"
                     )
                 );
                 Ok(TokenRefreshResult {
                     success: false,
                     new_access_token: None,
                     new_expires_at: None,
-                    error_message: Some(format!("OAuth client error: {:?}", e)),
+                    error_message: Some(format!("OAuth client error: {e:?}")),
                     should_retry: true,
                     refresh_type,
                 })
@@ -812,7 +802,8 @@ impl OAuthTokenRefreshService {
         self.refresh_stats.read().await.clone()
     }
 
-    pub fn retry_interval_seconds(&self) -> u64 {
+    #[must_use]
+    pub const fn retry_interval_seconds() -> u64 {
         RETRY_INTERVAL_SECONDS
     }
 }
