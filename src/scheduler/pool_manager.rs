@@ -595,18 +595,13 @@ impl ApiKeyPoolManager {
                 let is_locally_healthy =
                     match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
                         Ok(ApiKeyHealthStatus::Healthy) => true,
-                        Ok(ApiKeyHealthStatus::RateLimited) => {
-                            // 检查限流是否已经解除
-                            if let Some(resets_at) = key.rate_limit_resets_at {
+                        Ok(ApiKeyHealthStatus::RateLimited) => key
+                            .rate_limit_resets_at
+                            .map_or(false, |resets_at| {
                                 let now = chrono::Utc::now().naive_utc();
                                 now > resets_at
-                            } else {
-                                // 没有重置时间，保守地认为不健康
-                                false
-                            }
-                        }
-                        Ok(ApiKeyHealthStatus::Unhealthy) => false,
-                        Err(_) => false, // 无法解析的状态都认为不健康
+                            }),
+                        Ok(ApiKeyHealthStatus::Unhealthy) | Err(_) => false,
                     };
 
                 let final_result = is_healthy_by_checker || is_locally_healthy;

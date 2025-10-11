@@ -182,74 +182,6 @@ impl TokenMapping {
     }
 }
 
-/// 数值转换类型
-#[derive(Debug, Clone, PartialEq)]
-pub enum TransformRule {
-    /// 乘法转换
-    Multiply(f64),
-    /// 除法转换
-    Divide(f64),
-    /// 固定值
-    Fixed(Value),
-    /// 无转换
-    None,
-}
-
-impl TransformRule {
-    /// 从字符串解析转换规则
-    #[must_use]
-    pub fn from_str(rule: &str) -> Self {
-        let parts: Vec<&str> = rule.split(':').collect();
-        match parts.as_slice() {
-            ["multiply", value] => {
-                if let Ok(num) = value.parse::<f64>() {
-                    Self::Multiply(num)
-                } else {
-                    Self::None
-                }
-            }
-            ["divide", value] => {
-                if let Ok(num) = value.parse::<f64>() {
-                    Self::Divide(num)
-                } else {
-                    Self::None
-                }
-            }
-            ["fixed", value] => {
-                if let Ok(num) = value.parse::<f64>() {
-                    Self::Fixed(Value::Number(serde_json::Number::from_f64(num).unwrap()))
-                } else {
-                    Self::Fixed(Value::String((*value).to_string()))
-                }
-            }
-            _ => Self::None,
-        }
-    }
-
-    /// 应用转换规则
-    #[must_use]
-    pub fn apply(&self, value: &Value) -> Value {
-        match self {
-            Self::Multiply(factor) => match value {
-                Value::Number(num) => {
-                    let v = num.as_f64().unwrap_or(0.0) * factor;
-                    Value::Number(serde_json::Number::from_f64(v).unwrap())
-                }
-                _ => value.clone(),
-            },
-            Self::Divide(divisor) => match value {
-                Value::Number(num) => {
-                    let v = num.as_f64().unwrap_or(0.0) / divisor;
-                    Value::Number(serde_json::Number::from_f64(v).unwrap())
-                }
-                _ => value.clone(),
-            },
-            Self::Fixed(fixed_val) => fixed_val.clone(),
-            Self::None => value.clone(),
-        }
-    }
-}
-
 /// Token字段映射配置（新格式）
 #[derive(Debug, Clone)]
 pub struct TokenMappingConfig {
@@ -276,94 +208,6 @@ impl TokenMappingConfig {
     }
 }
 
-/// 字段映射配置（来自数据库）
-#[derive(Debug, Clone)]
-pub struct FieldMappingConfig {
-    /// 字段路径映射 `field_name` -> `json_path`
-    pub field_mappings: HashMap<String, String>,
-    /// 默认值配置 `field_name` -> `default_value`  
-    pub default_values: HashMap<String, Value>,
-    /// 转换规则
-    pub transformations: HashMap<String, TransformRule>,
-}
-
-impl FieldMappingConfig {
-    /// 从JSON字符串解析配置
-    pub fn from_json(json_str: &str) -> Result<Self> {
-        let config_value: Value = serde_json::from_str(json_str)?;
-
-        // 解析字段映射
-        let field_mappings = if let Some(mappings) = config_value.get("field_mappings") {
-            mappings
-                .as_object()
-                .unwrap_or(&serde_json::Map::new())
-                .iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        } else {
-            HashMap::new()
-        };
-
-        // 解析默认值
-        let default_values = if let Some(defaults) = config_value.get("default_values") {
-            defaults
-                .as_object()
-                .unwrap_or(&serde_json::Map::new())
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        } else {
-            HashMap::new()
-        };
-
-        // 解析转换规则
-        let transformations = if let Some(transforms) = config_value.get("transformations") {
-            transforms
-                .as_object()
-                .unwrap_or(&serde_json::Map::new())
-                .iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), TransformRule::from_str(s))))
-                .collect()
-        } else {
-            HashMap::new()
-        };
-
-        Ok(Self {
-            field_mappings,
-            default_values,
-            transformations,
-        })
-    }
-
-    /// 转换为JSON字符串
-    pub fn to_json(&self) -> Result<String> {
-        let mut config = serde_json::Map::new();
-
-        // 字段映射
-        let mappings: serde_json::Map<String, Value> = self
-            .field_mappings
-            .iter()
-            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-            .collect();
-        config.insert("field_mappings".to_string(), Value::Object(mappings));
-
-        // 默认值
-        let defaults = serde_json::Map::from_iter(self.default_values.clone());
-        config.insert("default_values".to_string(), Value::Object(defaults));
-
-        // 转换规则
-        let transforms = serde_json::Map::from_iter(
-            self.transformations
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(format!("{v:?}")))),
-        );
-        config.insert("transformations".to_string(), Value::Object(transforms));
-
-        serde_json::to_string_pretty(&Value::Object(config))
-            .map_err(|e| anyhow!("Failed to serialize config: {e}"))
-    }
-}
-
 /// Token字段提取器（新版本）
 #[derive(Debug, Clone)]
 pub struct TokenFieldExtractor {
@@ -377,47 +221,49 @@ impl TokenFieldExtractor {
         Self { config }
     }
 
-    /// 从JSON配置字符串创建
-    pub fn from_json_config(json_str: &str) -> Result<Self> {
-        let config = TokenMappingConfig::from_json(json_str)?;
-        Ok(Self::new(config))
-    }
-
     /// 尝试fallback逻辑
-    fn try_fallback(
-        &self,
-        response: &Value,
-        fallback: &Option<Box<TokenMapping>>,
-    ) -> Option<Value> {
-        if let Some(fallback_mapping) = fallback {
-            ldebug!(
-                "system",
-                LogStage::Internal,
-                LogComponent::Statistics,
-                "fallback_extraction",
-                "Attempting fallback extraction"
-            );
-            self.extract_by_mapping(response, fallback_mapping.as_ref())
-        } else {
-            ldebug!(
-                "system",
-                LogStage::Internal,
-                LogComponent::Statistics,
-                "no_fallback",
-                "No fallback available"
-            );
-            None
-        }
+    fn try_fallback(&self, response: &Value, fallback: Option<&TokenMapping>) -> Option<Value> {
+        fallback.map_or_else(
+            || {
+                ldebug!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "no_fallback",
+                    "No fallback available"
+                );
+                None
+            },
+            |fallback_mapping| {
+                ldebug!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "fallback_extraction",
+                    "Attempting fallback extraction"
+                );
+                self.extract_by_mapping(response, fallback_mapping)
+            },
+        )
     }
 
     /// 提取Token字段值
+    #[must_use]
     pub fn extract_token_field(&self, response: &Value, field_name: &str) -> Option<Value> {
-        if let Some(mapping) = self.config.token_mappings.get(field_name) {
-            self.extract_by_mapping(response, mapping)
-        } else {
-            ldebug!("system", LogStage::Internal, LogComponent::Statistics, "mapping_not_found", "Token field mapping not found", field_name = %field_name);
-            None
-        }
+        self.config.token_mappings.get(field_name).map_or_else(
+            || {
+                ldebug!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::Statistics,
+                    "mapping_not_found",
+                    "Token field mapping not found",
+                    field_name = %field_name
+                );
+                None
+            },
+            |mapping| self.extract_by_mapping(response, mapping),
+        )
     }
 
     /// 提取u32 token值
@@ -425,7 +271,19 @@ impl TokenFieldExtractor {
     pub fn extract_token_u32(&self, response: &Value, field_name: &str) -> Option<u32> {
         self.extract_token_field(response, field_name)
             .and_then(|v| match v {
-                Value::Number(n) => n.as_u64().map(|v| v as u32),
+                Value::Number(n) => n
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .or_else(|| {
+                        n.as_f64().and_then(|f| {
+                            if f >= 0.0 && (f.fract().abs() < f64::EPSILON) {
+                                let rounded = f.round() as u64;
+                                u32::try_from(rounded).ok()
+                            } else {
+                                None
+                            }
+                        })
+                    }),
                 Value::String(s) => s.parse::<u32>().ok(),
                 _ => None,
             })
@@ -434,88 +292,51 @@ impl TokenFieldExtractor {
     fn extract_by_mapping(&self, response: &Value, mapping: &TokenMapping) -> Option<Value> {
         match mapping {
             TokenMapping::Direct { path, fallback } => {
-                let result = self.json_path_lookup(response, path);
-                result.or_else(|| self.try_fallback(response, fallback))
+                let result = json_path_lookup(response, path);
+                result.or_else(|| self.try_fallback(response, fallback.as_deref()))
             }
             TokenMapping::Expression { formula, fallback } => {
-                let result = self.evaluate_expression(response, formula);
-                result.or_else(|| self.try_fallback(response, fallback))
+                let result = Self::evaluate_expression(response, formula);
+                result.or_else(|| self.try_fallback(response, fallback.as_deref()))
             }
-            TokenMapping::Default { value, fallback } => {
-                if let Some(result) = self.try_fallback(response, fallback) {
-                    Some(result)
-                } else {
-                    Some(value.clone())
-                }
-            }
+            TokenMapping::Default { value, fallback } => Some(
+                self.try_fallback(response, fallback.as_deref())
+                    .unwrap_or_else(|| value.clone()),
+            ),
             TokenMapping::Conditional {
                 condition,
                 true_value,
                 false_value,
                 fallback,
             } => {
-                let result = if self.evaluate_condition(response, condition) {
-                    self.json_path_lookup(response, true_value)
+                let result = if Self::evaluate_condition(response, condition) {
+                    json_path_lookup(response, true_value)
                         .or_else(|| Some(Value::String(true_value.clone())))
                 } else {
                     Some(false_value.clone())
                 };
-                result.or_else(|| self.try_fallback(response, fallback))
+                result.or_else(|| self.try_fallback(response, fallback.as_deref()))
             }
             TokenMapping::Fallback { paths, fallback } => {
                 for path in paths {
-                    if let Some(result) = self.json_path_lookup(response, path) {
+                    if let Some(result) = json_path_lookup(response, path) {
                         return Some(result);
                     }
                 }
-                self.try_fallback(response, fallback)
+                self.try_fallback(response, fallback.as_deref())
             }
         }
-    }
-
-    /// 简化版 JSON 路径查询（支持 a.b[0].c）
-    fn json_path_lookup(&self, value: &Value, path: &str) -> Option<Value> {
-        let parts: Vec<&str> = path.split('.').collect();
-        let mut current = value;
-
-        for part in parts {
-            if let Some((field, index)) = Self::parse_index(part) {
-                current = current.get(field)?;
-                current = current.get(index)?;
-            } else if part.chars().all(|c| c.is_ascii_digit()) {
-                // 直接的数字索引，如 data.0.model 中的 "0"
-                let idx = part.parse::<usize>().ok()?;
-                current = current.as_array()?.get(idx)?;
-            } else {
-                current = current.get(part)?;
-            }
-        }
-
-        Some(current.clone())
-    }
-
-    fn parse_index(part: &str) -> Option<(&str, usize)> {
-        if let Some(beg) = part.find('[')
-            && let Some(end) = part.find(']')
-        {
-            let field = &part[..beg];
-            let idx = &part[beg + 1..end];
-            if let Ok(i) = idx.parse::<usize>() {
-                return Some((field, i));
-            }
-        }
-        None
     }
 
     /// 评估简单算术表达式（包含路径替换）
-    fn evaluate_expression(&self, value: &Value, formula: &str) -> Option<Value> {
+    fn evaluate_expression(value: &Value, formula: &str) -> Option<Value> {
         // 替换 {path} 为实际数值
         let re = Regex::new(r"\{([^}]+)\}").ok()?;
         let mut eval_str = formula.to_string();
         for cap in re.captures_iter(formula) {
             if let Some(path) = cap.get(1) {
                 let path_str = path.as_str();
-                if let Some(v) = self.json_path_lookup(value, path_str) {
+                if let Some(v) = json_path_lookup(value, path_str) {
                     let num = match v {
                         Value::Number(n) => n.as_f64().unwrap_or(0.0),
                         Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
@@ -534,32 +355,28 @@ impl TokenFieldExtractor {
                 "+" => sign = 1.0,
                 "-" => sign = -1.0,
                 _ => {
-                    let num = if let Ok(n) = token.parse::<f64>() {
-                        n
-                    } else if let Some(v) = self.json_path_lookup(value, token) {
-                        match v {
-                            Value::Number(n) => n.as_f64().unwrap_or(0.0),
-                            Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
-                            _ => 0.0,
-                        }
-                    } else {
-                        0.0
-                    };
+                    let num = token.parse::<f64>().ok().map_or_else(
+                        || {
+                            json_path_lookup(value, token).map_or(0.0, |v| match v {
+                                Value::Number(n) => n.as_f64().unwrap_or(0.0),
+                                Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+                                _ => 0.0,
+                            })
+                        },
+                        |n| n,
+                    );
                     total += sign * num;
                 }
             }
         }
 
-        let number = if (total.fract()).abs() < f64::EPSILON {
-            serde_json::Number::from(total as i64)
-        } else {
-            serde_json::Number::from_f64(total).unwrap()
-        };
+        let number =
+            serde_json::Number::from_f64(total).unwrap_or_else(|| serde_json::Number::from(0));
         Some(Value::Number(number))
     }
 
     /// 评估条件表达式（非常简化，仅示例用途）
-    fn evaluate_condition(&self, value: &Value, condition: &str) -> bool {
+    fn evaluate_condition(value: &Value, condition: &str) -> bool {
         // 示例："{usage.prompt_tokens} > 0"
         let parts: Vec<&str> = condition.split_whitespace().collect();
         if parts.len() != 3 {
@@ -572,11 +389,7 @@ impl TokenFieldExtractor {
 
         let left_val = if left.starts_with('{') && left.ends_with('}') {
             let path = &left[1..left.len() - 1];
-            if let Some(v) = self.json_path_lookup(value, path) {
-                v.as_f64().unwrap_or(0.0)
-            } else {
-                0.0
-            }
+            json_path_lookup(value, path).map_or(0.0, |v| v.as_f64().unwrap_or(0.0))
         } else {
             left.parse::<f64>().unwrap_or(0.0)
         };
@@ -589,24 +402,6 @@ impl TokenFieldExtractor {
             "==" => (left_val - right_val).abs() < f64::EPSILON,
             _ => false,
         }
-    }
-}
-
-/// 兼容旧版通用字段提取器（可选）
-#[derive(Debug, Clone)]
-pub struct FieldExtractor {
-    config: FieldMappingConfig,
-}
-
-impl FieldExtractor {
-    #[must_use]
-    pub const fn new(config: FieldMappingConfig) -> Self {
-        Self { config }
-    }
-
-    pub fn from_json_config(json_str: &str) -> Result<Self> {
-        let config = FieldMappingConfig::from_json(json_str)?;
-        Ok(Self::new(config))
     }
 }
 
@@ -634,7 +429,8 @@ impl ModelExtractor {
                 let prio = item
                     .get("priority")
                     .and_then(sea_orm::JsonValue::as_i64)
-                    .unwrap_or(0) as i32;
+                    .and_then(|value| i32::try_from(value).ok())
+                    .unwrap_or(0);
                 match r#type {
                     "body_json" => {
                         if let Some(path) = item.get("path").and_then(|x| x.as_str()) {

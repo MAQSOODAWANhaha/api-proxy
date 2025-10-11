@@ -31,13 +31,10 @@ impl ConfigManager {
     /// 创建配置管理器
     pub async fn new() -> crate::error::Result<Self> {
         // 优先使用环境变量指定的配置文件路径
-        let config_file = env::var("API_PROXY_CONFIG_PATH").map_or_else(
-            |_| {
-                let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
-                format!("config/config.{env}.toml")
-            },
-            |path| path,
-        );
+        let config_file = env::var("API_PROXY_CONFIG_PATH").unwrap_or_else(|_| {
+            let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
+            format!("config/config.{env}.toml")
+        });
 
         Self::from_file(Path::new(&config_file)).await
     }

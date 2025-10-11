@@ -307,21 +307,11 @@ impl ProxyError {
         match self {
             Self::ConnectionTimeout {
                 timeout_seconds, ..
-            } => (
-                status,
-                format!(
-                    "{{\"error\":\"{self}\",\"code\":\"{code}\",\"timeout_configured\":{timeout_seconds}}}"
-                ),
-            ),
-            Self::ReadTimeout {
+            }
+            | Self::ReadTimeout {
                 timeout_seconds, ..
-            } => (
-                status,
-                format!(
-                    "{{\"error\":\"{self}\",\"code\":\"{code}\",\"timeout_configured\":{timeout_seconds}}}"
-                ),
-            ),
-            Self::WriteTimeout {
+            }
+            | Self::WriteTimeout {
                 timeout_seconds, ..
             } => (
                 status,
@@ -346,14 +336,18 @@ impl ProxyError {
 
             Self::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
             Self::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
-            Self::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
+            Self::Business { .. } | Self::ManagementBusiness { .. } => {
+                (StatusCode::BAD_REQUEST, "BUSINESS_ERROR")
+            }
             Self::Internal { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
             Self::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
             Self::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
             Self::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
             Self::ServerInit { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR"),
             Self::ServerStart { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR"),
-            Self::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+            Self::Authentication { .. } | Self::ManagementAuth { .. } => {
+                (StatusCode::UNAUTHORIZED, "AUTH_ERROR")
+            }
             Self::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
             Self::UpstreamNotAvailable { .. } => {
                 (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE")
@@ -367,10 +361,8 @@ impl ProxyError {
             Self::HealthCheck { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR"),
             Self::Statistics { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR"),
             Self::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
-            Self::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
             Self::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
             Self::ManagementValidation { .. } => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
-            Self::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
             Self::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
             Self::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
             Self::ManagementRateLimit { .. } => {

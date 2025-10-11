@@ -28,6 +28,15 @@ fn test_array_index_path_extraction() {
         ]
     });
 
+    // Debug: Check individual field extraction
+    let prompt_result = extractor.extract_token_u32(&response, "tokens_prompt");
+    let completion_result = extractor.extract_token_u32(&response, "tokens_completion");
+    let total_result = extractor.extract_token_u32(&response, "tokens_total");
+
+    println!("Prompt result: {prompt_result:?}");
+    println!("Completion result: {completion_result:?}");
+    println!("Total result: {total_result:?}");
+
     assert_eq!(
         extractor.extract_token_u32(&response, "tokens_prompt"),
         Some(15)

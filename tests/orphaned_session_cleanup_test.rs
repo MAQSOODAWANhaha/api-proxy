@@ -1,6 +1,6 @@
-//! # OAuth孤立会话清理集成测试
+//! # `OAuth`孤立会话清理集成测试
 //!
-//! 测试 validate_session_association 方法的孤立会话自动清理功能
+//! 测试 `validate_session_association` 方法的孤立会话自动清理功能
 
 use chrono::{Duration, Utc};
 use migration::{Migrator, MigratorTrait};
@@ -71,7 +71,7 @@ async fn setup_test_data(db: &DatabaseConnection) {
     // 注意：provider_types 数据可能已经在迁移中创建，跳过创建
 }
 
-/// 创建测试用的 OAuth 会话记录
+/// 创建测试用的 `OAuth` 会话记录
 async fn create_test_session(
     db: &DatabaseConnection,
     status: &str,
@@ -107,7 +107,7 @@ async fn create_test_session(
     session.insert(db).await.unwrap()
 }
 
-/// 创建测试用的 user_provider_keys 记录
+/// 创建测试用的 `user_provider_keys` 记录
 async fn create_user_provider_key(
     db: &DatabaseConnection,
     user_id: i32,
@@ -215,10 +215,10 @@ async fn test_orphaned_session_cleanup_functionality() {
 
     // 测试3分钟的年轻会话：不应该被删除（因为不足5分钟）
     let young_age = now.signed_duration_since(young_session.created_at);
-    if young_age >= orphaned_threshold {
-        // 这个逻辑不应该执行，因为年轻会话不足5分钟
-        panic!("年轻会话不应该达到5分钟阈值");
-    }
+    assert!(
+        young_age < orphaned_threshold,
+        "年轻会话不应该达到5分钟阈值"
+    );
 
     // 验证正常会话和年轻会话仍然存在
     let remaining_sessions = oauth_client_sessions::Entity::find()
@@ -267,9 +267,7 @@ async fn test_young_session_not_cleaned() {
     let threshold = Duration::minutes(5);
 
     // 年轻会话不足5分钟，不应该被处理
-    if young_age >= threshold {
-        panic!("年轻会话不应该达到5分钟阈值");
-    }
+    assert!(young_age < threshold, "年轻会话不应该达到5分钟阈值");
 
     // 验证会话仍然存在
     let final_count = oauth_client_sessions::Entity::find()

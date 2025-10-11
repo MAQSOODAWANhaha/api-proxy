@@ -28,6 +28,7 @@ pub struct SharedServices {
 }
 
 /// 双端口服务器启动函数
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn run_dual_port_servers() -> Result<()> {
     linfo!(
         "system",
@@ -41,14 +42,15 @@ pub async fn run_dual_port_servers() -> Result<()> {
     let (config, db, shared_services, trace_system) = initialize_shared_services().await?;
 
     // 创建管理服务器配置 - 使用dual_port配置或默认值
-    let (management_host, management_port) = if let Some(dual_port) = &config.dual_port {
-        (
-            dual_port.management.http.host.clone(),
-            dual_port.management.http.port,
-        )
-    } else {
-        ("127.0.0.1".to_string(), 9090)
-    };
+    let (management_host, management_port) = config.dual_port.as_ref().map_or_else(
+        || ("127.0.0.1".to_string(), 9090),
+        |dual_port| {
+            (
+                dual_port.management.http.host.clone(),
+                dual_port.management.http.port,
+            )
+        },
+    );
 
     let management_config = ManagementConfig {
         bind_address: management_host.clone(),
@@ -175,6 +177,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
 }
 
 /// 初始化共享服务资源
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn initialize_shared_services() -> Result<(
     Arc<AppConfig>,
     Arc<DatabaseConnection>,

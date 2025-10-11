@@ -71,6 +71,8 @@ pub struct ProviderConfig {
     pub auth_configs: Option<Vec<MultiAuthConfig>>,
 }
 
+const ACTIVE_PROVIDERS_CACHE_KEY: &str = "active_providers_config";
+
 impl ProviderConfigManager {
     /// 创建新的配置管理器
     pub fn new(db: Arc<DatabaseConnection>, cache: Arc<CacheManager>) -> Self {
@@ -83,39 +85,58 @@ impl ProviderConfigManager {
 
     /// 获取所有活跃的服务商配置
     pub async fn get_active_providers(&self) -> Result<Vec<ProviderConfig>> {
-        let cache_key = "active_providers_config";
-
-        // 尝试从缓存获取
-        if let Ok(Some(cached_configs)) = self
-            .cache
-            .provider()
-            .get::<Vec<ProviderConfig>>(cache_key)
-            .await
-        {
-            ldebug!(
-                "system",
-                LogStage::Cache,
-                LogComponent::Config,
-                "cache_hit",
-                &format!(
-                    "Retrieved {} active providers from cache",
-                    cached_configs.len()
-                )
-            );
-            return Ok(cached_configs);
+        if let Some(cached) = self.get_cached_active_providers().await? {
+            return Ok(cached);
         }
 
-        // 从数据库获取
+        let configs = self.load_active_providers_from_db().await?;
+        self.cache_active_providers(&configs).await;
+
+        Ok(configs)
+    }
+
+    async fn get_cached_active_providers(&self) -> Result<Option<Vec<ProviderConfig>>> {
+        match self
+            .cache
+            .provider()
+            .get::<Vec<ProviderConfig>>(ACTIVE_PROVIDERS_CACHE_KEY)
+            .await
+        {
+            Ok(Some(cached)) => {
+                ldebug!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Config,
+                    "cache_hit",
+                    &format!("Retrieved {} active providers from cache", cached.len())
+                );
+                Ok(Some(cached))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                lwarn!(
+                    "system",
+                    LogStage::Cache,
+                    LogComponent::Config,
+                    "cache_read_fail",
+                    &format!("Failed to read active providers cache: {e}")
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    async fn load_active_providers_from_db(&self) -> Result<Vec<ProviderConfig>> {
         let providers = ProviderTypes::find()
             .filter(provider_types::Column::IsActive.eq(true))
             .all(self.db.as_ref())
             .await
             .map_err(|e| ProxyError::database(format!("Failed to fetch active providers: {e}")))?;
 
-        let mut configs = Vec::new();
+        let mut configs = Vec::with_capacity(providers.len());
         for provider in providers {
-            let provider_name = provider.name.clone(); // 克隆名称用于错误日志
-            match self.parse_provider_config(provider) {
+            let provider_name = provider.name.clone();
+            match Self::parse_provider_config(provider) {
                 Ok(config) => configs.push(config),
                 Err(e) => {
                     lwarn!(
@@ -129,11 +150,26 @@ impl ProviderConfigManager {
             }
         }
 
-        // 缓存结果（缓存5分钟）
+        ldebug!(
+            "system",
+            LogStage::Db,
+            LogComponent::Config,
+            "load_from_db",
+            &format!("Loaded {} active providers from database", configs.len())
+        );
+
+        Ok(configs)
+    }
+
+    async fn cache_active_providers(&self, configs: &Vec<ProviderConfig>) {
         if let Err(e) = self
             .cache
             .provider()
-            .set(cache_key, &configs, Some(Duration::from_secs(300)))
+            .set(
+                ACTIVE_PROVIDERS_CACHE_KEY,
+                configs,
+                Some(Duration::from_secs(300)),
+            )
             .await
         {
             lwarn!(
@@ -144,15 +180,6 @@ impl ProviderConfigManager {
                 &format!("Failed to cache active providers: {e}")
             );
         }
-
-        ldebug!(
-            "system",
-            LogStage::Db,
-            LogComponent::Config,
-            "load_from_db",
-            &format!("Loaded {} active providers from database", configs.len())
-        );
-        Ok(configs)
     }
 
     /// 根据提供商名称解析为ProviderId（整合ProviderResolver功能）
@@ -235,7 +262,7 @@ impl ProviderConfigManager {
             .map_err(|e| ProxyError::database(format!("Failed to fetch provider {name}: {e}")))?;
 
         if let Some(provider) = provider {
-            match self.parse_provider_config(provider) {
+            match Self::parse_provider_config(provider) {
                 Ok(config) => {
                     // 缓存结果（缓存10分钟）
                     if let Err(e) = self
@@ -297,7 +324,7 @@ impl ProviderConfigManager {
                 return Ok(None);
             }
 
-            match self.parse_provider_config(provider) {
+            match Self::parse_provider_config(provider) {
                 Ok(config) => {
                     // 缓存结果（缓存10分钟）
                     if let Err(e) = self
@@ -363,9 +390,9 @@ impl ProviderConfigManager {
     }
 
     /// 解析服务商配置
-    fn parse_provider_config(&self, provider: provider_types::Model) -> Result<ProviderConfig> {
+    fn parse_provider_config(provider: provider_types::Model) -> Result<ProviderConfig> {
         // 解析基础URL，确保正确的格式
-        let base_url = self.normalize_base_url(&provider.base_url);
+        let base_url = Self::normalize_base_url(&provider.base_url);
         let https_url = if base_url.starts_with("http") {
             base_url.clone()
         } else {
@@ -373,7 +400,7 @@ impl ProviderConfigManager {
         };
 
         // 生成upstream地址（hostname:port格式）
-        let upstream_address = self.generate_upstream_address(&base_url)?;
+        let upstream_address = Self::generate_upstream_address(&base_url);
 
         // 解析JSON配置
         let config_json = if let Some(ref json_str) = provider.config_json {
@@ -399,11 +426,11 @@ impl ProviderConfigManager {
 
         // 解析支持的认证类型
         let supported_auth_types =
-            self.parse_supported_auth_types(&provider.supported_auth_types)?;
+            Self::parse_supported_auth_types(&provider.supported_auth_types)?;
 
         // 解析认证配置 - 支持对象映射格式
         let auth_configs = if let Some(ref json_str) = provider.auth_configs_json {
-            match self.parse_auth_configs_from_map(json_str) {
+            match Self::parse_auth_configs_from_map(json_str) {
                 Ok(configs) => Some(configs),
                 Err(e) => {
                     lwarn!(
@@ -448,7 +475,7 @@ impl ProviderConfigManager {
     }
 
     /// 解析对象映射格式的认证配置
-    fn parse_auth_configs_from_map(&self, map_str: &str) -> Result<Vec<MultiAuthConfig>> {
+    fn parse_auth_configs_from_map(map_str: &str) -> Result<Vec<MultiAuthConfig>> {
         let config_map: std::collections::HashMap<String, serde_json::Value> =
             serde_json::from_str(map_str).map_err(|e| {
                 ProxyError::config(format!("Failed to parse auth_configs_map: {e}"))
@@ -485,7 +512,7 @@ impl ProviderConfigManager {
     }
 
     /// 解析支持的认证类型字符串
-    fn parse_supported_auth_types(&self, json_str: &str) -> Result<Vec<AuthType>> {
+    fn parse_supported_auth_types(json_str: &str) -> Result<Vec<AuthType>> {
         let type_strings: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
             ProxyError::config(format!("Failed to parse supported_auth_types: {e}"))
         })?;
@@ -509,7 +536,7 @@ impl ProviderConfigManager {
     }
 
     /// `标准化base_url格式`
-    fn normalize_base_url(&self, url: &str) -> String {
+    fn normalize_base_url(url: &str) -> String {
         let url = url.trim();
 
         // 移除协议前缀
@@ -523,16 +550,16 @@ impl ProviderConfigManager {
     }
 
     /// 生成upstream地址（hostname:port格式）
-    fn generate_upstream_address(&self, base_url: &str) -> Result<String> {
-        let normalized = self.normalize_base_url(base_url);
+    fn generate_upstream_address(base_url: &str) -> String {
+        let normalized = Self::normalize_base_url(base_url);
 
         // 如果已经包含端口，直接返回
         if normalized.contains(':') {
-            return Ok(normalized);
+            return normalized;
         }
 
         // 默认使用443端口（HTTPS）
-        Ok(format!("{normalized}:443"))
+        format!("{normalized}:443")
     }
 
     /// 获取服务商的完整API端点URL
@@ -553,56 +580,36 @@ mod tests {
 
     #[test]
     fn test_normalize_base_url() {
-        use crate::config::CacheConfig;
-
-        let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config).unwrap();
-        let manager =
-            ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
-
         assert_eq!(
-            manager.normalize_base_url("https://api.example.com"),
+            ProviderConfigManager::normalize_base_url("https://api.example.com"),
             "api.example.com"
         );
         assert_eq!(
-            manager.normalize_base_url("http://api.example.com"),
+            ProviderConfigManager::normalize_base_url("http://api.example.com"),
             "api.example.com"
         );
         assert_eq!(
-            manager.normalize_base_url("api.example.com"),
+            ProviderConfigManager::normalize_base_url("api.example.com"),
             "api.example.com"
         );
         assert_eq!(
-            manager.normalize_base_url("api.example.com:8080"),
+            ProviderConfigManager::normalize_base_url("api.example.com:8080"),
             "api.example.com:8080"
         );
     }
 
     #[test]
     fn test_generate_upstream_address() {
-        use crate::config::CacheConfig;
-
-        let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config).unwrap();
-        let manager =
-            ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
-
         assert_eq!(
-            manager
-                .generate_upstream_address("api.example.com")
-                .unwrap(),
+            ProviderConfigManager::generate_upstream_address("api.example.com"),
             "api.example.com:443"
         );
         assert_eq!(
-            manager
-                .generate_upstream_address("api.example.com:8080")
-                .unwrap(),
+            ProviderConfigManager::generate_upstream_address("api.example.com:8080"),
             "api.example.com:8080"
         );
         assert_eq!(
-            manager
-                .generate_upstream_address("https://api.example.com")
-                .unwrap(),
+            ProviderConfigManager::generate_upstream_address("https://api.example.com"),
             "api.example.com:443"
         );
     }
@@ -650,13 +657,6 @@ mod tests {
 
     #[test]
     fn test_parse_auth_configs_from_map() {
-        use crate::config::CacheConfig;
-
-        let cache_config = CacheConfig::default();
-        let cache = CacheManager::new(&cache_config).unwrap();
-        let manager =
-            ProviderConfigManager::new(Arc::new(DatabaseConnection::default()), Arc::new(cache));
-
         // 测试gemini格式的配置
         let gemini_config = r#"{
             "api_key": {},
@@ -666,7 +666,7 @@ mod tests {
             }
         }"#;
 
-        let result = manager.parse_auth_configs_from_map(gemini_config).unwrap();
+        let result = ProviderConfigManager::parse_auth_configs_from_map(gemini_config).unwrap();
         assert_eq!(result.len(), 2);
 
         // 检查包含的认证类型
@@ -689,7 +689,7 @@ mod tests {
             "unknown_type": {}
         }"#;
 
-        let result = manager.parse_auth_configs_from_map(mixed_config).unwrap();
+        let result = ProviderConfigManager::parse_auth_configs_from_map(mixed_config).unwrap();
         assert_eq!(result.len(), 2); // unknown_type 被跳过
 
         // 检查包含的认证类型，不依赖顺序

@@ -56,6 +56,7 @@ async fn main() -> Result<()> {
 }
 
 /// 数据初始化函数
+#[allow(clippy::cognitive_complexity)]
 async fn run_data_initialization() -> anyhow::Result<()> {
     linfo!(
         "system",

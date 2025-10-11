@@ -266,63 +266,6 @@ pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
     )
 }
 
-/// 格式化响应头为人类可读的字符串
-#[must_use]
-pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String {
-    let mut formatted = Vec::new();
-    for (name, value) in &headers.headers {
-        let name_str = name.as_str();
-        let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
-
-        // 对敏感的响应头也进行脱敏处理
-        let masked = match name_str.to_ascii_lowercase().as_str() {
-            "set-cookie" => {
-                // 对set-cookie进行部分脱敏
-                if value_str.len() > 20 {
-                    let parts: Vec<&str> = value_str.split(';').collect();
-                    if let Some(first_part) = parts.first() {
-                        if first_part.contains('=') {
-                            let cookie_parts: Vec<&str> = first_part.split('=').collect();
-                            if let Some(name) = cookie_parts.first() {
-                                let value = &cookie_parts[1..].join("=");
-                                if value.len() > 8 {
-                                    let masked_value = format!(
-                                        "{}...{}",
-                                        &value[..4],
-                                        &value[value.len().saturating_sub(4)..]
-                                    );
-                                    format!(
-                                        "{}: {}={}",
-                                        name,
-                                        masked_value,
-                                        cookie_parts[1..].join("=")
-                                    )
-                                } else {
-                                    format!("{}: ****; {}", name, cookie_parts[1..].join("="))
-                                }
-                            } else {
-                                format!("{name_str}: ****")
-                            }
-                        } else {
-                            format!("{name_str}: ****")
-                        }
-                    } else {
-                        format!("{name_str}: ****")
-                    }
-                } else {
-                    format!("{name_str}: ****")
-                }
-            }
-            _ => format!("{name_str}: {value_str}"),
-        };
-        formatted.push(masked);
-    }
-    formatted.join(
-        "
-  ",
-    )
-}
-
 /// 将请求头转为 JSON 映射（键小写，按字母序）
 /// 注意：按当前仓库约定，此函数不做脱敏。
 pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeMap<String, String> {
@@ -622,7 +565,7 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
     // 如果有传入的日志级别，覆盖默认级别
     let final_config = if let Some(level) = log_level {
         let mut config = config;
-        config.default_level = level.clone();
+        config.default_level.clone_from(level);
         config
     } else {
         config
@@ -712,6 +655,62 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
 pub struct LogFormatValidator;
 
 impl LogFormatValidator {
+    fn log_validation_error(message: &str) {
+        lerror!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Config,
+            "log_validation_fail",
+            message
+        );
+    }
+
+    fn ensure_non_empty(field: &str, value: &str) -> bool {
+        if value.is_empty() {
+            Self::log_validation_error(&format!("日志格式验证失败: {field} 不能为空"));
+            return false;
+        }
+        true
+    }
+
+    fn ensure_valid_stage(stage: LogStage) -> bool {
+        if matches!(
+            stage,
+            LogStage::RequestStart
+                | LogStage::Authentication
+                | LogStage::RequestModify
+                | LogStage::UpstreamRequest
+                | LogStage::Response
+                | LogStage::ResponseFailure
+                | LogStage::Error
+        ) {
+            true
+        } else {
+            Self::log_validation_error(&format!("日志格式验证失败: 非法阶段 {stage:?}"));
+            false
+        }
+    }
+
+    fn ensure_valid_component(component: LogComponent) -> bool {
+        if matches!(
+            component,
+            LogComponent::Proxy
+                | LogComponent::Auth
+                | LogComponent::Tracing
+                | LogComponent::Upstream
+                | LogComponent::Builder
+                | LogComponent::GeminiStrategy
+                | LogComponent::Database
+        ) {
+            true
+        } else {
+            Self::log_validation_error(&format!(
+                "日志格式验证失败: 非法组件 {component:?}"
+            ));
+            false
+        }
+    }
+
     /// 验证日志格式是否符合统一标准
     ///
     /// 检查点：
@@ -727,66 +726,11 @@ impl LogFormatValidator {
         operation: &str,
         description: &str,
     ) -> bool {
-        // 检查 request_id 非空
-        if request_id.is_empty() {
-            lerror!(
-                "system",
-                LogStage::Internal,
-                LogComponent::Config,
-                "log_validation_fail",
-                "日志格式验证失败: request_id 不能为空"
-            );
-            return false;
-        }
-
-        // 检查 operation 非空
-        if operation.is_empty() {
-            lerror!(
-                "system",
-                LogStage::Internal,
-                LogComponent::Config,
-                "log_validation_fail",
-                "日志格式验证失败: operation 不能为空"
-            );
-            return false;
-        }
-
-        // 检查 description 非空
-        if description.is_empty() {
-            lerror!(
-                "system",
-                LogStage::Internal,
-                LogComponent::Config,
-                "log_validation_fail",
-                "日志格式验证失败: description 不能为空"
-            );
-            return false;
-        }
-
-        // 检查 stage 和 component 的有效性
-        match stage {
-            LogStage::RequestStart
-            | LogStage::Authentication
-            | LogStage::RequestModify
-            | LogStage::UpstreamRequest
-            | LogStage::Response
-            | LogStage::ResponseFailure
-            | LogStage::Error => {}
-            _ => {}
-        }
-
-        match component {
-            LogComponent::Proxy
-            | LogComponent::Auth
-            | LogComponent::Tracing
-            | LogComponent::Upstream
-            | LogComponent::Builder
-            | LogComponent::GeminiStrategy
-            | LogComponent::Database => {}
-            _ => {}
-        }
-
-        true
+        Self::ensure_non_empty("request_id", request_id)
+            && Self::ensure_non_empty("operation", operation)
+            && Self::ensure_non_empty("description", description)
+            && Self::ensure_valid_stage(stage)
+            && Self::ensure_valid_component(component)
     }
 
     /// 验证并记录日志（安全包装）
@@ -890,20 +834,24 @@ pub fn log_proxy_failure_details(
     let response_body = String::from_utf8_lossy(&ctx.response_body);
     let response_body_preview = response_body.as_ref();
 
-    let (error_message, error_details) = match error {
-        Some(e) => {
+    let (error_message, error_details) = error.map_or_else(
+        || {
+            (
+                format!("HTTP {status_code} response returned with error"),
+                response_body_preview.to_string(),
+            )
+        },
+        |e| {
             let message = match e.etype {
                 ErrorType::HTTPStatus(code) => format!("Pingora HTTP status error: {code}"),
-                ErrorType::CustomCode(_, code) => format!("Pingora custom status error: {code}"),
+                ErrorType::CustomCode(_, code) => {
+                    format!("Pingora custom status error: {code}")
+                }
                 _ => format!("Pingora proxy error: {:?}", e.etype),
             };
             (message, e.to_string())
-        }
-        None => (
-            format!("HTTP {status_code} response returned with error"),
-            response_body_preview.to_string(),
-        ),
-    };
+        },
+    );
 
     lerror!(
         request_id,
@@ -998,12 +946,13 @@ pub fn log_error_response(request_id: &str, path: &str, status_code: u16, respon
 
 /// 过滤 JSON 中的 request 字段
 fn filter_request_field(json_str: &str) -> String {
-    if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(json_str) {
-        if let Some(obj) = json.as_object_mut() {
-            obj.remove("request");
-        }
-        serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
-    } else {
-        json_str.to_string()
-    }
+    serde_json::from_str::<serde_json::Value>(json_str).map_or_else(
+        |_| json_str.to_string(),
+        |mut json| {
+            if let Some(obj) = json.as_object_mut() {
+                obj.remove("request");
+            }
+            serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
+        },
+    )
 }

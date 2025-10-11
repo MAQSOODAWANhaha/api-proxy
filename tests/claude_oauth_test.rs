@@ -1,6 +1,6 @@
-//! Claude OAuth配置专项测试
+//! Claude `OAuth`配置专项测试
 //!
-//! 测试Claude OAuth配置的scope处理问题
+//! 测试Claude `OAuth`配置的scope处理问题
 
 use api_proxy::auth::oauth_client::OAuthProviderConfig;
 use api_proxy::auth::oauth_client::providers::OAuthProviderManager;
@@ -22,7 +22,7 @@ mod tests {
         db
     }
 
-    /// 创建测试用的OAuth会话
+    /// 创建测试用的 `OAuth` 会话
     fn create_test_session() -> Model {
         Model {
             id: 1,
@@ -80,10 +80,10 @@ mod tests {
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
-        println!("🔍 [测试] 解析后的scopes数组: {:?}", scopes);
+        println!("🔍 [测试] 解析后的scopes数组: {scopes:?}");
 
         let mut extra_params = HashMap::new();
         if let Some(ref config_extra_params) = oauth_config.extra_params {
@@ -103,14 +103,14 @@ mod tests {
             extra_params,
         };
 
-        println!("🔍 [测试] 配置的scopes: {:?}", config.scopes);
+        println!("🔍 [测试] 配置的scopes: {scopes:?}", scopes = config.scopes);
 
         // 生成授权URL
         let result = manager.build_authorize_url(&config, &session);
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
-        println!("🎯 [测试] 生成的Claude授权URL: {}", url);
+        println!("🎯 [测试] 生成的Claude授权URL: {url}");
 
         // 解析URL验证参数
         let parsed_url = Url::parse(&url).expect("URL应该有效");
@@ -175,19 +175,19 @@ mod tests {
         ];
 
         for scope_string in test_scopes {
-            println!("🔍 [测试] 原始scope字符串: '{}'", scope_string);
+            println!("🔍 [测试] 原始scope字符串: '{scope_string}'");
 
             // 模拟split_whitespace逻辑
             let scopes: Vec<String> = scope_string
                 .split_whitespace()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
 
-            println!("🔍 [测试] split后: {:?}", scopes);
+            println!("🔍 [测试] split后: {scopes:?}");
 
             // 模拟join逻辑
             let rejoined = scopes.join(" ");
-            println!("🔍 [测试] join后: '{}'", rejoined);
+            println!("🔍 [测试] join后: '{rejoined}'");
 
             // 验证往返转换的一致性
             assert_eq!(
@@ -233,7 +233,7 @@ mod tests {
         assert!(result.is_ok());
 
         let url = result.unwrap();
-        println!("🎯 [测试] Claude URL (直接配置): {}", url);
+        println!("🎯 [测试] Claude URL (直接配置): {url}");
 
         // 解析URL验证scope编码
         let parsed_url = Url::parse(&url).unwrap();

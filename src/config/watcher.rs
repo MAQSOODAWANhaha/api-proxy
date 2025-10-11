@@ -57,17 +57,7 @@ impl ConfigWatcher {
         let mut watcher =
             notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
-                    if let Err(e) =
-                        Self::handle_file_event(&event, &config_clone, &sender_clone, &path_clone)
-                    {
-                        lerror!(
-                            "system",
-                            LogStage::Configuration,
-                            LogComponent::Config,
-                            "handle_file_event_fail",
-                            &format!("处理文件变更事件失败: {e}")
-                        );
-                    }
+                    Self::handle_file_event(&event, &config_clone, &sender_clone, &path_clone);
                 }
                 Err(e) => {
                     lerror!(
@@ -95,7 +85,7 @@ impl ConfigWatcher {
             LogStage::Configuration,
             LogComponent::Config,
             "config_watcher_start",
-            &format!("开始监控配置文件: {config_path:?}")
+            &format!("开始监控配置文件: {}", config_path.display())
         );
 
         Ok(Self {
@@ -145,12 +135,13 @@ impl ConfigWatcher {
     }
 
     /// 处理文件变更事件
+    #[allow(clippy::cognitive_complexity)]
     fn handle_file_event(
         event: &Event,
         config: &Arc<RwLock<AppConfig>>,
         sender: &broadcast::Sender<ConfigEvent>,
         config_path: &Path,
-    ) -> crate::error::Result<()> {
+    ) {
         // 只处理我们关心的配置文件
         let is_our_file = event
             .paths
@@ -158,7 +149,7 @@ impl ConfigWatcher {
             .any(|path| path.file_name() == config_path.file_name());
 
         if !is_our_file {
-            return Ok(());
+            return;
         }
 
         match &event.kind {
@@ -221,8 +212,6 @@ impl ConfigWatcher {
                 // 忽略其他事件类型
             }
         }
-
-        Ok(())
     }
 }
 
@@ -230,12 +219,16 @@ impl ConfigWatcher {
 fn load_config_from_file(path: &Path) -> crate::error::Result<AppConfig> {
     if !path.exists() {
         return Err(crate::error::ProxyError::config(format!(
-            "配置文件不存在: {path:?}"
+            "配置文件不存在: {}",
+            path.display()
         )));
     }
 
     let config_content = std::fs::read_to_string(path).map_err(|e| {
-        crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {path:?}"), e)
+        crate::error::ProxyError::config_with_source(
+            format!("读取配置文件失败: {}", path.display()),
+            e,
+        )
     })?;
 
     let config: AppConfig = toml::from_str(&config_content)?;

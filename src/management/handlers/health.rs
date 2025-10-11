@@ -110,6 +110,12 @@ struct SystemInfo {
     version: String,
 }
 
+#[derive(FromQueryResult, Debug)]
+struct LastTraceRow {
+    last_end: Option<chrono::NaiveDateTime>,
+    last_start: Option<chrono::NaiveDateTime>,
+}
+
 pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
     // 数据库连接状态
     let database_status = match state.database.ping().await {
@@ -138,13 +144,6 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
         .count(&*state.database)
         .await
         .unwrap_or(0);
-
-    // 最近一次 trace 时间
-    #[derive(FromQueryResult, Debug)]
-    struct LastTraceRow {
-        last_end: Option<chrono::NaiveDateTime>,
-        last_start: Option<chrono::NaiveDateTime>,
-    }
 
     let last_row = entity::proxy_tracing::Entity::find()
         .select_only()

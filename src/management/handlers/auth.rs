@@ -12,6 +12,7 @@ use entity::users::Entity as Users;
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 // remove unused Value
 
 /// 登录请求
@@ -396,8 +397,9 @@ pub async fn validate_token(
     };
 
     // 检查token是否过期
-    let now = Utc::now().timestamp() as usize;
-    if token_data.claims.exp < now {
+    let now = Utc::now().timestamp();
+    let current_timestamp = usize::try_from(now).unwrap_or(0);
+    if token_data.claims.exp < current_timestamp {
         let response_data = ValidateTokenResponse {
             valid: false,
             user: None,

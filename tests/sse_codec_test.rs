@@ -1,4 +1,4 @@
-//! 测试：utils::event_stream 的 SSE 解析行为（data 解析为 JSON Value）
+//! `测试：utils::event_stream` 的 SSE 解析行为（data 解析为 JSON Value）
 
 use bytes::BytesMut;
 use tokio_util::codec::Decoder; // bring decode/decode_eof into scope
@@ -14,7 +14,7 @@ fn sse_single_event_basic_json() {
     assert_eq!(ev.id, None);
     assert_eq!(ev.retry, None);
     let v = ev.data;
-    assert_eq!(v.get("a").and_then(|x| x.as_i64()), Some(1));
+    assert_eq!(v.get("a").and_then(serde_json::Value::as_i64), Some(1));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn sse_multi_line_data_and_comment_lines() {
 
     let ev = codec.decode(&mut buf).unwrap().expect("one event");
     let v = ev.data;
-    assert_eq!(v.get("x").and_then(|x| x.as_i64()), Some(42));
+    assert_eq!(v.get("x").and_then(serde_json::Value::as_i64), Some(42));
 }
 
 #[test]

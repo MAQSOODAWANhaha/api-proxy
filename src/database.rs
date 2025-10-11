@@ -17,6 +17,7 @@ use std::path::Path;
 use std::time::Duration;
 
 /// 初始化数据库连接
+#[allow(clippy::cognitive_complexity)]
 pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbErr> {
     linfo!(
         "system",
@@ -37,7 +38,8 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
     if database_url.starts_with("sqlite:") {
         let db_path = database_url
             .strip_prefix("sqlite://")
-            .unwrap_or(database_url.strip_prefix("sqlite:").unwrap_or(database_url));
+            .or_else(|| database_url.strip_prefix("sqlite:"))
+            .unwrap_or(database_url);
         let db_file_path = Path::new(db_path);
 
         // 确保父目录存在
@@ -305,6 +307,7 @@ pub async fn force_initialize_model_pricing_data(
 }
 
 /// 从 JSON 文件初始化数据（完全数据驱动，旧逻辑，仅在空表或强制清理后使用）
+#[allow(clippy::cognitive_complexity)]
 async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(), ProxyError> {
     linfo!(
         "system",
@@ -385,6 +388,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
 }
 
 /// 远程优先的初始化与增量更新（不删除未出现在数据源中的旧模型）
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 async fn initialize_model_pricing_from_remote_or_local(
     db: &DatabaseConnection,
 ) -> Result<(), ProxyError> {
@@ -591,12 +595,15 @@ async fn load_json_data() -> Result<HashMap<String, ModelPriceInfo>, ProxyError>
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
-        return Err(ProxyError::config(format!("JSON文件不存在: {json_path:?}")));
+        return Err(ProxyError::config(format!(
+            "JSON文件不存在: {}",
+            json_path.display()
+        )));
     }
 
-    let json_content = tokio::fs::read_to_string(&json_path)
-        .await
-        .map_err(|e| ProxyError::config(format!("读取JSON文件失败 {json_path:?}: {e}")))?;
+    let json_content = tokio::fs::read_to_string(&json_path).await.map_err(|e| {
+        ProxyError::config(format!("读取JSON文件失败 {}: {e}", json_path.display()))
+    })?;
 
     serde_json::from_str(&json_content)
         .map_err(|e| ProxyError::config(format!("解析JSON失败: {e}")))
@@ -710,6 +717,7 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
 
 /// 动态获取provider映射关系
 /// 从数据库查询所有活跃的provider，构建name -> id映射
+#[allow(clippy::cognitive_complexity)]
 async fn get_provider_mappings(
     db: &DatabaseConnection,
     models: &[FilteredModel],

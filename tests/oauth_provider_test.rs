@@ -81,9 +81,7 @@ mod tests {
     async fn test_oauth_provider_config_creation() {
         let db = create_test_db().await;
         let _manager = OAuthProviderManager::new(std::sync::Arc::new(db));
-
-        // 测试管理器创建成功
-        assert!(true); // 简单测试，确保能创建manager
+        // 只要能够顺利创建管理器，即视为通过
     }
 
     #[tokio::test]
@@ -265,8 +263,8 @@ mod tests {
         let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
         // 验证没有PKCE参数
-        assert!(params.get("code_challenge").is_none());
-        assert!(params.get("code_challenge_method").is_none());
+        assert!(!params.contains_key("code_challenge"));
+        assert!(!params.contains_key("code_challenge_method"));
 
         // 验证基础参数仍然存在
         assert_eq!(params.get("client_id"), Some(&"test_client_id".to_string()));
