@@ -31,21 +31,26 @@ impl ConfigManager {
     /// 创建配置管理器
     pub async fn new() -> crate::error::Result<Self> {
         // 优先使用环境变量指定的配置文件路径
-        let config_file = if let Ok(path) = env::var("API_PROXY_CONFIG_PATH") {
-            path
-        } else {
-            let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
-            format!("config/config.{env}.toml")
-        };
+        let config_file = env::var("API_PROXY_CONFIG_PATH").map_or_else(
+            |_| {
+                let env = env::var("RUST_ENV").unwrap_or_else(|_| "dev".to_string());
+                format!("config/config.{env}.toml")
+            },
+            |path| path,
+        );
 
         Self::from_file(Path::new(&config_file)).await
     }
 
     /// 从指定文件创建配置管理器
-    #[allow(clippy::unused_async)]
+    #[allow(
+        clippy::unused_async,
+        clippy::cognitive_complexity,
+        clippy::too_many_lines
+    )]
     pub async fn from_file(config_path: &Path) -> crate::error::Result<Self> {
-            // 加载初始配置
-            let mut config = Self::load_config_file(config_path)?;
+        // 加载初始配置
+        let mut config = Self::load_config_file(config_path)?;
 
         // 创建配置加密器（如果需要）
         let crypto = if env::var("PROXY_ENABLE_CONFIG_ENCRYPTION").unwrap_or_default() == "true" {
@@ -191,9 +196,11 @@ impl ConfigManager {
     }
 
     /// 订阅配置变更事件
-    #[must_use] 
+    #[must_use]
     pub fn subscribe_changes(&self) -> Option<broadcast::Receiver<ConfigEvent>> {
-        self.watcher.as_ref().map(super::watcher::ConfigWatcher::subscribe)
+        self.watcher
+            .as_ref()
+            .map(super::watcher::ConfigWatcher::subscribe)
     }
 
     /// 手动重载配置
@@ -214,7 +221,7 @@ impl ConfigManager {
     }
 
     /// 获取敏感字段定义
-    #[must_use] 
+    #[must_use]
     pub const fn get_sensitive_fields(&self) -> &SensitiveFields {
         &self.sensitive_fields
     }
@@ -247,17 +254,21 @@ impl ConfigManager {
     fn load_config_file(path: &Path) -> crate::error::Result<AppConfig> {
         if !path.exists() {
             return Err(crate::error::ProxyError::config(format!(
-                "配置文件不存在: {path:?}"
+                "配置文件不存在: {}",
+                path.display()
             )));
         }
 
         let config_content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {path:?}"), e)
+            crate::error::ProxyError::config_with_source(
+                format!("读取配置文件失败: {}", path.display()),
+                e,
+            )
         })?;
 
         let config: AppConfig = toml::from_str(&config_content).map_err(|e| {
             crate::error::ProxyError::config_with_source(
-                format!("TOML解析失败 - 配置文件: {path:?}, 详细错误: {e}"),
+                format!("TOML解析失败 - 配置文件: {}, 详细错误: {e}", path.display()),
                 e,
             )
         })?;

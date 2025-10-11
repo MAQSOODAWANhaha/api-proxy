@@ -284,7 +284,8 @@ impl TokenExchangeClient {
 
     /// 验证Google/Gemini令牌
     async fn validate_google_token(&self, access_token: &str) -> OAuthResult<bool> {
-        let validation_url = format!("https://oauth2.googleapis.com/tokeninfo?access_token={access_token}");
+        let validation_url =
+            format!("https://oauth2.googleapis.com/tokeninfo?access_token={access_token}");
         let response = self.http_client.get(&validation_url).send().await?;
 
         Ok(response.status().is_success())
@@ -438,9 +439,8 @@ impl TokenExchangeClient {
         );
 
         // 解析为我们定义的TokenResponse结构体
-        serde_json::from_str::<TokenResponse>(data).map_err(|e| {
-            OAuthError::SerdeError(format!("Failed to parse token response: {e}"))
-        })
+        serde_json::from_str::<TokenResponse>(data)
+            .map_err(|e| OAuthError::SerdeError(format!("Failed to parse token response: {e}")))
     }
 
     /// 处理Token响应
@@ -451,7 +451,11 @@ impl TokenExchangeClient {
         // 解析作用域
         let scopes = response
             .scope
-            .map(|s| s.split_whitespace().map(std::string::ToString::to_string).collect())
+            .map(|s| {
+                s.split_whitespace()
+                    .map(std::string::ToString::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
 
         super::OAuthTokenResponse {

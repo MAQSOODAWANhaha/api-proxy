@@ -208,22 +208,24 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> axum::response::Response {
     // 从Authorization头中提取token
-    let auth_header = if let Some(header) = headers.get("Authorization") { match header.to_str() {
-        Ok(header_str) => header_str,
-        Err(err) => {
-            lwarn!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "invalid_auth_header",
-                &format!("Invalid Authorization header format: {err}")
-            );
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "Invalid Authorization header format"
-            ));
+    let auth_header = if let Some(header) = headers.get("Authorization") {
+        match header.to_str() {
+            Ok(header_str) => header_str,
+            Err(err) => {
+                lwarn!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "invalid_auth_header",
+                    &format!("Invalid Authorization header format: {err}")
+                );
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "Invalid Authorization header format"
+                ));
+            }
         }
-    } } else {
+    } else {
         lwarn!(
             "system",
             LogStage::Authentication,
@@ -231,10 +233,7 @@ pub async fn logout(
             "no_auth_header_logout",
             "No Authorization header found in logout request"
         );
-        return crate::manage_error!(crate::proxy_err!(
-            business,
-            "No Authorization header found"
-        ));
+        return crate::manage_error!(crate::proxy_err!(business, "No Authorization header found"));
     };
 
     // 检查Bearer前缀
@@ -315,32 +314,34 @@ pub async fn validate_token(
     }
 
     // 从Authorization头中提取token
-    let auth_header = if let Some(header) = headers.get("Authorization") { match header.to_str() {
-        Ok(header_str) => {
-            linfo!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "found_auth_header",
-                &format!("Found Authorization header: {header_str}")
-            );
-            header_str
+    let auth_header = if let Some(header) = headers.get("Authorization") {
+        match header.to_str() {
+            Ok(header_str) => {
+                linfo!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "found_auth_header",
+                    &format!("Found Authorization header: {header_str}")
+                );
+                header_str
+            }
+            Err(err) => {
+                lwarn!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "invalid_auth_header",
+                    &format!("Invalid Authorization header format: {err}")
+                );
+                let response_data = ValidateTokenResponse {
+                    valid: false,
+                    user: None,
+                };
+                return response::success(response_data);
+            }
         }
-        Err(err) => {
-            lwarn!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "invalid_auth_header",
-                &format!("Invalid Authorization header format: {err}")
-            );
-            let response_data = ValidateTokenResponse {
-                valid: false,
-                user: None,
-            };
-            return response::success(response_data);
-        }
-    } } else {
+    } else {
         lwarn!(
             "system",
             LogStage::Authentication,
@@ -462,7 +463,11 @@ pub async fn refresh_token(
     Json(request): Json<RefreshTokenRequest>,
 ) -> axum::response::Response {
     // 验证refresh token
-    let refresh_claims = match state.auth_service.jwt_manager.validate_token(&request.refresh_token) {
+    let refresh_claims = match state
+        .auth_service
+        .jwt_manager
+        .validate_token(&request.refresh_token)
+    {
         Ok(claims) => claims,
         Err(err) => {
             lwarn!(

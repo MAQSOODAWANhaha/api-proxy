@@ -24,7 +24,7 @@ async fn test_extract_model_openai_format() {
     let response = json!({
         "id": "chatcmpl-B9MHDbslfkBeAs8l4bebGdFOJ6PeG",
         "object": "chat.completion",
-        "created": 1741570283,
+        "created": 1_741_570_283,
         "model": "gpt-4o-2024-08-06",
         "choices": [
             {

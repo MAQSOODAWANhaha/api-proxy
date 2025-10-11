@@ -154,12 +154,13 @@ impl TokenType {
             use base64::{Engine as _, engine::general_purpose};
             if let Ok(decoded) = general_purpose::STANDARD.decode(encoded)
                 && let Ok(credentials) = String::from_utf8(decoded)
-                && let Some((username, password)) = credentials.split_once(':') {
-                    return Some(Self::Basic {
-                        username: username.to_string(),
-                        password: password.to_string(),
-                    });
-                }
+                && let Some((username, password)) = credentials.split_once(':')
+            {
+                return Some(Self::Basic {
+                    username: username.to_string(),
+                    password: password.to_string(),
+                });
+            }
             None
         } else if auth_header.starts_with("sk-") {
             // 直接的 API 密钥
@@ -478,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_token_type_parsing() {
-        use base64::{engine::general_purpose, Engine as _};
+        use base64::{Engine as _, engine::general_purpose};
         // Bearer token
         let auth_header = "Bearer abc123";
         assert_eq!(

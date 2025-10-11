@@ -37,7 +37,8 @@ impl ProviderType {
     /// - `OpenAI`: "openai", "chatgpt"
     /// - Gemini: "gemini", "google"
     /// - Anthropic: "anthropic", "claude"
-    #[must_use] pub fn from_str(s: &str) -> Option<Self> {
+    #[must_use]
+    pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             // OpenAI 及其别名
             s if s.contains("openai") || s.contains("chatgpt") => Some(Self::OpenAI),
@@ -53,7 +54,8 @@ impl ProviderType {
     }
 
     /// 获取策略名称
-    #[must_use] pub const fn strategy_name(&self) -> &'static str {
+    #[must_use]
+    pub const fn strategy_name(&self) -> &'static str {
         match self {
             Self::OpenAI => "openai",
             Self::Gemini => "gemini",
@@ -62,7 +64,8 @@ impl ProviderType {
     }
 
     /// 获取数据库中的名称
-    #[must_use] pub const fn db_name(&self) -> &'static str {
+    #[must_use]
+    pub const fn db_name(&self) -> &'static str {
         match self {
             Self::OpenAI => "openai",
             Self::Gemini => "gemini",
@@ -131,14 +134,16 @@ impl ProviderRegistry {
     /// 根据提供商名称匹配对应的策略名称
     ///
     /// 使用 `ProviderType` 枚举进行类型安全的匹配
-    #[must_use] pub fn match_name(provider_name: &str) -> Option<&'static str> {
+    #[must_use]
+    pub fn match_name(provider_name: &str) -> Option<&'static str> {
         ProviderType::from_str(provider_name).map(|provider| provider.strategy_name())
     }
 }
 
 // 预留：将来可切换为动态注册（HashMap<&'static str, Arc<dyn ProviderStrategy>>）
 // 这里先提供一个工厂方法，避免无谓的全局可变状态。
-#[must_use] pub fn make_strategy(
+#[must_use]
+pub fn make_strategy(
     name: &str,
     db: Option<Arc<DatabaseConnection>>,
 ) -> Option<Arc<dyn ProviderStrategy>> {

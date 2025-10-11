@@ -312,7 +312,10 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
 
     for key in active_keys {
         let provider_info = provider_types_map.get(&key.provider_type_id);
-        let provider_name = provider_info.map_or_else(|| format!("Provider {}", key.provider_type_id), |p| p.display_name.clone());
+        let provider_name = provider_info.map_or_else(
+            || format!("Provider {}", key.provider_type_id),
+            |p| p.display_name.clone(),
+        );
 
         // 获取健康状态
         let health_status = health_checker.get_key_health_status(key.id).await;

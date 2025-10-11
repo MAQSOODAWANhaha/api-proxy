@@ -32,7 +32,7 @@ pub struct ProxyServerBuilder {
 
 impl ProxyServerBuilder {
     /// 创建新的构建器实例
-    #[must_use] 
+    #[must_use]
     pub const fn new(config: Arc<AppConfig>) -> Self {
         Self {
             config,
@@ -44,14 +44,14 @@ impl ProxyServerBuilder {
     }
 
     /// 设置共享数据库连接
-    #[must_use] 
+    #[must_use]
     pub fn with_database(mut self, db: Arc<DatabaseConnection>) -> Self {
         self.db = Some(db);
         self
     }
 
     /// 设置追踪系统
-    #[must_use] 
+    #[must_use]
     pub fn with_trace_system(mut self, trace_system: Arc<TraceSystem>) -> Self {
         self.trace_system = Some(trace_system);
         self
@@ -214,7 +214,7 @@ impl ProxyServerBuilder {
     }
 
     /// 获取代理服务器监听地址
-    #[must_use] 
+    #[must_use]
     pub fn get_server_address(&self) -> String {
         let proxy_port = self.config.get_proxy_port();
         let host = self

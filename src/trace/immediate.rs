@@ -254,11 +254,16 @@ impl ImmediateProxyTracer {
             cost: None,
             cost_currency: None,
         };
-        self.complete_trace_with_stats(&params.request_id, complete_params).await
+        self.complete_trace_with_stats(&params.request_id, complete_params)
+            .await
     }
 
     /// 完成追踪 - `使用TraceStats`
-    pub async fn complete_trace_with_stats(&self, request_id: &str, params: CompleteTraceParams) -> Result<()> {
+    pub async fn complete_trace_with_stats(
+        &self,
+        request_id: &str,
+        params: CompleteTraceParams,
+    ) -> Result<()> {
         // 强制追踪所有请求，移除配置开关
 
         let end_time = Utc::now().naive_utc();
@@ -300,7 +305,9 @@ impl ImmediateProxyTracer {
             tokens_completion: Set(params.tokens_completion.and_then(|t| i32::try_from(t).ok())),
             tokens_total: Set(tokens_total.and_then(|t| i32::try_from(t).ok())),
             token_efficiency_ratio: Set(token_efficiency_ratio),
-            cache_create_tokens: Set(params.cache_create_tokens.and_then(|t| i32::try_from(t).ok())),
+            cache_create_tokens: Set(params
+                .cache_create_tokens
+                .and_then(|t| i32::try_from(t).ok())),
             cache_read_tokens: Set(params.cache_read_tokens.and_then(|t| i32::try_from(t).ok())),
             cost: Set(params.cost),
             cost_currency: Set(params.cost_currency),
@@ -512,7 +519,8 @@ mod tests {
             client_ip: Some("127.0.0.1".to_string()),
             user_agent: Some("test-client/1.0".to_string()),
         };
-        tracer.start_trace(start_params)
+        tracer
+            .start_trace(start_params)
             .await
             .expect("Failed to start trace");
 
@@ -532,7 +540,8 @@ mod tests {
             error_type: None,
             error_message: None,
         };
-        tracer.complete_trace(complete_params)
+        tracer
+            .complete_trace(complete_params)
             .await
             .expect("Failed to complete trace");
 

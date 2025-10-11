@@ -19,7 +19,7 @@ pub struct UpstreamService {
 
 impl UpstreamService {
     /// 创建新的上游服务
-    #[must_use] 
+    #[must_use]
     pub const fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
@@ -34,13 +34,14 @@ impl UpstreamService {
         // 优先由 ProviderStrategy 决定上游地址
         let mut upstream_addr: Option<String> = None;
         if let Some(strategy) = &ctx.strategy
-            && let Ok(Some(host)) = strategy.select_upstream_host(ctx).await {
-                upstream_addr = Some(if host.contains(':') {
-                    host
-                } else {
-                    format!("{host}:443")
-                });
-            }
+            && let Ok(Some(host)) = strategy.select_upstream_host(ctx).await
+        {
+            upstream_addr = Some(if host.contains(':') {
+                host
+            } else {
+                format!("{host}:443")
+            });
+        }
 
         // 回退：使用 provider_types.base_url
         let final_addr = upstream_addr.unwrap_or_else(|| {

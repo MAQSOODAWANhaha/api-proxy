@@ -22,7 +22,7 @@ pub struct TracingService {
 
 impl TracingService {
     /// 创建新的追踪服务
-    #[must_use] 
+    #[must_use]
     pub const fn new(tracer: Option<Arc<ImmediateProxyTracer>>) -> Self {
         Self { tracer }
     }
@@ -54,18 +54,17 @@ impl TracingService {
                 client_ip,
                 user_agent,
             };
-            tracer.start_trace(start_params).await
-                .map_err(|e| {
-                    lwarn!(
-                        request_id,
-                        LogStage::Error,
-                        LogComponent::Tracing,
-                        "trace_start_failed",
-                        "即时追踪启动失败",
-                        error = format!("{:?}", e)
-                    );
-                    proxy_err!(tracing, "Failed to start trace: {}", e)
-                })?;
+            tracer.start_trace(start_params).await.map_err(|e| {
+                lwarn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::Tracing,
+                    "trace_start_failed",
+                    "即时追踪启动失败",
+                    error = format!("{:?}", e)
+                );
+                proxy_err!(tracing, "Failed to start trace: {}", e)
+            })?;
 
             ldebug!(
                 request_id,
@@ -150,14 +149,16 @@ impl TracingService {
                 is_success: true,
                 tokens_prompt,
                 tokens_completion,
-                error_type: None, // no error type for success
+                error_type: None,    // no error type for success
                 error_message: None, // no error message for success
                 cache_create_tokens,
                 cache_read_tokens,
                 cost,
                 cost_currency: cost_currency.clone(),
             };
-            tracer.complete_trace_with_stats(request_id, complete_params).await
+            tracer
+                .complete_trace_with_stats(request_id, complete_params)
+                .await
                 .map_err(|e| {
                     lwarn!(
                         request_id,
@@ -211,18 +212,17 @@ impl TracingService {
                 error_type: error_type.clone(),
                 error_message: error_message.clone(),
             };
-            tracer.complete_trace(params).await
-                .map_err(|e| {
-                    lwarn!(
-                        request_id,
-                        LogStage::Error,
-                        LogComponent::Tracing,
-                        "failure_trace_complete_failed",
-                        "失败请求追踪完成失败（第二层）",
-                        error = format!("{:?}", e)
-                    );
-                    proxy_err!(tracing, "Failed to complete trace: {}", e)
-                })?;
+            tracer.complete_trace(params).await.map_err(|e| {
+                lwarn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::Tracing,
+                    "failure_trace_complete_failed",
+                    "失败请求追踪完成失败（第二层）",
+                    error = format!("{:?}", e)
+                );
+                proxy_err!(tracing, "Failed to complete trace: {}", e)
+            })?;
 
             linfo!(
                 request_id,
@@ -293,7 +293,7 @@ impl TracingService {
     }
 
     /// 检查是否启用了追踪
-    #[must_use] 
+    #[must_use]
     pub const fn is_tracing_enabled(&self) -> bool {
         self.tracer.is_some()
     }
@@ -369,7 +369,7 @@ pub struct TracingContextHelper;
 
 impl TracingContextHelper {
     /// `从ProxyContext提取用户服务API信息`
-    #[must_use] 
+    #[must_use]
     pub fn extract_user_service_api_info(ctx: &ProxyContext) -> Option<(i32, Option<i32>)> {
         ctx.user_service_api
             .as_ref()
@@ -377,26 +377,26 @@ impl TracingContextHelper {
     }
 
     /// `从ProxyContext提取提供商信息`
-    #[must_use] 
+    #[must_use]
     pub fn extract_provider_info(ctx: &ProxyContext) -> Option<i32> {
         ctx.provider_type.as_ref().map(|pt| pt.id)
     }
 
     /// `从ProxyContext提取后端API密钥信息`
-    #[must_use] 
+    #[must_use]
     pub fn extract_backend_key_info(ctx: &ProxyContext) -> Option<i32> {
         ctx.selected_backend.as_ref().map(|backend| backend.id)
     }
 
     /// `从ProxyContext提取模型信息`
-    #[must_use] 
+    #[must_use]
     pub fn extract_model_info(ctx: &ProxyContext) -> Option<String> {
         // 使用最新请求模型（统计阶段会同步更新）
         ctx.requested_model.clone()
     }
 
     /// `从ProxyContext提取token信息`
-    #[must_use] 
+    #[must_use]
     pub fn extract_token_info(ctx: &ProxyContext) -> (Option<u32>, Option<u32>, Option<u32>) {
         let usage = ctx.usage_final.as_ref();
         let prompt = usage.and_then(|u| u.prompt_tokens);

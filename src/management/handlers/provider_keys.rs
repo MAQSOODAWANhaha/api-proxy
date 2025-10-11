@@ -91,9 +91,10 @@ pub async fn get_provider_keys_list(
 
     // 应用搜索筛选
     if let Some(search) = &query.search
-        && !search.is_empty() {
-            select = select.filter(user_provider_keys::Column::Name.contains(search));
-        }
+        && !search.is_empty()
+    {
+        select = select.filter(user_provider_keys::Column::Name.contains(search));
+    }
 
     // 应用状态筛选 - 基于health_status而不是IsActive
     if let Some(status) = &query.status {
@@ -175,7 +176,8 @@ pub async fn get_provider_keys_list(
     let mut provider_keys_list = Vec::new();
 
     for (provider_key, provider_type_opt) in provider_keys {
-        let provider_name = provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
+        let provider_name =
+            provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
         // 获取该密钥的使用统计
         let key_stats = usage_stats
@@ -327,73 +329,72 @@ pub async fn create_provider_key(
 
     // 验证OAuth会话存在性和所有权
     if payload.auth_type == "oauth"
-        && let Some(session_id) = &payload.api_key {
-            use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+        && let Some(session_id) = &payload.api_key
+    {
+        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
 
-            match OAuthSession::find()
-                .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-                .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                .filter(
-                    oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
-                )
-                .one(db)
-                .await
-            {
-                Ok(Some(_)) => {
-                    // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
-                    let existing_usage = UserProviderKey::find()
-                        .filter(user_provider_keys::Column::ApiKey.eq(session_id))
-                        .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-                        .filter(user_provider_keys::Column::IsActive.eq(true))
-                        .one(db)
-                        .await;
+        match OAuthSession::find()
+            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
+            .one(db)
+            .await
+        {
+            Ok(Some(_)) => {
+                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                let existing_usage = UserProviderKey::find()
+                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+                    .filter(user_provider_keys::Column::IsActive.eq(true))
+                    .one(db)
+                    .await;
 
-                    match existing_usage {
-                        Ok(Some(_)) => {
-                            return crate::manage_error!(crate::proxy_err!(
-                                business,
-                                "指定的OAuth会话已被其他provider key使用"
-                            ));
-                        }
-                        Err(err) => {
-                            lerror!(
-                                "system",
-                                LogStage::Db,
-                                LogComponent::OAuth,
-                                "check_session_usage_fail",
-                                &format!("Failed to check OAuth session usage: {err}")
-                            );
-                            return crate::manage_error!(
-                                crate::error::ProxyError::database_with_source(
-                                    "Failed to check OAuth session usage",
-                                    err,
-                                )
-                            );
-                        }
-                        _ => {} // 会话可用
+                match existing_usage {
+                    Ok(Some(_)) => {
+                        return crate::manage_error!(crate::proxy_err!(
+                            business,
+                            "指定的OAuth会话已被其他provider key使用"
+                        ));
                     }
-                }
-                Ok(None) => {
-                    return crate::manage_error!(crate::proxy_err!(
-                        business,
-                        "指定的OAuth会话不存在或未完成授权 (field: api_key)"
-                    ));
-                }
-                Err(err) => {
-                    lerror!(
-                        "system",
-                        LogStage::Db,
-                        LogComponent::OAuth,
-                        "validate_session_fail",
-                        &format!("Failed to validate OAuth session: {err}")
-                    );
-                    return crate::manage_error!(crate::error::ProxyError::database_with_source(
-                        "Failed to validate OAuth session",
-                        err,
-                    ));
+                    Err(err) => {
+                        lerror!(
+                            "system",
+                            LogStage::Db,
+                            LogComponent::OAuth,
+                            "check_session_usage_fail",
+                            &format!("Failed to check OAuth session usage: {err}")
+                        );
+                        return crate::manage_error!(
+                            crate::error::ProxyError::database_with_source(
+                                "Failed to check OAuth session usage",
+                                err,
+                            )
+                        );
+                    }
+                    _ => {} // 会话可用
                 }
             }
+            Ok(None) => {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "指定的OAuth会话不存在或未完成授权 (field: api_key)"
+                ));
+            }
+            Err(err) => {
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::OAuth,
+                    "validate_session_fail",
+                    &format!("Failed to validate OAuth session: {err}")
+                );
+                return crate::manage_error!(crate::error::ProxyError::database_with_source(
+                    "Failed to validate OAuth session",
+                    err,
+                ));
+            }
         }
+    }
 
     // Gemini OAuth 场景处理
     let mut final_project_id = payload.project_id.clone();
@@ -408,123 +409,124 @@ pub async fn create_provider_key(
             entity::provider_types::Entity::find_by_id(payload.provider_type_id)
                 .one(db)
                 .await
-            && provider_type.name == GEMINI_PROVIDER_NAME {
-                // 需要访问 OAuth 会话拿 access_token
-                if let Some(session_id) = &payload.api_key {
-                    use entity::oauth_client_sessions::{self, Entity as OAuthSession};
-                    if let Ok(Some(oauth_session)) = OAuthSession::find()
-                        .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-                        .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                        .filter(
-                            oauth_client_sessions::Column::Status
-                                .eq(AuthStatus::Authorized.to_string()),
-                        )
-                        .one(db)
-                        .await
-                    {
-                        let access_token = oauth_session.access_token.as_deref().unwrap_or("");
-                        let gemini_client = GeminiCodeAssistClient::new();
+            && provider_type.name == GEMINI_PROVIDER_NAME
+        {
+            // 需要访问 OAuth 会话拿 access_token
+            if let Some(session_id) = &payload.api_key {
+                use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+                if let Ok(Some(oauth_session)) = OAuthSession::find()
+                    .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+                    .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+                    .filter(
+                        oauth_client_sessions::Column::Status
+                            .eq(AuthStatus::Authorized.to_string()),
+                    )
+                    .one(db)
+                    .await
+                {
+                    let access_token = oauth_session.access_token.as_deref().unwrap_or("");
+                    let gemini_client = GeminiCodeAssistClient::new();
 
-                        // 如果用户传递了 project_id, 直接带 project_id 调用 loadCodeAssist
-                        if let Some(provided_pid) = final_project_id.clone() {
-                            linfo!(
-                                "system",
-                                LogStage::Authentication,
-                                LogComponent::OAuth,
-                                "gemini_load_assist_with_project",
-                                "Gemini OAuth: Using user-provided project_id to call loadCodeAssist",
-                                user_id = user_id,
-                                project_id = %provided_pid,
-                            );
-                            match gemini_client
-                                .load_code_assist(access_token, Some(&provided_pid), None)
-                                .await
-                            {
-                                Ok(resp) => {
-                                    // 如果后端返回了 cloudaicompanionProject 则以其为准
-                                    if let Some(server_pid) = resp.cloudaicompanionProject {
-                                        final_project_id = Some(server_pid);
-                                    } else {
-                                        // 没有返回 cloudaicompanionProject，说明用户提供的 project_id 无效或不存在
-                                        // 需要走自动获取流程来获取正确的 project_id
-                                        linfo!(
-                                            "system",
-                                            LogStage::Authentication,
-                                            LogComponent::OAuth,
-                                            "gemini_invalid_project_id",
-                                            "loadCodeAssist did not return cloudaicompanionProject, user-provided project_id is invalid",
-                                            user_id = user_id,
-                                            provided_project_id = %provided_pid,
-                                        );
-
-                                        // 设置为不健康状态，用户提供的project_id无效，需要自动获取
-                                        health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                                        needs_auto_get_project_id_async = true;
-                                        final_project_id = None; // 清空无效的project_id
-
-                                        linfo!(
-                                            "system",
-                                            LogStage::Authentication,
-                                            LogComponent::OAuth,
-                                            "gemini_auto_get_project_id",
-                                            "Gemini OAuth: User-provided project_id is invalid, will auto-get project_id",
-                                            user_id = user_id,
-                                            provided_project_id = %provided_pid,
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                                    lerror!("system", LogStage::Authentication, LogComponent::OAuth, "gemini_load_assist_fail", "Gemini OAuth: loadCodeAssist call failed (with project_id)", user_id = user_id, error = %e);
-                                }
-                            }
-                        } else {
-                            // 未提供 project_id: 走自动流程（loadCodeAssist -> 若无则 onboardUser）
-                            linfo!(
-                                "system",
-                                LogStage::Authentication,
-                                LogComponent::OAuth,
-                                "gemini_auto_get_project_id_async",
-                                "Gemini OAuth: No project_id provided, will auto-get asynchronously (loadCodeAssist / onboardUser)",
-                                user_id = user_id,
-                            );
-
-                            // 设置为不健康状态，标记需要异步执行自动获取 project_id
-                            health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                            needs_auto_get_project_id_async = true;
-
-                            linfo!(
-                                "system",
-                                LogStage::Authentication,
-                                LogComponent::OAuth,
-                                "gemini_mark_unhealthy_for_auto_get",
-                                "Gemini OAuth: Marked as unhealthy for async auto-get of project_id",
-                                user_id = user_id,
-                            );
-                        }
-                    } else {
-                        lerror!(
+                    // 如果用户传递了 project_id, 直接带 project_id 调用 loadCodeAssist
+                    if let Some(provided_pid) = final_project_id.clone() {
+                        linfo!(
                             "system",
                             LogStage::Authentication,
                             LogComponent::OAuth,
-                            "gemini_no_auth_session",
-                            "Gemini OAuth: Authorized OAuth session not found, cannot validate project_id",
+                            "gemini_load_assist_with_project",
+                            "Gemini OAuth: Using user-provided project_id to call loadCodeAssist",
+                            user_id = user_id,
+                            project_id = %provided_pid,
+                        );
+                        match gemini_client
+                            .load_code_assist(access_token, Some(&provided_pid), None)
+                            .await
+                        {
+                            Ok(resp) => {
+                                // 如果后端返回了 cloudaicompanionProject 则以其为准
+                                if let Some(server_pid) = resp.cloudaicompanionProject {
+                                    final_project_id = Some(server_pid);
+                                } else {
+                                    // 没有返回 cloudaicompanionProject，说明用户提供的 project_id 无效或不存在
+                                    // 需要走自动获取流程来获取正确的 project_id
+                                    linfo!(
+                                        "system",
+                                        LogStage::Authentication,
+                                        LogComponent::OAuth,
+                                        "gemini_invalid_project_id",
+                                        "loadCodeAssist did not return cloudaicompanionProject, user-provided project_id is invalid",
+                                        user_id = user_id,
+                                        provided_project_id = %provided_pid,
+                                    );
+
+                                    // 设置为不健康状态，用户提供的project_id无效，需要自动获取
+                                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                                    needs_auto_get_project_id_async = true;
+                                    final_project_id = None; // 清空无效的project_id
+
+                                    linfo!(
+                                        "system",
+                                        LogStage::Authentication,
+                                        LogComponent::OAuth,
+                                        "gemini_auto_get_project_id",
+                                        "Gemini OAuth: User-provided project_id is invalid, will auto-get project_id",
+                                        user_id = user_id,
+                                        provided_project_id = %provided_pid,
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                                lerror!("system", LogStage::Authentication, LogComponent::OAuth, "gemini_load_assist_fail", "Gemini OAuth: loadCodeAssist call failed (with project_id)", user_id = user_id, error = %e);
+                            }
+                        }
+                    } else {
+                        // 未提供 project_id: 走自动流程（loadCodeAssist -> 若无则 onboardUser）
+                        linfo!(
+                            "system",
+                            LogStage::Authentication,
+                            LogComponent::OAuth,
+                            "gemini_auto_get_project_id_async",
+                            "Gemini OAuth: No project_id provided, will auto-get asynchronously (loadCodeAssist / onboardUser)",
                             user_id = user_id,
                         );
+
+                        // 设置为不健康状态，标记需要异步执行自动获取 project_id
                         health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                        needs_auto_get_project_id_async = true;
+
+                        linfo!(
+                            "system",
+                            LogStage::Authentication,
+                            LogComponent::OAuth,
+                            "gemini_mark_unhealthy_for_auto_get",
+                            "Gemini OAuth: Marked as unhealthy for async auto-get of project_id",
+                            user_id = user_id,
+                        );
                     }
                 } else {
                     lerror!(
                         "system",
                         LogStage::Authentication,
                         LogComponent::OAuth,
-                        "gemini_missing_session_id",
-                        "Gemini OAuth: Missing session_id (api_key field), cannot complete validation",
+                        "gemini_no_auth_session",
+                        "Gemini OAuth: Authorized OAuth session not found, cannot validate project_id",
                         user_id = user_id,
                     );
                     health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                 }
+            } else {
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "gemini_missing_session_id",
+                    "Gemini OAuth: Missing session_id (api_key field), cannot complete validation",
+                    user_id = user_id,
+                );
+                health_status = ApiKeyHealthStatus::Unhealthy.to_string();
             }
+        }
     }
 
     let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
@@ -738,7 +740,8 @@ pub async fn get_provider_key_detail(
     };
 
     let provider_name = provider_key
-        .1.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
+        .1
+        .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取使用统计
     let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id]).await;
@@ -962,76 +965,75 @@ pub async fn update_provider_key(
 
     // 验证OAuth会话存在性和所有权
     if payload.auth_type == "oauth"
-        && let Some(session_id) = &payload.api_key {
-            use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+        && let Some(session_id) = &payload.api_key
+    {
+        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
 
-            // 检查会话是否有效
-            match OAuthSession::find()
-                .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-                .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                .filter(
-                    oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
-                )
-                .one(db)
-                .await
-            {
-                Ok(Some(_)) => {
-                    // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
-                    // (排除当前正在更新的key)
-                    let existing_usage = UserProviderKey::find()
-                        .filter(user_provider_keys::Column::ApiKey.eq(session_id))
-                        .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-                        .filter(user_provider_keys::Column::IsActive.eq(true))
-                        .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
-                        .one(db)
-                        .await;
+        // 检查会话是否有效
+        match OAuthSession::find()
+            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
+            .one(db)
+            .await
+        {
+            Ok(Some(_)) => {
+                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
+                // (排除当前正在更新的key)
+                let existing_usage = UserProviderKey::find()
+                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
+                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+                    .filter(user_provider_keys::Column::IsActive.eq(true))
+                    .filter(user_provider_keys::Column::Id.ne(key_id)) // 排除当前key
+                    .one(db)
+                    .await;
 
-                    match existing_usage {
-                        Ok(Some(_)) => {
-                            return crate::manage_error!(crate::proxy_err!(
-                                business,
-                                "指定的OAuth会话已被其他provider key使用"
-                            ));
-                        }
-                        Err(err) => {
-                            lerror!(
-                                "system",
-                                LogStage::Db,
-                                LogComponent::OAuth,
-                                "check_session_usage_fail",
-                                &format!("Failed to check OAuth session usage: {err}")
-                            );
-                            return crate::manage_error!(
-                                crate::error::ProxyError::database_with_source(
-                                    "Failed to check OAuth session usage",
-                                    err,
-                                )
-                            );
-                        }
-                        _ => {} // 会话可用
+                match existing_usage {
+                    Ok(Some(_)) => {
+                        return crate::manage_error!(crate::proxy_err!(
+                            business,
+                            "指定的OAuth会话已被其他provider key使用"
+                        ));
                     }
-                }
-                Ok(None) => {
-                    return crate::manage_error!(crate::proxy_err!(
-                        business,
-                        "指定的OAuth会话不存在或未完成授权 (field: api_key)"
-                    ));
-                }
-                Err(err) => {
-                    lerror!(
-                        "system",
-                        LogStage::Db,
-                        LogComponent::OAuth,
-                        "validate_session_fail",
-                        &format!("Failed to validate OAuth session: {err}")
-                    );
-                    return crate::manage_error!(crate::error::ProxyError::database_with_source(
-                        "Failed to validate OAuth session",
-                        err,
-                    ));
+                    Err(err) => {
+                        lerror!(
+                            "system",
+                            LogStage::Db,
+                            LogComponent::OAuth,
+                            "check_session_usage_fail",
+                            &format!("Failed to check OAuth session usage: {err}")
+                        );
+                        return crate::manage_error!(
+                            crate::error::ProxyError::database_with_source(
+                                "Failed to check OAuth session usage",
+                                err,
+                            )
+                        );
+                    }
+                    _ => {} // 会话可用
                 }
             }
+            Ok(None) => {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "指定的OAuth会话不存在或未完成授权 (field: api_key)"
+                ));
+            }
+            Err(err) => {
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::OAuth,
+                    "validate_session_fail",
+                    &format!("Failed to validate OAuth session: {err}")
+                );
+                return crate::manage_error!(crate::error::ProxyError::database_with_source(
+                    "Failed to validate OAuth session",
+                    err,
+                ));
+            }
         }
+    }
 
     let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
         match prepare_oauth_schedule(
@@ -1090,9 +1092,7 @@ pub async fn update_provider_key(
                     LogStage::Scheduling,
                     LogComponent::OAuth,
                     "enqueue_schedule_update_fail",
-                    &format!(
-                        "Failed to enqueue OAuth refresh schedule during update: {err}"
-                    ),
+                    &format!("Failed to enqueue OAuth refresh schedule during update: {err}"),
                     user_id = user_id,
                     key_id = key_id,
                 );
@@ -1135,20 +1135,19 @@ pub async fn update_provider_key(
 
         if updated_session_id.as_deref() != Some(old_id.as_str())
             && let Some(task) = refresh_task.as_ref()
-                && let Err(err) = task.remove_session(&old_id).await {
-                    lwarn!(
-                        "system",
-                        LogStage::Scheduling,
-                        LogComponent::OAuth,
-                        "remove_old_session_fail",
-                        &format!(
-                            "Failed to remove old OAuth session from refresh queue: {err}"
-                        ),
-                        user_id = user_id,
-                        key_id = key_id,
-                        session_id = old_id.as_str(),
-                    );
-                }
+            && let Err(err) = task.remove_session(&old_id).await
+        {
+            lwarn!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::OAuth,
+                "remove_old_session_fail",
+                &format!("Failed to remove old OAuth session from refresh queue: {err}"),
+                user_id = user_id,
+                key_id = key_id,
+                session_id = old_id.as_str(),
+            );
+        }
     }
 
     let data = json!({
@@ -1235,20 +1234,19 @@ pub async fn delete_provider_key(
 
     if let Some(session_id) = session_to_remove
         && let Some(task) = refresh_task.as_ref()
-            && let Err(err) = task.remove_session(&session_id).await {
-                lwarn!(
-                    "system",
-                    LogStage::Scheduling,
-                    LogComponent::OAuth,
-                    "remove_session_after_delete_fail",
-                    &format!(
-                        "Failed to remove OAuth session from refresh queue after delete: {err}"
-                    ),
-                    user_id = user_id,
-                    key_id = key_id,
-                    session_id = session_id.as_str(),
-                );
-            }
+        && let Err(err) = task.remove_session(&session_id).await
+    {
+        lwarn!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::OAuth,
+            "remove_session_after_delete_fail",
+            &format!("Failed to remove OAuth session from refresh queue after delete: {err}"),
+            user_id = user_id,
+            key_id = key_id,
+            session_id = session_id.as_str(),
+        );
+    }
 
     let data = json!({
         "id": key_id,
@@ -1304,7 +1302,8 @@ pub async fn get_provider_key_stats(
     };
 
     let provider_name = provider_key
-        .1.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
+        .1
+        .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取真实的统计数据
     let end_date = Utc::now().naive_utc();
@@ -1548,7 +1547,8 @@ pub async fn get_simple_provider_keys_list(
 
     for (provider_key, provider_type_opt) in provider_keys {
         let provider_name = provider_type_opt
-            .as_ref().map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
 
         let display_name = format!("{} ({})", provider_key.name, provider_name);
 
@@ -2176,7 +2176,7 @@ struct DailyStats {
 }
 
 /// 获取API密钥健康状态列表
-#[must_use] 
+#[must_use]
 pub fn get_provider_key_health_statuses() -> axum::response::Response {
     use crate::scheduler::types::ApiKeyHealthStatus;
 

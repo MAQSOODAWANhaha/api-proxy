@@ -259,7 +259,9 @@ impl OAuthClient {
             LogStage::Authentication,
             LogComponent::OAuth,
             "start_authorization",
-            &format!("🚀 [OAuth] 开始授权流程: user_id={user_id}, provider_name={provider_name}, name={name}")
+            &format!(
+                "🚀 [OAuth] 开始授权流程: user_id={user_id}, provider_name={provider_name}, name={name}"
+            )
         );
     }
 
@@ -286,7 +288,11 @@ impl OAuthClient {
     }
 
     /// 记录会话创建开始日志
-    fn log_session_creation_start(user_id: i32, provider_name: &str, provider_type_id: Option<i32>) {
+    fn log_session_creation_start(
+        user_id: i32,
+        provider_name: &str,
+        provider_type_id: Option<i32>,
+    ) {
         ldebug!(
             "system",
             LogStage::Authentication,

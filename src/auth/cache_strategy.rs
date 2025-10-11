@@ -51,14 +51,10 @@ impl AuthCacheKey {
             Self::JwtAuth(_) => Duration::from_secs(900),
 
             // JWT黑名单和Basic失败计数：1小时（安全相关，需要较长时间生效）
-            Self::JwtBlacklist(_) | Self::BasicFailure(_) => {
-                Duration::from_secs(3600)
-            }
+            Self::JwtBlacklist(_) | Self::BasicFailure(_) => Duration::from_secs(3600),
 
             // API密钥认证：5分钟（相对较短，便于快速更新权限）
-            Self::ApiKeyAuth(_) => {
-                Duration::from_secs(300)
-            }
+            Self::ApiKeyAuth(_) => Duration::from_secs(300),
 
             // Basic认证结果：10分钟（包含密码信息，较短TTL）
             Self::BasicAuth(_) => Duration::from_secs(600),
@@ -73,7 +69,12 @@ impl AuthCacheKey {
     pub const fn should_cache(&self) -> bool {
         match self {
             // 安全相关的缓存
-            Self::JwtAuth(_) | Self::JwtBlacklist(_) | Self::ApiKeyAuth(_) | Self::BasicFailure(_) | Self::BasicAuth(_) | Self::OAuthSession(_) => true,
+            Self::JwtAuth(_)
+            | Self::JwtBlacklist(_)
+            | Self::ApiKeyAuth(_)
+            | Self::BasicFailure(_)
+            | Self::BasicAuth(_)
+            | Self::OAuthSession(_) => true,
         }
     }
 }
@@ -188,11 +189,13 @@ impl UnifiedAuthCacheManager {
     pub async fn cache_exists(&self, key: &AuthCacheKey) -> bool {
         let cache_key = key.to_key();
 
-        matches!(self
-            .cache_manager
-            .provider()
-            .get::<serde_json::Value>(&cache_key)
-            .await, Ok(Some(_)))
+        matches!(
+            self.cache_manager
+                .provider()
+                .get::<serde_json::Value>(&cache_key)
+                .await,
+            Ok(Some(_))
+        )
     }
 
     /// 获取有效的TTL

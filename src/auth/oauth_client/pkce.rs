@@ -48,7 +48,8 @@ impl PkceVerifier {
     }
 
     #[must_use]
-            pub fn with_length(length: usize) -> Self {        assert!(
+    pub fn with_length(length: usize) -> Self {
+        assert!(
             (MIN_CODE_VERIFIER_LENGTH..=MAX_CODE_VERIFIER_LENGTH).contains(&length),
             "Code verifier length must be between {MIN_CODE_VERIFIER_LENGTH} and {MAX_CODE_VERIFIER_LENGTH}"
         );
@@ -122,8 +123,7 @@ pub struct PkceChallenge {
 }
 
 /// Code Challenge方法
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ChallengeMethod {
     /// SHA256哈希方法（推荐）
     #[serde(rename = "S256")]
@@ -144,8 +144,6 @@ impl ChallengeMethod {
         }
     }
 }
-
-
 
 impl PkceChallenge {
     /// 从`Code Verifier`生成`Code Challenge`（使用SHA256）

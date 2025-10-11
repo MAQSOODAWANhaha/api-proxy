@@ -43,19 +43,27 @@ impl CacheTtl {
 
     /// 从秒数创建自定义 TTL
     #[must_use]
-    pub const fn from_seconds(seconds: u64) -> Self { Self::Custom(seconds) }
+    pub const fn from_seconds(seconds: u64) -> Self {
+        Self::Custom(seconds)
+    }
 
     /// 从分钟创建自定义 TTL
     #[must_use]
-    pub const fn from_minutes(minutes: u64) -> Self { Self::Custom(minutes * 60) }
+    pub const fn from_minutes(minutes: u64) -> Self {
+        Self::Custom(minutes * 60)
+    }
 
     /// 从小时创建自定义 TTL
     #[must_use]
-    pub const fn from_hours(hours: u64) -> Self { Self::Custom(hours * 3600) }
+    pub const fn from_hours(hours: u64) -> Self {
+        Self::Custom(hours * 3600)
+    }
 
     /// 从天创建自定义 TTL
     #[must_use]
-    pub const fn from_days(days: u64) -> Self { Self::Custom(days * 86400) }
+    pub const fn from_days(days: u64) -> Self {
+        Self::Custom(days * 86400)
+    }
 }
 
 /// 缓存策略
@@ -181,7 +189,7 @@ impl CacheStrategy {
     }
 
     /// 验证值是否符合策略要求
-    #[must_use] 
+    #[must_use]
     pub const fn validate_value(&self, value: &str) -> bool {
         if value.is_empty() && !self.cache_null_values {
             return false;
@@ -200,7 +208,7 @@ pub struct CacheStrategies;
 
 impl CacheStrategies {
     /// 用户会话缓存策略（30分钟）
-    #[must_use] 
+    #[must_use]
     pub const fn user_session() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(30))
@@ -209,7 +217,7 @@ impl CacheStrategies {
     }
 
     /// 认证令牌缓存策略（15分钟）
-    #[must_use] 
+    #[must_use]
     pub const fn auth_token() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(15))
@@ -218,7 +226,7 @@ impl CacheStrategies {
     }
 
     /// API健康状态缓存策略（5分钟）
-    #[must_use] 
+    #[must_use]
     pub const fn api_health() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(5))
@@ -227,7 +235,7 @@ impl CacheStrategies {
     }
 
     /// 用户API密钥缓存策略（2小时）
-    #[must_use] 
+    #[must_use]
     pub const fn user_api_key() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(2))
@@ -236,7 +244,7 @@ impl CacheStrategies {
     }
 
     /// 请求统计缓存策略（6小时）
-    #[must_use] 
+    #[must_use]
     pub const fn request_stats() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(6))
@@ -245,7 +253,7 @@ impl CacheStrategies {
     }
 
     /// 每日统计缓存策略（24小时）
-    #[must_use] 
+    #[must_use]
     pub const fn daily_stats() -> CacheStrategy {
         CacheStrategy::long_term()
             .with_ttl(CacheTtl::from_hours(24))
@@ -254,7 +262,7 @@ impl CacheStrategies {
     }
 
     /// 配置缓存策略（12小时）
-    #[must_use] 
+    #[must_use]
     pub const fn config() -> CacheStrategy {
         CacheStrategy::long_term()
             .with_ttl(CacheTtl::from_hours(12))
@@ -264,7 +272,7 @@ impl CacheStrategies {
     }
 
     /// 提供商配置缓存策略（6小时）
-    #[must_use] 
+    #[must_use]
     pub const fn provider_config() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(6))
@@ -274,7 +282,7 @@ impl CacheStrategies {
     }
 
     /// 速率限制缓存策略（1分钟）
-    #[must_use] 
+    #[must_use]
     pub const fn rate_limit() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(1))
@@ -283,12 +291,11 @@ impl CacheStrategies {
     }
 
     /// 根据缓存键获取推荐策略
-    #[must_use] 
+    #[must_use]
     pub fn for_key(key: &CacheKey) -> CacheStrategy {
         match key {
             CacheKey::UserSession { .. } => Self::user_session(),
-            CacheKey::UserApiKey { .. } => Self::user_api_key(),
-            CacheKey::UserApiConfig { .. } => Self::user_api_key(), // 用户API配置使用与API密钥相同的策略
+            CacheKey::UserApiKey { .. } | CacheKey::UserApiConfig { .. } => Self::user_api_key(),
             CacheKey::ApiHealth { .. } => Self::api_health(),
             CacheKey::RequestStats { .. } => Self::request_stats(),
             CacheKey::DailyStats { .. } => Self::daily_stats(),

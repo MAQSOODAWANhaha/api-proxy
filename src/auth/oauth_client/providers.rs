@@ -278,14 +278,22 @@ impl OAuthProviderManager {
             Some(model) => {
                 // 先尝试指定的OAuth类型
                 if let Ok(Some(oauth_config)) = model.get_oauth_config(oauth_type) {
-                    return Ok(Self::oauth_model_to_config(&model, oauth_type, oauth_config));
+                    return Ok(Self::oauth_model_to_config(
+                        &model,
+                        oauth_type,
+                        oauth_config,
+                    ));
                 }
 
                 // 如果指定类型不存在，尝试其他OAuth类型
                 let oauth_types = model.get_oauth_types();
                 for available_type in oauth_types {
                     if let Ok(Some(oauth_config)) = model.get_oauth_config(&available_type) {
-                        return Ok(Self::oauth_model_to_config(&model, &available_type, oauth_config));
+                        return Ok(Self::oauth_model_to_config(
+                            &model,
+                            &available_type,
+                            oauth_config,
+                        ));
                     }
                 }
 

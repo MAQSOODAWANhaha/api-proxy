@@ -156,7 +156,7 @@ impl DualPortServerConfig {
     }
 
     /// 获取所有监听地址 - 简化版（仅HTTP）
-    #[must_use] 
+    #[must_use]
     pub fn get_all_listeners(&self) -> Vec<(String, SocketAddr, String)> {
         let mut listeners = Vec::new();
 

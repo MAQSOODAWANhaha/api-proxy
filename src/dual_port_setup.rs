@@ -314,15 +314,12 @@ pub async fn initialize_shared_services() -> Result<(
     ));
 
     // 创建统一认证管理器
-    let unified_auth_manager = Arc::new(
-        AuthManager::new(
-            auth_service.clone(),
-            auth_config,
-            db.clone(),
-            unified_cache_manager,
-        )
-        ?,
-    );
+    let unified_auth_manager = Arc::new(AuthManager::new(
+        auth_service.clone(),
+        auth_config,
+        db.clone(),
+        unified_cache_manager,
+    )?);
 
     // unified_auth_manager已经是Arc类型
 
@@ -376,9 +373,7 @@ pub async fn initialize_shared_services() -> Result<(
         "init_oauth_client",
         "🔐 Initializing OAuth client..."
     );
-    let oauth_client = Arc::new(
-        crate::auth::oauth_client::OAuthClient::new(db.clone()),
-    );
+    let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
     linfo!(
         "system",
         LogStage::Startup,

@@ -41,9 +41,8 @@ pub struct OpenAIStrategy {
     db: Option<Arc<DatabaseConnection>>,
 }
 
-
 impl OpenAIStrategy {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -144,26 +143,28 @@ impl ProviderStrategy for OpenAIStrategy {
         ctx: &mut ProxyContext,
     ) -> Result<()> {
         if let Some(backend) = &ctx.selected_backend
-            && backend.auth_type == "oauth" {
-                upstream_request
-                    .insert_header("host", "chatgpt.com")
-                    .with_network_context(|| {
-                        format!("设置OpenAI host头失败, request_id: {}", ctx.request_id)
-                    })?;
+            && backend.auth_type == "oauth"
+        {
+            upstream_request
+                .insert_header("host", "chatgpt.com")
+                .with_network_context(|| {
+                    format!("设置OpenAI host头失败, request_id: {}", ctx.request_id)
+                })?;
 
-                if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
-                    && let Some(account_id) = self.extract_chatgpt_account_id(token) {
-                        ctx.account_id = Some(account_id.clone());
-                        upstream_request
-                            .insert_header("chatgpt-account-id", &account_id)
-                            .with_network_context(|| {
-                                format!(
-                                    "设置OpenAI chatgpt-account-id头失败, request_id: {}",
-                                    ctx.request_id
-                                )
-                            })?;
-                    }
+            if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
+                && let Some(account_id) = self.extract_chatgpt_account_id(token)
+            {
+                ctx.account_id = Some(account_id.clone());
+                upstream_request
+                    .insert_header("chatgpt-account-id", &account_id)
+                    .with_network_context(|| {
+                        format!(
+                            "设置OpenAI chatgpt-account-id头失败, request_id: {}",
+                            ctx.request_id
+                        )
+                    })?;
             }
+        }
         Ok(())
     }
 
@@ -183,17 +184,18 @@ impl ProviderStrategy for OpenAIStrategy {
     async fn should_retry_key(&self, key: &user_provider_keys::Model) -> Result<bool> {
         if key.health_status == "rate_limited"
             && let Some(resets_at) = key.rate_limit_resets_at
-                && Utc::now().naive_utc() > resets_at {
-                    linfo!(
-                        "system",
-                        LogStage::Internal,
-                        LogComponent::OpenAIStrategy,
-                        "rate_limit_lifted",
-                        "OpenAI API密钥限流已解除，恢复使用",
-                        key_id = key.id
-                    );
-                    return Ok(true);
-                }
+            && Utc::now().naive_utc() > resets_at
+        {
+            linfo!(
+                "system",
+                LogStage::Internal,
+                LogComponent::OpenAIStrategy,
+                "rate_limit_lifted",
+                "OpenAI API密钥限流已解除，恢复使用",
+                key_id = key.id
+            );
+            return Ok(true);
+        }
         Ok(key.is_active && key.health_status == "healthy")
     }
 

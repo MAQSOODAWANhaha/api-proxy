@@ -211,10 +211,12 @@ impl ProxyHttp for ProxyService {
             ctx.request_body.extend_from_slice(chunk);
             // 如果需要修改请求体且不是流结束，按照 Pingora 官方示例清空分块
             // 保持 HTTP 流式语义，避免原始与改写后的内容混合发送
-            if ctx.will_modify_body && !end_of_stream
-                && let Some(chunk) = body_chunk {
-                    chunk.clear();
-                }
+            if ctx.will_modify_body
+                && !end_of_stream
+                && let Some(chunk) = body_chunk
+            {
+                chunk.clear();
+            }
         }
 
         // 流结束处理：处理完整的请求体
@@ -333,10 +335,11 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        crate::pingora_try!(
-            self.resp_transform_service
-                .filter_response(session, upstream_response, ctx)
-        );
+        crate::pingora_try!(self.resp_transform_service.filter_response(
+            session,
+            upstream_response,
+            ctx
+        ));
 
         let resp_stats = self
             .stats_service
@@ -377,15 +380,15 @@ impl ProxyHttp for ProxyService {
             && let Err(e) = strategy
                 .handle_response_body(session, ctx, status_code, &ctx.response_body)
                 .await
-            {
-                lwarn!(
-                    &ctx.request_id,
-                    LogStage::Response,
-                    LogComponent::Proxy,
-                    "strategy_response_fail",
-                    &format!("Provider strategy handle_response_body failed: {e}")
-                );
-            }
+        {
+            lwarn!(
+                &ctx.request_id,
+                LogStage::Response,
+                LogComponent::Proxy,
+                "strategy_response_fail",
+                &format!("Provider strategy handle_response_body failed: {e}")
+            );
+        }
 
         if success {
             let stats = crate::statistics::usage_model::finalize_eos(ctx);
@@ -449,9 +452,7 @@ impl ProxyHttp for ProxyService {
                     status_code,
                     ctx.usage_final.as_ref().and_then(|u| u.prompt_tokens),
                     ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
-                    ctx.usage_final
-                        .as_ref()
-                        .and_then(|u| u.total_tokens),
+                    ctx.usage_final.as_ref().and_then(|u| u.total_tokens),
                     ctx.requested_model.clone(),
                     ctx.usage_final.as_ref().and_then(|u| u.cache_create_tokens),
                     ctx.usage_final.as_ref().and_then(|u| u.cache_read_tokens),

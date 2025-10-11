@@ -32,7 +32,7 @@ pub struct ApiKeyPoolManager {
 
 impl ApiKeyPoolManager {
     /// 创建新的API密钥池管理器
-    #[must_use] 
+    #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, health_checker: Arc<ApiKeyHealthChecker>) -> Self {
         Self {
             db,
@@ -44,7 +44,7 @@ impl ApiKeyPoolManager {
     }
 
     /// 创建带有智能密钥提供者的API密钥池管理器
-    #[must_use] 
+    #[must_use]
     pub fn new_with_smart_provider(
         db: Arc<DatabaseConnection>,
         health_checker: Arc<ApiKeyHealthChecker>,
@@ -467,19 +467,20 @@ impl ApiKeyPoolManager {
 
                 // 2. 检查过期时间
                 if let Some(expires_at) = key.expires_at
-                    && now >= expires_at {
-                        ldebug!(
-                            "system",
-                            LogStage::Scheduling,
-                            LogComponent::Scheduler,
-                            "key_expired",
-                            "API key has expired, skipping",
-                            key_id = key.id,
-                            key_name = %key.name,
-                            expires_at = %expires_at,
-                        );
-                        return false;
-                    }
+                    && now >= expires_at
+                {
+                    ldebug!(
+                        "system",
+                        LogStage::Scheduling,
+                        LogComponent::Scheduler,
+                        "key_expired",
+                        "API key has expired, skipping",
+                        key_id = key.id,
+                        key_name = %key.name,
+                        expires_at = %expires_at,
+                    );
+                    return false;
+                }
 
                 // 3. 检查健康状态（使用统一的三状态枚举）
                 match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
@@ -750,13 +751,13 @@ pub struct SmartApiKeySelectionResult {
 
 impl SmartApiKeySelectionResult {
     /// 获取实际可用的API凭证
-    #[must_use] 
+    #[must_use]
     pub fn get_credential(&self) -> &str {
         &self.credential.credential
     }
 
     /// `检查凭证是否是OAuth` token
-    #[must_use] 
+    #[must_use]
     pub const fn is_oauth_token(&self) -> bool {
         matches!(
             self.credential.auth_type,
@@ -765,25 +766,25 @@ impl SmartApiKeySelectionResult {
     }
 
     /// 检查凭证是否刚刚刷新过
-    #[must_use] 
+    #[must_use]
     pub const fn is_refreshed(&self) -> bool {
         self.credential.refreshed
     }
 
     /// 获取选中的密钥ID
-    #[must_use] 
+    #[must_use]
     pub const fn get_key_id(&self) -> i32 {
         self.selection_result.selected_key.id
     }
 
     /// 获取选中的密钥名称
-    #[must_use] 
+    #[must_use]
     pub fn get_key_name(&self) -> &str {
         &self.selection_result.selected_key.name
     }
 
     /// 获取用户ID
-    #[must_use] 
+    #[must_use]
     pub const fn get_user_id(&self) -> i32 {
         self.selection_result.selected_key.user_id
     }

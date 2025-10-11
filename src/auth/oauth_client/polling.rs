@@ -266,7 +266,9 @@ impl OAuthPollingClient {
                                     refresh_token: response.refresh_token,
                                     id_token: response.id_token,
                                     token_type: "Bearer".to_string(),
-                                    expires_in: response.expires_in.and_then(|x| i32::try_from(x).ok()),
+                                    expires_in: response
+                                        .expires_in
+                                        .and_then(|x| i32::try_from(x).ok()),
                                     scopes: Vec::new(),
                                 });
                             }

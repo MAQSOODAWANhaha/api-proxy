@@ -49,7 +49,7 @@ pub struct CostCalculationResult {
 
 impl PricingCalculatorService {
     /// 创建新的费用计算服务
-    #[must_use] 
+    #[must_use]
     pub const fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
@@ -71,7 +71,10 @@ impl PricingCalculatorService {
         // 查找模型定价配置
         let model_pricing = if let Some(pricing) = self
             .find_model_pricing(model_used, provider_type_id)
-            .await? { pricing } else {
+            .await?
+        {
+            pricing
+        } else {
             lwarn!(
                 request_id,
                 LogStage::Internal,
@@ -118,37 +121,44 @@ impl PricingCalculatorService {
 
         // 计算prompt tokens费用
         if let Some(prompt_tokens) = token_usage.prompt_tokens {
-            let cost = self
-                .calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id);
+            let cost =
+                self.calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id);
             cost_breakdown.insert("prompt_tokens".to_string(), cost);
             total_cost += cost;
         }
 
         // 计算completion tokens费用
         if let Some(completion_tokens) = token_usage.completion_tokens {
-            let cost = self
-                .calculate_tiered_cost("completion", completion_tokens, &pricing_tiers, request_id);
+            let cost = self.calculate_tiered_cost(
+                "completion",
+                completion_tokens,
+                &pricing_tiers,
+                request_id,
+            );
             cost_breakdown.insert("completion_tokens".to_string(), cost);
             total_cost += cost;
         }
 
         // 计算cache create tokens费用
         if let Some(cache_create_tokens) = token_usage.cache_create_tokens {
-            let cost = self
-                .calculate_tiered_cost(
-                    "cache_create",
-                    cache_create_tokens,
-                    &pricing_tiers,
-                    request_id,
-                );
+            let cost = self.calculate_tiered_cost(
+                "cache_create",
+                cache_create_tokens,
+                &pricing_tiers,
+                request_id,
+            );
             cost_breakdown.insert("cache_create_tokens".to_string(), cost);
             total_cost += cost;
         }
 
         // 计算cache read tokens费用
         if let Some(cache_read_tokens) = token_usage.cache_read_tokens {
-            let cost = self
-                .calculate_tiered_cost("cache_read", cache_read_tokens, &pricing_tiers, request_id);
+            let cost = self.calculate_tiered_cost(
+                "cache_read",
+                cache_read_tokens,
+                &pricing_tiers,
+                request_id,
+            );
             cost_breakdown.insert("cache_read_tokens".to_string(), cost);
             total_cost += cost;
         }

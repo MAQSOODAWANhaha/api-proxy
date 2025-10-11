@@ -150,25 +150,25 @@ pub fn success_with_message<T: Serialize>(data: T, message: &str) -> axum::respo
 }
 
 /// # 便捷函数：无数据体的成功响应
-#[must_use] 
+#[must_use]
 pub fn success_without_data(message: &str) -> axum::response::Response {
     ApiResponse::<()>::SuccessWithoutData(message.to_string()).into_response()
 }
 
 /// # 便捷函数：分页响应
-#[must_use] 
+#[must_use]
 pub fn paginated<T: Serialize>(data: Vec<T>, pagination: Pagination) -> axum::response::Response {
     ApiResponse::Paginated(data, pagination).into_response()
 }
 
 /// # 便捷函数：HTTP错误响应
-#[must_use] 
+#[must_use]
 pub fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
     ApiResponse::<()>::Error(status, code.to_string(), message.to_string()).into_response()
 }
 
 /// # 便捷函数：应用错误响应
-#[must_use] 
+#[must_use]
 pub fn app_error(error: ProxyError) -> axum::response::Response {
     // 与 IntoResponse(AppError) 分支一致：用 as_http_parts() 保持包裹结构
     let (status, code, message) = error.as_http_parts();

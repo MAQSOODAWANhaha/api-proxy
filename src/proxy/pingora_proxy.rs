@@ -23,7 +23,7 @@ pub struct PingoraProxyServer {
 
 impl PingoraProxyServer {
     /// 创建新的代理服务器
-    #[must_use] 
+    #[must_use]
     pub fn new(config: AppConfig) -> Self {
         let config_arc = Arc::new(config);
 
@@ -35,7 +35,7 @@ impl PingoraProxyServer {
     }
 
     /// 创建新的代理服务器（带数据库连接）
-    #[must_use] 
+    #[must_use]
     pub fn new_with_db(config: AppConfig, db: Arc<sea_orm::DatabaseConnection>) -> Self {
         let mut server = Self::new(config);
         server.db = Some(db);
@@ -43,7 +43,7 @@ impl PingoraProxyServer {
     }
 
     /// 创建新的代理服务器（带数据库连接和追踪系统）
-    #[must_use] 
+    #[must_use]
     pub fn new_with_db_and_trace(
         config: AppConfig,
         db: Arc<sea_orm::DatabaseConnection>,

@@ -137,8 +137,7 @@ impl OAuthTokenRefreshTask {
 
         // 启动任务循环
         let (command_sender, command_receiver) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-        let task_handle = self
-            .spawn_task_loop(initial_schedule, command_receiver);
+        let task_handle = self.spawn_task_loop(initial_schedule, command_receiver);
         *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
@@ -504,7 +503,8 @@ impl OAuthTokenRefreshTask {
     }
 
     fn schedule_rescan(queue: &mut DelayQueue<RefreshQueueItem>, rescan_key: &mut Option<Key>) {
-        let next_rescan_at = Utc::now() + Duration::seconds(i64::try_from(FALLBACK_RESCAN_INTERVAL_SECS).unwrap_or(i64::MAX));
+        let next_rescan_at = Utc::now()
+            + Duration::seconds(i64::try_from(FALLBACK_RESCAN_INTERVAL_SECS).unwrap_or(i64::MAX));
         let delay = Self::duration_until(next_rescan_at);
         if let Some(key) = rescan_key.as_ref() {
             queue.reset(key, delay);
@@ -601,9 +601,7 @@ impl OAuthTokenRefreshTask {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "refresh_failed",
-                    &format!(
-                        "Failed to refresh token for session {session_id}: {e:?}"
-                    )
+                    &format!("Failed to refresh token for session {session_id}: {e:?}")
                 );
                 let failure = TokenRefreshResult {
                     success: false,
@@ -666,13 +664,14 @@ impl OAuthTokenRefreshTask {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "next_refresh_fail",
-                    &format!(
-                        "Failed to determine next refresh for session {session_id}: {e:?}"
-                    )
+                    &format!("Failed to determine next refresh for session {session_id}: {e:?}")
                 );
                 if result.should_retry {
                     let retry_at = Utc::now()
-                        + Duration::seconds(i64::try_from(OAuthTokenRefreshService::retry_interval_seconds()).unwrap_or(i64::MAX));
+                        + Duration::seconds(
+                            i64::try_from(OAuthTokenRefreshService::retry_interval_seconds())
+                                .unwrap_or(i64::MAX),
+                        );
                     let schedule = ScheduledTokenRefresh {
                         session_id: session_id.to_string(),
                         next_refresh_at: retry_at,
@@ -680,7 +679,10 @@ impl OAuthTokenRefreshTask {
                     };
                     Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
                 } else {
-                    let retry_at = Utc::now() + Duration::seconds(i64::try_from(ERROR_RETRY_INTERVAL_SECS).unwrap_or(i64::MAX));
+                    let retry_at = Utc::now()
+                        + Duration::seconds(
+                            i64::try_from(ERROR_RETRY_INTERVAL_SECS).unwrap_or(i64::MAX),
+                        );
                     let schedule = ScheduledTokenRefresh {
                         session_id: session_id.to_string(),
                         next_refresh_at: retry_at,

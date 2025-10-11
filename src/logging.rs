@@ -41,7 +41,7 @@ pub enum LogStage {
 }
 
 impl LogStage {
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::RequestStart => "request_start",
@@ -102,7 +102,7 @@ pub enum LogComponent {
 }
 
 impl LogComponent {
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Main => "main",
@@ -267,7 +267,7 @@ pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
 }
 
 /// 格式化响应头为人类可读的字符串
-#[must_use] 
+#[must_use]
 pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String {
     let mut formatted = Vec::new();
     for (name, value) in &headers.headers {
@@ -337,7 +337,7 @@ pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeM
 
 /// 将响应头转为 JSON 映射（键小写，按字母序）
 /// 注意：按当前仓库约定，此函数不做脱敏。
-#[must_use] 
+#[must_use]
 pub fn headers_json_map_response(
     headers: &pingora_http::ResponseHeader,
 ) -> BTreeMap<String, String> {
@@ -356,13 +356,13 @@ pub fn headers_json_string_request(headers: &pingora_http::RequestHeader) -> Str
 }
 
 /// 将响应头直接序列化为 JSON 字符串（稳定字段顺序）
-#[must_use] 
+#[must_use]
 pub fn headers_json_string_response(headers: &pingora_http::ResponseHeader) -> String {
     serde_json::to_string(&headers_json_map_response(headers)).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// 脱敏API密钥
-#[must_use] 
+#[must_use]
 pub fn sanitize_api_key(api_key: &str) -> String {
     if api_key.len() > 8 {
         format!(
@@ -378,7 +378,7 @@ pub fn sanitize_api_key(api_key: &str) -> String {
 }
 
 /// 构建详细信息的字符串
-#[must_use] 
+#[must_use]
 pub fn build_details_string(details: &[(&str, String)]) -> String {
     details
         .iter()
@@ -391,7 +391,7 @@ pub fn build_details_string(details: &[(&str, String)]) -> String {
 }
 
 /// 构建请求信息的详细信息
-#[must_use] 
+#[must_use]
 pub fn build_request_details(method: &str, url: &str, headers: &str) -> String {
     let details = vec![
         ("方法", method.to_string()),
@@ -402,7 +402,7 @@ pub fn build_request_details(method: &str, url: &str, headers: &str) -> String {
 }
 
 /// 构建响应信息的详细信息
-#[must_use] 
+#[must_use]
 pub fn build_response_details(status_code: u16, headers: &str, duration_ms: u64) -> String {
     let details = vec![
         ("状态码", status_code.to_string()),
@@ -413,7 +413,7 @@ pub fn build_response_details(status_code: u16, headers: &str, duration_ms: u64)
 }
 
 /// 构建错误信息的详细信息
-#[must_use] 
+#[must_use]
 pub fn build_error_details(error_message: &str, error_type: &str, context: &str) -> String {
     let details = vec![
         ("错误类型", error_type.to_string()),
@@ -430,7 +430,7 @@ pub struct DbQueryFormatter;
 
 impl DbQueryFormatter {
     /// `格式化SQLx查询日志`
-    #[must_use] 
+    #[must_use]
     pub fn format_sqlx_query(
         statement: &str,
         _summary: &str,
@@ -456,22 +456,22 @@ impl DbQueryFormatter {
         // 构建结果信息
         let mut result_parts = Vec::new();
         if let Some(affected) = rows_affected
-            && affected > 0 {
-                result_parts.push(format!("{affected}行受影响"));
-            }
+            && affected > 0
+        {
+            result_parts.push(format!("{affected}行受影响"));
+        }
         if let Some(returned) = rows_returned
-            && returned > 0 {
-                result_parts.push(format!("{returned}行返回"));
-            }
+            && returned > 0
+        {
+            result_parts.push(format!("{returned}行返回"));
+        }
         let result_str = if result_parts.is_empty() {
             String::new()
         } else {
             format!(" → {}", result_parts.join(", "))
         };
 
-        format!(
-            "{operation_icon} {clean_sql} (⏱ {time_str}){result_str}"
-        )
+        format!("{operation_icon} {clean_sql} (⏱ {time_str}){result_str}")
     }
 
     /// 清理SQL语句，移除多余的空白和换行
@@ -541,7 +541,7 @@ impl Default for LoggingConfig {
 
 impl LoggingConfig {
     /// 创建生产环境配置
-    #[must_use] 
+    #[must_use]
     pub fn production() -> Self {
         Self {
             default_level: "info".to_string(),
@@ -553,7 +553,7 @@ impl LoggingConfig {
     }
 
     /// 创建开发环境配置
-    #[must_use] 
+    #[must_use]
     pub fn development() -> Self {
         Self {
             default_level: "debug".to_string(),
@@ -565,7 +565,7 @@ impl LoggingConfig {
     }
 
     /// 创建测试环境配置
-    #[must_use] 
+    #[must_use]
     pub fn testing() -> Self {
         Self {
             default_level: "warn".to_string(),
@@ -577,7 +577,7 @@ impl LoggingConfig {
     }
 
     /// 构建日志过滤器字符串
-    #[must_use] 
+    #[must_use]
     pub fn build_filter(&self) -> String {
         format!(
             "{},api_proxy={},sqlx::query={},sea_orm::query={},sqlx={}",
@@ -604,7 +604,7 @@ impl LoggingConfig {
     ///   - LOG_MODE=development  # 开发模式
     ///   - LOG_MODE=testing      # 测试模式
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn from_env() -> Self {
         match env::var("LOG_MODE").ok().as_deref() {
             Some("development") => Self::development(),
@@ -831,7 +831,7 @@ impl LogFormatValidator {
     /// 获取日志格式统计信息
     ///
     /// 返回当前系统中各种日志格式的使用情况
-    #[must_use] 
+    #[must_use]
     pub fn get_format_stats() -> String {
         "📊 日志格式统计:
   - 统一日志宏: proxy_info!, proxy_debug!, proxy_warn!, proxy_error!
@@ -843,7 +843,7 @@ impl LogFormatValidator {
     /// 检查日志字段是否包含敏感信息
     ///
     /// 自动检测并警告潜在的敏感信息泄露
-    #[must_use] 
+    #[must_use]
     pub fn check_sensitive_fields(fields: &[(&str, String)]) -> Vec<String> {
         let sensitive_keywords = vec![
             "password",
@@ -923,12 +923,7 @@ pub fn log_proxy_failure_details(
 }
 
 /// 记录 Gemini 完整请求信息
-pub fn log_complete_request(
-    request_id: &str,
-    path: &str,
-    session: &Session,
-    ctx: &ProxyContext,
-) {
+pub fn log_complete_request(request_id: &str, path: &str, session: &Session, ctx: &ProxyContext) {
     // 读取请求体
     let request_body = if ctx.request_body.is_empty() {
         String::new()

@@ -65,7 +65,8 @@ fn get_or_build_extractor(
         return Some(extractor);
     }
     let mapping_json = provider.token_mappings_json.as_ref()?;
-    let Ok(cfg) = crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json) else {
+    let Ok(cfg) = crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
+    else {
         return None;
     };
     let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(cfg));

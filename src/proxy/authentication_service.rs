@@ -77,7 +77,7 @@ impl AuthenticationService {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn db(&self) -> Arc<DatabaseConnection> {
         self.db.clone()
     }
@@ -168,7 +168,7 @@ impl AuthenticationService {
                                 location: key.to_string(),
                             });
                         }
-                        _ => {},
+                        _ => {}
                     }
                 }
             }
@@ -182,24 +182,25 @@ impl AuthenticationService {
         ];
         for header_name in &auth_headers {
             if let Some(header_value) = req_header.headers.get(*header_name)
-                && let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
-                    let auth_value = if *header_name == "authorization" {
-                        header_str
-                            .strip_prefix("Bearer ")
-                            .unwrap_or(header_str)
-                            .trim()
-                            .to_string()
-                    } else {
-                        header_str.trim().to_string()
-                    };
-                    if !auth_value.is_empty() {
-                        return Ok(Authorization {
-                            auth_value,
-                            source: AuthSource::Header,
-                            location: (*header_name).to_string(),
-                        });
-                    }
+                && let Ok(header_str) = std::str::from_utf8(header_value.as_bytes())
+            {
+                let auth_value = if *header_name == "authorization" {
+                    header_str
+                        .strip_prefix("Bearer ")
+                        .unwrap_or(header_str)
+                        .trim()
+                        .to_string()
+                } else {
+                    header_str.trim().to_string()
+                };
+                if !auth_value.is_empty() {
+                    return Ok(Authorization {
+                        auth_value,
+                        source: AuthSource::Header,
+                        location: (*header_name).to_string(),
+                    });
                 }
+            }
         }
 
         Err(proxy_err!(auth, "No authentication information found"))
@@ -212,42 +213,45 @@ impl AuthenticationService {
         _request_id: &str,
     ) -> Result<()> {
         if let Some(expires_at) = &user_api.expires_at
-            && chrono::Utc::now().naive_utc() > *expires_at {
-                return Err(proxy_err!(rate_limit, "API has expired"));
-            }
+            && chrono::Utc::now().naive_utc() > *expires_at
+        {
+            return Err(proxy_err!(rate_limit, "API has expired"));
+        }
 
         let rl = DistributedRateLimiter::new(self.cache.clone());
         let endpoint_key = format!("service_api:{}", user_api.id);
 
         if let Some(rate_limit) = user_api.max_request_per_min
-            && rate_limit > 0 {
-                let outcome = rl
-                    .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
-                    .await
-                    .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
-                if !outcome.allowed {
-                    return Err(proxy_err!(
-                        rate_limit,
-                        "Rate limit exceeded: {} requests per minute",
-                        rate_limit
-                    ));
-                }
+            && rate_limit > 0
+        {
+            let outcome = rl
+                .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
+                .await
+                .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+            if !outcome.allowed {
+                return Err(proxy_err!(
+                    rate_limit,
+                    "Rate limit exceeded: {} requests per minute",
+                    rate_limit
+                ));
             }
+        }
 
         if let Some(daily_limit) = user_api.max_requests_per_day
-            && daily_limit > 0 {
-                let outcome = rl
-                    .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
-                    .await
-                    .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
-                if !outcome.allowed {
-                    return Err(proxy_err!(
-                        rate_limit,
-                        "Daily request limit exceeded: {} requests per day",
-                        daily_limit
-                    ));
-                }
+            && daily_limit > 0
+        {
+            let outcome = rl
+                .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
+                .await
+                .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+            if !outcome.allowed {
+                return Err(proxy_err!(
+                    rate_limit,
+                    "Daily request limit exceeded: {} requests per day",
+                    daily_limit
+                ));
             }
+        }
 
         Ok(())
     }

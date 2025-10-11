@@ -139,13 +139,10 @@ impl AuthUtils {
     /// 解析后的查询参数映射
     #[must_use]
     pub fn extract_query_params_from_path(path: &str) -> HashMap<String, String> {
-        path.find('?').map_or_else(
-            HashMap::new,
-            |query_start| {
-                let query = &path[query_start + 1..];
-                Self::parse_query_string(query)
-            }
-        )
+        path.find('?').map_or_else(HashMap::new, |query_start| {
+            let query = &path[query_start + 1..];
+            Self::parse_query_string(query)
+        })
     }
 
     /// `验证API Key的基本格式`

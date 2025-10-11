@@ -112,7 +112,9 @@ impl CacheKey {
     #[must_use]
     pub const fn namespace(&self) -> &'static str {
         match self {
-            Self::UserSession { .. } | Self::UserApiKey { .. } | Self::UserApiConfig { .. } => "user",
+            Self::UserSession { .. } | Self::UserApiKey { .. } | Self::UserApiConfig { .. } => {
+                "user"
+            }
             Self::ApiHealth { .. } => "health",
             Self::RequestStats { .. } | Self::DailyStats { .. } => "stats",
             Self::Config { .. } => "config",
@@ -141,7 +143,10 @@ impl CacheKey {
     /// 判断是否是统计缓存（需要中等的 TTL）
     #[must_use]
     pub const fn is_stats(&self) -> bool {
-        matches!(self, Self::RequestStats { .. } | Self::DailyStats { .. } | Self::ApiHealth { .. })
+        matches!(
+            self,
+            Self::RequestStats { .. } | Self::DailyStats { .. } | Self::ApiHealth { .. }
+        )
     }
 }
 

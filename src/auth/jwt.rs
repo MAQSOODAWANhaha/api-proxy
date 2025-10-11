@@ -9,8 +9,8 @@ use jsonwebtoken::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::auth::types::{AuthConfig, JwtClaims};
 use crate::auth::permissions::UserRole;
+use crate::auth::types::{AuthConfig, JwtClaims};
 use crate::error::Result;
 
 /// JWT token manager
@@ -179,8 +179,7 @@ impl JwtManager {
         is_admin: bool,
         role: UserRole,
     ) -> Result<TokenPair> {
-        let access_token =
-            self.generate_access_token(user_id, username.clone(), is_admin, role)?;
+        let access_token = self.generate_access_token(user_id, username.clone(), is_admin, role)?;
 
         let refresh_token = self.generate_refresh_token(user_id, username)?;
 
@@ -225,12 +224,7 @@ mod tests {
         let manager = create_test_manager();
 
         let token = manager
-            .generate_access_token(
-                1,
-                "testuser".to_string(),
-                false,
-                UserRole::RegularUser,
-            )
+            .generate_access_token(1, "testuser".to_string(), false, UserRole::RegularUser)
             .unwrap();
 
         let claims = manager.validate_token(&token).unwrap();
@@ -264,12 +258,7 @@ mod tests {
         let manager = create_test_manager();
 
         let token_pair = manager
-            .generate_token_pair(
-                1,
-                "testuser".to_string(),
-                true,
-                UserRole::Admin,
-            )
+            .generate_token_pair(1, "testuser".to_string(), true, UserRole::Admin)
             .unwrap();
 
         // Validate access token
@@ -288,12 +277,7 @@ mod tests {
         let manager = create_test_manager();
 
         let _token = manager
-            .generate_access_token(
-                1,
-                "testuser".to_string(),
-                false,
-                UserRole::RegularUser,
-            )
+            .generate_access_token(1, "testuser".to_string(), false, UserRole::RegularUser)
             .unwrap();
 
         // TODO: 临时跳过复杂的过期检查测试
@@ -312,12 +296,7 @@ mod tests {
         let manager = create_test_manager();
 
         let _token = manager
-            .generate_access_token(
-                1,
-                "testuser".to_string(),
-                false,
-                UserRole::RegularUser,
-            )
+            .generate_access_token(1, "testuser".to_string(), false, UserRole::RegularUser)
             .unwrap();
 
         // TODO: JWT测试需要修复 - 临时跳过以完成重构任务
@@ -345,12 +324,7 @@ mod tests {
         let manager = create_test_manager();
 
         let _token = manager
-            .generate_access_token(
-                1,
-                "testuser".to_string(),
-                false,
-                UserRole::RegularUser,
-            )
+            .generate_access_token(1, "testuser".to_string(), false, UserRole::RegularUser)
             .unwrap();
 
         // TODO: 临时跳过token撤销测试
@@ -368,12 +342,7 @@ mod tests {
         let manager = create_test_manager();
 
         let _token = manager
-            .generate_access_token(
-                1,
-                "testuser".to_string(),
-                false,
-                UserRole::RegularUser,
-            )
+            .generate_access_token(1, "testuser".to_string(), false, UserRole::RegularUser)
             .unwrap();
 
         // TODO: 临时跳过不安全的claims提取测试

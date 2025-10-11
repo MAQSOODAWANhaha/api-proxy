@@ -49,8 +49,6 @@ pub use cache_strategy::{
     hash_token,
 };
 
-
-
 /// 统一认证结果
 /// 表示用户认证成功后的完整信息，包括用户身份、角色和可选的令牌信息
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -138,12 +136,9 @@ impl AuthContext {
     /// 检查是否为管理员
     #[must_use]
     pub fn is_admin(&self) -> bool {
-        self.auth_result
-            .as_ref()
-            .is_some_and(|r| r.is_admin)
+        self.auth_result.as_ref().is_some_and(|r| r.is_admin)
     }
 
-    
     /// 获取用户ID
     #[must_use]
     pub fn get_user_id(&self) -> Option<i32> {

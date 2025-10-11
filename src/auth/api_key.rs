@@ -316,9 +316,11 @@ impl ApiKeyManager {
             LogStage::Internal,
             LogComponent::ApiKey,
             "usage_recorded",
-                                            &format!("Recorded usage for API key: {}, tokens: {tokens_used}",
-                                                Self::sanitize_api_key(api_key),
-                                            )        );
+            &format!(
+                "Recorded usage for API key: {}, tokens: {tokens_used}",
+                Self::sanitize_api_key(api_key),
+            )
+        );
 
         Ok(())
     }

@@ -197,7 +197,7 @@ pub enum TransformRule {
 
 impl TransformRule {
     /// 从字符串解析转换规则
-    #[must_use] 
+    #[must_use]
     pub fn from_str(rule: &str) -> Self {
         let parts: Vec<&str> = rule.split(':').collect();
         match parts.as_slice() {
@@ -227,7 +227,7 @@ impl TransformRule {
     }
 
     /// 应用转换规则
-    #[must_use] 
+    #[must_use]
     pub fn apply(&self, value: &Value) -> Value {
         match self {
             Self::Multiply(factor) => match value {
@@ -372,7 +372,7 @@ pub struct TokenFieldExtractor {
 
 impl TokenFieldExtractor {
     /// 创建新的Token字段提取器
-    #[must_use] 
+    #[must_use]
     pub const fn new(config: TokenMappingConfig) -> Self {
         Self { config }
     }
@@ -421,7 +421,7 @@ impl TokenFieldExtractor {
     }
 
     /// 提取u32 token值
-    #[must_use] 
+    #[must_use]
     pub fn extract_token_u32(&self, response: &Value, field_name: &str) -> Option<u32> {
         self.extract_token_field(response, field_name)
             .and_then(|v| match v {
@@ -496,13 +496,14 @@ impl TokenFieldExtractor {
 
     fn parse_index(part: &str) -> Option<(&str, usize)> {
         if let Some(beg) = part.find('[')
-            && let Some(end) = part.find(']') {
-                let field = &part[..beg];
-                let idx = &part[beg + 1..end];
-                if let Ok(i) = idx.parse::<usize>() {
-                    return Some((field, i));
-                }
+            && let Some(end) = part.find(']')
+        {
+            let field = &part[..beg];
+            let idx = &part[beg + 1..end];
+            if let Ok(i) = idx.parse::<usize>() {
+                return Some((field, i));
             }
+        }
         None
     }
 
@@ -598,7 +599,7 @@ pub struct FieldExtractor {
 }
 
 impl FieldExtractor {
-    #[must_use] 
+    #[must_use]
     pub const fn new(config: FieldMappingConfig) -> Self {
         Self { config }
     }
@@ -630,7 +631,10 @@ impl ModelExtractor {
         if let Some(arr) = v.get("extraction_rules").and_then(|x| x.as_array()) {
             for item in arr {
                 let r#type = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                let prio = item.get("priority").and_then(sea_orm::JsonValue::as_i64).unwrap_or(0) as i32;
+                let prio = item
+                    .get("priority")
+                    .and_then(sea_orm::JsonValue::as_i64)
+                    .unwrap_or(0) as i32;
                 match r#type {
                     "body_json" => {
                         if let Some(path) = item.get("path").and_then(|x| x.as_str()) {
@@ -642,12 +646,13 @@ impl ModelExtractor {
                     }
                     "url_regex" => {
                         if let Some(pattern) = item.get("pattern").and_then(|x| x.as_str())
-                            && let Ok(re) = Regex::new(pattern) {
-                                rules.push(ModelRule::UrlRegex {
-                                    pattern: re,
-                                    priority: prio,
-                                });
-                            }
+                            && let Ok(re) = Regex::new(pattern)
+                        {
+                            rules.push(ModelRule::UrlRegex {
+                                pattern: re,
+                                priority: prio,
+                            });
+                        }
                     }
                     "query_param" => {
                         if let Some(name) = item.get("parameter").and_then(|x| x.as_str()) {
@@ -677,7 +682,7 @@ impl ModelExtractor {
         })
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn extract_model_name(
         &self,
         url_path: &str,

@@ -189,9 +189,7 @@ impl GeminiCodeAssistClient {
                         LogStage::ExternalApi,
                         LogComponent::GeminiClient,
                         "retry_success",
-                        &format!(
-                            "{operation}在第{attempt}次尝试中成功完成，耗时: {duration:?}"
-                        )
+                        &format!("{operation}在第{attempt}次尝试中成功完成，耗时: {duration:?}")
                     );
                     return Ok(response);
                 }
@@ -202,9 +200,7 @@ impl GeminiCodeAssistClient {
                         LogStage::ExternalApi,
                         LogComponent::GeminiClient,
                         "retry_fail",
-                        &format!(
-                            "{operation}第{attempt}次尝试失败，耗时: {duration:?}，错误: {e}"
-                        )
+                        &format!("{operation}第{attempt}次尝试失败，耗时: {duration:?}，错误: {e}")
                     );
 
                     // 如果是最后一次尝试，保存错误并返回
@@ -281,7 +277,8 @@ impl GeminiCodeAssistClient {
 
         self.execute_with_retry(operation_name, || async {
             let mut request_body = serde_json::Map::new();
-            let metadata = project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
+            let metadata =
+                project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
             request_body.insert(
                 "metadata".to_string(),
                 serde_json::to_value(metadata).map_err(|e| {
@@ -360,9 +357,7 @@ impl GeminiCodeAssistClient {
                     LogStage::ExternalApi,
                     LogComponent::GeminiClient,
                     "load_code_assist_fail",
-                    &format!(
-                        "loadCodeAssist API失败: status={status}, response={error_text}"
-                    )
+                    &format!("loadCodeAssist API失败: status={status}, response={error_text}")
                 );
                 return Err(ProxyError::gemini_code_assist(format!(
                     "loadCodeAssist API failed: {status} - {error_text}"
@@ -438,7 +433,8 @@ impl GeminiCodeAssistClient {
             }
 
             // 添加客户端元数据
-            let metadata = project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
+            let metadata =
+                project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
             request_body.insert(
                 "metadata".to_string(),
                 serde_json::to_value(metadata).map_err(|e| {
@@ -453,9 +449,7 @@ impl GeminiCodeAssistClient {
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
                 "onboard_user_call",
-                &format!(
-                    "调用onboardUser with tier_id: {tier_id:?}, project_id: {project_id:?}"
-                )
+                &format!("调用onboardUser with tier_id: {tier_id:?}, project_id: {project_id:?}")
             );
 
             let url = format!("{}/v1internal:onboardUser", self.base_url);
@@ -504,9 +498,7 @@ impl GeminiCodeAssistClient {
                     LogStage::ExternalApi,
                     LogComponent::GeminiClient,
                     "onboard_user_fail",
-                    &format!(
-                        "onboardUser API失败: status={status}, response={error_text}"
-                    )
+                    &format!("onboardUser API失败: status={status}, response={error_text}")
                 );
                 return Err(ProxyError::gemini_code_assist(format!(
                     "onboardUser API failed: {status} - {error_text}"
@@ -587,7 +579,8 @@ impl GeminiCodeAssistClient {
 
                     if retry_count < MAX_RETRIES {
                         // 指数退避计算延迟时间
-                        let delay_ms = BASE_DELAY_MS * 2u64.pow(u32::try_from(retry_count).unwrap_or(0) - 1);
+                        let delay_ms =
+                            BASE_DELAY_MS * 2u64.pow(u32::try_from(retry_count).unwrap_or(0) - 1);
                         lwarn!(
                             "system",
                             LogStage::ExternalApi,
@@ -609,9 +602,7 @@ impl GeminiCodeAssistClient {
                             LogStage::ExternalApi,
                             LogComponent::GeminiClient,
                             "onboard_user_retry_giveup",
-                            &format!(
-                                "onboardUser重试{MAX_RETRIES}次后仍然失败，最终错误: {e}"
-                            )
+                            &format!("onboardUser重试{MAX_RETRIES}次后仍然失败，最终错误: {e}")
                         );
                     }
                 }
@@ -709,9 +700,7 @@ impl GeminiCodeAssistClient {
     /// `从loadCodeAssist响应中获取tierId`
     ///
     /// `参考JavaScript实现中的getOnboardTier逻辑`
-    fn get_tier_id_from_load_response(
-        load_response: &LoadCodeAssistResponse,
-    ) -> &str {
+    fn get_tier_id_from_load_response(load_response: &LoadCodeAssistResponse) -> &str {
         // 使用currentTier的id
         if let Some(current_tier) = &load_response.currentTier {
             return &current_tier.id;
@@ -817,7 +806,11 @@ impl GeminiCodeAssistClient {
             LogStage::ExternalApi,
             LogComponent::GeminiClient,
             "project_id_from_onboard",
-                            &format!("通过onboardUser获取到project_id: {project_id:?} (display_name: {})", onboard_response.cloudaicompanionProject.display_name)        );
+            &format!(
+                "通过onboardUser获取到project_id: {project_id:?} (display_name: {})",
+                onboard_response.cloudaicompanionProject.display_name
+            )
+        );
 
         Ok(project_id)
     }

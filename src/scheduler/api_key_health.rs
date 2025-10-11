@@ -147,7 +147,7 @@ pub struct ApiKeyHealthChecker {
 
 impl ApiKeyHealthChecker {
     /// 创建新的API密钥健康检查器
-    #[must_use] 
+    #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, config: Option<ApiKeyHealthConfig>) -> Self {
         let client = Client::builder()
             .timeout(
@@ -636,17 +636,19 @@ impl ApiKeyHealthChecker {
         // 尝试从OpenAI 429错误中解析resets_in_seconds
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(error_msg)
             && let Some(error_obj) = json_value.get("error")
-                && let Some(resets_in_seconds) = error_obj.get("resets_in_seconds") {
-                    return resets_in_seconds.as_i64();
-                }
+            && let Some(resets_in_seconds) = error_obj.get("resets_in_seconds")
+        {
+            return resets_in_seconds.as_i64();
+        }
 
         // 尝试从文本中提取数字
         if let Some(seconds_str) = error_msg.split("resets_in_seconds").nth(1)
             && let Some(start) = seconds_str.find(|c: char| c.is_ascii_digit())
-                && let Some(end) = seconds_str[start..].find(|c: char| !c.is_ascii_digit())
-                    && let Ok(seconds) = seconds_str[start..start + end].parse::<i64>() {
-                        return Some(seconds);
-                    }
+            && let Some(end) = seconds_str[start..].find(|c: char| !c.is_ascii_digit())
+            && let Ok(seconds) = seconds_str[start..start + end].parse::<i64>()
+        {
+            return Some(seconds);
+        }
 
         None
     }
@@ -794,22 +796,24 @@ impl ApiKeyHealthChecker {
 
             // 如果数据库中有健康状态详情，解析它
             if let Some(ref detail) = key.health_status_detail
-                && let Ok(detail_json) = serde_json::from_str::<serde_json::Value>(detail) {
-                    if let Some(error_msg) =
-                        detail_json.get("error_message").and_then(|v| v.as_str())
-                    {
-                        status.last_error = Some(error_msg.to_string());
-                    }
-                    if let Some(score) = detail_json.get("health_score").and_then(sea_orm::JsonValue::as_f64) {
-                        status.health_score = score as f32;
-                    }
-                    if let Some(failures) = detail_json
-                        .get("consecutive_failures")
-                        .and_then(sea_orm::JsonValue::as_u64)
-                    {
-                        status.consecutive_failures = failures as u32;
-                    }
+                && let Ok(detail_json) = serde_json::from_str::<serde_json::Value>(detail)
+            {
+                if let Some(error_msg) = detail_json.get("error_message").and_then(|v| v.as_str()) {
+                    status.last_error = Some(error_msg.to_string());
                 }
+                if let Some(score) = detail_json
+                    .get("health_score")
+                    .and_then(sea_orm::JsonValue::as_f64)
+                {
+                    status.health_score = score as f32;
+                }
+                if let Some(failures) = detail_json
+                    .get("consecutive_failures")
+                    .and_then(sea_orm::JsonValue::as_u64)
+                {
+                    status.consecutive_failures = failures as u32;
+                }
+            }
 
             ldebug!(
                 "system",
@@ -894,7 +898,7 @@ impl ApiKeyHealthChecker {
 
 impl ApiKeyHealth {
     /// 检查是否应该进行下次检查
-    #[must_use] 
+    #[must_use]
     pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
         if let Some(last_check) = self.last_check {
             let interval = if self.is_healthy {

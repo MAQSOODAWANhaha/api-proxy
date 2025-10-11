@@ -287,7 +287,9 @@ impl RequestTrace {
             current_phase.details = details;
 
             if let Some(end_time) = current_phase.end_time {
-                let duration_ms = end_time.signed_duration_since(current_phase.start_time).num_milliseconds();
+                let duration_ms = end_time
+                    .signed_duration_since(current_phase.start_time)
+                    .num_milliseconds();
                 if duration_ms >= 0 {
                     current_phase.duration_ms = Some(duration_ms.try_into().unwrap_or(u64::MAX));
                 }
@@ -302,7 +304,9 @@ impl RequestTrace {
         self.is_success = is_success;
 
         if let Some(end_time) = self.end_time {
-            let duration_ms = end_time.signed_duration_since(self.start_time).num_milliseconds();
+            let duration_ms = end_time
+                .signed_duration_since(self.start_time)
+                .num_milliseconds();
             if duration_ms >= 0 {
                 self.duration_ms = Some(duration_ms.try_into().unwrap_or(u64::MAX));
             }
@@ -338,7 +342,8 @@ impl TokenUsage {
     /// 计算使用效率
     pub fn calculate_efficiency(&mut self) {
         if self.prompt_tokens > 0 {
-            self.efficiency_ratio = Some(f64::from(self.completion_tokens) / f64::from(self.prompt_tokens));
+            self.efficiency_ratio =
+                Some(f64::from(self.completion_tokens) / f64::from(self.prompt_tokens));
         }
     }
 }

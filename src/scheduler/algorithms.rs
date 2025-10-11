@@ -30,7 +30,7 @@ pub struct SelectionContext {
 }
 
 impl SelectionContext {
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         request_id: String,
         user_id: i32,
@@ -64,7 +64,7 @@ pub struct ApiKeySelectionResult {
 }
 
 impl ApiKeySelectionResult {
-    #[must_use] 
+    #[must_use]
     pub fn new(
         selected_index: usize,
         selected_key: user_provider_keys::Model,
@@ -104,7 +104,7 @@ pub struct RoundRobinApiKeySelector {
 }
 
 impl RoundRobinApiKeySelector {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             counters: DashMap::new(),
@@ -220,7 +220,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
 pub struct HealthBestApiKeySelector;
 
 impl HealthBestApiKeySelector {
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }
@@ -351,7 +351,7 @@ pub struct WeightedApiKeySelector {
 }
 
 impl WeightedApiKeySelector {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             counters: DashMap::new(),
@@ -467,7 +467,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
 }
 
 /// 创建API密钥选择器
-#[must_use] 
+#[must_use]
 pub fn create_api_key_selector(strategy: SchedulingStrategy) -> Arc<dyn ApiKeySelector> {
     match strategy {
         SchedulingStrategy::RoundRobin => Arc::new(RoundRobinApiKeySelector::new()),

@@ -64,8 +64,6 @@ impl fmt::Display for UserRole {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

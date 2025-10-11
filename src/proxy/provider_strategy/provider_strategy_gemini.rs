@@ -38,7 +38,6 @@ pub struct GeminiStrategy {
     db: Option<Arc<DatabaseConnection>>,
 }
 
-
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
     fn name(&self) -> &'static str {
@@ -103,13 +102,13 @@ impl ProviderStrategy for GeminiStrategy {
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
         if let Some(backend) = &ctx.selected_backend
             && backend.auth_type.as_str() == "oauth"
-                && let Some(pid) = &backend.project_id
-                    && !pid.is_empty() {
-                        let path = session.req_header().uri.path();
-                        let need = path.contains("streamGenerateContent")
-                            || path.contains("generateContent");
-                        ctx.will_modify_body = need;
-                    }
+            && let Some(pid) = &backend.project_id
+            && !pid.is_empty()
+        {
+            let path = session.req_header().uri.path();
+            let need = path.contains("streamGenerateContent") || path.contains("generateContent");
+            ctx.will_modify_body = need;
+        }
         Ok(())
     }
 

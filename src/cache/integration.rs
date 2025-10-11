@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
 use crate::error::{ProxyError, Result};
-use entity::{ProviderTypes, provider_types, UserServiceApis, user_service_apis};
+use entity::{ProviderTypes, UserServiceApis, provider_types, user_service_apis};
 
 /// 缓存的提供商配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,9 +196,7 @@ impl CacheFacade {
             LogStage::Cache,
             LogComponent::Cache,
             "clear_user_cache_complete",
-            &format!(
-                "清空用户缓存完成: user_id={user_id}, deleted={total_deleted}"
-            )
+            &format!("清空用户缓存完成: user_id={user_id}, deleted={total_deleted}")
         );
         Ok(total_deleted)
     }
@@ -600,9 +598,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Redis instance"] // 默认忽略，需要手动运行
     async fn test_cache_manager_basic_operations() {
-        let mut cache_config = CacheConfig::default();
-        cache_config.cache_type = CacheType::Redis;
-        cache_config.redis = Some(RedisConfig::default());
+        let cache_config = CacheConfig {
+            cache_type: CacheType::Redis,
+            redis: Some(RedisConfig::default()),
+            ..CacheConfig::default()
+        };
         let cache_manager = CacheFacade::from_config(&cache_config).await.unwrap();
 
         // 测试连接
@@ -628,9 +628,11 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Redis instance"]
     async fn test_cache_decorator() {
-        let mut cache_config = CacheConfig::default();
-        cache_config.cache_type = CacheType::Redis;
-        cache_config.redis = Some(RedisConfig::default());
+        let cache_config = CacheConfig {
+            cache_type: CacheType::Redis,
+            redis: Some(RedisConfig::default()),
+            ..CacheConfig::default()
+        };
         let cache_manager = CacheFacade::from_config(&cache_config).await.unwrap();
 
         let key = CacheKeyBuilder::config("decorator_test");

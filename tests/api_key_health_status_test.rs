@@ -3,7 +3,7 @@
 //! 测试健康状态枚举的统一性和相关功能
 
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 /// API密钥健康状态枚举（复制定义用于测试）
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,14 +16,14 @@ pub enum ApiKeyHealthStatus {
     Unhealthy,
 }
 
-impl ToString for ApiKeyHealthStatus {
-    fn to_string(&self) -> String {
-        match self {
-            ApiKeyHealthStatus::Healthy => "healthy",
-            ApiKeyHealthStatus::RateLimited => "rate_limited",
-            ApiKeyHealthStatus::Unhealthy => "unhealthy",
-        }
-        .to_string()
+impl fmt::Display for ApiKeyHealthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::Healthy => "healthy",
+            Self::RateLimited => "rate_limited",
+            Self::Unhealthy => "unhealthy",
+        };
+        f.write_str(text)
     }
 }
 
@@ -32,10 +32,10 @@ impl FromStr for ApiKeyHealthStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "healthy" => Ok(ApiKeyHealthStatus::Healthy),
-            "rate_limited" => Ok(ApiKeyHealthStatus::RateLimited),
-            "unhealthy" => Ok(ApiKeyHealthStatus::Unhealthy),
-            _ => Err(format!("Invalid health status: {}", s)),
+            "healthy" => Ok(Self::Healthy),
+            "rate_limited" => Ok(Self::RateLimited),
+            "unhealthy" => Ok(Self::Unhealthy),
+            _ => Err(format!("Invalid health status: {s}")),
         }
     }
 }
@@ -126,17 +126,12 @@ mod tests {
 
         for (key_name, health_status, expected_healthy) in test_keys {
             let status_result = ApiKeyHealthStatus::from_str(health_status);
-            let is_healthy = match status_result {
-                Ok(ApiKeyHealthStatus::Healthy) => true,
-                Ok(ApiKeyHealthStatus::RateLimited) => false, // 限流需要额外检查重置时间
-                Ok(ApiKeyHealthStatus::Unhealthy) => false,
-                Err(_) => false, // 无法解析的状态都认为不健康
-            };
+            // 仅 Healthy 视为真正健康，其余（含限流、错误与未知）均视为不健康
+            let is_healthy = matches!(status_result, Ok(ApiKeyHealthStatus::Healthy));
 
             assert_eq!(
                 is_healthy, expected_healthy,
-                "Key {} with status {} should be healthy: {}",
-                key_name, health_status, expected_healthy
+                "Key {key_name} with status {health_status} should be healthy: {expected_healthy}"
             );
         }
     }
@@ -144,7 +139,7 @@ mod tests {
     #[test]
     fn test_status_count() {
         // 确保我们有且只有三个状态
-        let statuses = vec![
+        let statuses = [
             ApiKeyHealthStatus::Healthy,
             ApiKeyHealthStatus::RateLimited,
             ApiKeyHealthStatus::Unhealthy,

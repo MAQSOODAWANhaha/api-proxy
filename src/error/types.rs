@@ -271,7 +271,7 @@ pub enum ProxyError {
 impl ProxyError {
     /// 将错误标准化为 (HTTP 状态码, 标准错误码, 人类可读消息)
     /// 可用于管理端(Axum)与代理端(Pingora)统一输出
-    #[must_use] 
+    #[must_use]
     pub fn as_http_parts(&self) -> (StatusCode, &'static str, String) {
         let (status, code) = self.to_http_response_parts();
         let message = self.to_string();
@@ -292,14 +292,14 @@ impl ProxyError {
     }
 
     /// 直接转换为 Pingora 错误
-    #[must_use] 
+    #[must_use]
     pub fn to_pingora_error(&self) -> pingora_core::Error {
         let (status, body) = self.to_http_status_and_body();
         *pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(status.as_u16()), body)
     }
     /// 直接生成 (HTTP 状态码, JSON 字符串) 形式的响应体，便于快速返回
     /// JSON 结构: {"error": <message>, "code": <code>, [extras...]}
-    #[must_use] 
+    #[must_use]
     pub fn to_http_status_and_body(&self) -> (StatusCode, String) {
         let (status, code) = self.to_http_response_parts();
 
@@ -337,7 +337,7 @@ impl ProxyError {
     }
 
     /// 将错误转换为HTTP状态码和错误代码
-    #[must_use] 
+    #[must_use]
     pub const fn to_http_response_parts(&self) -> (StatusCode, &'static str) {
         match self {
             Self::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
@@ -351,12 +351,8 @@ impl ProxyError {
             Self::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
             Self::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
             Self::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
-            Self::ServerInit { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR")
-            }
-            Self::ServerStart { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR")
-            }
+            Self::ServerInit { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR"),
+            Self::ServerStart { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR"),
             Self::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
             Self::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
             Self::UpstreamNotAvailable { .. } => {
@@ -364,26 +360,16 @@ impl ProxyError {
             }
             Self::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT"),
             Self::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
-            Self::ConnectionTimeout { .. } => {
-                (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT")
-            }
+            Self::ConnectionTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT"),
             Self::ReadTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "READ_TIMEOUT"),
             Self::WriteTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "WRITE_TIMEOUT"),
-            Self::LoadBalancer { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR")
-            }
-            Self::HealthCheck { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR")
-            }
-            Self::Statistics { .. } => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR")
-            }
+            Self::LoadBalancer { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR"),
+            Self::HealthCheck { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR"),
+            Self::Statistics { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR"),
             Self::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
             Self::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
             Self::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
-            Self::ManagementValidation { .. } => {
-                (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
-            }
+            Self::ManagementValidation { .. } => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
             Self::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
             Self::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
             Self::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),

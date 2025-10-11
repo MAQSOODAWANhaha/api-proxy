@@ -94,7 +94,9 @@ impl ApiKeyStrategy {
     pub fn extract_api_key(&self, header_value: &str) -> Option<String> {
         // 如果格式是 "Bearer {key}"
         if self.value_format.starts_with("Bearer ") {
-            header_value.strip_prefix("Bearer ").map(std::string::ToString::to_string)
+            header_value
+                .strip_prefix("Bearer ")
+                .map(std::string::ToString::to_string)
         }
         // 如果格式是 "{key}"
         else if self.value_format == "{key}" {
@@ -104,7 +106,9 @@ impl ApiKeyStrategy {
         else {
             // 简单实现：假设{key}在最后
             self.value_format.strip_suffix("{key}").and_then(|prefix| {
-                header_value.strip_prefix(prefix).map(std::string::ToString::to_string)
+                header_value
+                    .strip_prefix(prefix)
+                    .map(std::string::ToString::to_string)
             })
         }
     }
@@ -198,8 +202,9 @@ impl AuthStrategy for ApiKeyStrategy {
     fn validate_config(&self, config: &serde_json::Value) -> Result<()> {
         // 验证必需的配置字段
         if let Some(header_name) = config.get("header_name")
-            && !header_name.is_string() {
-                return Err(crate::proxy_err!(config, "header_name必须是字符串"));
+            && !header_name.is_string()
+        {
+            return Err(crate::proxy_err!(config, "header_name必须是字符串"));
         }
 
         if let Some(value_format) = config.get("value_format") {

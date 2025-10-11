@@ -21,7 +21,7 @@ impl Default for ResponseTransformService {
 
 impl ResponseTransformService {
     /// 创建新的响应转换服务
-    #[must_use] 
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }

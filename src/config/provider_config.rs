@@ -110,9 +110,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .all(self.db.as_ref())
             .await
-            .map_err(|e| {
-                ProxyError::database(format!("Failed to fetch active providers: {e}"))
-            })?;
+            .map_err(|e| ProxyError::database(format!("Failed to fetch active providers: {e}")))?;
 
         let mut configs = Vec::new();
         for provider in providers {
@@ -125,9 +123,7 @@ impl ProviderConfigManager {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "parse_provider_config_fail",
-                        &format!(
-                            "Failed to parse provider config for {provider_name}: {e}"
-                        )
+                        &format!("Failed to parse provider config for {provider_name}: {e}")
                     );
                 }
             }
@@ -176,9 +172,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| {
-                crate::error::ProxyError::internal(format!("Database query error: {e}"))
-            })?
+            .map_err(|e| crate::error::ProxyError::internal(format!("Database query error: {e}")))?
         {
             return Ok(ProviderId::from_database_id(provider.id));
         }
@@ -238,9 +232,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| {
-                ProxyError::database(format!("Failed to fetch provider {name}: {e}"))
-            })?;
+            .map_err(|e| ProxyError::database(format!("Failed to fetch provider {name}: {e}")))?;
 
         if let Some(provider) = provider {
             match self.parse_provider_config(provider) {
@@ -544,7 +536,7 @@ impl ProviderConfigManager {
     }
 
     /// 获取服务商的完整API端点URL
-    #[must_use] 
+    #[must_use]
     pub fn get_api_endpoint(&self, config: &ProviderConfig, path: &str) -> String {
         let path = if path.starts_with('/') {
             path

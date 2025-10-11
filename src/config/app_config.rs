@@ -106,19 +106,19 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// 获取双端口配置
-    #[must_use] 
+    #[must_use]
     pub const fn get_dual_port_config(&self) -> Option<&DualPortServerConfig> {
         self.dual_port.as_ref()
     }
 
     /// 是否启用双端口模式
-    #[must_use] 
+    #[must_use]
     pub const fn is_dual_port_mode(&self) -> bool {
         self.dual_port.is_some()
     }
 
     /// 获取管理端口
-    #[must_use] 
+    #[must_use]
     pub fn get_management_port(&self) -> u16 {
         self.dual_port
             .as_ref()
@@ -126,7 +126,7 @@ impl AppConfig {
     }
 
     /// 获取代理端口
-    #[must_use] 
+    #[must_use]
     pub fn get_proxy_port(&self) -> u16 {
         self.dual_port
             .as_ref()
@@ -189,7 +189,7 @@ impl AppConfig {
     }
 
     /// 是否启用追踪
-    #[must_use] 
+    #[must_use]
     pub const fn is_trace_enabled(&self) -> bool {
         false
     }

@@ -115,7 +115,9 @@ async fn test_layer1_immediate_model_info_update() {
         client_ip: Some("127.0.0.1".to_string()),
         user_agent: Some("test-client/1.0".to_string()),
     };
-    tracer.start_trace(start_params).await
+    tracer
+        .start_trace(start_params)
+        .await
         .expect("Failed to start trace");
 
     // 验证基础记录已创建
@@ -168,7 +170,9 @@ async fn test_layer2_batch_statistics_update() {
         client_ip: Some("127.0.0.1".to_string()),
         user_agent: Some("test-client/1.0".to_string()),
     };
-    tracer.start_trace(start_params).await
+    tracer
+        .start_trace(start_params)
+        .await
         .expect("Failed to start trace");
 
     // 阶段1：更新模型信息
@@ -208,7 +212,7 @@ async fn test_layer2_batch_statistics_update() {
         .expect("Record should exist");
 
     assert_eq!(record.status_code, Some(200));
-    assert_eq!(record.is_success, true);
+    assert!(record.is_success);
     assert_eq!(record.tokens_prompt, Some(150));
     assert_eq!(record.tokens_completion, Some(75));
     assert_eq!(record.tokens_total, Some(225));
@@ -240,7 +244,9 @@ async fn test_layered_update_with_error() {
         client_ip: Some("127.0.0.1".to_string()),
         user_agent: Some("test-client/1.0".to_string()),
     };
-    tracer.start_trace(start_params).await
+    tracer
+        .start_trace(start_params)
+        .await
         .expect("Failed to start trace");
 
     // 阶段1：更新模型信息
@@ -274,7 +280,7 @@ async fn test_layered_update_with_error() {
         .expect("Record should exist");
 
     assert_eq!(record.status_code, Some(500));
-    assert_eq!(record.is_success, false);
+    assert!(!record.is_success);
     assert_eq!(record.error_type, Some("upstream_error".to_string()));
     assert_eq!(
         record.error_message,
@@ -309,7 +315,9 @@ async fn test_layered_update_performance() {
         client_ip: Some("127.0.0.1".to_string()),
         user_agent: Some("test-client/1.0".to_string()),
     };
-    tracer.start_trace(start_params).await
+    tracer
+        .start_trace(start_params)
+        .await
         .expect("Failed to start trace");
 
     // 阶段1：立即更新模型信息（模拟实时获取到信息）
@@ -360,7 +368,7 @@ async fn test_layered_update_performance() {
     assert_eq!(record.tokens_total, Some(150));
 
     // 性能测试：总时间应该合理（主要用于回归测试）
-    println!("分层更新总耗时: {:?}", total_time);
+    println!("分层更新总耗时: {total_time:?}");
     assert!(
         total_time < std::time::Duration::from_secs(1),
         "分层更新应该在合理时间内完成"
@@ -389,7 +397,9 @@ async fn test_backward_compatibility() {
         client_ip: Some("127.0.0.1".to_string()),
         user_agent: Some("test-client/1.0".to_string()),
     };
-    tracer.start_trace(start_params).await
+    tracer
+        .start_trace(start_params)
+        .await
         .expect("Failed to start trace");
 
     // 直接使用旧的complete_trace方法
@@ -402,7 +412,9 @@ async fn test_backward_compatibility() {
         error_type: None,
         error_message: None,
     };
-    tracer.complete_trace(complete_params).await
+    tracer
+        .complete_trace(complete_params)
+        .await
         .expect("Failed to complete trace");
 
     // 验证仍然可以正常工作
@@ -414,7 +426,7 @@ async fn test_backward_compatibility() {
         .expect("Record should exist");
 
     assert_eq!(record.status_code, Some(200));
-    assert_eq!(record.is_success, true);
+    assert!(record.is_success);
     assert_eq!(record.tokens_prompt, Some(200));
     assert_eq!(record.tokens_completion, Some(100));
 }

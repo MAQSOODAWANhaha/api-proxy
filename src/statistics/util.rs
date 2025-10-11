@@ -93,7 +93,8 @@ pub fn find_last_balanced_json(s: &str) -> Option<serde_json::Value> {
     for line in s.lines().rev() {
         let t = line.trim_start_matches("data: ").trim();
         if let Some(pos) = t.find('{')
-            && let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
+            && let Ok(v) = serde_json::from_str::<serde_json::Value>(&t[pos..])
+        {
             return Some(v);
         }
     }
@@ -116,7 +117,8 @@ pub fn find_last_balanced_json(s: &str) -> Option<serde_json::Value> {
         }
     }
     if let Some(idx) = start_idx
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[idx..]) {
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[idx..])
+    {
         return Some(v);
     }
     None

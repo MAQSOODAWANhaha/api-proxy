@@ -262,17 +262,11 @@ impl OAuthTokenRefreshService {
             .one(&*self.db)
             .await
             .map_err(|e| {
-                ProxyError::database_with_source(
-                    format!("Failed to load OAuth session: {e:?}"),
-                    e,
-                )
+                ProxyError::database_with_source(format!("Failed to load OAuth session: {e:?}"), e)
             })
     }
 
-    fn should_refresh_session(
-        session: &oauth_client_sessions::Model,
-        now: DateTime<Utc>,
-    ) -> bool {
+    fn should_refresh_session(session: &oauth_client_sessions::Model, now: DateTime<Utc>) -> bool {
         if session.access_token.is_none() || session.refresh_token.is_none() {
             return false;
         }
@@ -282,10 +276,7 @@ impl OAuthTokenRefreshService {
         now + buffer >= expires_at
     }
 
-    fn compute_next_from_expiry(
-        expires_at: DateTime<Utc>,
-        now: DateTime<Utc>,
-    ) -> DateTime<Utc> {
+    fn compute_next_from_expiry(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> DateTime<Utc> {
         let buffer = Duration::minutes(REFRESH_BUFFER_MINUTES);
         let remaining = expires_at - now;
 
@@ -325,12 +316,11 @@ impl OAuthTokenRefreshService {
         session: &oauth_client_sessions::Model,
     ) -> Option<ScheduledTokenRefresh> {
         let now = Utc::now();
-        Self::compute_next_refresh_at(session, now)
-            .map(|next| ScheduledTokenRefresh {
-                session_id: session.session_id.clone(),
-                next_refresh_at: next,
-                expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
-            })
+        Self::compute_next_refresh_at(session, now).map(|next| ScheduledTokenRefresh {
+            session_id: session.session_id.clone(),
+            next_refresh_at: next,
+            expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+        })
     }
 
     /// 构建启动时的刷新计划，并针对需要立即刷新的会话进行刷新
@@ -379,7 +369,10 @@ impl OAuthTokenRefreshService {
                                 session.session_id, e
                             )
                         );
-                        let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
+                        let retry_at = now
+                            + Duration::seconds(
+                                i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX),
+                            );
                         schedule.push(ScheduledTokenRefresh {
                             session_id: session.session_id.clone(),
                             next_refresh_at: retry_at,
@@ -454,7 +447,10 @@ impl OAuthTokenRefreshService {
                             session.session_id, e
                         )
                     );
-                    let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
+                    let retry_at = now
+                        + Duration::seconds(
+                            i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX),
+                        );
                     return Ok(ScheduledTokenRefresh {
                         session_id: session.session_id.clone(),
                         next_refresh_at: retry_at,
@@ -498,16 +494,18 @@ impl OAuthTokenRefreshService {
         }
 
         if let Some(session) = self.load_session(session_id).await?
-            && let Some(next) = Self::compute_next_refresh_at(&session, now) {
-                return Ok(Some(ScheduledTokenRefresh {
-                    session_id: session.session_id.clone(),
-                    next_refresh_at: next,
-                    expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
-                }));
-            }
+            && let Some(next) = Self::compute_next_refresh_at(&session, now)
+        {
+            return Ok(Some(ScheduledTokenRefresh {
+                session_id: session.session_id.clone(),
+                next_refresh_at: next,
+                expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
+            }));
+        }
 
         if !result.success && result.should_retry {
-            let retry_at = now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
+            let retry_at =
+                now + Duration::seconds(i64::try_from(RETRY_INTERVAL_SECONDS).unwrap_or(i64::MAX));
             return Ok(Some(ScheduledTokenRefresh {
                 session_id: session_id.to_string(),
                 next_refresh_at: retry_at,
@@ -571,10 +569,7 @@ impl OAuthTokenRefreshService {
             .one(&*self.db)
             .await
             .map_err(|e| {
-                ProxyError::database_with_source(
-                    format!("Failed to find OAuth session: {e:?}"),
-                    e,
-                )
+                ProxyError::database_with_source(format!("Failed to find OAuth session: {e:?}"), e)
             })?
             .ok_or_else(|| {
                 ProxyError::authentication(format!("OAuth session not found: {session_id}"))
@@ -626,9 +621,7 @@ impl OAuthTokenRefreshService {
                 LogStage::BackgroundTask,
                 LogComponent::OAuth,
                 "already_refreshed",
-                &format!(
-                    "Token already refreshed by another thread for session: {session_id}"
-                )
+                &format!("Token already refreshed by another thread for session: {session_id}")
             );
             return Ok(TokenRefreshResult {
                 success: true,
@@ -669,9 +662,7 @@ impl OAuthTokenRefreshService {
             LogStage::BackgroundTask,
             LogComponent::OAuth,
             "perform_token_refresh",
-            &format!(
-                "Performing token refresh for session: {session_id}, type: {refresh_type:?}"
-            )
+            &format!("Performing token refresh for session: {session_id}, type: {refresh_type:?}")
         );
 
         // 使用OAuth client进行token刷新
@@ -722,9 +713,7 @@ impl OAuthTokenRefreshService {
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "token_refresh_fail",
-                    &format!(
-                        "Failed to refresh token for session {session_id}: {e:?}"
-                    )
+                    &format!("Failed to refresh token for session {session_id}: {e:?}")
                 );
                 Ok(TokenRefreshResult {
                     success: false,

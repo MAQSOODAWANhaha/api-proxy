@@ -106,9 +106,7 @@ impl SessionManager {
             .one(self.db.as_ref())
             .await?;
 
-        session.ok_or_else(|| OAuthError::InvalidSession(format!(
-                "Session {session_id} not found"
-            )))
+        session.ok_or_else(|| OAuthError::InvalidSession(format!("Session {session_id} not found")))
     }
 
     /// 根据状态参数获取会话
@@ -121,9 +119,9 @@ impl SessionManager {
             .one(self.db.as_ref())
             .await?;
 
-        session.ok_or_else(|| OAuthError::InvalidSession(format!(
-                "Session with state {state} not found"
-            )))
+        session.ok_or_else(|| {
+            OAuthError::InvalidSession(format!("Session with state {state} not found"))
+        })
     }
 
     /// 更新会话状态
@@ -179,7 +177,10 @@ impl SessionManager {
         // 计算令牌过期时间
         let expires_at = token_response.expires_in.map_or_else(
             || Utc::now().naive_utc() + Duration::try_hours(1).unwrap_or_default(),
-            |expires_in| Utc::now().naive_utc() + Duration::try_seconds(i64::from(expires_in)).unwrap_or_default()
+            |expires_in| {
+                Utc::now().naive_utc()
+                    + Duration::try_seconds(i64::from(expires_in)).unwrap_or_default()
+            },
         );
 
         // 先保存会话中的原 refresh_token，再转换为 ActiveModel

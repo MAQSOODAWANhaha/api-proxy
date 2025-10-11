@@ -153,16 +153,17 @@ pub async fn ip_filter_middleware(
     let config = request.extensions().get::<IpFilterConfig>().cloned();
 
     if let Some(config) = config
-        && !config.is_allowed(client_ip) {
-            lwarn!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "ip_denied",
-                &format!("Access denied for IP: {client_ip}")
-            );
-            return Err(StatusCode::FORBIDDEN);
-        }
+        && !config.is_allowed(client_ip)
+    {
+        lwarn!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "ip_denied",
+            &format!("Access denied for IP: {client_ip}")
+        );
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     ldebug!(
         "system",
@@ -178,20 +179,23 @@ pub async fn ip_filter_middleware(
 pub fn get_real_client_ip(request: &Request) -> Option<IpAddr> {
     // 尝试从 X-Forwarded-For 头获取
     if let Some(forwarded_for) = request.headers().get("x-forwarded-for")
-        && let Ok(forwarded_str) = forwarded_for.to_str() {
-            // X-Forwarded-For 可能包含多个IP，取第一个
-            if let Some(first_ip) = forwarded_str.split(',').next()
-                && let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                    return Some(ip);
-                }
+        && let Ok(forwarded_str) = forwarded_for.to_str()
+    {
+        // X-Forwarded-For 可能包含多个IP，取第一个
+        if let Some(first_ip) = forwarded_str.split(',').next()
+            && let Ok(ip) = first_ip.trim().parse::<IpAddr>()
+        {
+            return Some(ip);
         }
+    }
 
     // 尝试从 X-Real-IP 头获取
     if let Some(real_ip) = request.headers().get("x-real-ip")
         && let Ok(ip_str) = real_ip.to_str()
-            && let Ok(ip) = ip_str.parse::<IpAddr>() {
-                return Some(ip);
-            }
+        && let Ok(ip) = ip_str.parse::<IpAddr>()
+    {
+        return Some(ip);
+    }
 
     // 从连接信息获取
     request

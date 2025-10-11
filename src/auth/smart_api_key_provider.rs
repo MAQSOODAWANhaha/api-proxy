@@ -213,7 +213,9 @@ impl SmartApiKeyProvider {
                 LogStage::Cache,
                 LogComponent::Auth,
                 "cache_hit_after_lock",
-                &format!("Found cached credential after lock for provider_key_id: {provider_key_id}")
+                &format!(
+                    "Found cached credential after lock for provider_key_id: {provider_key_id}"
+                )
             );
             return Ok(CredentialResult {
                 credential: cached.credential,
@@ -238,7 +240,9 @@ impl SmartApiKeyProvider {
                             LogStage::Authentication,
                             LogComponent::Auth,
                             "token_refreshed",
-                            &format!("Got refreshed OAuth access token for provider_key_id: {provider_key_id}")
+                            &format!(
+                                "Got refreshed OAuth access token for provider_key_id: {provider_key_id}"
+                            )
                         );
 
                         let credential_type = AuthCredentialType::OAuthToken {
@@ -274,7 +278,9 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "using_current_token",
-                                    &format!("Using current valid OAuth access token for provider_key_id: {provider_key_id}")
+                                    &format!(
+                                        "Using current valid OAuth access token for provider_key_id: {provider_key_id}"
+                                    )
                                 );
 
                                 let credential_type = AuthCredentialType::OAuthToken {
@@ -308,7 +314,9 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "no_valid_token",
-                                    &format!("No valid OAuth access token available for provider_key_id: {provider_key_id}")
+                                    &format!(
+                                        "No valid OAuth access token available for provider_key_id: {provider_key_id}"
+                                    )
                                 );
                                 Self::fallback_to_api_key(provider_key)
                             }
@@ -318,7 +326,9 @@ impl SmartApiKeyProvider {
                                     LogStage::Authentication,
                                     LogComponent::Auth,
                                     "get_token_failed",
-                                    &format!("Failed to get OAuth access token for provider_key_id: {provider_key_id}: {e:?}")
+                                    &format!(
+                                        "Failed to get OAuth access token for provider_key_id: {provider_key_id}: {e:?}"
+                                    )
                                 );
                                 Self::fallback_to_api_key(provider_key)
                             }
@@ -345,7 +355,9 @@ impl SmartApiKeyProvider {
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "refresh_service_error",
-                    &format!("OAuth refresh service error for provider_key_id: {provider_key_id}: {e:?}")
+                    &format!(
+                        "OAuth refresh service error for provider_key_id: {provider_key_id}: {e:?}"
+                    )
                 );
                 Self::fallback_to_api_key(provider_key)
             }
@@ -353,9 +365,7 @@ impl SmartApiKeyProvider {
     }
 
     /// 降级到使用存储的API密钥
-    fn fallback_to_api_key(
-        provider_key: &user_provider_keys::Model,
-    ) -> Result<CredentialResult> {
+    fn fallback_to_api_key(provider_key: &user_provider_keys::Model) -> Result<CredentialResult> {
         if provider_key.api_key.is_empty() {
             Err(crate::proxy_err!(
                 auth,
@@ -367,7 +377,10 @@ impl SmartApiKeyProvider {
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "fallback_to_api_key",
-                &format!("Falling back to stored api_key for provider_key_id: {}", provider_key.id)
+                &format!(
+                    "Falling back to stored api_key for provider_key_id: {}",
+                    provider_key.id
+                )
             );
             Ok(CredentialResult {
                 credential: provider_key.api_key.clone(),
@@ -405,7 +418,9 @@ impl SmartApiKeyProvider {
                             LogStage::Cache,
                             LogComponent::Auth,
                             "token_expired",
-                            &format!("Cached OAuth token expired or expiring soon for provider_key_id: {provider_key_id}")
+                            &format!(
+                                "Cached OAuth token expired or expiring soon for provider_key_id: {provider_key_id}"
+                            )
                         );
                     }
                 }

@@ -48,10 +48,12 @@ impl RedisConfig {
     pub fn build_url(&self) -> String {
         self.password.as_ref().map_or_else(
             || format!("redis://{}:{}/{}", self.host, self.port, self.database),
-            |password| format!(
-                "redis://:{}@{}:{}/{}",
-                password, self.host, self.port, self.database
-            )
+            |password| {
+                format!(
+                    "redis://:{}@{}:{}/{}",
+                    password, self.host, self.port, self.database
+                )
+            },
         )
     }
 }
@@ -243,9 +245,12 @@ impl CacheClient {
 
         let mut conn = self.connection_manager.clone();
 
-        let success: bool = conn.expire(key, i64::try_from(ttl_seconds).unwrap_or(i64::MAX)).await.map_err(|e| {
-            ProxyError::cache_with_source(format!("设置缓存过期时间失败: {key}"), e)
-        })?;
+        let success: bool = conn
+            .expire(key, i64::try_from(ttl_seconds).unwrap_or(i64::MAX))
+            .await
+            .map_err(|e| {
+                ProxyError::cache_with_source(format!("设置缓存过期时间失败: {key}"), e)
+            })?;
 
         ldebug!(
             "system",
@@ -322,9 +327,7 @@ impl CacheClient {
             LogStage::Cache,
             LogComponent::Cache,
             "delete_pattern_complete",
-            &format!(
-                "批量删除缓存完成: pattern={pattern}, deleted={deleted_count}"
-            )
+            &format!("批量删除缓存完成: pattern={pattern}, deleted={deleted_count}")
         );
         Ok(u64::try_from(deleted_count).unwrap_or(u64::MAX))
     }

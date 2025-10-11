@@ -112,7 +112,7 @@ impl ConfigWatcher {
     }
 
     /// 订阅配置变更事件
-    #[must_use] 
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<ConfigEvent> {
         self.event_sender.subscribe()
     }

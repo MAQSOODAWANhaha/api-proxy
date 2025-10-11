@@ -102,7 +102,7 @@ impl Default for SchedulingStrategy {
 
 impl SchedulingStrategy {
     /// 从字符串解析调度策略
-    #[must_use] 
+    #[must_use]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
@@ -115,7 +115,7 @@ impl SchedulingStrategy {
     }
 
     /// 转换为字符串
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::RoundRobin => "round_robin",

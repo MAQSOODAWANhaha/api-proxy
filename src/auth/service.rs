@@ -113,11 +113,7 @@ impl AuthService {
     }
 
     /// Authenticate using JWT token
-    pub fn authenticate_jwt(
-        &self,
-        token: &str,
-        _context: &AuthContext,
-    ) -> Result<AuthResult> {
+    pub fn authenticate_jwt(&self, token: &str, _context: &AuthContext) -> Result<AuthResult> {
         let claims = self.jwt_manager.validate_token(token)?;
 
         let user_id = claims.user_id()?;
@@ -184,9 +180,10 @@ impl AuthService {
 
         // 检查API密钥是否过期
         if let Some(expires_at) = user_api.expires_at
-            && expires_at < chrono::Utc::now().naive_utc() {
-                return Err(crate::proxy_err!(auth, "无效的认证凭据"));
-            }
+            && expires_at < chrono::Utc::now().naive_utc()
+        {
+            return Err(crate::proxy_err!(auth, "无效的认证凭据"));
+        }
 
         Ok(user_api)
     }
@@ -239,7 +236,6 @@ impl AuthService {
         })
     }
 
-    
     /// Generate token pair for user login
     pub async fn login(&self, username: &str, password: &str) -> Result<TokenPair> {
         // Query user from database
@@ -390,7 +386,6 @@ impl AuthService {
         }
     }
 
-    
     /// Get user information by user ID
     pub async fn get_user_info(&self, user_id: i32) -> Result<Option<UserInfo>> {
         let user = Users::find_by_id(user_id)
@@ -507,7 +502,6 @@ impl AuthService {
         cache.retain(|entry| entry.timestamp > one_day_ago);
     }
 
-    
     /// Update user's last login time
     async fn update_last_login(&self, user_id: i32) -> Result<()> {
         use sea_orm::ActiveModelTrait;

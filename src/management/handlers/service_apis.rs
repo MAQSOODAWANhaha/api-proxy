@@ -320,8 +320,8 @@ pub async fn list_user_service_keys(
     }
 
     if let Some(description) = &query.description {
-        select = select
-            .filter(user_service_apis::Column::Description.like(format!("%{description}%")));
+        select =
+            select.filter(user_service_apis::Column::Description.like(format!("%{description}%")));
     }
 
     if let Some(provider_type_id) = query.provider_type_id {
@@ -765,7 +765,8 @@ pub async fn get_user_service_key(
         api_key: api.api_key,
         user_provider_keys_ids: serde_json::from_value::<Vec<i32>>(
             api.user_provider_keys_ids.clone(),
-        ).unwrap_or_else(|_| vec![]),
+        )
+        .unwrap_or_else(|_| vec![]),
         scheduling_strategy: api.scheduling_strategy,
         retry_count: api.retry_count,
         timeout_seconds: api.timeout_seconds,

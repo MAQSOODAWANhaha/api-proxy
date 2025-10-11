@@ -10,19 +10,19 @@ pub struct ProviderId(pub i32);
 
 impl ProviderId {
     /// 从数据库ID创建提供商标识
-    #[must_use] 
+    #[must_use]
     pub const fn from_database_id(id: i32) -> Self {
         Self(id)
     }
 
     /// 获取数据库ID
-    #[must_use] 
+    #[must_use]
     pub const fn id(&self) -> i32 {
         self.0
     }
 
     /// 转换为字符串形式（用于日志等）
-    #[must_use] 
+    #[must_use]
     pub fn as_string(&self) -> String {
         format!("provider_{}", self.0)
     }
@@ -76,7 +76,7 @@ pub struct ForwardingContext {
 
 impl ForwardingContext {
     /// 创建新的转发上下文
-    #[must_use] 
+    #[must_use]
     pub fn new(request_id: String, provider_id: ProviderId) -> Self {
         Self {
             request_id,

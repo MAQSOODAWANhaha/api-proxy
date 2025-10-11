@@ -19,7 +19,7 @@ pub struct RequestTransformService {
 
 impl RequestTransformService {
     /// 创建新的请求转换服务
-    #[must_use] 
+    #[must_use]
     pub const fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }

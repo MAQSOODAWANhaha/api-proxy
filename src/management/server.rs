@@ -289,7 +289,7 @@ impl ManagementServer {
     }
 
     /// 获取绑定地址
-    #[must_use] 
+    #[must_use]
     pub fn bind_address(&self) -> SocketAddr {
         SocketAddr::new(self.config.bind_address.parse().unwrap(), self.config.port)
     }

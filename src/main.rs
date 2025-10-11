@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     run_data_initialization()
         .await
         .map_err(|e| ProxyError::Database {
-            message: format!("数据初始化失败: {}", e),
+            message: format!("数据初始化失败: {e}"),
             source: Some(e),
         })?;
 
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
             LogStage::Startup,
             LogComponent::Main,
             "service_start_failed",
-            &format!("服务启动失败: {:?}", e)
+            &format!("服务启动失败: {e:?}")
         );
         std::process::exit(1);
     }
@@ -68,12 +68,12 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     // 获取配置并初始化数据库连接
     let config_manager = ConfigManager::new()
         .await
-        .map_err(|e| anyhow::anyhow!("配置管理器初始化失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("配置管理器初始化失败: {e}"))?;
     let config = config_manager.get_config().await;
 
     let db = api_proxy::database::init_database(&config.database.url)
         .await
-        .map_err(|e| anyhow::anyhow!("数据库连接失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("数据库连接失败: {e}"))?;
 
     // 首先运行数据库迁移，确保表结构存在
     linfo!(
@@ -85,7 +85,7 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     );
     api_proxy::database::run_migrations(&db)
         .await
-        .map_err(|e| anyhow::anyhow!("数据库迁移失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("数据库迁移失败: {e}"))?;
 
     // 检查数据完整性并按需初始化
     linfo!(
@@ -97,7 +97,7 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     );
     api_proxy::database::ensure_model_pricing_data(&db)
         .await
-        .map_err(|e| anyhow::anyhow!("数据完整性检查失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("数据完整性检查失败: {e}"))?;
 
     linfo!(
         "system",

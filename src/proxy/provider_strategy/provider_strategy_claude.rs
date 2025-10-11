@@ -7,8 +7,9 @@ use crate::error::Result;
 use crate::proxy::ProxyContext;
 use crate::proxy_err;
 use crate::{
-    ldebug, linfo, lwarn,
+    ldebug, linfo,
     logging::{LogComponent, LogStage},
+    lwarn,
 };
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
@@ -31,7 +32,8 @@ impl Default for ClaudeStrategy {
     fn default() -> Self {
         Self {
             db: None,
-            unified_client_id: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456".to_string(),
+            unified_client_id: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+                .to_string(),
         }
     }
 }
@@ -39,7 +41,7 @@ impl Default for ClaudeStrategy {
 #[async_trait::async_trait]
 impl ProviderStrategy for ClaudeStrategy {
     fn name(&self) -> &'static str {
-        "anthropic"  // 统一使用 anthropic，与数据库中的名称一致
+        "anthropic" // 统一使用 anthropic，与数据库中的名称一致
     }
 
     fn set_db_connection(&mut self, db: Option<Arc<DatabaseConnection>>) {
@@ -157,16 +159,23 @@ impl ProviderStrategy for ClaudeStrategy {
 /// - 替换为：user_{unifiedClientId}_`account__session`_{UUID}
 /// - 保留 session UUID 部分不变
 fn replace_client_id(json_value: &mut serde_json::Value, unified_client_id: &str) -> bool {
-    if let Some(metadata) = json_value.get_mut("metadata").and_then(|m| m.as_object_mut())
-        && let Some(user_id) = metadata.get_mut("user_id").and_then(|u| u.as_str()) {
-            let re = Regex::new(r"^user_[a-f0-9]{64}(_account__session_[a-f0-9-]{36})$").unwrap();
-            if let Some(captures) = re.captures(user_id)
-                && let Some(session_suffix) = captures.get(1) {
-                    let new_user_id = format!("user_{}{}", unified_client_id, session_suffix.as_str());
-                    metadata.insert("user_id".to_string(), serde_json::Value::String(new_user_id));
-                    return true;
-                }
+    if let Some(metadata) = json_value
+        .get_mut("metadata")
+        .and_then(|m| m.as_object_mut())
+        && let Some(user_id) = metadata.get_mut("user_id").and_then(|u| u.as_str())
+    {
+        let re = Regex::new(r"^user_[a-f0-9]{64}(_account__session_[a-f0-9-]{36})$").unwrap();
+        if let Some(captures) = re.captures(user_id)
+            && let Some(session_suffix) = captures.get(1)
+        {
+            let new_user_id = format!("user_{}{}", unified_client_id, session_suffix.as_str());
+            metadata.insert(
+                "user_id".to_string(),
+                serde_json::Value::String(new_user_id),
+            );
+            return true;
         }
+    }
     false
 }
 
@@ -261,15 +270,30 @@ mod tests {
     fn test_replace_client_id_various_formats() {
         let test_cases = vec![
             // 标准格式
-            ("user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_account__session_550e8400-e29b-41d4-a716-446655440000", true),
+            (
+                "user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_account__session_550e8400-e29b-41d4-a716-446655440000",
+                true,
+            ),
             // 另一个有效的格式
-            ("user_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210_account__session_123e4567-e89b-12d3-a456-426614174000", true),
+            (
+                "user_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210_account__session_123e4567-e89b-12d3-a456-426614174000",
+                true,
+            ),
             // 无效格式 - 长度不对
-            ("user_123_account__session_550e8400-e29b-41d4-a716-446655440000", false),
+            (
+                "user_123_account__session_550e8400-e29b-41d4-a716-446655440000",
+                false,
+            ),
             // 无效格式 - 缺少session部分
-            ("user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", false),
+            (
+                "user_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                false,
+            ),
             // 无效格式 - 不是小写字母数字
-            ("user_ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890_account__session_550e8400-e29b-41d4-a716-446655440000", false),
+            (
+                "user_ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890_account__session_550e8400-e29b-41d4-a716-446655440000",
+                false,
+            ),
         ];
 
         let unified_id = "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456";
@@ -323,8 +347,11 @@ mod tests {
     #[test]
     fn test_claude_strategy_default() {
         let strategy = ClaudeStrategy::default();
-        assert_eq!(strategy.name(), "anthropic");  // 更新为 anthropic
-        assert_eq!(strategy.unified_client_id, "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456");
+        assert_eq!(strategy.name(), "anthropic"); // 更新为 anthropic
+        assert_eq!(
+            strategy.unified_client_id,
+            "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+        );
     }
 
     #[test]
@@ -376,7 +403,11 @@ mod tests {
         // 验证 client ID 被正确替换
         assert!(modified);
         let new_user_id = json_value["metadata"]["user_id"].as_str().unwrap();
-        assert!(new_user_id.starts_with("user_a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"));
+        assert!(
+            new_user_id.starts_with(
+                "user_a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+            )
+        );
         assert!(new_user_id.ends_with("_account__session_550e8400-e29b-41d4-a716-446655440000"));
 
         // 3. 测试认证头构建
@@ -423,6 +454,9 @@ mod tests {
         assert_eq!(strategy.name(), "anthropic");
 
         // 验证 unified_client_id
-        assert_eq!(strategy.unified_client_id, "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456");
+        assert_eq!(
+            strategy.unified_client_id,
+            "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+        );
     }
 }

@@ -27,7 +27,7 @@ pub struct ConfigCrypto {
 
 impl ConfigCrypto {
     /// 创建新的配置加密器
-    #[must_use] 
+    #[must_use]
     pub fn new(key: &[u8; 32]) -> Self {
         let key = Key::<Aes256Gcm>::from_slice(key);
         let cipher = Aes256Gcm::new(key);
@@ -110,7 +110,7 @@ impl ConfigCrypto {
     }
 
     /// 生成新的加密密钥
-    #[must_use] 
+    #[must_use]
     pub fn generate_key() -> String {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
@@ -127,7 +127,7 @@ pub struct SensitiveFields {
 
 impl SensitiveFields {
     /// 创建新的敏感字段配置
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         let mut fields = HashMap::new();
 
@@ -142,7 +142,7 @@ impl SensitiveFields {
     }
 
     /// 检查字段是否敏感
-    #[must_use] 
+    #[must_use]
     pub fn is_sensitive(&self, field_path: &str) -> bool {
         // 直接匹配
         if self.fields.contains_key(field_path) {
@@ -151,7 +151,7 @@ impl SensitiveFields {
 
         // 通配符匹配
         for pattern in self.fields.keys() {
-            if self.matches_pattern(pattern, field_path) {
+            if Self::matches_pattern(pattern, field_path) {
                 return true;
             }
         }
@@ -160,7 +160,7 @@ impl SensitiveFields {
     }
 
     /// 模式匹配
-    fn matches_pattern(&self, pattern: &str, field_path: &str) -> bool {
+    fn matches_pattern(pattern: &str, field_path: &str) -> bool {
         if pattern.contains('*') {
             let parts: Vec<&str> = pattern.split('*').collect();
             if parts.len() == 2 {

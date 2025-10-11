@@ -284,8 +284,8 @@ impl AuthHeaderParser {
         header_value: &str,
     ) -> Result<String, AuthParseError> {
         // 尝试解析为JSON数组格式
-        let formats: Vec<String> = serde_json::from_str(formats_json)
-            .unwrap_or_else(|_| vec![formats_json.to_string()]);
+        let formats: Vec<String> =
+            serde_json::from_str(formats_json).unwrap_or_else(|_| vec![formats_json.to_string()]);
         // 遍历所有格式，找到匹配的格式并提取密钥
         for format in formats {
             if let Ok(format_header_name) = Self::extract_header_name(&format)
@@ -414,41 +414,33 @@ mod tests {
     // 反向解析功能测试
     #[test]
     fn test_parse_api_key_from_inbound_header_value_direct() {
-        let api_key = AuthHeaderParser.parse_api_key_from_value(
-            "sk-123456789",
-            "Authorization: {key}",
-        )
-        .unwrap();
+        let api_key = AuthHeaderParser
+            .parse_api_key_from_value("sk-123456789", "Authorization: {key}")
+            .unwrap();
         assert_eq!(api_key, "sk-123456789");
     }
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_bearer() {
-        let api_key = AuthHeaderParser.parse_api_key_from_value(
-            "Bearer sk-abcdef123",
-            "Authorization: Bearer {key}",
-        )
-        .unwrap();
+        let api_key = AuthHeaderParser
+            .parse_api_key_from_value("Bearer sk-abcdef123", "Authorization: Bearer {key}")
+            .unwrap();
         assert_eq!(api_key, "sk-abcdef123");
     }
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_google() {
-        let api_key = AuthHeaderParser.parse_api_key_from_value(
-            "AIza_google_key_xyz",
-            "X-goog-api-key: {key}",
-        )
-        .unwrap();
+        let api_key = AuthHeaderParser
+            .parse_api_key_from_value("AIza_google_key_xyz", "X-goog-api-key: {key}")
+            .unwrap();
         assert_eq!(api_key, "AIza_google_key_xyz");
     }
 
     #[test]
     fn test_parse_api_key_from_inbound_header_value_custom_prefix() {
-        let api_key = AuthHeaderParser.parse_api_key_from_value(
-            "Token custom_token_456",
-            "X-API-Key: Token {key}",
-        )
-        .unwrap();
+        let api_key = AuthHeaderParser
+            .parse_api_key_from_value("Token custom_token_456", "X-API-Key: Token {key}")
+            .unwrap();
         assert_eq!(api_key, "custom_token_456");
     }
 

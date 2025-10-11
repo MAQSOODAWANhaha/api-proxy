@@ -591,9 +591,7 @@ async fn load_json_data() -> Result<HashMap<String, ModelPriceInfo>, ProxyError>
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
-        return Err(ProxyError::config(format!(
-            "JSON文件不存在: {json_path:?}"
-        )));
+        return Err(ProxyError::config(format!("JSON文件不存在: {json_path:?}")));
     }
 
     let json_content = tokio::fs::read_to_string(&json_path)
@@ -705,9 +703,7 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
         LogStage::Startup,
         LogComponent::Database,
         "normalize_model_name_skip",
-        &format!(
-            "模型名称无需标准化: {model_name} (litellm_provider: {litellm_provider})"
-        )
+        &format!("模型名称无需标准化: {model_name} (litellm_provider: {litellm_provider})")
     );
     model_name.to_string()
 }
