@@ -820,7 +820,6 @@ fn parse_time_range(
             let today = end_time.date_naive().and_hms_opt(0, 0, 0).unwrap();
             DateTime::from_naive_utc_and_offset(today, Utc)
         }
-        Some("7days") => end_time - Duration::days(7),
         Some("30days") => end_time - Duration::days(30),
         Some("custom") => {
             if let (Some(start_str), Some(_end_str)) = (&query.start, &query.end) {

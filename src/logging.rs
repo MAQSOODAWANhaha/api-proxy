@@ -6,12 +6,14 @@
 //! - 日志系统初始化和配置
 
 use crate::proxy::ProxyContext;
+use flate2::read::GzDecoder;
 use pingora_core::{Error, ErrorType};
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use serde_json;
 use std::collections::BTreeMap;
 use std::env;
+use std::io::Read;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 // ================ Proxy 模块业务日志工具 ================
@@ -704,9 +706,7 @@ impl LogFormatValidator {
         ) {
             true
         } else {
-            Self::log_validation_error(&format!(
-                "日志格式验证失败: 非法组件 {component:?}"
-            ));
+            Self::log_validation_error(&format!("日志格式验证失败: 非法组件 {component:?}"));
             false
         }
     }
@@ -719,6 +719,7 @@ impl LogFormatValidator {
     /// 3. 是否包含 component 字段
     /// 4. 是否包含 operation 字段
     /// 5. 是否包含描述信息
+    #[must_use]
     pub fn validate_log_format(
         request_id: &str,
         stage: LogStage,
@@ -830,15 +831,30 @@ pub fn log_proxy_failure_details(
     let request_body = String::from_utf8_lossy(&ctx.request_body);
     let request_body_preview = request_body.as_ref();
 
-    // Safely get response body
-    let response_body = String::from_utf8_lossy(&ctx.response_body);
-    let response_body_preview = response_body.as_ref();
+    // Decompress response body if gzipped
+    let response_body_preview = if ctx
+        .response_details
+        .content_encoding
+        .as_deref()
+        .map_or(false, |encoding| encoding.contains("gzip"))
+    {
+        let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_ok() {
+            String::from_utf8_lossy(&decompressed).to_string()
+        } else {
+            // Fallback to lossy conversion if decompression fails
+            String::from_utf8_lossy(&ctx.response_body).to_string()
+        }
+    } else {
+        String::from_utf8_lossy(&ctx.response_body).to_string()
+    };
 
     let (error_message, error_details) = error.map_or_else(
         || {
             (
                 format!("HTTP {status_code} response returned with error"),
-                response_body_preview.to_string(),
+                response_body_preview.clone(),
             )
         },
         |e| {

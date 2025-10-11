@@ -394,14 +394,11 @@ pub async fn list_user_service_keys(
 
     for (api, provider_type) in apis {
         // 获取完整的使用统计
-        let tracings = match ProxyTracing::find()
+        let tracings = ProxyTracing::find()
             .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
             .all(db)
             .await
-        {
-            Ok(data) => data,
-            Err(_) => Vec::new(),
-        };
+            .unwrap_or_default();
 
         let success_count = tracings.iter().filter(|t| t.is_success).count() as i32;
         let failure_count = tracings.len() as i32 - success_count;
@@ -1061,11 +1058,6 @@ pub async fn get_user_service_key_usage(
             "7days" => {
                 let end = Utc::now().naive_utc();
                 let start = end - chrono::Duration::days(7);
-                (start, end)
-            }
-            "30days" => {
-                let end = Utc::now().naive_utc();
-                let start = end - chrono::Duration::days(30);
                 (start, end)
             }
             _ => {

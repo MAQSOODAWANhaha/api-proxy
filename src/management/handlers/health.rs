@@ -304,10 +304,7 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
     let mut health_infos = Vec::new();
 
     // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = match &state.api_key_health_checker {
-        Some(checker) => checker.clone(),
-        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-    };
+    let health_checker = state.api_key_health_checker.as_ref().map_or_else(|| Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)), std::clone::Clone::clone);
 
     for key in active_keys {
         let provider_info = provider_types_map.get(&key.provider_type_id);
@@ -384,14 +381,14 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
             let avg_health_score = if scores.is_empty() {
                 0.0
             } else {
-                scores.iter().sum::<f32>() / scores.len() as f32
+                scores.iter().map(|&x| f64::from(x)).sum::<f64>() / scores.len() as f64
             };
 
             ProviderHealthStats {
                 provider_name,
                 total_keys: total,
                 healthy_keys: healthy,
-                avg_health_score,
+                avg_health_score: avg_health_score as f32,
             }
         })
         .collect();
@@ -419,10 +416,7 @@ async fn trigger_key_health_check_internal(
         .ok_or_else(|| anyhow::anyhow!("API key not found: {key_id}"))?;
 
     // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = match &state.api_key_health_checker {
-        Some(checker) => checker.clone(),
-        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-    };
+    let health_checker = state.api_key_health_checker.as_ref().map_or_else(|| Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)), std::clone::Clone::clone);
     health_checker.check_api_key(&key).await
 }
 
@@ -432,9 +426,6 @@ async fn mark_key_unhealthy_internal(
     reason: String,
 ) -> anyhow::Result<()> {
     // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = match &state.api_key_health_checker {
-        Some(checker) => checker.clone(),
-        None => Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-    };
+    let health_checker = state.api_key_health_checker.as_ref().map_or_else(|| Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)), std::clone::Clone::clone);
     health_checker.mark_key_unhealthy(key_id, reason).await
 }

@@ -705,7 +705,6 @@ async fn fetch_logs_analytics(
     let start_time = match time_range {
         "1h" => now - chrono::Duration::hours(1),
         "6h" => now - chrono::Duration::hours(6),
-        "24h" => now - chrono::Duration::hours(24),
         "7d" => now - chrono::Duration::days(7),
         "30d" => now - chrono::Duration::days(30),
         _ => now - chrono::Duration::hours(24),

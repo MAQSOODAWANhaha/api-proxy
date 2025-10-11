@@ -395,9 +395,7 @@ impl ApiKeyHealthChecker {
         // 判断成功状态
         let success = match status_code {
             200..=299 => true,
-            401 => false,           // 密钥无效
-            403 => false,           // 权限不足
-            429 => false,           // 配额耗尽
+            401 | 403 | 429 => false, // 密钥无效, 权限不足, 配额耗尽
             _ => status_code < 500, // 4xx可能是配置问题，5xx是服务器问题
         };
 

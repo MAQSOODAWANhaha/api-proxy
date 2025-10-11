@@ -26,8 +26,7 @@ enum GeminiProxyMode {
 impl GeminiProxyMode {
     const fn upstream_host(&self) -> &'static str {
         match self {
-            Self::OAuthWithoutProject => "cloudcode-pa.googleapis.com",
-            Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
+            Self::OAuthWithoutProject | Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
             Self::ApiKey => "generativelanguage.googleapis.com",
         }
     }
@@ -67,7 +66,6 @@ impl ProviderStrategy for GeminiStrategy {
                     GeminiProxyMode::OAuthWithoutProject
                 }
             }
-            "api_key" => GeminiProxyMode::ApiKey,
             _ => GeminiProxyMode::ApiKey,
         };
         Ok(Some(mode.upstream_host().to_string()))

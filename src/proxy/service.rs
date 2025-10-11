@@ -62,8 +62,7 @@ impl ProxyService {
 
         if let Some(err) = error {
             match err.etype {
-                ErrorType::HTTPStatus(code) => return code,
-                ErrorType::CustomCode(_, code) => return code,
+                ErrorType::HTTPStatus(code) | ErrorType::CustomCode(_, code) => return code,
                 _ => {}
             }
         }
@@ -430,14 +429,10 @@ impl ProxyHttp for ProxyService {
                         cache_create_tokens: usage.cache_create_tokens,
                         cache_read_tokens: usage.cache_read_tokens,
                     };
-                    match self
-                        .stats_service
+                    (self.stats_service
                         .calculate_cost_direct(model, provider.id, &pricing_usage, &ctx.request_id)
-                        .await
-                    {
-                        Ok(cost_tuple) => cost_tuple,
-                        Err(_) => (None, None),
-                    }
+                        .await)
+                        .unwrap_or_default()
                 } else {
                     (None, None)
                 }
