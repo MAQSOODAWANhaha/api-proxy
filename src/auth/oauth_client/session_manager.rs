@@ -35,7 +35,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// 创建新的会话管理器
     #[must_use]
-    pub fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {
+    pub const fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 

@@ -7,21 +7,22 @@ use crate::statistics::types::RequestDetails;
 use crate::statistics::types::RequestStats;
 
 /// 收集请求统计信息（方法、路径、客户端信息）
+#[must_use]
 pub fn collect_stats(session: &Session) -> RequestStats {
     // 将Pingora headers转换为标准HeaderMap以便使用AuthUtils
     let mut headers = axum::http::HeaderMap::new();
-    for (name, value) in session.req_header().headers.iter() {
-        if let Ok(header_name) = axum::http::HeaderName::from_bytes(name.as_str().as_bytes()) {
-            if let Ok(header_value) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
-                headers.insert(header_name, header_value);
-            }
+    for (name, value) in &session.req_header().headers {
+        if let Ok(header_name) = axum::http::HeaderName::from_bytes(name.as_str().as_bytes())
+            && let Ok(header_value) = axum::http::HeaderValue::from_bytes(value.as_bytes())
+        {
+            headers.insert(header_name, header_value);
         }
     }
 
     // 使用AuthUtils提取客户端信息
     let client_ip = AuthUtils::extract_real_client_ip(
         &headers,
-        session.client_addr().map(|addr| addr.to_string()),
+        session.client_addr().map(std::string::ToString::to_string),
     );
     let user_agent = AuthUtils::extract_user_agent(&headers);
     let referer = AuthUtils::extract_referer(&headers);
@@ -37,12 +38,13 @@ pub fn collect_stats(session: &Session) -> RequestStats {
 }
 
 /// 收集请求详情（头、大小、类型等）
+#[must_use]
 pub fn collect_details(session: &Session, request_stats: &RequestStats) -> RequestDetails {
     let req_header = session.req_header();
 
     // 收集请求头
     let mut headers = std::collections::HashMap::new();
-    for (name, value) in req_header.headers.iter() {
+    for (name, value) in &req_header.headers {
         if let Ok(value_str) = std::str::from_utf8(value.as_bytes()) {
             headers.insert(name.as_str().to_string(), value_str.to_string());
         }
@@ -53,7 +55,7 @@ pub fn collect_details(session: &Session, request_stats: &RequestStats) -> Reque
         .headers
         .get("content-type")
         .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     // 获取Content-Length
     let body_size = req_header

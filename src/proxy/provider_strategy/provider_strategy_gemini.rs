@@ -250,8 +250,10 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_oauth_with_project() {
         let strat = GeminiStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.selected_backend = Some(dummy_key("oauth", Some("proj-123")));
+        let ctx = ProxyContext {
+            selected_backend: Some(dummy_key("oauth", Some("proj-123"))),
+            ..Default::default()
+        };
         let host = strat.select_upstream_host(&ctx).await.unwrap();
         assert_eq!(host.as_deref(), Some("cloudcode-pa.googleapis.com"));
     }
@@ -259,8 +261,10 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_api_key() {
         let strat = GeminiStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.selected_backend = Some(dummy_key("api_key", None));
+        let ctx = ProxyContext {
+            selected_backend: Some(dummy_key("api_key", None)),
+            ..Default::default()
+        };
         let host = strat.select_upstream_host(&ctx).await.unwrap();
         assert_eq!(host.as_deref(), Some("generativelanguage.googleapis.com"));
     }
@@ -283,8 +287,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_project_id_selection_with_real_project() {
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-request-123".to_string();
+        let mut ctx = ProxyContext {
+            request_id: "test-request-123".to_string(),
+            ..Default::default()
+        };
 
         // 创建一个有真实project_id的backend
         let backend = dummy_key("oauth", Some("my-real-project-123"));
@@ -311,8 +317,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_project_id_selection_with_empty_project() {
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-request-456".to_string();
+        let mut ctx = ProxyContext {
+            request_id: "test-request-456".to_string(),
+            ..Default::default()
+        };
 
         // 创建一个project_id为空字符串的backend
         let mut backend = dummy_key("oauth", None);
@@ -340,8 +348,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_project_id_selection_with_no_project() {
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-request-789".to_string();
+        let mut ctx = ProxyContext {
+            request_id: "test-request-789".to_string(),
+            ..Default::default()
+        };
 
         // 创建一个没有project_id的backend
         let backend = dummy_key("oauth", None);

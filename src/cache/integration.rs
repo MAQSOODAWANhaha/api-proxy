@@ -204,6 +204,7 @@ impl CacheFacade {
     }
 
     /// 预热关键缓存
+    #[allow(clippy::cognitive_complexity)]
     pub async fn warmup_cache(&self) -> Result<()> {
         linfo!(
             "system",
@@ -300,6 +301,7 @@ impl CacheFacade {
     }
 
     /// 预热提供商配置
+    #[allow(clippy::cognitive_complexity)]
     async fn warmup_provider_configs(&self, db: &DatabaseConnection) -> Result<usize> {
         ldebug!(
             "system",
@@ -366,6 +368,7 @@ impl CacheFacade {
     }
 
     /// 预热活跃用户的API配置
+    #[allow(clippy::cognitive_complexity)]
     async fn warmup_active_user_configs(&self, db: &DatabaseConnection) -> Result<usize> {
         ldebug!(
             "system",
@@ -517,7 +520,8 @@ impl CacheFacade {
     }
 
     /// 获取底层客户端
-    pub fn client(&self) -> &CacheClient {
+    #[must_use]
+    pub const fn client(&self) -> &CacheClient {
         &self.client
     }
 }
@@ -530,11 +534,13 @@ pub struct CacheDecorator<'a> {
 
 impl<'a> CacheDecorator<'a> {
     /// 创建缓存装饰器
-    pub fn new(manager: &'a CacheFacade, key: CacheKey) -> Self {
+    #[must_use]
+    pub const fn new(manager: &'a CacheFacade, key: CacheKey) -> Self {
         Self { manager, key }
     }
 
     /// 获取或计算值
+    #[allow(clippy::cognitive_complexity)]
     pub async fn get_or_compute<T, F, Fut>(&self, compute_fn: F) -> Result<T>
     where
         T: Serialize + for<'de> Deserialize<'de> + Clone + Sync,

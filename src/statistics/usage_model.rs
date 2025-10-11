@@ -60,14 +60,13 @@ fn get_or_build_extractor(
     provider: &entity::provider_types::Model,
 ) -> Option<Arc<crate::statistics::field_extractor::TokenFieldExtractor>> {
     let id = provider.id;
-    if let Some(extractor) = EXTRACTOR_CACHE.read().unwrap().get(&id).cloned() {
+    let value = EXTRACTOR_CACHE.read().unwrap().get(&id).cloned();
+    if let Some(extractor) = value {
         return Some(extractor);
     }
     let mapping_json = provider.token_mappings_json.as_ref()?;
-    let cfg = match crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
-    {
-        Ok(c) => c,
-        Err(_) => return None,
+    let Ok(cfg) = crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json) else {
+        return None;
     };
     let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(cfg));
     EXTRACTOR_CACHE
@@ -77,19 +76,20 @@ fn get_or_build_extractor(
     Some(extractor)
 }
 
+#[must_use]
 pub fn extract_tokens_from_json(
     provider: Option<&entity::provider_types::Model>,
     json: &Value,
 ) -> TokenUsageMetrics {
     let mut usage = TokenUsageMetrics::default();
-    if let Some(p) = provider {
-        if let Some(extractor) = get_or_build_extractor(p) {
-            usage.prompt_tokens = extractor.extract_token_u32(json, "tokens_prompt");
-            usage.completion_tokens = extractor.extract_token_u32(json, "tokens_completion");
-            usage.total_tokens = extractor.extract_token_u32(json, "tokens_total");
-            usage.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
-            usage.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
-        }
+    if let Some(p) = provider
+        && let Some(extractor) = get_or_build_extractor(p)
+    {
+        usage.prompt_tokens = extractor.extract_token_u32(json, "tokens_prompt");
+        usage.completion_tokens = extractor.extract_token_u32(json, "tokens_completion");
+        usage.total_tokens = extractor.extract_token_u32(json, "tokens_total");
+        usage.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
+        usage.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
     }
     normalize(&mut usage);
     usage
@@ -113,12 +113,13 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
 // 已统一仅使用 extract_tokens_from_json（数据库驱动 + 归一化），
 // 流式路径在合并阶段采用“累加”策略，不再需要 partial 版本。
 
-/// 统一在 EOS（end_of_stream）时进行解析与统计。
+/// 统一在 `EOS（end_of_stream）时进行解析与统计`。
 ///
 /// 逻辑：
 /// - 使用完整的 `ctx.body` 进行解压与解析；
 /// - Content-Type 决定解析方式：SSE（按事件）、NDJSON（按行）、普通 JSON（整体/窗口）。
 /// - 用量字段采用“累加”策略；模型名称取最后一次出现或整体 JSON 中的字段。
+#[allow(clippy::too_many_lines)]
 pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
     use crate::statistics::util::{decompress_for_stats, find_last_balanced_json};
     use bytes::BytesMut;
@@ -139,22 +140,19 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         stats.usage.prompt_tokens = Some(0);
         stats.usage.completion_tokens = Some(0);
         stats.usage.total_tokens = Some(0);
-        stats.model_name = ctx.requested_model.clone();
+        stats.model_name.clone_from(&ctx.requested_model);
         return stats;
     }
 
     // 解压+限流读取（默认 2MB 上限）
     let decoded = decompress_for_stats(encoding, &raw, 2 * 1024 * 1024);
-    let body_str = match std::str::from_utf8(&decoded) {
-        Ok(s) => s,
-        Err(_) => {
-            // UTF-8 解码失败，无法进行 JSON 解析
-            stats.usage.prompt_tokens = Some(0);
-            stats.usage.completion_tokens = Some(0);
-            stats.usage.total_tokens = Some(0);
-            stats.model_name = ctx.requested_model.clone();
-            return stats;
-        }
+    let Ok(body_str) = std::str::from_utf8(&decoded) else {
+        // UTF-8 解码失败，无法进行 JSON 解析
+        stats.usage.prompt_tokens = Some(0);
+        stats.usage.completion_tokens = Some(0);
+        stats.usage.total_tokens = Some(0);
+        stats.model_name.clone_from(&ctx.requested_model);
+        return stats;
     };
 
     // SSE：text/event-stream
@@ -236,7 +234,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
             stats.model_name = extract_model_from_json(&j);
         }
         if stats.model_name.is_none() {
-            stats.model_name = ctx.requested_model.clone();
+            stats.model_name.clone_from(&ctx.requested_model);
         }
         return stats;
     }
@@ -287,7 +285,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
             stats.model_name = extract_model_from_json(&j);
         }
         if stats.model_name.is_none() {
-            stats.model_name = ctx.requested_model.clone();
+            stats.model_name.clone_from(&ctx.requested_model);
         }
         return stats;
     }
@@ -303,10 +301,10 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
     let mut last_json: Option<serde_json::Value> = None;
     for line in body_str.lines() {
         let t = line.trim_start_matches("data:").trim();
-        if let Some(pos) = t.find('{') {
-            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t[pos..]) {
-                last_json = Some(j);
-            }
+        if let Some(pos) = t.find('{')
+            && let Ok(j) = serde_json::from_str::<serde_json::Value>(&t[pos..])
+        {
+            last_json = Some(j);
         }
     }
     if last_json.is_none() {
@@ -323,9 +321,9 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         stats.usage.total_tokens = Some(0);
     }
     if stats.model_name.is_none() {
-        stats.model_name = ctx.requested_model.clone();
+        stats.model_name.clone_from(&ctx.requested_model);
     }
-    return stats;
+    stats
 }
 
 // 注意：不再提供 finalize_streaming 别名，统一使用 finalize_eos。

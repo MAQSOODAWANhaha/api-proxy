@@ -296,8 +296,10 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_from_config() {
         let strategy = ClaudeStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-request-123".to_string();
+        let mut ctx = ProxyContext {
+            request_id: "test-request-123".to_string(),
+            ..Default::default()
+        };
 
         let provider = dummy_claude_provider();
         ctx.provider_type = Some(provider);
@@ -309,8 +311,10 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_no_config() {
         let strategy = ClaudeStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-request-456".to_string();
+        let ctx = ProxyContext {
+            request_id: "test-request-456".to_string(),
+            ..Default::default()
+        };
 
         let host = strategy.select_upstream_host(&ctx).await.unwrap();
         assert!(host.is_none());
@@ -341,9 +345,11 @@ mod tests {
         let strategy = ClaudeStrategy::default();
 
         // 创建代理上下文
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-integration-123".to_string();
-        ctx.provider_type = Some(dummy_claude_provider());
+        let ctx = ProxyContext {
+            request_id: "test-integration-123".to_string(),
+            provider_type: Some(dummy_claude_provider()),
+            ..Default::default()
+        };
 
         // 1. 测试 select_upstream_host
         let host = strategy.select_upstream_host(&ctx).await.unwrap();
@@ -385,8 +391,10 @@ mod tests {
         // 测试没有提供商配置的情况
 
         let strategy = ClaudeStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-no-provider-789".to_string();
+        let ctx = ProxyContext {
+            request_id: "test-no-provider-789".to_string(),
+            ..Default::default()
+        };
         // 故意不设置 provider_type
 
         let host = strategy.select_upstream_host(&ctx).await.unwrap();
@@ -398,8 +406,10 @@ mod tests {
         // 测试使用真实数据库配置的情况
 
         let strategy = ClaudeStrategy::default();
-        let mut ctx = ProxyContext::default();
-        ctx.request_id = "test-real-config-456".to_string();
+        let mut ctx = ProxyContext {
+            request_id: "test-real-config-456".to_string(),
+            ..Default::default()
+        };
 
         // 使用模拟的真实提供商配置
         let real_provider = dummy_claude_provider();

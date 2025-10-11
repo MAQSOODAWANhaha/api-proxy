@@ -104,19 +104,18 @@ async fn test_layer1_immediate_model_info_update() {
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
     let request_id = "test_layer1_immediate_model_info_update_1";
 
-    tracer
-        .start_trace(
-            request_id.to_string(),
-            1000,
-            Some(1000),
-            Some(100), // provider_type_id
-            None,      // user_provider_key_id
-            "POST".to_string(),
-            Some("/v1/chat/completions".to_string()),
-            Some("127.0.0.1".to_string()),
-            Some("test-client/1.0".to_string()),
-        )
-        .await
+    let start_params = api_proxy::trace::immediate::StartTraceParams {
+        request_id: request_id.to_string(),
+        user_service_api_id: 1000,
+        user_id: Some(1000),
+        provider_type_id: Some(100),
+        user_provider_key_id: None,
+        method: "POST".to_string(),
+        path: Some("/v1/chat/completions".to_string()),
+        client_ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("test-client/1.0".to_string()),
+    };
+    tracer.start_trace(start_params).await
         .expect("Failed to start trace");
 
     // 验证基础记录已创建
@@ -158,19 +157,18 @@ async fn test_layer2_batch_statistics_update() {
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
     let request_id = "test_layer2_batch_statistics_update_1";
 
-    tracer
-        .start_trace(
-            request_id.to_string(),
-            1000,
-            Some(1000),
-            Some(100), // provider_type_id
-            None,      // user_provider_key_id
-            "POST".to_string(),
-            Some("/v1/chat/completions".to_string()),
-            Some("127.0.0.1".to_string()),
-            Some("test-client/1.0".to_string()),
-        )
-        .await
+    let start_params = api_proxy::trace::immediate::StartTraceParams {
+        request_id: request_id.to_string(),
+        user_service_api_id: 1000,
+        user_id: Some(1000),
+        provider_type_id: Some(100),
+        user_provider_key_id: None,
+        method: "POST".to_string(),
+        path: Some("/v1/chat/completions".to_string()),
+        client_ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("test-client/1.0".to_string()),
+    };
+    tracer.start_trace(start_params).await
         .expect("Failed to start trace");
 
     // 阶段1：更新模型信息
@@ -231,19 +229,18 @@ async fn test_layered_update_with_error() {
     let tracing_service = TracingService::new(Some(Arc::new(tracer.clone())));
     let request_id = "test_layered_update_with_error_1";
 
-    tracer
-        .start_trace(
-            request_id.to_string(),
-            1000,
-            Some(1000),
-            Some(100), // provider_type_id
-            None,      // user_provider_key_id
-            "POST".to_string(),
-            Some("/v1/chat/completions".to_string()),
-            Some("127.0.0.1".to_string()),
-            Some("test-client/1.0".to_string()),
-        )
-        .await
+    let start_params = api_proxy::trace::immediate::StartTraceParams {
+        request_id: request_id.to_string(),
+        user_service_api_id: 1000,
+        user_id: Some(1000),
+        provider_type_id: Some(100),
+        user_provider_key_id: None,
+        method: "POST".to_string(),
+        path: Some("/v1/chat/completions".to_string()),
+        client_ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("test-client/1.0".to_string()),
+    };
+    tracer.start_trace(start_params).await
         .expect("Failed to start trace");
 
     // 阶段1：更新模型信息
@@ -301,19 +298,18 @@ async fn test_layered_update_performance() {
     let request_id = "test_layered_update_performance_1";
     let start_time = std::time::Instant::now();
 
-    tracer
-        .start_trace(
-            request_id.to_string(),
-            1000,
-            Some(1000),
-            Some(100), // provider_type_id
-            None,      // user_provider_key_id
-            "POST".to_string(),
-            Some("/v1/chat/completions".to_string()),
-            Some("127.0.0.1".to_string()),
-            Some("test-client/1.0".to_string()),
-        )
-        .await
+    let start_params = api_proxy::trace::immediate::StartTraceParams {
+        request_id: request_id.to_string(),
+        user_service_api_id: 1000,
+        user_id: Some(1000),
+        provider_type_id: Some(100),
+        user_provider_key_id: None,
+        method: "POST".to_string(),
+        path: Some("/v1/chat/completions".to_string()),
+        client_ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("test-client/1.0".to_string()),
+    };
+    tracer.start_trace(start_params).await
         .expect("Failed to start trace");
 
     // 阶段1：立即更新模型信息（模拟实时获取到信息）
@@ -382,25 +378,31 @@ async fn test_backward_compatibility() {
     let request_id = "test_compatibility_13579";
 
     // 使用旧的API路径（直接调用complete_trace）
-    tracer
-        .start_trace(
-            request_id.to_string(),
-            1000,
-            Some(1000),
-            Some(100), // provider_type_id
-            None,      // user_provider_key_id
-            "POST".to_string(),
-            Some("/v1/chat/completions".to_string()),
-            Some("127.0.0.1".to_string()),
-            Some("test-client/1.0".to_string()),
-        )
-        .await
+    let start_params = api_proxy::trace::immediate::StartTraceParams {
+        request_id: request_id.to_string(),
+        user_service_api_id: 1000,
+        user_id: Some(1000),
+        provider_type_id: Some(100),
+        user_provider_key_id: None,
+        method: "POST".to_string(),
+        path: Some("/v1/chat/completions".to_string()),
+        client_ip: Some("127.0.0.1".to_string()),
+        user_agent: Some("test-client/1.0".to_string()),
+    };
+    tracer.start_trace(start_params).await
         .expect("Failed to start trace");
 
     // 直接使用旧的complete_trace方法
-    tracer
-        .complete_trace(request_id, 200, true, Some(200), Some(100), None, None)
-        .await
+    let complete_params = api_proxy::trace::immediate::SimpleCompleteTraceParams {
+        request_id: request_id.to_string(),
+        status_code: 200,
+        is_success: true,
+        tokens_prompt: Some(200),
+        tokens_completion: Some(100),
+        error_type: None,
+        error_message: None,
+    };
+    tracer.complete_trace(complete_params).await
         .expect("Failed to complete trace");
 
     // 验证仍然可以正常工作

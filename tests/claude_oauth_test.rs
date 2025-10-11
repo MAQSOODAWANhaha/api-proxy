@@ -70,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_multiple_scopes_url_generation() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(db);
+        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
         let session = create_test_session();
         let oauth_config = create_claude_oauth_config();
 
@@ -204,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_config_with_url_encoding() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(db);
+        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建Claude配置，测试URL编码

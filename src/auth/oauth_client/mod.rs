@@ -195,7 +195,7 @@ impl OAuthClient {
             session_manager.clone(),
             provider_manager.clone(),
             token_exchange_client.clone(),
-            db.clone(),
+            db,
         );
 
         Self {

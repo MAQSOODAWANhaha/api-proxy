@@ -61,7 +61,7 @@ pub struct PartialUsage {
 }
 
 impl PartialUsage {
-    pub fn merge_latest(&mut self, other: &PartialUsage) {
+    pub const fn merge_latest(&mut self, other: &Self) {
         if other.prompt_tokens.is_some() {
             self.prompt_tokens = other.prompt_tokens;
         }
@@ -79,7 +79,7 @@ impl PartialUsage {
         }
     }
 
-    pub fn merge_sum(&mut self, other: &PartialUsage) {
+    pub fn merge_sum(&mut self, other: &Self) {
         if let Some(v) = other.prompt_tokens {
             self.prompt_tokens = Some(self.prompt_tokens.unwrap_or(0) + v);
         }

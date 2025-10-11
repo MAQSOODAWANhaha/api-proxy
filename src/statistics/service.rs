@@ -24,11 +24,12 @@ pub struct StatisticsService {
 impl StatisticsService {
     /// 在任意层级查找并归一化 usageMetadata 到顶层，便于通用提取器工作
     /// 创建新的统计服务
-    pub fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
+    #[must_use]
+    pub const fn new(pricing_calculator: Arc<PricingCalculatorService>) -> Self {
         Self { pricing_calculator }
     }
 
-    /// 直接根据给定的 TokenUsage 计算成本（用于 SSE 聚合覆盖后重算）
+    /// 直接根据给定的 `TokenUsage` 计算成本（用于 SSE 聚合覆盖后重算）
     pub async fn calculate_cost_direct(
         &self,
         model: &str,
@@ -48,7 +49,7 @@ impl StatisticsService {
                     LogStage::Internal,
                     LogComponent::Statistics,
                     "cost_calculation_fail",
-                    &format!("Failed to calculate cost (direct): {}", e)
+                    &format!("Failed to calculate cost (direct): {e}")
                 );
                 Ok((None, None))
             }
@@ -56,11 +57,13 @@ impl StatisticsService {
     }
 
     /// 收集请求统计信息
+    #[must_use]
     pub fn collect_request_stats(&self, session: &Session) -> RequestStats {
         crate::statistics::request::collect_stats(session)
     }
 
     /// 收集请求详情
+    #[must_use]
     pub fn collect_request_details(
         &self,
         session: &Session,
@@ -82,12 +85,14 @@ impl StatisticsService {
     /// 从响应体中提取模型信息
     ///
     /// 支持多种AI API响应格式的模型提取，包括数组索引访问
+    #[must_use]
     pub fn extract_model_from_response_body(&self, json: &serde_json::Value) -> Option<String> {
         crate::statistics::usage_model::extract_model_from_json(json)
     }
 
     /// 根据路径提取模型信息
-    fn extract_model_by_path(&self, json: &serde_json::Value, path: &str) -> Option<String> {
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    fn extract_model_by_path(json: &serde_json::Value, path: &str) -> Option<String> {
         if path.is_empty() {
             return None;
         }
@@ -98,7 +103,7 @@ impl StatisticsService {
 
         for part in parts {
             // 检查是否是数组索引访问，如 choices[0]
-            if let Some((field_name, index_str)) = self.parse_array_access(part) {
+            if let Some((field_name, index_str)) = Self::parse_array_access(part) {
                 // 处理 field_name[index] 格式
                 if let Some(array_field) = current.get(field_name) {
                     if let Some(array) = array_field.as_array() {
@@ -239,21 +244,20 @@ impl StatisticsService {
     }
 
     /// 解析数组索引访问，如 choices[0] -> (choices, 0) 或 0 -> None
-    fn parse_array_access<'a>(&self, part: &'a str) -> Option<(&'a str, &'a str)> {
+    fn parse_array_access(part: &str) -> Option<(&str, &str)> {
         // 首先检查是否是直接的数字索引，如 "0"
         if part.chars().all(|c| c.is_ascii_digit()) {
             return None; // 直接数字索引，由调用者处理
         }
 
         // 检查是否是 field[index] 格式
-        if let Some(bracket_pos) = part.find('[') {
-            if let Some(close_bracket_pos) = part.find(']') {
-                if bracket_pos < close_bracket_pos {
-                    let field_name = &part[..bracket_pos];
-                    let index_str = &part[bracket_pos + 1..close_bracket_pos];
-                    return Some((field_name, index_str));
-                }
-            }
+        if let Some(bracket_pos) = part.find('[')
+            && let Some(close_bracket_pos) = part.find(']')
+            && bracket_pos < close_bracket_pos
+        {
+            let field_name = &part[..bracket_pos];
+            let index_str = &part[bracket_pos + 1..close_bracket_pos];
+            return Some((field_name, index_str));
         }
         None
     }
@@ -261,6 +265,7 @@ impl StatisticsService {
     /// 从上下文响应体中提取统计信息（统一实现）
     // ========== 请求阶段模型提取方法 ==========
     /// 统一的请求阶段模型提取入口点
+    #[allow(clippy::cognitive_complexity)]
     pub fn extract_model_from_request(
         &self,
         session: &Session,
@@ -312,7 +317,8 @@ impl StatisticsService {
         None
     }
 
-    /// 尝试使用数据库驱动的 ModelExtractor 提取模型
+    /// 尝试使用数据库驱动的 `ModelExtractor` 提取模型
+    #[allow(clippy::cognitive_complexity)]
     pub fn extract_model_from_request_with_db_config(
         &self,
         session: &Session,
@@ -350,10 +356,7 @@ impl StatisticsService {
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "create_model_extractor_fail",
-                &format!(
-                    "Failed to create ModelExtractor from database config: {}",
-                    e
-                ),
+                &format!("Failed to create ModelExtractor from database config: {e}"),
                 provider_id = provider.id,
             );
             e
@@ -392,6 +395,7 @@ impl StatisticsService {
     }
 
     /// 尝试从请求体直接提取模型（fallback方法）
+    #[allow(clippy::cognitive_complexity)]
     pub fn extract_model_from_request_body_fallback(&self, ctx: &ProxyContext) -> Option<String> {
         let body_data = ctx.request_body.clone();
 
@@ -416,15 +420,14 @@ impl StatisticsService {
         }
 
         let body_str = std::str::from_utf8(&body_data)
-            .map_err(|e| {
+            .inspect_err(|&e| {
                 ldebug!(
                     &ctx.request_id,
                     LogStage::Internal,
                     LogComponent::Statistics,
                     "invalid_utf8_body",
-                    &format!("Request body is not valid UTF-8: {}", e)
+                    &format!("Request body is not valid UTF-8: {e}")
                 );
-                e
             })
             .ok()?;
 
@@ -438,22 +441,21 @@ impl StatisticsService {
         );
 
         let json_value = serde_json::from_str::<serde_json::Value>(body_str)
-            .map_err(|e| {
+            .inspect_err(|e| {
                 ldebug!(
                     &ctx.request_id,
                     LogStage::Internal,
                     LogComponent::Statistics,
                     "json_parse_fail",
-                    &format!("Failed to parse request body as JSON: {}", e)
+                    &format!("Failed to parse request body as JSON: {e}")
                 );
-                e
             })
             .ok()?;
 
         let model_name = json_value
             .get("model")
             .and_then(|m| m.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         match model_name {
             Some(ref model) => {
@@ -482,6 +484,7 @@ impl StatisticsService {
     }
 
     /// 解析请求体用于模型提取
+    #[must_use]
     pub fn parse_request_body_for_model(&self, ctx: &ProxyContext) -> Option<serde_json::Value> {
         let body_data = ctx.request_body.clone();
 
@@ -490,33 +493,32 @@ impl StatisticsService {
         }
 
         let body_str = std::str::from_utf8(&body_data)
-            .map_err(|e| {
+            .inspect_err(|&e| {
                 ldebug!(
                     &ctx.request_id,
                     LogStage::Internal,
                     LogComponent::Statistics,
                     "invalid_utf8_body",
-                    &format!("Request body is not valid UTF-8: {}", e)
+                    &format!("Request body is not valid UTF-8: {e}")
                 );
-                e
             })
             .ok()?;
 
         serde_json::from_str::<serde_json::Value>(body_str)
-            .map_err(|e| {
+            .inspect_err(|e| {
                 ldebug!(
                     &ctx.request_id,
                     LogStage::Internal,
                     LogComponent::Statistics,
                     "json_parse_fail",
-                    &format!("Failed to parse request body as JSON: {}", e)
+                    &format!("Failed to parse request body as JSON: {e}")
                 );
-                e
             })
             .ok()
     }
 
     /// 提取查询参数用于模型提取
+    #[must_use]
     pub fn extract_query_params_for_model(&self, session: &Session) -> HashMap<String, String> {
         let uri = &session.req_header().uri;
         let query_string = uri.query().unwrap_or("");

@@ -39,7 +39,7 @@ pub async fn calculate(
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "cost_calculation_fail",
-                &format!("Failed to calculate cost: {}", e)
+                &format!("Failed to calculate cost: {e}")
             );
             Ok((None, None))
         }

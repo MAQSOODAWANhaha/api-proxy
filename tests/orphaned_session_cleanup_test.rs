@@ -162,7 +162,7 @@ async fn test_orphaned_session_cleanup_functionality() {
     assert_eq!(initial_keys_count, 1);
 
     // 创建 SessionManager 实例
-    let session_manager = SessionManager::new(db.clone());
+    let session_manager = SessionManager::new(std::sync::Arc::new(db.clone()));
 
     // 模拟 validate_session_association 的逻辑
     // 测试6分钟的孤立会话：应该被删除
@@ -259,7 +259,7 @@ async fn test_young_session_not_cleaned() {
     assert_eq!(initial_count, 1);
 
     // 创建 SessionManager 实例
-    let session_manager = SessionManager::new(db.clone());
+    let session_manager = SessionManager::new(std::sync::Arc::new(db.clone()));
 
     // 模拟 validate_session_association 的逻辑
     let now = Utc::now().naive_utc();
@@ -300,7 +300,7 @@ async fn test_session_deletion_ownership_check() {
     assert_eq!(initial_count, 2);
 
     // 创建 SessionManager 实例
-    let session_manager = SessionManager::new(db.clone());
+    let session_manager = SessionManager::new(std::sync::Arc::new(db.clone()));
 
     // 尝试用错误的用户ID删除会话（应该失败）
     let result = session_manager

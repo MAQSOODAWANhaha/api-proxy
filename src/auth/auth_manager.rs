@@ -350,17 +350,3 @@ pub fn create_auth_manager(
 ) -> Result<AuthManager> {
     AuthManager::new(auth_service, config, db, cache_manager)
 }
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_is_public_path() {
-        // 测试公开路径识别逻辑
-        let _public_paths = ["/health", "/metrics", "/api/health", "/api/version"];
-
-        let _private_paths = ["/api/admin", "/proxy/openai", "/api/users"];
-
-        // 实际测试逻辑
-    }
-}

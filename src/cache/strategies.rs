@@ -24,40 +24,38 @@ pub enum CacheTtl {
 
 impl CacheTtl {
     /// 获取TTL秒数
-    pub fn as_seconds(&self) -> Option<u64> {
+    #[must_use]
+    pub const fn as_seconds(&self) -> Option<u64> {
         match self {
-            CacheTtl::Short => Some(300),   // 5分钟
-            CacheTtl::Medium => Some(3600), // 1小时
-            CacheTtl::Long => Some(86400),  // 24小时
-            CacheTtl::Custom(seconds) => Some(*seconds),
-            CacheTtl::Never => None,
+            Self::Short => Some(300),   // 5分钟
+            Self::Medium => Some(3600), // 1小时
+            Self::Long => Some(86400),  // 24小时
+            Self::Custom(seconds) => Some(*seconds),
+            Self::Never => None,
         }
     }
 
     /// 获取 Duration
+    #[must_use]
     pub fn as_duration(&self) -> Option<Duration> {
         self.as_seconds().map(Duration::from_secs)
     }
 
     /// 从秒数创建自定义 TTL
-    pub fn from_seconds(seconds: u64) -> Self {
-        CacheTtl::Custom(seconds)
-    }
+    #[must_use]
+    pub const fn from_seconds(seconds: u64) -> Self { Self::Custom(seconds) }
 
     /// 从分钟创建自定义 TTL
-    pub fn from_minutes(minutes: u64) -> Self {
-        CacheTtl::Custom(minutes * 60)
-    }
+    #[must_use]
+    pub const fn from_minutes(minutes: u64) -> Self { Self::Custom(minutes * 60) }
 
     /// 从小时创建自定义 TTL
-    pub fn from_hours(hours: u64) -> Self {
-        CacheTtl::Custom(hours * 3600)
-    }
+    #[must_use]
+    pub const fn from_hours(hours: u64) -> Self { Self::Custom(hours * 3600) }
 
     /// 从天创建自定义 TTL
-    pub fn from_days(days: u64) -> Self {
-        CacheTtl::Custom(days * 86400)
-    }
+    #[must_use]
+    pub const fn from_days(days: u64) -> Self { Self::Custom(days * 86400) }
 }
 
 /// 缓存策略
@@ -89,7 +87,8 @@ impl Default for CacheStrategy {
 
 impl CacheStrategy {
     /// 创建短期缓存策略
-    pub fn short_term() -> Self {
+    #[must_use]
+    pub const fn short_term() -> Self {
         Self {
             ttl: CacheTtl::Short,
             cache_null_values: false,
@@ -100,7 +99,8 @@ impl CacheStrategy {
     }
 
     /// 创建中期缓存策略
-    pub fn medium_term() -> Self {
+    #[must_use]
+    pub const fn medium_term() -> Self {
         Self {
             ttl: CacheTtl::Medium,
             cache_null_values: true,
@@ -111,7 +111,8 @@ impl CacheStrategy {
     }
 
     /// 创建长期缓存策略
-    pub fn long_term() -> Self {
+    #[must_use]
+    pub const fn long_term() -> Self {
         Self {
             ttl: CacheTtl::Long,
             cache_null_values: true,
@@ -122,6 +123,7 @@ impl CacheStrategy {
     }
 
     /// 创建自定义缓存策略
+    #[must_use]
     pub fn custom(ttl: CacheTtl) -> Self {
         Self {
             ttl,
@@ -130,6 +132,7 @@ impl CacheStrategy {
     }
 
     /// 根据缓存键自动选择策略
+    #[must_use]
     pub fn for_key(key: &CacheKey) -> Self {
         if key.is_temporary() {
             Self::short_term()
@@ -143,30 +146,35 @@ impl CacheStrategy {
     }
 
     /// 设置 TTL
+    #[must_use]
     pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
         self.ttl = ttl;
         self
     }
 
     /// 设置是否允许缓存空值
+    #[must_use]
     pub fn with_null_values(mut self, cache_null_values: bool) -> Self {
         self.cache_null_values = cache_null_values;
         self
     }
 
     /// 设置是否启用压缩
+    #[must_use]
     pub fn with_compression(mut self, compression_enabled: bool) -> Self {
         self.compression_enabled = compression_enabled;
         self
     }
 
     /// 设置最大值大小
+    #[must_use]
     pub fn with_max_value_size(mut self, max_value_size: usize) -> Self {
         self.max_value_size = max_value_size;
         self
     }
 
     /// 设置是否启用预热
+    #[must_use]
     pub fn with_warmup(mut self, warmup_enabled: bool) -> Self {
         self.warmup_enabled = warmup_enabled;
         self

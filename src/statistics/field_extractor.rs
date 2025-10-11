@@ -667,7 +667,7 @@ impl ModelExtractor {
         let fallback_model = v
             .get("fallback_model")
             .and_then(|x| x.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         Ok(Self {
             rules,
             fallback_model,
@@ -683,17 +683,17 @@ impl ModelExtractor {
         for rule in &self.rules {
             match rule {
                 ModelRule::BodyJson { path, .. } => {
-                    if let Some(val) = body_json.and_then(|v| json_path_lookup(v, path)) {
-                        if let Some(s) = val.as_str() {
-                            return s.to_string();
-                        }
+                    if let Some(val) = body_json.and_then(|v| json_path_lookup(v, path))
+                        && let Some(s) = val.as_str()
+                    {
+                        return s.to_string();
                     }
                 }
                 ModelRule::UrlRegex { pattern, .. } => {
-                    if let Some(cap) = pattern.captures(url_path) {
-                        if let Some(m) = cap.get(1) {
-                            return m.as_str().to_string();
-                        }
+                    if let Some(cap) = pattern.captures(url_path)
+                        && let Some(m) = cap.get(1)
+                    {
+                        return m.as_str().to_string();
                     }
                 }
                 ModelRule::QueryParam { name, .. } => {

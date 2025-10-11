@@ -478,6 +478,7 @@ mod tests {
 
     #[test]
     fn test_token_type_parsing() {
+        use base64::{engine::general_purpose, Engine as _};
         // Bearer token
         let auth_header = "Bearer abc123";
         assert_eq!(
@@ -493,9 +494,8 @@ mod tests {
         );
 
         // Basic auth
-        use base64::{Engine as _, engine::general_purpose};
         let credentials = general_purpose::STANDARD.encode("user:pass");
-        let auth_header = format!("Basic {}", credentials);
+        let auth_header = format!("Basic {credentials}");
         assert_eq!(
             TokenType::from_auth_header(&auth_header),
             Some(TokenType::Basic {
