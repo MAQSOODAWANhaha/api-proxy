@@ -32,7 +32,7 @@ impl<'de> serde::Deserialize<'de> for ApiKeyHealthStatus {
     {
         struct ApiKeyHealthStatusVisitor;
 
-        impl<'de> serde::de::Visitor<'de> for ApiKeyHealthStatusVisitor {
+        impl serde::de::Visitor<'_> for ApiKeyHealthStatusVisitor {
             type Value = ApiKeyHealthStatus;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -47,7 +47,7 @@ impl<'de> serde::Deserialize<'de> for ApiKeyHealthStatus {
                     "healthy" => Ok(ApiKeyHealthStatus::Healthy),
                     "rate_limited" => Ok(ApiKeyHealthStatus::RateLimited),
                     "unhealthy" => Ok(ApiKeyHealthStatus::Unhealthy),
-                    _ => Err(E::custom(format!("unknown health status: {}", s))),
+                    _ => Err(E::custom(format!("unknown health status: {s}"))),
                 }
             }
         }
@@ -62,9 +62,9 @@ impl serde::Serialize for ApiKeyHealthStatus {
         S: serde::Serializer,
     {
         let s = match self {
-            ApiKeyHealthStatus::Healthy => "healthy",
-            ApiKeyHealthStatus::RateLimited => "rate_limited",
-            ApiKeyHealthStatus::Unhealthy => "unhealthy",
+            Self::Healthy => "healthy",
+            Self::RateLimited => "rate_limited",
+            Self::Unhealthy => "unhealthy",
         };
         serializer.serialize_str(s)
     }
@@ -73,9 +73,9 @@ impl serde::Serialize for ApiKeyHealthStatus {
 impl ToString for ApiKeyHealthStatus {
     fn to_string(&self) -> String {
         match self {
-            ApiKeyHealthStatus::Healthy => "healthy",
-            ApiKeyHealthStatus::RateLimited => "rate_limited",
-            ApiKeyHealthStatus::Unhealthy => "unhealthy",
+            Self::Healthy => "healthy",
+            Self::RateLimited => "rate_limited",
+            Self::Unhealthy => "unhealthy",
         }
         .to_string()
     }
@@ -86,10 +86,10 @@ impl FromStr for ApiKeyHealthStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "healthy" => Ok(ApiKeyHealthStatus::Healthy),
-            "rate_limited" => Ok(ApiKeyHealthStatus::RateLimited),
-            "unhealthy" => Ok(ApiKeyHealthStatus::Unhealthy),
-            _ => Err(format!("Invalid health status: {}", s)),
+            "healthy" => Ok(Self::Healthy),
+            "rate_limited" => Ok(Self::RateLimited),
+            "unhealthy" => Ok(Self::Unhealthy),
+            _ => Err(format!("Invalid health status: {s}")),
         }
     }
 }
@@ -102,6 +102,7 @@ impl Default for SchedulingStrategy {
 
 impl SchedulingStrategy {
     /// 从字符串解析调度策略
+    #[must_use] 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
@@ -114,7 +115,8 @@ impl SchedulingStrategy {
     }
 
     /// 转换为字符串
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::RoundRobin => "round_robin",
             Self::Weighted => "weighted",

@@ -61,7 +61,7 @@ impl Default for CacheConfig {
 /// Redis配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
-    /// Redis连接URL
+    /// `Redis连接URL`
     pub url: String,
     /// 连接池大小
     pub pool_size: u32,
@@ -106,16 +106,19 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// 获取双端口配置
-    pub fn get_dual_port_config(&self) -> Option<&DualPortServerConfig> {
+    #[must_use] 
+    pub const fn get_dual_port_config(&self) -> Option<&DualPortServerConfig> {
         self.dual_port.as_ref()
     }
 
     /// 是否启用双端口模式
-    pub fn is_dual_port_mode(&self) -> bool {
+    #[must_use] 
+    pub const fn is_dual_port_mode(&self) -> bool {
         self.dual_port.is_some()
     }
 
     /// 获取管理端口
+    #[must_use] 
     pub fn get_management_port(&self) -> u16 {
         self.dual_port
             .as_ref()
@@ -123,6 +126,7 @@ impl AppConfig {
     }
 
     /// 获取代理端口
+    #[must_use] 
     pub fn get_proxy_port(&self) -> u16 {
         self.dual_port
             .as_ref()
@@ -185,7 +189,8 @@ impl AppConfig {
     }
 
     /// 是否启用追踪
-    pub fn is_trace_enabled(&self) -> bool {
+    #[must_use] 
+    pub const fn is_trace_enabled(&self) -> bool {
         false
     }
 }

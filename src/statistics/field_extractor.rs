@@ -44,7 +44,7 @@ pub enum TokenMapping {
 }
 
 impl TokenMapping {
-    /// 从JSON配置解析Token映射
+    /// `从JSON配置解析Token映射`
     pub fn from_json(config: &Value) -> Result<Self> {
         let mapping_type = config
             .get("type")
@@ -69,7 +69,7 @@ impl TokenMapping {
                     None
                 };
 
-                Ok(TokenMapping::Direct {
+                Ok(Self::Direct {
                     path: path.to_string(),
                     fallback,
                 })
@@ -91,7 +91,7 @@ impl TokenMapping {
                     None
                 };
 
-                Ok(TokenMapping::Expression {
+                Ok(Self::Expression {
                     formula: formula.to_string(),
                     fallback,
                 })
@@ -113,7 +113,7 @@ impl TokenMapping {
                     None
                 };
 
-                Ok(TokenMapping::Default { value, fallback })
+                Ok(Self::Default { value, fallback })
             }
             "conditional" => {
                 let condition = config
@@ -139,7 +139,7 @@ impl TokenMapping {
                     None
                 };
 
-                Ok(TokenMapping::Conditional {
+                Ok(Self::Conditional {
                     condition: condition.to_string(),
                     true_value: true_value.to_string(),
                     false_value,
@@ -172,12 +172,12 @@ impl TokenMapping {
                     None
                 };
 
-                Ok(TokenMapping::Fallback {
+                Ok(Self::Fallback {
                     paths: path_strings,
                     fallback,
                 })
             }
-            _ => Err(anyhow!("Unknown mapping type: {}", mapping_type)),
+            _ => Err(anyhow!("Unknown mapping type: {mapping_type}")),
         }
     }
 }
@@ -197,53 +197,55 @@ pub enum TransformRule {
 
 impl TransformRule {
     /// 从字符串解析转换规则
+    #[must_use] 
     pub fn from_str(rule: &str) -> Self {
         let parts: Vec<&str> = rule.split(':').collect();
         match parts.as_slice() {
             ["multiply", value] => {
                 if let Ok(num) = value.parse::<f64>() {
-                    TransformRule::Multiply(num)
+                    Self::Multiply(num)
                 } else {
-                    TransformRule::None
+                    Self::None
                 }
             }
             ["divide", value] => {
                 if let Ok(num) = value.parse::<f64>() {
-                    TransformRule::Divide(num)
+                    Self::Divide(num)
                 } else {
-                    TransformRule::None
+                    Self::None
                 }
             }
             ["fixed", value] => {
                 if let Ok(num) = value.parse::<f64>() {
-                    TransformRule::Fixed(Value::Number(serde_json::Number::from_f64(num).unwrap()))
+                    Self::Fixed(Value::Number(serde_json::Number::from_f64(num).unwrap()))
                 } else {
-                    TransformRule::Fixed(Value::String(value.to_string()))
+                    Self::Fixed(Value::String((*value).to_string()))
                 }
             }
-            _ => TransformRule::None,
+            _ => Self::None,
         }
     }
 
     /// 应用转换规则
+    #[must_use] 
     pub fn apply(&self, value: &Value) -> Value {
         match self {
-            TransformRule::Multiply(factor) => match value {
+            Self::Multiply(factor) => match value {
                 Value::Number(num) => {
                     let v = num.as_f64().unwrap_or(0.0) * factor;
                     Value::Number(serde_json::Number::from_f64(v).unwrap())
                 }
                 _ => value.clone(),
             },
-            TransformRule::Divide(divisor) => match value {
+            Self::Divide(divisor) => match value {
                 Value::Number(num) => {
                     let v = num.as_f64().unwrap_or(0.0) / divisor;
                     Value::Number(serde_json::Number::from_f64(v).unwrap())
                 }
                 _ => value.clone(),
             },
-            TransformRule::Fixed(fixed_val) => fixed_val.clone(),
-            TransformRule::None => value.clone(),
+            Self::Fixed(fixed_val) => fixed_val.clone(),
+            Self::None => value.clone(),
         }
     }
 }
@@ -251,12 +253,12 @@ impl TransformRule {
 /// Token字段映射配置（新格式）
 #[derive(Debug, Clone)]
 pub struct TokenMappingConfig {
-    /// Token字段映射 field_name -> TokenMapping
+    /// Token字段映射 `field_name` -> `TokenMapping`
     pub token_mappings: HashMap<String, TokenMapping>,
 }
 
 impl TokenMappingConfig {
-    /// 从token_mappings_json解析配置
+    /// `从token_mappings_json解析配置`
     pub fn from_json(json_str: &str) -> Result<Self> {
         let config_value: Value = serde_json::from_str(json_str)?;
         let mut token_mappings = HashMap::new();
@@ -277,9 +279,9 @@ impl TokenMappingConfig {
 /// 字段映射配置（来自数据库）
 #[derive(Debug, Clone)]
 pub struct FieldMappingConfig {
-    /// 字段路径映射 field_name -> json_path
+    /// 字段路径映射 `field_name` -> `json_path`
     pub field_mappings: HashMap<String, String>,
-    /// 默认值配置 field_name -> default_value  
+    /// 默认值配置 `field_name` -> `default_value`  
     pub default_values: HashMap<String, Value>,
     /// 转换规则
     pub transformations: HashMap<String, TransformRule>,
@@ -353,12 +355,12 @@ impl FieldMappingConfig {
         let transforms = serde_json::Map::from_iter(
             self.transformations
                 .iter()
-                .map(|(k, v)| (k.clone(), Value::String(format!("{:?}", v)))),
+                .map(|(k, v)| (k.clone(), Value::String(format!("{v:?}")))),
         );
         config.insert("transformations".to_string(), Value::Object(transforms));
 
         serde_json::to_string_pretty(&Value::Object(config))
-            .map_err(|e| anyhow!("Failed to serialize config: {}", e))
+            .map_err(|e| anyhow!("Failed to serialize config: {e}"))
     }
 }
 
@@ -370,7 +372,8 @@ pub struct TokenFieldExtractor {
 
 impl TokenFieldExtractor {
     /// 创建新的Token字段提取器
-    pub fn new(config: TokenMappingConfig) -> Self {
+    #[must_use] 
+    pub const fn new(config: TokenMappingConfig) -> Self {
         Self { config }
     }
 
@@ -418,6 +421,7 @@ impl TokenFieldExtractor {
     }
 
     /// 提取u32 token值
+    #[must_use] 
     pub fn extract_token_u32(&self, response: &Value, field_name: &str) -> Option<u32> {
         self.extract_token_field(response, field_name)
             .and_then(|v| match v {
@@ -491,15 +495,14 @@ impl TokenFieldExtractor {
     }
 
     fn parse_index(part: &str) -> Option<(&str, usize)> {
-        if let Some(beg) = part.find('[') {
-            if let Some(end) = part.find(']') {
+        if let Some(beg) = part.find('[')
+            && let Some(end) = part.find(']') {
                 let field = &part[..beg];
                 let idx = &part[beg + 1..end];
                 if let Ok(i) = idx.parse::<usize>() {
                     return Some((field, i));
                 }
             }
-        }
         None
     }
 
@@ -517,7 +520,7 @@ impl TokenFieldExtractor {
                         Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
                         _ => 0.0,
                     };
-                    eval_str = eval_str.replace(&format!("{{{}}}", path_str), &num.to_string());
+                    eval_str = eval_str.replace(&format!("{{{path_str}}}"), &num.to_string());
                 }
             }
         }
@@ -595,7 +598,8 @@ pub struct FieldExtractor {
 }
 
 impl FieldExtractor {
-    pub fn new(config: FieldMappingConfig) -> Self {
+    #[must_use] 
+    pub const fn new(config: FieldMappingConfig) -> Self {
         Self { config }
     }
 
@@ -626,7 +630,7 @@ impl ModelExtractor {
         if let Some(arr) = v.get("extraction_rules").and_then(|x| x.as_array()) {
             for item in arr {
                 let r#type = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                let prio = item.get("priority").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                let prio = item.get("priority").and_then(sea_orm::JsonValue::as_i64).unwrap_or(0) as i32;
                 match r#type {
                     "body_json" => {
                         if let Some(path) = item.get("path").and_then(|x| x.as_str()) {
@@ -637,14 +641,13 @@ impl ModelExtractor {
                         }
                     }
                     "url_regex" => {
-                        if let Some(pattern) = item.get("pattern").and_then(|x| x.as_str()) {
-                            if let Ok(re) = Regex::new(pattern) {
+                        if let Some(pattern) = item.get("pattern").and_then(|x| x.as_str())
+                            && let Ok(re) = Regex::new(pattern) {
                                 rules.push(ModelRule::UrlRegex {
                                     pattern: re,
                                     priority: prio,
                                 });
                             }
-                        }
                     }
                     "query_param" => {
                         if let Some(name) = item.get("parameter").and_then(|x| x.as_str()) {
@@ -674,6 +677,7 @@ impl ModelExtractor {
         })
     }
 
+    #[must_use] 
     pub fn extract_model_name(
         &self,
         url_path: &str,

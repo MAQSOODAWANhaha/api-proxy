@@ -122,7 +122,7 @@ pub async fn login(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "parse_user_id_fail",
-                &format!("Failed to parse user id from access token: {}", err)
+                &format!("Failed to parse user id from access token: {err}")
             );
             return crate::manage_error!(err);
         }
@@ -136,7 +136,7 @@ pub async fn login(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "user_not_found_after_login",
-                &format!("User {} not found after successful login", user_id)
+                &format!("User {user_id} not found after successful login")
             );
             return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
         }
@@ -146,7 +146,7 @@ pub async fn login(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "load_user_info_fail",
-                &format!("Failed to load user info for {}: {}", user_id, err)
+                &format!("Failed to load user info for {user_id}: {err}")
             );
             return crate::manage_error!(err);
         }
@@ -208,36 +208,33 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> axum::response::Response {
     // 从Authorization头中提取token
-    let auth_header = match headers.get("Authorization") {
-        Some(header) => match header.to_str() {
-            Ok(header_str) => header_str,
-            Err(err) => {
-                lwarn!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::Auth,
-                    "invalid_auth_header",
-                    &format!("Invalid Authorization header format: {}", err)
-                );
-                return crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "Invalid Authorization header format"
-                ));
-            }
-        },
-        None => {
+    let auth_header = if let Some(header) = headers.get("Authorization") { match header.to_str() {
+        Ok(header_str) => header_str,
+        Err(err) => {
             lwarn!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::Auth,
-                "no_auth_header_logout",
-                "No Authorization header found in logout request"
+                "invalid_auth_header",
+                &format!("Invalid Authorization header format: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 business,
-                "No Authorization header found"
+                "Invalid Authorization header format"
             ));
         }
+    } } else {
+        lwarn!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "no_auth_header_logout",
+            "No Authorization header found in logout request"
+        );
+        return crate::manage_error!(crate::proxy_err!(
+            business,
+            "No Authorization header found"
+        ));
     };
 
     // 检查Bearer前缀
@@ -268,7 +265,7 @@ pub async fn logout(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "token_validation_fail_logout",
-                &format!("Token validation failed during logout: {}", err)
+                &format!("Token validation failed during logout: {err}")
             );
             // 即使token无效，也返回成功，避免客户端异常
             return response::success_without_data("Logout successful");
@@ -305,53 +302,37 @@ pub async fn validate_token(
         "validate_token_headers",
         "Validate token request headers:"
     );
-    for (name, value) in headers.iter() {
+    for (name, value) in &headers {
         if let Ok(value_str) = value.to_str() {
             linfo!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "validate_token_header",
-                &format!("  {}: {}", name, value_str)
+                &format!("  {name}: {value_str}")
             );
         }
     }
 
     // 从Authorization头中提取token
-    let auth_header = match headers.get("Authorization") {
-        Some(header) => match header.to_str() {
-            Ok(header_str) => {
-                linfo!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::Auth,
-                    "found_auth_header",
-                    &format!("Found Authorization header: {}", header_str)
-                );
-                header_str
-            }
-            Err(err) => {
-                lwarn!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::Auth,
-                    "invalid_auth_header",
-                    &format!("Invalid Authorization header format: {}", err)
-                );
-                let response_data = ValidateTokenResponse {
-                    valid: false,
-                    user: None,
-                };
-                return response::success(response_data);
-            }
-        },
-        None => {
+    let auth_header = if let Some(header) = headers.get("Authorization") { match header.to_str() {
+        Ok(header_str) => {
+            linfo!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "found_auth_header",
+                &format!("Found Authorization header: {header_str}")
+            );
+            header_str
+        }
+        Err(err) => {
             lwarn!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::Auth,
-                "no_auth_header",
-                "No Authorization header found in request"
+                "invalid_auth_header",
+                &format!("Invalid Authorization header format: {err}")
             );
             let response_data = ValidateTokenResponse {
                 valid: false,
@@ -359,6 +340,19 @@ pub async fn validate_token(
             };
             return response::success(response_data);
         }
+    } } else {
+        lwarn!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "no_auth_header",
+            "No Authorization header found in request"
+        );
+        let response_data = ValidateTokenResponse {
+            valid: false,
+            user: None,
+        };
+        return response::success(response_data);
     };
 
     // 检查Bearer前缀
@@ -390,7 +384,7 @@ pub async fn validate_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "token_validation_fail",
-                &format!("Token validation failed: {}", err)
+                &format!("Token validation failed: {err}")
             );
             let response_data = ValidateTokenResponse {
                 valid: false,
@@ -423,7 +417,7 @@ pub async fn validate_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "user_not_found_in_db",
-                &format!("Token valid but user {} not found in database", user_id)
+                &format!("Token valid but user {user_id} not found in database")
             );
             let response_data = ValidateTokenResponse {
                 valid: false,
@@ -437,7 +431,7 @@ pub async fn validate_token(
                 LogStage::Db,
                 LogComponent::Auth,
                 "db_error_token_validation",
-                &format!("Database error during token validation: {}", err)
+                &format!("Database error during token validation: {err}")
             );
             let response_data = ValidateTokenResponse {
                 valid: false,
@@ -476,7 +470,7 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "refresh_token_invalid",
-                &format!("Invalid refresh token: {}", err)
+                &format!("Invalid refresh token: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(auth, "刷新令牌无效或已过期"));
         }
@@ -491,7 +485,7 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "refresh_token_user_id_parse_fail",
-                &format!("Failed to parse user id from refresh token: {}", err)
+                &format!("Failed to parse user id from refresh token: {err}")
             );
             return crate::manage_error!(err);
         }
@@ -506,7 +500,7 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "refresh_token_user_not_found",
-                &format!("User {} not found during token refresh", user_id)
+                &format!("User {user_id} not found during token refresh")
             );
             return crate::manage_error!(crate::proxy_err!(auth, "用户不存在"));
         }
@@ -516,7 +510,7 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "refresh_token_user_info_fail",
-                &format!("Failed to load user info for {}: {}", user_id, err)
+                &format!("Failed to load user info for {user_id}: {err}")
             );
             return crate::manage_error!(err);
         }
@@ -542,7 +536,7 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "refresh_token_generation_fail",
-                &format!("Failed to generate new access token: {}", err)
+                &format!("Failed to generate new access token: {err}")
             );
             return crate::manage_error!(err);
         }

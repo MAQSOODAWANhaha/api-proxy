@@ -196,13 +196,13 @@ fn format_uptime(uptime_seconds: u64) -> String {
     let seconds = uptime_seconds % 60;
 
     if days > 0 {
-        format!("{}d {}h {}m", days, hours, minutes)
+        format!("{days}d {hours}h {minutes}m")
     } else if hours > 0 {
-        format!("{}h {}m {}s", hours, minutes, seconds)
+        format!("{hours}h {minutes}m {seconds}s")
     } else if minutes > 0 {
-        format!("{}m {}s", minutes, seconds)
+        format!("{minutes}m {seconds}s")
     } else {
-        format!("{}s", seconds)
+        format!("{seconds}s")
     }
 }
 
@@ -213,7 +213,7 @@ fn mask_sensitive_info(url: &str) -> String {
             if let Some(scheme_end) = url.find("://") {
                 let scheme = &url[..scheme_end + 3];
                 let after_at = &url[at_pos + 1..];
-                format!("{}***:***@{}", scheme, after_at)
+                format!("{scheme}***:***@{after_at}")
             } else {
                 url.to_string()
             }

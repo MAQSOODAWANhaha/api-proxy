@@ -35,15 +35,15 @@ pub struct ProxyContext {
     pub response_details: ResponseDetails,
     /// 连接超时时间(秒)
     pub timeout_seconds: Option<i32>,
-    /// 请求体缓冲区 (用于request_body_filter中的数据收集)
+    /// 请求体缓冲区 (`用于request_body_filter中的数据收集`)
     pub request_body: BytesMut,
-    /// 响应体缓冲区 (用于response_body_filter中的数据收集)
+    /// 响应体缓冲区 (`用于response_body_filter中的数据收集`)
     pub response_body: BytesMut,
     /// 是否计划修改请求体（供上游头部处理决策使用）
     pub will_modify_body: bool,
-    /// 解析得到的最终上游凭证（由 CredentialResolutionStep 设置）
+    /// 解析得到的最终上游凭证（由 `CredentialResolutionStep` 设置）
     pub resolved_credential: Option<ResolvedCredential>,
-    /// ChatGPT Account ID（用于OpenAI ChatGPT API）
+    /// `ChatGPT` Account ID（用于OpenAI `ChatGPT` API）
     pub account_id: Option<String>,
     /// 用户请求的模型名称
     pub requested_model: Option<String>,

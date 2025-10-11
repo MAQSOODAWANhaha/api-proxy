@@ -5,7 +5,10 @@ use crate::management::{response, server::AppState};
 use crate::scheduler::types::SchedulingStrategy;
 use axum::extract::{Extension, State};
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
-use sea_orm::{entity::*, query::*};
+use sea_orm::{
+    entity::{ColumnTrait, EntityTrait},
+    query::{QueryFilter, QueryOrder},
+};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -27,7 +30,7 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_provider_types_fail",
-                &format!("Failed to fetch provider types: {}", err)
+                &format!("Failed to fetch provider types: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,

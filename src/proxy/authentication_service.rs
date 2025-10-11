@@ -34,8 +34,8 @@ pub enum AuthSource {
 impl std::fmt::Display for AuthSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthSource::Query => write!(f, "query"),
-            AuthSource::Header => write!(f, "header"),
+            Self::Query => write!(f, "query"),
+            Self::Header => write!(f, "header"),
         }
     }
 }
@@ -63,7 +63,7 @@ pub struct AuthenticationService {
 
 impl AuthenticationService {
     /// 创建新的认证服务
-    pub fn new(
+    pub const fn new(
         auth_manager: Arc<AuthManager>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
@@ -77,11 +77,12 @@ impl AuthenticationService {
         }
     }
 
+    #[must_use] 
     pub fn db(&self) -> Arc<DatabaseConnection> {
         self.db.clone()
     }
 
-    /// 执行完整的认证和授权流程, 直接填充 ProxyContext
+    /// 执行完整的认证和授权流程, 直接填充 `ProxyContext`
     pub async fn authenticate_and_authorize(
         &self,
         session: &mut Session,
@@ -180,8 +181,8 @@ impl AuthenticationService {
             "x-openai-api-key",
         ];
         for header_name in &auth_headers {
-            if let Some(header_value) = req_header.headers.get(*header_name) {
-                if let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
+            if let Some(header_value) = req_header.headers.get(*header_name)
+                && let Ok(header_str) = std::str::from_utf8(header_value.as_bytes()) {
                     let auth_value = if *header_name == "authorization" {
                         header_str
                             .strip_prefix("Bearer ")
@@ -195,11 +196,10 @@ impl AuthenticationService {
                         return Ok(Authorization {
                             auth_value,
                             source: AuthSource::Header,
-                            location: header_name.to_string(),
+                            location: (*header_name).to_string(),
                         });
                     }
                 }
-            }
         }
 
         Err(proxy_err!(auth, "No authentication information found"))
@@ -211,19 +211,18 @@ impl AuthenticationService {
         user_api: &user_service_apis::Model,
         _request_id: &str,
     ) -> Result<()> {
-        if let Some(expires_at) = &user_api.expires_at {
-            if chrono::Utc::now().naive_utc() > *expires_at {
+        if let Some(expires_at) = &user_api.expires_at
+            && chrono::Utc::now().naive_utc() > *expires_at {
                 return Err(proxy_err!(rate_limit, "API has expired"));
             }
-        }
 
         let rl = DistributedRateLimiter::new(self.cache.clone());
         let endpoint_key = format!("service_api:{}", user_api.id);
 
-        if let Some(rate_limit) = user_api.max_request_per_min {
-            if rate_limit > 0 {
+        if let Some(rate_limit) = user_api.max_request_per_min
+            && rate_limit > 0 {
                 let outcome = rl
-                    .check_per_minute(user_api.user_id, &endpoint_key, rate_limit as i64)
+                    .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
                     .await
                     .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
                 if !outcome.allowed {
@@ -234,12 +233,11 @@ impl AuthenticationService {
                     ));
                 }
             }
-        }
 
-        if let Some(daily_limit) = user_api.max_requests_per_day {
-            if daily_limit > 0 {
+        if let Some(daily_limit) = user_api.max_requests_per_day
+            && daily_limit > 0 {
                 let outcome = rl
-                    .check_per_day(user_api.user_id, &endpoint_key, daily_limit as i64)
+                    .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
                     .await
                     .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
                 if !outcome.allowed {
@@ -250,14 +248,13 @@ impl AuthenticationService {
                     ));
                 }
             }
-        }
 
         Ok(())
     }
 
     /// 3. 获取提供商类型配置
     async fn get_provider_type(&self, provider_type_id: i32) -> Result<provider_types::Model> {
-        let cache_key = format!("provider_type:{}", provider_type_id);
+        let cache_key = format!("provider_type:{provider_type_id}");
         if let Ok(Some(provider_type)) = self
             .cache
             .provider()
@@ -332,7 +329,7 @@ impl AuthenticationService {
         }
     }
 
-    /// 解析 OAuth 会话，返回 access_token
+    /// 解析 OAuth 会话，返回 `access_token`
     async fn resolve_oauth_access_token(
         &self,
         session_id: &str,

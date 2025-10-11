@@ -74,7 +74,7 @@ pub struct ProviderHealthStats {
 /// 简单健康检查处理器（系统存活检查）
 pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
     match state.database.ping().await {
-        Ok(_) => response::success(serde_json::json!({
+        Ok(()) => response::success(serde_json::json!({
             "status": "healthy",
             "database": "connected",
             "timestamp": chrono::Utc::now().to_rfc3339()
@@ -85,7 +85,7 @@ pub async fn health_check(State(state): State<AppState>) -> axum::response::Resp
                 LogStage::HealthCheck,
                 LogComponent::Database,
                 "db_ping_fail",
-                &format!("Database ping failed: {}", e)
+                &format!("Database ping failed: {e}")
             );
             manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
         }
@@ -113,14 +113,14 @@ struct SystemInfo {
 pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
     // 数据库连接状态
     let database_status = match state.database.ping().await {
-        Ok(_) => "connected".to_string(),
+        Ok(()) => "connected".to_string(),
         Err(e) => {
             lwarn!(
                 "system",
                 LogStage::HealthCheck,
                 LogComponent::Database,
                 "db_ping_fail",
-                &format!("Database ping failed: {}", e)
+                &format!("Database ping failed: {e}")
             );
             "disconnected".to_string()
         }
@@ -196,7 +196,7 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
                 LogStage::HealthCheck,
                 LogComponent::HealthChecker,
                 "get_api_keys_health_fail",
-                &format!("Failed to get API keys health status: {}", err)
+                &format!("Failed to get API keys health status: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -218,7 +218,7 @@ pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::
                 LogStage::HealthCheck,
                 LogComponent::HealthChecker,
                 "get_health_stats_fail",
-                &format!("Failed to get health statistics: {}", err)
+                &format!("Failed to get health statistics: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -242,7 +242,7 @@ pub async fn trigger_key_health_check(
                 LogStage::HealthCheck,
                 LogComponent::HealthChecker,
                 "trigger_health_check_fail",
-                &format!("Failed to trigger health check for key {}: {}", key_id, err)
+                &format!("Failed to trigger health check for key {key_id}: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -259,16 +259,16 @@ pub async fn mark_key_unhealthy(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
 ) -> axum::response::Response {
-    let reason = format!("Manually marked unhealthy via management API");
+    let reason = "Manually marked unhealthy via management API".to_string();
     match mark_key_unhealthy_internal(&state, key_id, reason).await {
-        Ok(_) => response::success("API key marked as unhealthy"),
+        Ok(()) => response::success("API key marked as unhealthy"),
         Err(err) => {
             lerror!(
                 "system",
                 LogStage::HealthCheck,
                 LogComponent::HealthChecker,
                 "mark_key_unhealthy_fail",
-                &format!("Failed to mark key {} as unhealthy: {}", key_id, err)
+                &format!("Failed to mark key {key_id} as unhealthy: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -312,9 +312,7 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
 
     for key in active_keys {
         let provider_info = provider_types_map.get(&key.provider_type_id);
-        let provider_name = provider_info
-            .map(|p| p.display_name.clone())
-            .unwrap_or_else(|| format!("Provider {}", key.provider_type_id));
+        let provider_name = provider_info.map_or_else(|| format!("Provider {}", key.provider_type_id), |p| p.display_name.clone());
 
         // 获取健康状态
         let health_status = health_checker.get_key_health_status(key.id).await;
@@ -416,7 +414,7 @@ async fn trigger_key_health_check_internal(
     let key = user_provider_keys::Entity::find_by_id(key_id)
         .one(&*state.database)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("API key not found: {}", key_id))?;
+        .ok_or_else(|| anyhow::anyhow!("API key not found: {key_id}"))?;
 
     // 使用共享的健康检查器，如果不存在则创建临时的
     let health_checker = match &state.api_key_health_checker {

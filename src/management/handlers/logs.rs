@@ -1,6 +1,6 @@
 //! # 日志管理处理器
 //!
-//! 基于 proxy_tracing 表的日志查询、统计和分析功能
+//! 基于 `proxy_tracing` 表的日志查询、统计和分析功能
 
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -16,7 +16,10 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
-use sea_orm::*;
+use sea_orm::{
+    ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,7 +36,7 @@ pub struct LogsDashboardStatsResponse {
     pub avg_response_time: i64,
 }
 
-/// 日志列表条目（省略 request_id 字段）
+/// 日志列表条目（省略 `request_id` 字段）
 #[derive(Debug, Serialize)]
 pub struct ProxyTraceListEntry {
     pub id: i32,
@@ -203,7 +206,7 @@ pub async fn get_dashboard_stats(
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "dashboard_stats_fail",
-                &format!("获取日志仪表板统计失败: {}", e)
+                &format!("获取日志仪表板统计失败: {e}")
             );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
@@ -307,7 +310,7 @@ pub async fn get_traces_list(
                 LogStage::Internal,
                 LogComponent::Tracing,
                 "get_traces_fail",
-                &format!("获取日志列表失败: {}", e)
+                &format!("获取日志列表失败: {e}")
             );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
@@ -331,39 +334,36 @@ async fn fetch_traces_list(
     let mut select = ProxyTracing::find();
 
     // 权限控制：非管理员只能查看自己的日志记录
-    if !is_admin {
+    if is_admin {
+        linfo!(
+            "system",
+            LogStage::Internal,
+            LogComponent::Tracing,
+            "admin_access",
+            &format!("Admin user {current_user_id} accessing all traces")
+        );
+    } else {
         select = select.filter(proxy_tracing::Column::UserId.eq(current_user_id));
         linfo!(
             "system",
             LogStage::Internal,
             LogComponent::Tracing,
             "non_admin_access",
-            &format!(
-                "Non-admin user {} accessing traces - filtering by user_id",
-                current_user_id
-            )
-        );
-    } else {
-        linfo!(
-            "system",
-            LogStage::Internal,
-            LogComponent::Tracing,
-            "admin_access",
-            &format!("Admin user {} accessing all traces", current_user_id)
+            &format!("Non-admin user {current_user_id} accessing traces - filtering by user_id")
         );
     }
 
     // 应用搜索过滤
-    if let Some(search) = &query.search {
-        if !search.trim().is_empty() {
-            let search_pattern = format!("%{}%", search.trim());
-            select = select.filter(
-                Condition::any()
-                    .add(proxy_tracing::Column::RequestId.like(&search_pattern))
-                    .add(proxy_tracing::Column::Path.like(&search_pattern))
-                    .add(proxy_tracing::Column::ModelUsed.like(&search_pattern)),
-            );
-        }
+    if let Some(search) = &query.search
+        && !search.trim().is_empty()
+    {
+        let search_pattern = format!("%{}%", search.trim());
+        select = select.filter(
+            Condition::any()
+                .add(proxy_tracing::Column::RequestId.like(&search_pattern))
+                .add(proxy_tracing::Column::Path.like(&search_pattern))
+                .add(proxy_tracing::Column::ModelUsed.like(&search_pattern)),
+        );
     }
 
     // 应用方法过滤
@@ -402,7 +402,7 @@ async fn fetch_traces_list(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
-        let pattern = format!("%{}%", name_filter);
+        let pattern = format!("%{name_filter}%");
         let matched_ids: Vec<i32> = UserServiceApis::find()
             .filter(user_service_apis::Column::Name.like(&pattern))
             .all(db)
@@ -425,7 +425,7 @@ async fn fetch_traces_list(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
     {
-        let pattern = format!("%{}%", name_filter);
+        let pattern = format!("%{name_filter}%");
         let matched_ids: Vec<i32> = UserProviderKeys::find()
             .filter(user_provider_keys::Column::Name.like(&pattern))
             .all(db)
@@ -479,7 +479,9 @@ async fn fetch_traces_list(
         base_records.push((trace_model, provider_name));
     }
 
-    let user_service_api_name_map: HashMap<i32, String> = if !user_service_api_ids.is_empty() {
+    let user_service_api_name_map: HashMap<i32, String> = if user_service_api_ids.is_empty() {
+        HashMap::new()
+    } else {
         let ids: Vec<i32> = user_service_api_ids.into_iter().collect();
         UserServiceApis::find()
             .filter(user_service_apis::Column::Id.is_in(ids))
@@ -488,11 +490,11 @@ async fn fetch_traces_list(
             .into_iter()
             .filter_map(|model| model.name.map(|name| (model.id, name)))
             .collect()
-    } else {
-        HashMap::new()
     };
 
-    let user_provider_key_name_map: HashMap<i32, String> = if !user_provider_key_ids.is_empty() {
+    let user_provider_key_name_map: HashMap<i32, String> = if user_provider_key_ids.is_empty() {
+        HashMap::new()
+    } else {
         let ids: Vec<i32> = user_provider_key_ids.into_iter().collect();
         UserProviderKeys::find()
             .filter(user_provider_keys::Column::Id.is_in(ids))
@@ -501,8 +503,6 @@ async fn fetch_traces_list(
             .into_iter()
             .map(|model| (model.id, model.name))
             .collect()
-    } else {
-        HashMap::new()
     };
 
     for (trace_model, provider_name) in base_records {
@@ -550,7 +550,7 @@ async fn fetch_traces_list(
     }
 
     // 计算总页数
-    let pages = (total + limit - 1) / limit;
+    let pages = total.div_ceil(limit);
 
     Ok(LogsListResponse {
         traces,
@@ -582,7 +582,7 @@ pub async fn get_trace_detail(
                 LogStage::Internal,
                 LogComponent::Tracing,
                 "get_trace_detail_fail",
-                &format!("获取日志详情失败: {}", e)
+                &format!("获取日志详情失败: {e}")
             );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
@@ -683,7 +683,7 @@ pub async fn get_logs_analytics(
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "analytics_fail",
-                &format!("获取日志统计分析失败: {}", e)
+                &format!("获取日志统计分析失败: {e}")
             );
             crate::management::response::app_error(crate::proxy_err!(
                 database,
@@ -761,8 +761,7 @@ async fn fetch_logs_analytics(
     for (trace, provider_types) in provider_stats {
         let provider_name = provider_types
             .first()
-            .map(|pt| pt.display_name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
+            .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
 
         let entry = provider_map.entry(provider_name).or_insert((0, 0, 0));
         entry.0 += 1; // total requests

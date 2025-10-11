@@ -23,6 +23,7 @@ pub struct PingoraProxyServer {
 
 impl PingoraProxyServer {
     /// 创建新的代理服务器
+    #[must_use] 
     pub fn new(config: AppConfig) -> Self {
         let config_arc = Arc::new(config);
 
@@ -34,6 +35,7 @@ impl PingoraProxyServer {
     }
 
     /// 创建新的代理服务器（带数据库连接）
+    #[must_use] 
     pub fn new_with_db(config: AppConfig, db: Arc<sea_orm::DatabaseConnection>) -> Self {
         let mut server = Self::new(config);
         server.db = Some(db);
@@ -41,6 +43,7 @@ impl PingoraProxyServer {
     }
 
     /// 创建新的代理服务器（带数据库连接和追踪系统）
+    #[must_use] 
     pub fn new_with_db_and_trace(
         config: AppConfig,
         db: Arc<sea_orm::DatabaseConnection>,
@@ -85,7 +88,7 @@ impl PingoraProxyServer {
         );
         let opt = self.create_pingora_options()?;
         let mut server = Server::new(Some(opt)).map_err(|e| {
-            ProxyError::server_init(format!("Failed to create Pingora server: {}", e))
+            ProxyError::server_init(format!("Failed to create Pingora server: {e}"))
         })?;
 
         linfo!(
@@ -161,7 +164,7 @@ impl PingoraProxyServer {
         // 等待服务器任务完成（实际上不会完成，因为 run_forever 不会返回）
         handle
             .await
-            .map_err(|e| ProxyError::server_start(format!("Pingora server task failed: {}", e)))?
+            .map_err(|e| ProxyError::server_start(format!("Pingora server task failed: {e}")))?
     }
 
     // TODO: 实现健康检查服务

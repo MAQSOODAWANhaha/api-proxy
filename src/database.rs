@@ -42,7 +42,15 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
 
         // 确保父目录存在
         if let Some(parent_dir) = db_file_path.parent() {
-            if !parent_dir.exists() {
+            if parent_dir.exists() {
+                ldebug!(
+                    "system",
+                    LogStage::Startup,
+                    LogComponent::Database,
+                    "db_dir_exists",
+                    &format!("数据库目录已存在: {}", parent_dir.display())
+                );
+            } else {
                 ldebug!(
                     "system",
                     LogStage::Startup,
@@ -64,19 +72,19 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                     "create_db_dir_ok",
                     &format!("数据库目录创建成功: {}", parent_dir.display())
                 );
-            } else {
-                ldebug!(
-                    "system",
-                    LogStage::Startup,
-                    LogComponent::Database,
-                    "db_dir_exists",
-                    &format!("数据库目录已存在: {}", parent_dir.display())
-                );
             }
         }
 
         // 确保数据库文件存在（如果不存在则创建空文件）
-        if !db_file_path.exists() {
+        if db_file_path.exists() {
+            ldebug!(
+                "system",
+                LogStage::Startup,
+                LogComponent::Database,
+                "db_file_exists",
+                &format!("数据库文件已存在: {}", db_file_path.display())
+            );
+        } else {
             ldebug!(
                 "system",
                 LogStage::Startup,
@@ -97,14 +105,6 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                 LogComponent::Database,
                 "create_db_file_ok",
                 &format!("数据库文件创建成功: {}", db_file_path.display())
-            );
-        } else {
-            ldebug!(
-                "system",
-                LogStage::Startup,
-                LogComponent::Database,
-                "db_file_exists",
-                &format!("数据库文件已存在: {}", db_file_path.display())
             );
         }
     }
@@ -148,7 +148,7 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
                 LogStage::Startup,
                 LogComponent::Database,
                 "migration_fail",
-                &format!("数据库迁移失败: {}", e)
+                &format!("数据库迁移失败: {e}")
             );
             Err(e)
         }
@@ -257,7 +257,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), Pr
             let pricing_count = model_pricing::Entity::find()
                 .count(db)
                 .await
-                .map_err(|err| ProxyError::database(format!("查询模型定价数据失败: {}", err)))?;
+                .map_err(|err| ProxyError::database(format!("查询模型定价数据失败: {err}")))?;
             if pricing_count > 0 {
                 lerror!(
                     "system",
@@ -291,12 +291,12 @@ pub async fn force_initialize_model_pricing_data(
     model_pricing_tiers::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("清理定价层级数据失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("清理定价层级数据失败: {e}")))?;
 
     model_pricing::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("清理模型定价数据失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("清理模型定价数据失败: {e}")))?;
 
     // 重新初始化
     initialize_model_pricing_from_json(db).await?;
@@ -379,7 +379,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
         LogStage::Startup,
         LogComponent::Database,
         "init_pricing_ok",
-        &format!("✅ 数据初始化完成! 成功处理了 {} 个模型", success_count)
+        &format!("✅ 数据初始化完成! 成功处理了 {success_count} 个模型")
     );
     Ok(())
 }
@@ -433,7 +433,7 @@ async fn initialize_model_pricing_from_remote_or_local(
     let txn = db
         .begin()
         .await
-        .map_err(|e| ProxyError::database(format!("开启事务失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("开启事务失败: {e}")))?;
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut tiers_written = 0usize;
@@ -446,7 +446,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                 .filter(model_pricing::Column::ModelName.eq(&model.name))
                 .one(&txn)
                 .await
-                .map_err(|e| ProxyError::database(format!("查询现有定价记录失败: {}", e)))?;
+                .map_err(|e| ProxyError::database(format!("查询现有定价记录失败: {e}")))?;
 
             if let Some(existing_model) = existing {
                 // 更新基础字段
@@ -457,14 +457,14 @@ async fn initialize_model_pricing_from_remote_or_local(
                 model_pricing::Entity::update(am)
                     .exec(&txn)
                     .await
-                    .map_err(|e| ProxyError::database(format!("更新模型定价失败: {}", e)))?;
+                    .map_err(|e| ProxyError::database(format!("更新模型定价失败: {e}")))?;
 
                 // 替换 tiers
                 model_pricing_tiers::Entity::delete_many()
                     .filter(model_pricing_tiers::Column::ModelPricingId.eq(id))
                     .exec(&txn)
                     .await
-                    .map_err(|e| ProxyError::database(format!("清理旧定价层级失败: {}", e)))?;
+                    .map_err(|e| ProxyError::database(format!("清理旧定价层级失败: {e}")))?;
 
                 let pricing_tiers = parse_pricing_tiers(&model.price_info);
                 for tier in pricing_tiers {
@@ -479,7 +479,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                     model_pricing_tiers::Entity::insert(tier_model)
                         .exec(&txn)
                         .await
-                        .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
+                        .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
                     tiers_written += 1;
                 }
                 updated += 1;
@@ -505,7 +505,7 @@ async fn initialize_model_pricing_from_remote_or_local(
 
     txn.commit()
         .await
-        .map_err(|e| ProxyError::database(format!("提交模型定价事务失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("提交模型定价事务失败: {e}")))?;
 
     linfo!(
         "system",
@@ -548,7 +548,7 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
 
     let url = REMOTE_URL
         .parse::<reqwest::Url>()
-        .map_err(|e| ProxyError::config(format!("远程URL非法: {}", e)))?;
+        .map_err(|e| ProxyError::config(format!("远程URL非法: {e}")))?;
     if url.scheme() != "https" {
         return Err(ProxyError::config("仅允许HTTPS的远程URL".to_string()));
     }
@@ -556,7 +556,7 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(5000))
         .build()
-        .map_err(|e| ProxyError::config(format!("创建HTTP客户端失败: {}", e)))?;
+        .map_err(|e| ProxyError::config(format!("创建HTTP客户端失败: {e}")))?;
 
     let resp = client
         .get(url)
@@ -566,7 +566,7 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
         )
         .send()
         .await
-        .map_err(|e| ProxyError::config(format!("请求远程模型定价失败: {}", e)))?;
+        .map_err(|e| ProxyError::config(format!("请求远程模型定价失败: {e}")))?;
 
     if !resp.status().is_success() {
         return Err(ProxyError::config(format!(
@@ -578,35 +578,34 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
     let text = resp
         .text()
         .await
-        .map_err(|e| ProxyError::config(format!("读取远程响应失败: {}", e)))?;
+        .map_err(|e| ProxyError::config(format!("读取远程响应失败: {e}")))?;
 
     serde_json::from_str::<HashMap<String, ModelPriceInfo>>(&text)
-        .map_err(|e| ProxyError::config(format!("解析远程JSON失败: {}", e)))
+        .map_err(|e| ProxyError::config(format!("解析远程JSON失败: {e}")))
 }
 /// 加载并解析JSON文件
 async fn load_json_data() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
     let json_path = std::env::current_dir()
-        .map_err(|e| ProxyError::config(format!("获取当前目录失败: {}", e)))?
+        .map_err(|e| ProxyError::config(format!("获取当前目录失败: {e}")))?
         .join("config")
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
         return Err(ProxyError::config(format!(
-            "JSON文件不存在: {:?}",
-            json_path
+            "JSON文件不存在: {json_path:?}"
         )));
     }
 
     let json_content = tokio::fs::read_to_string(&json_path)
         .await
-        .map_err(|e| ProxyError::config(format!("读取JSON文件失败 {:?}: {}", json_path, e)))?;
+        .map_err(|e| ProxyError::config(format!("读取JSON文件失败 {json_path:?}: {e}")))?;
 
     serde_json::from_str(&json_content)
-        .map_err(|e| ProxyError::config(format!("解析JSON失败: {}", e)))
+        .map_err(|e| ProxyError::config(format!("解析JSON失败: {e}")))
 }
 
 /// 完全数据驱动的模型过滤
-/// 基于 litellm_provider 字段选择目标提供商的所有模型
+/// 基于 `litellm_provider` 字段选择目标提供商的所有模型
 fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<FilteredModel> {
     // 定义目标提供商映射：JSON中的provider名称 -> 数据库中的provider名称
     let provider_mappings = [
@@ -630,16 +629,16 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
 
                 // 生成描述信息
                 let description = match litellm_provider.as_str() {
-                    "gemini" => format!("Google Gemini 模型 ({})", normalized_model_name),
-                    "anthropic" => format!("Anthropic Claude 模型 ({})", normalized_model_name),
-                    "openai" => format!("OpenAI 模型 ({})", normalized_model_name),
-                    _ => format!("AI 模型 ({})", normalized_model_name),
+                    "gemini" => format!("Google Gemini 模型 ({normalized_model_name})"),
+                    "anthropic" => format!("Anthropic Claude 模型 ({normalized_model_name})"),
+                    "openai" => format!("OpenAI 模型 ({normalized_model_name})"),
+                    _ => format!("AI 模型 ({normalized_model_name})"),
                 };
 
                 filtered_models.push(FilteredModel {
                     name: normalized_model_name.clone(),
                     description,
-                    provider_name: db_provider_name.to_string(),
+                    provider_name: (*db_provider_name).to_string(),
                     price_info: price_info.clone(),
                 });
 
@@ -649,8 +648,7 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
                     LogComponent::Database,
                     "select_model",
                     &format!(
-                        "🎯 选择模型: {} -> {} (litellm_provider: {} -> db_provider: {})",
-                        model_name, normalized_model_name, litellm_provider, db_provider_name
+                        "🎯 选择模型: {model_name} -> {normalized_model_name} (litellm_provider: {litellm_provider} -> db_provider: {db_provider_name})"
                     )
                 );
             }
@@ -674,15 +672,15 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
 
 /// 标准化模型名称，去除提供商前缀
 ///
-/// 根据litellm_provider字段动态确定前缀，如果模型名称以"provider/"开头则去除
+/// `根据litellm_provider字段动态确定前缀，如果模型名称以"provider/"开头则去除`
 /// # 示例
-/// - `"gemini/gemini-2.5-flash"` (litellm_provider="gemini") -> `"gemini-2.5-flash"`
-/// - `"anthropic/claude-3.5-sonnet"` (litellm_provider="anthropic") -> `"claude-3.5-sonnet"`
-/// - `"openai/gpt-4"` (litellm_provider="openai") -> `"gpt-4"`
-/// - `"gemini-2.5-flash"` (litellm_provider="gemini") -> `"gemini-2.5-flash"` (无前缀保持不变)
+/// - `"gemini/gemini-2.5-flash"` (`litellm_provider="gemini`") -> `"gemini-2.5-flash"`
+/// - `"anthropic/claude-3.5-sonnet"` (`litellm_provider="anthropic`") -> `"claude-3.5-sonnet"`
+/// - `"openai/gpt-4"` (`litellm_provider="openai`") -> `"gpt-4"`
+/// - `"gemini-2.5-flash"` (`litellm_provider="gemini`") -> `"gemini-2.5-flash"` (无前缀保持不变)
 fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
     // 构建基于litellm_provider的前缀
-    let provider_prefix = format!("{}/", litellm_provider);
+    let provider_prefix = format!("{litellm_provider}/");
 
     // 检查模型名称是否以该provider前缀开头
     if model_name.starts_with(&provider_prefix) {
@@ -695,8 +693,7 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
             LogComponent::Database,
             "normalize_model_name",
             &format!(
-                "标准化模型名称: {} -> {} (移除前缀: {} 基于litellm_provider: {})",
-                model_name, normalized, provider_prefix, litellm_provider
+                "标准化模型名称: {model_name} -> {normalized} (移除前缀: {provider_prefix} 基于litellm_provider: {litellm_provider})"
             )
         );
         return normalized.to_string();
@@ -709,8 +706,7 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
         LogComponent::Database,
         "normalize_model_name_skip",
         &format!(
-            "模型名称无需标准化: {} (litellm_provider: {})",
-            model_name, litellm_provider
+            "模型名称无需标准化: {model_name} (litellm_provider: {litellm_provider})"
         )
     );
     model_name.to_string()
@@ -731,7 +727,7 @@ async fn get_provider_mappings(
         LogStage::Startup,
         LogComponent::Database,
         "query_providers",
-        &format!("📋 需要查询的providers: {:?}", required_providers)
+        &format!("📋 需要查询的providers: {required_providers:?}")
     );
 
     // 查询数据库中所有活跃的provider
@@ -739,7 +735,7 @@ async fn get_provider_mappings(
         .filter(provider_types::Column::IsActive.eq(true))
         .all(db)
         .await
-        .map_err(|e| ProxyError::database(format!("查询provider类型失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("查询provider类型失败: {e}")))?;
 
     // 构建映射关系
     let mut mappings = HashMap::new();
@@ -764,7 +760,7 @@ async fn get_provider_mappings(
                 LogStage::Startup,
                 LogComponent::Database,
                 "provider_not_found",
-                &format!("⚠️  Provider '{}' 在数据库中不存在", required)
+                &format!("⚠️  Provider '{required}' 在数据库中不存在")
             );
         }
     }
@@ -801,7 +797,7 @@ async fn insert_model_with_pricing(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {e}")))?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -832,7 +828,7 @@ async fn insert_model_with_pricing(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(db)
             .await
-            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
+            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
     }
 
     Ok(())
@@ -866,7 +862,7 @@ async fn insert_model_with_pricing_txn(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(txn)
         .await
-        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {}", e)))?;
+        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {e}")))?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -884,13 +880,13 @@ async fn insert_model_with_pricing_txn(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(txn)
             .await
-            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {}", e)))?;
+            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
     }
 
     Ok(())
 }
 
-/// 从ModelPriceInfo解析出定价层级
+/// `从ModelPriceInfo解析出定价层级`
 fn parse_pricing_tiers(price_info: &ModelPriceInfo) -> Vec<PricingTier> {
     let mut tiers = Vec::new();
 

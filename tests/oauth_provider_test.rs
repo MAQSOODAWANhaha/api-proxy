@@ -1,4 +1,4 @@
-//! OAuth提供商配置和URL生成测试
+//! `OAuth提供商配置和URL生成测试`
 //!
 //! 测试OAuth提供商配置管理和URL生成的正确性，特别是：
 //! 1. 数据库驱动的参数配置
@@ -30,7 +30,7 @@ mod tests {
         db
     }
 
-    /// 创建测试用的OAuth会话
+    /// `创建测试用的OAuth会话`
     fn create_test_session() -> Model {
         Model {
             id: 1,
@@ -57,7 +57,7 @@ mod tests {
         }
     }
 
-    /// 创建测试用的OpenAI OAuth配置
+    /// `创建测试用的OpenAI` `OAuth配置`
     fn create_openai_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
         extra_params.insert("response_type".to_string(), "code".to_string());
@@ -97,7 +97,7 @@ mod tests {
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let mut extra_params = HashMap::new();
@@ -126,7 +126,7 @@ mod tests {
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
-        println!("生成的授权URL: {}", url);
+        println!("生成的授权URL: {url}");
 
         // 解析URL验证参数
         let parsed_url = Url::parse(&url).expect("URL应该有效");
@@ -167,12 +167,11 @@ mod tests {
         assert_eq!(params.get("originator"), Some(&"codex_cli_rs".to_string()));
 
         // 关键测试：验证没有重复参数
-        let param_counts: HashMap<&String, usize> = params.iter().map(|(k, _)| (k, 1)).collect();
+        let param_counts: HashMap<&String, usize> = params.keys().map(|k| (k, 1)).collect();
         for (param, count) in param_counts {
             assert_eq!(
                 count, 1,
-                "参数 '{}' 应该只出现一次，但出现了 {} 次",
-                param, count
+                "参数 '{param}' 应该只出现一次，但出现了 {count} 次"
             );
         }
 
@@ -231,7 +230,7 @@ mod tests {
         // 验证没有重复参数
         let param_names: Vec<&String> = params.keys().collect();
         let unique_param_names: std::collections::HashSet<&String> =
-            param_names.iter().cloned().collect();
+            param_names.iter().copied().collect();
         assert_eq!(
             param_names.len(),
             unique_param_names.len(),
@@ -393,7 +392,7 @@ mod tests {
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let mut extra_params = HashMap::new();
@@ -470,7 +469,7 @@ mod tests {
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let mut extra_params = HashMap::new();
@@ -496,7 +495,7 @@ mod tests {
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
-        println!("🎯 [测试] 生成的Claude授权URL: {}", url);
+        println!("🎯 [测试] 生成的Claude授权URL: {url}");
 
         // 解析URL验证参数
         let parsed_url = Url::parse(&url).expect("URL应该有效");
@@ -547,7 +546,7 @@ mod tests {
         println!("✅ [测试] Claude OAuth测试通过，所有参数正确");
     }
 
-    /// 创建Gemini OAuth配置
+    /// 创建Gemini `OAuth配置`
     fn create_gemini_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
         extra_params.insert("response_type".to_string(), "code".to_string());
@@ -578,7 +577,7 @@ mod tests {
         let scopes: Vec<String> = oauth_config
             .scopes
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let mut extra_params = HashMap::new();
@@ -604,7 +603,7 @@ mod tests {
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
-        println!("🎯 [测试] 生成的Gemini授权URL: {}", url);
+        println!("🎯 [测试] 生成的Gemini授权URL: {url}");
 
         // 解析URL验证参数
         let parsed_url = Url::parse(&url).expect("URL应该有效");
@@ -668,13 +667,13 @@ mod tests {
         let session = create_test_session();
 
         for (provider_name, oauth_config) in providers {
-            println!("🔍 [对比测试] 测试 {} OAuth配置", provider_name);
+            println!("🔍 [对比测试] 测试 {provider_name} OAuth配置");
 
             // 模拟oauth_model_to_config方法的逻辑
             let scopes: Vec<String> = oauth_config
                 .scopes
                 .split_whitespace()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
 
             let mut extra_params = HashMap::new();
@@ -695,7 +694,7 @@ mod tests {
             };
 
             let result = manager.build_authorize_url(&config, &session);
-            assert!(result.is_ok(), "{} URL生成应该成功", provider_name);
+            assert!(result.is_ok(), "{provider_name} URL生成应该成功");
 
             let url = result.unwrap();
             let parsed_url = Url::parse(&url).expect("URL应该有效");
@@ -704,57 +703,48 @@ mod tests {
             // 通用验证
             assert!(
                 params.contains_key("client_id"),
-                "{} 应该包含client_id",
-                provider_name
+                "{provider_name} 应该包含client_id"
             );
             assert!(
                 params.contains_key("redirect_uri"),
-                "{} 应该包含redirect_uri",
-                provider_name
+                "{provider_name} 应该包含redirect_uri"
             );
             assert!(
                 params.contains_key("state"),
-                "{} 应该包含state",
-                provider_name
+                "{provider_name} 应该包含state"
             );
             assert!(
                 params.contains_key("scope"),
-                "{} 应该包含scope",
-                provider_name
+                "{provider_name} 应该包含scope"
             );
             assert!(
                 params.contains_key("response_type"),
-                "{} 应该包含response_type",
-                provider_name
+                "{provider_name} 应该包含response_type"
             );
             assert!(
                 params.contains_key("code_challenge"),
-                "{} 应该包含code_challenge",
-                provider_name
+                "{provider_name} 应该包含code_challenge"
             );
             assert!(
                 params.contains_key("code_challenge_method"),
-                "{} 应该包含code_challenge_method",
-                provider_name
+                "{provider_name} 应该包含code_challenge_method"
             );
 
             // 验证PKCE方法
             assert_eq!(
                 params.get("code_challenge_method"),
                 Some(&"S256".to_string()),
-                "{} PKCE方法应该是S256",
-                provider_name
+                "{provider_name} PKCE方法应该是S256"
             );
 
             // 验证没有重复参数
             let param_names: Vec<&String> = params.keys().collect();
             let unique_param_names: std::collections::HashSet<&String> =
-                param_names.iter().cloned().collect();
+                param_names.iter().copied().collect();
             assert_eq!(
                 param_names.len(),
                 unique_param_names.len(),
-                "{} 不应该有重复的参数名",
-                provider_name
+                "{provider_name} 不应该有重复的参数名"
             );
 
             println!(

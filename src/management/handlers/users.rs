@@ -12,7 +12,11 @@ use bcrypt::{DEFAULT_COST, hash};
 use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use rand::{Rng, distributions::Alphanumeric};
-use sea_orm::{DatabaseConnection, entity::*, query::*};
+use sea_orm::{
+    DatabaseConnection,
+    entity::{ActiveModelTrait, ColumnTrait, EntityTrait, Set},
+    query::{PaginatorTrait, QueryFilter, QueryOrder, QuerySelect},
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 // Removed unused serde_json imports
@@ -134,6 +138,7 @@ pub struct UserStats {
 
 impl UserResponse {
     /// 从用户实体和统计数据创建响应DTO
+    #[must_use]
     pub fn from_user_with_stats(user: users::Model, stats: UserStats) -> Self {
         Self {
             id: user.id,
@@ -206,11 +211,8 @@ async fn get_user_monthly_requests(user_id: i32, db: &DatabaseConnection) -> i64
 fn generate_avatar_url(email: &str) -> String {
     // 使用Gravatar生成头像，如果没有则使用默认头像
     let email_hash = md5::compute(email.to_lowercase());
-    let hash_str = format!("{:x}", email_hash);
-    format!(
-        "https://www.gravatar.com/avatar/{}?d=identicon&s=200",
-        hash_str
-    )
+    let hash_str = format!("{email_hash:x}");
+    format!("https://www.gravatar.com/avatar/{hash_str}?d=identicon&s=200")
 }
 
 /// 列出用户
@@ -243,7 +245,7 @@ pub async fn list_users(
                     LogStage::Db,
                     LogComponent::Database,
                     "get_user_fail",
-                    &format!("获取用户信息失败: {}", err)
+                    &format!("获取用户信息失败: {err}")
                 );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
@@ -268,10 +270,7 @@ pub async fn list_users(
             LogStage::Authentication,
             LogComponent::Auth,
             "non_admin_access",
-            &format!(
-                "Non-admin user {} accessing only their own user info",
-                user_id
-            )
+            &format!("Non-admin user {user_id} accessing only their own user info")
         );
         return response::paginated(vec![user_response], pagination);
     }
@@ -281,7 +280,7 @@ pub async fn list_users(
         LogStage::Authentication,
         LogComponent::Auth,
         "admin_access",
-        &format!("Admin user {} accessing all users list", user_id)
+        &format!("Admin user {user_id} accessing all users list")
     );
     let page = query.page.unwrap_or(1).max(1);
     let limit = query.limit.unwrap_or(10).min(100);
@@ -292,15 +291,15 @@ pub async fn list_users(
     let mut count_select = Users::find();
 
     // 搜索过滤
-    if let Some(search) = &query.search {
-        if !search.trim().is_empty() {
-            let search_pattern = format!("%{}%", search.trim());
-            let search_condition = users::Column::Username
-                .like(&search_pattern)
-                .or(users::Column::Email.like(&search_pattern));
-            select = select.filter(search_condition.clone());
-            count_select = count_select.filter(search_condition);
-        }
+    if let Some(search) = &query.search
+        && !search.trim().is_empty()
+    {
+        let search_pattern = format!("%{}%", search.trim());
+        let search_condition = users::Column::Username
+            .like(&search_pattern)
+            .or(users::Column::Email.like(&search_pattern));
+        select = select.filter(search_condition.clone());
+        count_select = count_select.filter(search_condition);
     }
 
     // 激活状态过滤
@@ -352,8 +351,8 @@ pub async fn list_users(
 
     // 分页查询
     let users_result = select
-        .offset(offset as u64)
-        .limit(limit as u64)
+        .offset(u64::from(offset))
+        .limit(u64::from(limit))
         .all(state.database.as_ref())
         .await;
 
@@ -365,7 +364,7 @@ pub async fn list_users(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_users_fail",
-                &format!("获取用户列表失败: {}", err)
+                &format!("获取用户列表失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户列表失败: {}", err));
         }
@@ -380,7 +379,7 @@ pub async fn list_users(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_user_count_fail",
-                &format!("获取用户总数失败: {}", err)
+                &format!("获取用户总数失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户总数失败: {}", err));
         }
@@ -395,10 +394,10 @@ pub async fn list_users(
     }
 
     let pagination = response::Pagination {
-        page: page as u64,
-        limit: limit as u64,
+        page: u64::from(page),
+        limit: u64::from(limit),
         total,
-        pages: ((total as f64) / (limit as f64)).ceil() as u64,
+        pages: ((total as f64) / f64::from(limit)).ceil() as u64,
     };
 
     response::paginated(user_responses, pagination)
@@ -468,7 +467,7 @@ pub async fn create_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "check_existing_user_fail",
-                &format!("Failed to check existing user: {}", err)
+                &format!("Failed to check existing user: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -494,7 +493,7 @@ pub async fn create_user(
                 LogStage::Internal,
                 LogComponent::Auth,
                 "hash_password_fail",
-                &format!("Failed to hash password: {}", err)
+                &format!("Failed to hash password: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
@@ -531,7 +530,7 @@ pub async fn create_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "create_user_fail",
-                &format!("Failed to create user: {}", err)
+                &format!("Failed to create user: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -566,7 +565,7 @@ pub async fn create_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_created_user_fail",
-                &format!("Failed to fetch created user: {}", err)
+                &format!("Failed to fetch created user: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -616,7 +615,7 @@ pub async fn get_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_fail",
-                &format!("Failed to fetch user {}: {}", user_id, err)
+                &format!("Failed to fetch user {user_id}: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -683,7 +682,7 @@ pub async fn get_user_profile(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_profile_fail",
-                &format!("Failed to fetch user profile: {}", err)
+                &format!("Failed to fetch user profile: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -732,10 +731,10 @@ pub async fn update_user_profile(
     let user_id = auth_context.user_id;
 
     // 验证邮箱格式
-    if let Some(ref email) = request.email {
-        if email.is_empty() || !email.contains('@') {
-            return crate::manage_error!(crate::proxy_err!(business, "Invalid email format"));
-        }
+    if let Some(ref email) = request.email
+        && (email.is_empty() || !email.contains('@'))
+    {
+        return crate::manage_error!(crate::proxy_err!(business, "Invalid email format"));
     }
 
     // 获取现有用户
@@ -757,7 +756,7 @@ pub async fn update_user_profile(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_for_update_fail",
-                &format!("Failed to fetch user for update: {}", err)
+                &format!("Failed to fetch user for update: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -815,7 +814,7 @@ pub async fn update_user_profile(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_user_profile_fail",
-                &format!("Failed to update user profile: {}", err)
+                &format!("Failed to update user profile: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -861,7 +860,7 @@ pub async fn change_password(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_for_password_change_fail",
-                &format!("Failed to fetch user for password change: {}", err)
+                &format!("Failed to fetch user for password change: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -886,7 +885,7 @@ pub async fn change_password(
                 LogStage::Internal,
                 LogComponent::Auth,
                 "verify_password_fail",
-                &format!("Failed to verify current password: {}", err)
+                &format!("Failed to verify current password: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
@@ -905,7 +904,7 @@ pub async fn change_password(
                 LogStage::Internal,
                 LogComponent::Auth,
                 "hash_password_fail",
-                &format!("Failed to hash new password: {}", err)
+                &format!("Failed to hash new password: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 internal,
@@ -928,7 +927,7 @@ pub async fn change_password(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_password_fail",
-                &format!("Failed to update password: {}", err)
+                &format!("Failed to update password: {err}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -957,28 +956,22 @@ pub async fn update_user(
     }
 
     // 验证输入
-    if let Some(ref username) = request.username {
-        if username.len() < 3 || username.len() > 50 {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "用户名长度必须在3-50字符之间"
-            ));
-        }
+    if let Some(ref username) = request.username
+        && (username.len() < 3 || username.len() > 50)
+    {
+        return crate::manage_error!(crate::proxy_err!(business, "用户名长度必须在3-50字符之间"));
     }
 
-    if let Some(ref email) = request.email {
-        if email.len() > 100 || !email.contains('@') {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "邮箱格式无效或长度超过100字符"
-            ));
-        }
+    if let Some(ref email) = request.email
+        && (email.len() > 100 || !email.contains('@'))
+    {
+        return crate::manage_error!(crate::proxy_err!(business, "邮箱格式无效或长度超过100字符"));
     }
 
-    if let Some(ref password) = request.password {
-        if password.len() < 8 {
-            return crate::manage_error!(crate::proxy_err!(business, "密码长度至少8字符"));
-        }
+    if let Some(ref password) = request.password
+        && password.len() < 8
+    {
+        return crate::manage_error!(crate::proxy_err!(business, "密码长度至少8字符"));
     }
 
     // 获取现有用户
@@ -1000,7 +993,7 @@ pub async fn update_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_user_fail",
-                &format!("获取用户失败: {}", err)
+                &format!("获取用户失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
@@ -1019,23 +1012,23 @@ pub async fn update_user(
         }
 
         if let Ok(Some(existing)) = check_query.one(state.database.as_ref()).await {
-            if let Some(ref username) = request.username {
-                if existing.username == *username {
-                    return crate::manage_error!(crate::proxy_err!(
-                        business,
-                        "username conflict: {}",
-                        username.clone()
-                    ));
-                }
+            if let Some(ref username) = request.username
+                && existing.username == *username
+            {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "username conflict: {}",
+                    username.clone()
+                ));
             }
-            if let Some(ref email) = request.email {
-                if existing.email == *email {
-                    return crate::manage_error!(crate::proxy_err!(
-                        business,
-                        "email conflict: {}",
-                        email.clone()
-                    ));
-                }
+            if let Some(ref email) = request.email
+                && existing.email == *email
+            {
+                return crate::manage_error!(crate::proxy_err!(
+                    business,
+                    "email conflict: {}",
+                    email.clone()
+                ));
             }
         }
     }
@@ -1061,7 +1054,7 @@ pub async fn update_user(
                     LogStage::Internal,
                     LogComponent::Auth,
                     "hash_password_fail",
-                    &format!("密码加密失败: {}", err)
+                    &format!("密码加密失败: {err}")
                 );
                 return crate::manage_error!(crate::proxy_err!(internal, "密码加密失败: {}", err));
             }
@@ -1091,7 +1084,7 @@ pub async fn update_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_user_fail",
-                &format!("更新用户失败: {}", err)
+                &format!("更新用户失败: {err}")
             );
             crate::manage_error!(crate::proxy_err!(database, "更新用户失败: {}", err))
         }
@@ -1135,7 +1128,7 @@ pub async fn delete_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_user_fail",
-                &format!("获取用户失败: {}", err)
+                &format!("获取用户失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
@@ -1153,7 +1146,7 @@ pub async fn delete_user(
                 LogStage::Db,
                 LogComponent::Database,
                 "delete_user_fail",
-                &format!("删除用户失败: {}", err)
+                &format!("删除用户失败: {err}")
             );
             crate::manage_error!(crate::proxy_err!(database, "删除用户失败: {}", err))
         }
@@ -1190,7 +1183,7 @@ pub async fn batch_delete_users(
     {
         Ok(result) => {
             let deleted_count = result.rows_affected;
-            response::success_without_data(&format!("成功删除 {} 个用户", deleted_count))
+            response::success_without_data(&format!("成功删除 {deleted_count} 个用户"))
         }
         Err(err) => {
             lerror!(
@@ -1198,7 +1191,7 @@ pub async fn batch_delete_users(
                 LogStage::Db,
                 LogComponent::Database,
                 "batch_delete_users_fail",
-                &format!("批量删除用户失败: {}", err)
+                &format!("批量删除用户失败: {err}")
             );
             crate::manage_error!(crate::proxy_err!(database, "批量删除用户失败: {}", err))
         }
@@ -1235,7 +1228,7 @@ pub async fn toggle_user_status(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_user_fail",
-                &format!("获取用户失败: {}", err)
+                &format!("获取用户失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
@@ -1259,7 +1252,7 @@ pub async fn toggle_user_status(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_user_status_fail",
-                &format!("更新用户状态失败: {}", err)
+                &format!("更新用户状态失败: {err}")
             );
             crate::manage_error!(crate::proxy_err!(database, "更新用户状态失败: {}", err))
         }
@@ -1302,7 +1295,7 @@ pub async fn reset_user_password(
                 LogStage::Db,
                 LogComponent::Database,
                 "get_user_fail",
-                &format!("获取用户失败: {}", err)
+                &format!("获取用户失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(database, "获取用户失败: {}", err));
         }
@@ -1317,7 +1310,7 @@ pub async fn reset_user_password(
                 LogStage::Internal,
                 LogComponent::Auth,
                 "hash_password_fail",
-                &format!("密码加密失败: {}", err)
+                &format!("密码加密失败: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(internal, "密码加密失败: {}", err));
         }
@@ -1336,7 +1329,7 @@ pub async fn reset_user_password(
                 LogStage::Db,
                 LogComponent::Database,
                 "reset_password_fail",
-                &format!("重置密码失败: {}", err)
+                &format!("重置密码失败: {err}")
             );
             crate::manage_error!(crate::proxy_err!(database, "重置密码失败: {}", err))
         }

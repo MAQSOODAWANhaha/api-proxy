@@ -44,7 +44,7 @@ impl IpFilterConfig {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "parse_ip_fail",
-                        &format!("Failed to parse allowed IP '{}': {}", ip_str, e)
+                        &format!("Failed to parse allowed IP '{ip_str}': {e}")
                     );
                     // 尝试解析为单个IP地址
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
@@ -72,7 +72,7 @@ impl IpFilterConfig {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "parse_ip_fail",
-                        &format!("Failed to parse denied IP '{}': {}", ip_str, e)
+                        &format!("Failed to parse denied IP '{ip_str}': {e}")
                     );
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
@@ -105,7 +105,7 @@ impl IpFilterConfig {
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "ip_denied",
-                    &format!("IP {} is in denied list", ip)
+                    &format!("IP {ip} is in denied list")
                 );
                 return false;
             }
@@ -124,7 +124,7 @@ impl IpFilterConfig {
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "ip_allowed",
-                    &format!("IP {} is in allowed list", ip)
+                    &format!("IP {ip} is in allowed list")
                 );
                 return true;
             }
@@ -135,7 +135,7 @@ impl IpFilterConfig {
             LogStage::Authentication,
             LogComponent::Auth,
             "ip_not_in_allow_list",
-            &format!("IP {} is not in allowed list", ip)
+            &format!("IP {ip} is not in allowed list")
         );
         false
     }
@@ -152,25 +152,24 @@ pub async fn ip_filter_middleware(
     // 从请求扩展中获取IP过滤配置
     let config = request.extensions().get::<IpFilterConfig>().cloned();
 
-    if let Some(config) = config {
-        if !config.is_allowed(client_ip) {
+    if let Some(config) = config
+        && !config.is_allowed(client_ip) {
             lwarn!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "ip_denied",
-                &format!("Access denied for IP: {}", client_ip)
+                &format!("Access denied for IP: {client_ip}")
             );
             return Err(StatusCode::FORBIDDEN);
         }
-    }
 
     ldebug!(
         "system",
         LogStage::Authentication,
         LogComponent::Auth,
         "ip_allowed",
-        &format!("Access allowed for IP: {}", client_ip)
+        &format!("Access allowed for IP: {client_ip}")
     );
     Ok(next.run(request).await)
 }
@@ -178,25 +177,21 @@ pub async fn ip_filter_middleware(
 /// 获取真实客户端IP地址（考虑代理情况）
 pub fn get_real_client_ip(request: &Request) -> Option<IpAddr> {
     // 尝试从 X-Forwarded-For 头获取
-    if let Some(forwarded_for) = request.headers().get("x-forwarded-for") {
-        if let Ok(forwarded_str) = forwarded_for.to_str() {
+    if let Some(forwarded_for) = request.headers().get("x-forwarded-for")
+        && let Ok(forwarded_str) = forwarded_for.to_str() {
             // X-Forwarded-For 可能包含多个IP，取第一个
-            if let Some(first_ip) = forwarded_str.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
+            if let Some(first_ip) = forwarded_str.split(',').next()
+                && let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
                     return Some(ip);
                 }
-            }
         }
-    }
 
     // 尝试从 X-Real-IP 头获取
-    if let Some(real_ip) = request.headers().get("x-real-ip") {
-        if let Ok(ip_str) = real_ip.to_str() {
-            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+    if let Some(real_ip) = request.headers().get("x-real-ip")
+        && let Ok(ip_str) = real_ip.to_str()
+            && let Ok(ip) = ip_str.parse::<IpAddr>() {
                 return Some(ip);
             }
-        }
-    }
 
     // 从连接信息获取
     request

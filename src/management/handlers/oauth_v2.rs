@@ -1,7 +1,7 @@
 //! # OAuth v2 客户端管理接口
 //!
 //! 提供基于客户端轮询的新OAuth管理API，替代传统的服务器回调方式
-//! 支持公共OAuth凭据和PKCE安全机制
+//! `支持公共OAuth凭据和PKCE安全机制`
 
 use crate::auth::oauth_client::session_manager::SessionStatistics;
 use crate::auth::oauth_client::{
@@ -28,7 +28,7 @@ pub struct OAuthV2AuthorizeRequest {
     pub name: String,
     /// 会话描述
     pub description: Option<String>,
-    /// 用户提供的额外参数（如Gemini的project_id）
+    /// `用户提供的额外参数（如Gemini的project_id`）
     pub extra_params: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -64,7 +64,7 @@ pub enum OAuthV2Response {
     Statistics { data: SessionStatistics },
 }
 
-/// 开始OAuth授权流程
+/// `开始OAuth授权流程`
 pub async fn start_authorization(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -99,14 +99,14 @@ pub async fn start_authorization(
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "start_auth_fail",
-                &format!("Failed to start OAuth authorization: {:?}", e)
+                &format!("Failed to start OAuth authorization: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(internal, "Failed to start authorization"))
         }
     }
 }
 
-/// 轮询OAuth会话状态
+/// `轮询OAuth会话状态`
 pub async fn poll_session(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -144,7 +144,7 @@ pub async fn poll_session(
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "poll_session_fail",
-                &format!("Failed to poll session: {:?}", e)
+                &format!("Failed to poll session: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(internal, "Failed to poll session"))
         }
@@ -219,14 +219,14 @@ pub async fn exchange_token(
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "exchange_token_fail",
-                &format!("Failed to exchange token: {:?}", e)
+                &format!("Failed to exchange token: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(internal, "Failed to exchange token"))
         }
     }
 }
 
-/// 获取用户的OAuth会话列表
+/// `获取用户的OAuth会话列表`
 pub async fn list_sessions(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -246,7 +246,7 @@ pub async fn list_sessions(
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "list_sessions_fail",
-                &format!("Failed to list sessions: {:?}", e)
+                &format!("Failed to list sessions: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -257,7 +257,7 @@ pub async fn list_sessions(
     }
 }
 
-/// 删除OAuth会话
+/// `删除OAuth会话`
 pub async fn delete_session(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -283,7 +283,7 @@ pub async fn delete_session(
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "delete_session_fail",
-                &format!("Failed to delete session: {:?}", e)
+                &format!("Failed to delete session: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -294,7 +294,7 @@ pub async fn delete_session(
     }
 }
 
-/// 刷新OAuth令牌
+/// `刷新OAuth令牌`
 pub async fn refresh_token(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -335,14 +335,14 @@ pub async fn refresh_token(
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "refresh_token_fail",
-                &format!("Failed to refresh token: {:?}", e)
+                &format!("Failed to refresh token: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(internal, "Failed to refresh token"))
         }
     }
 }
 
-/// 获取OAuth统计信息
+/// `获取OAuth统计信息`
 pub async fn get_statistics(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -362,7 +362,7 @@ pub async fn get_statistics(
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "get_stats_fail",
-                &format!("Failed to get statistics: {:?}", e)
+                &format!("Failed to get statistics: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -398,7 +398,7 @@ pub async fn cleanup_expired_sessions(
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "cleanup_sessions_fail",
-                &format!("Failed to cleanup sessions: {:?}", e)
+                &format!("Failed to cleanup sessions: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,
@@ -409,7 +409,7 @@ pub async fn cleanup_expired_sessions(
     }
 }
 
-/// 获取支持的OAuth提供商列表
+/// `获取支持的OAuth提供商列表`
 pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse {
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
@@ -438,7 +438,7 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "list_providers_fail",
-                &format!("Failed to list providers: {:?}", e)
+                &format!("Failed to list providers: {e:?}")
             );
             crate::manage_error!(crate::proxy_err!(
                 database,

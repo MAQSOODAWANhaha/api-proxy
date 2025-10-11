@@ -147,41 +147,42 @@ impl CacheStrategy {
 
     /// 设置 TTL
     #[must_use]
-    pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
+    pub const fn with_ttl(mut self, ttl: CacheTtl) -> Self {
         self.ttl = ttl;
         self
     }
 
     /// 设置是否允许缓存空值
     #[must_use]
-    pub fn with_null_values(mut self, cache_null_values: bool) -> Self {
+    pub const fn with_null_values(mut self, cache_null_values: bool) -> Self {
         self.cache_null_values = cache_null_values;
         self
     }
 
     /// 设置是否启用压缩
     #[must_use]
-    pub fn with_compression(mut self, compression_enabled: bool) -> Self {
+    pub const fn with_compression(mut self, compression_enabled: bool) -> Self {
         self.compression_enabled = compression_enabled;
         self
     }
 
     /// 设置最大值大小
     #[must_use]
-    pub fn with_max_value_size(mut self, max_value_size: usize) -> Self {
+    pub const fn with_max_value_size(mut self, max_value_size: usize) -> Self {
         self.max_value_size = max_value_size;
         self
     }
 
     /// 设置是否启用预热
     #[must_use]
-    pub fn with_warmup(mut self, warmup_enabled: bool) -> Self {
+    pub const fn with_warmup(mut self, warmup_enabled: bool) -> Self {
         self.warmup_enabled = warmup_enabled;
         self
     }
 
     /// 验证值是否符合策略要求
-    pub fn validate_value(&self, value: &str) -> bool {
+    #[must_use] 
+    pub const fn validate_value(&self, value: &str) -> bool {
         if value.is_empty() && !self.cache_null_values {
             return false;
         }
@@ -199,7 +200,8 @@ pub struct CacheStrategies;
 
 impl CacheStrategies {
     /// 用户会话缓存策略（30分钟）
-    pub fn user_session() -> CacheStrategy {
+    #[must_use] 
+    pub const fn user_session() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(30))
             .with_null_values(false)
@@ -207,7 +209,8 @@ impl CacheStrategies {
     }
 
     /// 认证令牌缓存策略（15分钟）
-    pub fn auth_token() -> CacheStrategy {
+    #[must_use] 
+    pub const fn auth_token() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(15))
             .with_null_values(false)
@@ -215,7 +218,8 @@ impl CacheStrategies {
     }
 
     /// API健康状态缓存策略（5分钟）
-    pub fn api_health() -> CacheStrategy {
+    #[must_use] 
+    pub const fn api_health() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(5))
             .with_null_values(true)
@@ -223,7 +227,8 @@ impl CacheStrategies {
     }
 
     /// 用户API密钥缓存策略（2小时）
-    pub fn user_api_key() -> CacheStrategy {
+    #[must_use] 
+    pub const fn user_api_key() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(2))
             .with_null_values(false)
@@ -231,7 +236,8 @@ impl CacheStrategies {
     }
 
     /// 请求统计缓存策略（6小时）
-    pub fn request_stats() -> CacheStrategy {
+    #[must_use] 
+    pub const fn request_stats() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(6))
             .with_null_values(true)
@@ -239,7 +245,8 @@ impl CacheStrategies {
     }
 
     /// 每日统计缓存策略（24小时）
-    pub fn daily_stats() -> CacheStrategy {
+    #[must_use] 
+    pub const fn daily_stats() -> CacheStrategy {
         CacheStrategy::long_term()
             .with_ttl(CacheTtl::from_hours(24))
             .with_null_values(true)
@@ -247,7 +254,8 @@ impl CacheStrategies {
     }
 
     /// 配置缓存策略（12小时）
-    pub fn config() -> CacheStrategy {
+    #[must_use] 
+    pub const fn config() -> CacheStrategy {
         CacheStrategy::long_term()
             .with_ttl(CacheTtl::from_hours(12))
             .with_null_values(false)
@@ -256,7 +264,8 @@ impl CacheStrategies {
     }
 
     /// 提供商配置缓存策略（6小时）
-    pub fn provider_config() -> CacheStrategy {
+    #[must_use] 
+    pub const fn provider_config() -> CacheStrategy {
         CacheStrategy::medium_term()
             .with_ttl(CacheTtl::from_hours(6))
             .with_null_values(false)
@@ -265,7 +274,8 @@ impl CacheStrategies {
     }
 
     /// 速率限制缓存策略（1分钟）
-    pub fn rate_limit() -> CacheStrategy {
+    #[must_use] 
+    pub const fn rate_limit() -> CacheStrategy {
         CacheStrategy::short_term()
             .with_ttl(CacheTtl::from_minutes(1))
             .with_null_values(false)
@@ -273,6 +283,7 @@ impl CacheStrategies {
     }
 
     /// 根据缓存键获取推荐策略
+    #[must_use] 
     pub fn for_key(key: &CacheKey) -> CacheStrategy {
         match key {
             CacheKey::UserSession { .. } => Self::user_session(),

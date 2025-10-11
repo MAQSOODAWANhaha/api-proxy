@@ -66,7 +66,9 @@ impl ConfigManager {
         let config = Arc::new(RwLock::new(config));
 
         // 创建文件监控器（如果启用）
-        let watcher = if env::var("PROXY_DISABLE_CONFIG_WATCH").unwrap_or_default() != "true" {
+        let watcher = if env::var("PROXY_DISABLE_CONFIG_WATCH").unwrap_or_default() == "true" {
+            None
+        } else {
             match ConfigWatcher::new(config_path) {
                 Ok(watcher) => {
                     let config_clone = Arc::clone(&config);
@@ -88,7 +90,7 @@ impl ConfigManager {
                                             LogStage::Configuration,
                                             LogComponent::Config,
                                             "env_override_failed",
-                                            &format!("应用环境变量覆盖失败: {}", e)
+                                            &format!("应用环境变量覆盖失败: {e}")
                                         );
                                     } else {
                                         *config_clone.write().await = final_config;
@@ -107,7 +109,7 @@ impl ConfigManager {
                                         LogStage::Configuration,
                                         LogComponent::Config,
                                         "reload_failed",
-                                        &format!("配置重载失败: {}", error)
+                                        &format!("配置重载失败: {error}")
                                     );
                                 }
                                 ConfigEvent::FileDeleted => {
@@ -131,13 +133,11 @@ impl ConfigManager {
                         LogStage::Startup,
                         LogComponent::Config,
                         "watcher_start_failed",
-                        &format!("无法启动配置文件监控: {}, 将禁用热重载功能", e)
+                        &format!("无法启动配置文件监控: {e}, 将禁用热重载功能")
                     );
                     None
                 }
             }
-        } else {
-            None
         };
 
         linfo!(
@@ -191,8 +191,9 @@ impl ConfigManager {
     }
 
     /// 订阅配置变更事件
+    #[must_use] 
     pub fn subscribe_changes(&self) -> Option<broadcast::Receiver<ConfigEvent>> {
-        self.watcher.as_ref().map(|w| w.subscribe())
+        self.watcher.as_ref().map(super::watcher::ConfigWatcher::subscribe)
     }
 
     /// 手动重载配置
@@ -213,7 +214,8 @@ impl ConfigManager {
     }
 
     /// 获取敏感字段定义
-    pub fn get_sensitive_fields(&self) -> &SensitiveFields {
+    #[must_use] 
+    pub const fn get_sensitive_fields(&self) -> &SensitiveFields {
         &self.sensitive_fields
     }
 
@@ -245,18 +247,17 @@ impl ConfigManager {
     fn load_config_file(path: &Path) -> crate::error::Result<AppConfig> {
         if !path.exists() {
             return Err(crate::error::ProxyError::config(format!(
-                "配置文件不存在: {:?}",
-                path
+                "配置文件不存在: {path:?}"
             )));
         }
 
         let config_content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {:?}", path), e)
+            crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {path:?}"), e)
         })?;
 
         let config: AppConfig = toml::from_str(&config_content).map_err(|e| {
             crate::error::ProxyError::config_with_source(
-                format!("TOML解析失败 - 配置文件: {:?}, 详细错误: {}", path, e),
+                format!("TOML解析失败 - 配置文件: {path:?}, 详细错误: {e}"),
                 e,
             )
         })?;
@@ -332,7 +333,7 @@ impl ConfigManager {
                 if let Some(ref mut dual_port) = config.dual_port {
                     dual_port.workers = value.parse().map_err(|e| {
                         crate::error::ProxyError::config_with_source(
-                            format!("无效的工作线程数: {}", value),
+                            format!("无效的工作线程数: {value}"),
                             e,
                         )
                     })?;
@@ -347,7 +348,7 @@ impl ConfigManager {
                 if let Some(ref mut dual_port) = config.dual_port {
                     dual_port.management.http.port = value.parse().map_err(|e| {
                         crate::error::ProxyError::config_with_source(
-                            format!("无效的管理端口: {}", value),
+                            format!("无效的管理端口: {value}"),
                             e,
                         )
                     })?;
@@ -362,7 +363,7 @@ impl ConfigManager {
                 if let Some(ref mut dual_port) = config.dual_port {
                     dual_port.proxy.http.port = value.parse().map_err(|e| {
                         crate::error::ProxyError::config_with_source(
-                            format!("无效的代理端口: {}", value),
+                            format!("无效的代理端口: {value}"),
                             e,
                         )
                     })?;
@@ -372,7 +373,7 @@ impl ConfigManager {
             ["database", "max", "connections"] | ["database", "maxconnections"] => {
                 config.database.max_connections = value.parse().map_err(|e| {
                     crate::error::ProxyError::config_with_source(
-                        format!("无效的最大连接数: {}", value),
+                        format!("无效的最大连接数: {value}"),
                         e,
                     )
                 })?;
@@ -394,7 +395,7 @@ impl ConfigManager {
                     .get_or_insert_with(super::RedisConfig::default);
                 redis.pool_size = value.parse().map_err(|e| {
                     crate::error::ProxyError::config_with_source(
-                        format!("无效的Redis连接池大小: {}", value),
+                        format!("无效的Redis连接池大小: {value}"),
                         e,
                     )
                 })?;
@@ -406,7 +407,7 @@ impl ConfigManager {
                     LogStage::Configuration,
                     LogComponent::Config,
                     "unknown_env_override",
-                    &format!("未知的配置路径，忽略环境变量覆盖: {}", path)
+                    &format!("未知的配置路径，忽略环境变量覆盖: {path}")
                 );
             }
         }

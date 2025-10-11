@@ -65,7 +65,7 @@ impl ConfigWatcher {
                             LogStage::Configuration,
                             LogComponent::Config,
                             "handle_file_event_fail",
-                            &format!("处理文件变更事件失败: {}", e)
+                            &format!("处理文件变更事件失败: {e}")
                         );
                     }
                 }
@@ -75,7 +75,7 @@ impl ConfigWatcher {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "watcher_error",
-                        &format!("文件监控错误: {}", e)
+                        &format!("文件监控错误: {e}")
                     );
                 }
             })
@@ -95,7 +95,7 @@ impl ConfigWatcher {
             LogStage::Configuration,
             LogComponent::Config,
             "config_watcher_start",
-            &format!("开始监控配置文件: {:?}", config_path)
+            &format!("开始监控配置文件: {config_path:?}")
         );
 
         Ok(Self {
@@ -112,6 +112,7 @@ impl ConfigWatcher {
     }
 
     /// 订阅配置变更事件
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<ConfigEvent> {
         self.event_sender.subscribe()
     }
@@ -134,7 +135,7 @@ impl ConfigWatcher {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("配置重载失败: {}", e);
+                let error_msg = format!("配置重载失败: {e}");
                 let _ = self
                     .event_sender
                     .send(ConfigEvent::ReloadFailed(error_msg.clone()));
@@ -194,7 +195,7 @@ impl ConfigWatcher {
                         );
                     }
                     Err(e) => {
-                        let error_msg = format!("配置文件重载失败: {}", e);
+                        let error_msg = format!("配置文件重载失败: {e}");
                         lwarn!(
                             "system",
                             LogStage::Configuration,
@@ -229,13 +230,12 @@ impl ConfigWatcher {
 fn load_config_from_file(path: &Path) -> crate::error::Result<AppConfig> {
     if !path.exists() {
         return Err(crate::error::ProxyError::config(format!(
-            "配置文件不存在: {:?}",
-            path
+            "配置文件不存在: {path:?}"
         )));
     }
 
     let config_content = std::fs::read_to_string(path).map_err(|e| {
-        crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {:?}", path), e)
+        crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {path:?}"), e)
     })?;
 
     let config: AppConfig = toml::from_str(&config_content)?;

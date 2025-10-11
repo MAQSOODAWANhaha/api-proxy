@@ -1,6 +1,6 @@
 //! # 统一统计信息处理器
 //!
-//! 基于proxy_tracing表的统一统计查询API
+//! `基于proxy_tracing表的统一统计查询API`
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -9,7 +9,10 @@ use crate::management::server::AppState;
 use axum::extract::{Extension, Query, State};
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
-use sea_orm::{entity::*, query::*};
+use sea_orm::{
+    entity::{ColumnTrait, EntityTrait},
+    query::QueryFilter,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -171,7 +174,7 @@ pub async fn get_today_dashboard_cards(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_today_traces_fail",
-                &format!("Failed to fetch today's traces: {}", err)
+                &format!("Failed to fetch today's traces: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -196,7 +199,7 @@ pub async fn get_today_dashboard_cards(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_yesterday_traces_fail",
-                &format!("Failed to fetch yesterday's traces: {}", err)
+                &format!("Failed to fetch yesterday's traces: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -209,11 +212,7 @@ pub async fn get_today_dashboard_cards(
     // 计算今天的统计数据
     let requests_today = today_traces.len() as i64;
     // 使用 collect + len 避免与 SeaORM count 混淆
-    let successes_today = today_traces
-        .iter()
-        .filter(|t| t.is_success)
-        .collect::<Vec<_>>()
-        .len() as i64;
+    let successes_today = today_traces.iter().filter(|t| t.is_success).count() as i64;
     let success_rate_today = if requests_today > 0 {
         (successes_today as f64 / requests_today as f64) * 100.0
     } else {
@@ -234,11 +233,7 @@ pub async fn get_today_dashboard_cards(
 
     // 计算昨天的统计数据用于比较
     let requests_yesterday = yesterday_traces.len() as i64;
-    let successes_yesterday = yesterday_traces
-        .iter()
-        .filter(|t| t.is_success)
-        .collect::<Vec<_>>()
-        .len() as i64;
+    let successes_yesterday = yesterday_traces.iter().filter(|t| t.is_success).count() as i64;
     let success_rate_yesterday = if requests_yesterday > 0 {
         (successes_yesterday as f64 / requests_yesterday as f64) * 100.0
     } else {
@@ -308,7 +303,7 @@ pub async fn get_models_usage_rate(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_models_rate_fail",
-                &format!("Failed to fetch traces for models rate: {}", err)
+                &format!("Failed to fetch traces for models rate: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -326,9 +321,11 @@ pub async fn get_models_usage_rate(
             // 检查模型名称是否有效（非空、非空白字符）
             if !model_name.trim().is_empty() {
                 let cost = trace.cost.unwrap_or(0.0);
-                let successful = if trace.is_success { 1 } else { 0 };
-                let failed = if trace.is_success { 0 } else { 1 };
-                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0, 0, 0));
+                let successful = i64::from(trace.is_success);
+                let failed = i64::from(!trace.is_success);
+                let entry = model_stats
+                    .entry(model_name.clone())
+                    .or_insert((0, 0.0, 0, 0));
                 entry.0 += 1; // usage count
                 entry.1 += cost; // total cost
                 entry.2 += successful; // successful requests
@@ -359,7 +356,7 @@ pub async fn get_models_usage_rate(
                 cost,
                 successful_requests: successful,
                 failed_requests: failed,
-                success_rate
+                success_rate,
             });
         }
     } else {
@@ -380,10 +377,26 @@ pub async fn get_models_usage_rate(
             });
         }
         // 其余模型合并为"其他"
-        let other_usage: i64 = model_vec.iter().skip(5).map(|(_, usage, _, _, _)| usage).sum();
-        let other_cost: f64 = model_vec.iter().skip(5).map(|(_, _, cost, _, _)| cost).sum();
-        let other_successful: i64 = model_vec.iter().skip(5).map(|(_, _, _, successful, _)| successful).sum();
-        let other_failed: i64 = model_vec.iter().skip(5).map(|(_, _, _, _, failed)| failed).sum();
+        let other_usage: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, usage, _, _, _)| usage)
+            .sum();
+        let other_cost: f64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, cost, _, _)| cost)
+            .sum();
+        let other_successful: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, _, successful, _)| successful)
+            .sum();
+        let other_failed: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, _, _, failed)| failed)
+            .sum();
         let other_success_rate = if other_usage > 0 {
             (other_successful as f64 / other_usage as f64) * 100.0
         } else {
@@ -430,7 +443,7 @@ pub async fn get_models_statistics(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_models_stats_fail",
-                &format!("Failed to fetch traces for models statistics: {}", err)
+                &format!("Failed to fetch traces for models statistics: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -492,7 +505,7 @@ pub async fn get_models_statistics(
     response::success(response)
 }
 
-/// 4. Token使用趋势API: /api/statistics/tokens/trend
+/// 4. `Token使用趋势API`: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -515,7 +528,7 @@ pub async fn get_tokens_trend(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_tokens_trend_fail",
-                &format!("Failed to fetch traces for tokens trend: {}", err)
+                &format!("Failed to fetch traces for tokens trend: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -533,10 +546,10 @@ pub async fn get_tokens_trend(
             .to_string();
 
         let entry = daily_stats.entry(date).or_insert((0, 0, 0, 0, 0.0));
-        entry.0 += trace.cache_create_tokens.unwrap_or(0) as i64;
-        entry.1 += trace.cache_read_tokens.unwrap_or(0) as i64;
-        entry.2 += trace.tokens_prompt.unwrap_or(0) as i64;
-        entry.3 += trace.tokens_completion.unwrap_or(0) as i64;
+        entry.0 += i64::from(trace.cache_create_tokens.unwrap_or(0));
+        entry.1 += i64::from(trace.cache_read_tokens.unwrap_or(0));
+        entry.2 += i64::from(trace.tokens_prompt.unwrap_or(0));
+        entry.3 += i64::from(trace.tokens_completion.unwrap_or(0));
         entry.4 += trace.cost.unwrap_or(0.0);
     }
 
@@ -587,13 +600,13 @@ pub async fn get_tokens_trend(
 
     let current_token_usage: i64 = today_traces
         .iter()
-        .map(|t| t.tokens_total.unwrap_or(0) as i64)
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
-    let average_token_usage = if !daily_totals.is_empty() {
-        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
-    } else {
+    let average_token_usage = if daily_totals.is_empty() {
         0
+    } else {
+        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
     };
 
     let max_token_usage = daily_totals.iter().max().copied().unwrap_or(0);
@@ -608,7 +621,7 @@ pub async fn get_tokens_trend(
     response::success(response)
 }
 
-/// 5. 用户API Keys请求趋势API: /api/statistics/user-service-api-keys/request
+/// 5. 用户API `Keys请求趋势API`: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -631,10 +644,7 @@ pub async fn get_user_api_keys_request_trend(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_request_trend_fail",
-                &format!(
-                    "Failed to fetch traces for user API keys request trend: {}",
-                    err
-                )
+                &format!("Failed to fetch traces for user API keys request trend: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -684,10 +694,10 @@ pub async fn get_user_api_keys_request_trend(
 
     let current_request_usage = today_traces.len() as i64;
 
-    let average_request_usage = if !daily_totals.is_empty() {
-        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
-    } else {
+    let average_request_usage = if daily_totals.is_empty() {
         0
+    } else {
+        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
     };
 
     let max_request_usage = daily_totals.iter().max().copied().unwrap_or(0);
@@ -702,7 +712,7 @@ pub async fn get_user_api_keys_request_trend(
     response::success(response)
 }
 
-/// 6. 用户API Keys Token趋势API: /api/statistics/user-service-api-keys/token
+/// 6. 用户API Keys `Token趋势API`: /api/statistics/user-service-api-keys/token
 pub async fn get_user_api_keys_token_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -725,10 +735,7 @@ pub async fn get_user_api_keys_token_trend(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_token_trend_fail",
-                &format!(
-                    "Failed to fetch traces for user API keys token trend: {}",
-                    err
-                )
+                &format!("Failed to fetch traces for user API keys token trend: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -744,7 +751,7 @@ pub async fn get_user_api_keys_token_trend(
         let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
             .format("%Y-%m-%d")
             .to_string();
-        let tokens = trace.tokens_total.unwrap_or(0) as i64;
+        let tokens = i64::from(trace.tokens_total.unwrap_or(0));
         *daily_tokens.entry(date).or_insert(0) += tokens;
     }
 
@@ -779,13 +786,13 @@ pub async fn get_user_api_keys_token_trend(
 
     let current_token_usage: i64 = today_traces
         .iter()
-        .map(|t| t.tokens_total.unwrap_or(0) as i64)
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
-    let average_token_usage = if !daily_totals.is_empty() {
-        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
-    } else {
+    let average_token_usage = if daily_totals.is_empty() {
         0
+    } else {
+        daily_totals.iter().sum::<i64>() / daily_totals.len() as i64
     };
 
     let max_token_usage = daily_totals.iter().max().copied().unwrap_or(0);
@@ -853,9 +860,9 @@ fn calculate_growth_rate(current: i64, previous: i64) -> String {
     } else {
         let rate = ((current - previous) as f64 / previous as f64) * 100.0;
         if rate > 0.0 {
-            format!("+{:.1}%", rate)
+            format!("+{rate:.1}%")
         } else {
-            format!("{:.1}%", rate)
+            format!("{rate:.1}%")
         }
     }
 }
@@ -871,9 +878,9 @@ fn calculate_growth_rate_f64(current: f64, previous: f64) -> String {
     } else {
         let rate = ((current - previous) / previous) * 100.0;
         if rate > 0.0 {
-            format!("+{:.1}%", rate)
+            format!("+{rate:.1}%")
         } else {
-            format!("{:.1}%", rate)
+            format!("{rate:.1}%")
         }
     }
 }

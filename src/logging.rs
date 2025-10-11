@@ -41,26 +41,27 @@ pub enum LogStage {
 }
 
 impl LogStage {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            LogStage::RequestStart => "request_start",
-            LogStage::Authentication => "authentication",
-            LogStage::RequestModify => "request_modify",
-            LogStage::UpstreamRequest => "upstream_request",
-            LogStage::Response => "response",
-            LogStage::ResponseFailure => "response_failure",
-            LogStage::Error => "error",
-            LogStage::Startup => "startup",
-            LogStage::Shutdown => "shutdown",
-            LogStage::Configuration => "configuration",
-            LogStage::HealthCheck => "health_check",
-            LogStage::BackgroundTask => "background_task",
-            LogStage::Scheduling => "scheduling",
-            LogStage::Cache => "cache",
-            LogStage::ExternalApi => "external_api",
-            LogStage::Internal => "internal",
-            LogStage::Db => "db",
-            LogStage::Codec => "codec",
+            Self::RequestStart => "request_start",
+            Self::Authentication => "authentication",
+            Self::RequestModify => "request_modify",
+            Self::UpstreamRequest => "upstream_request",
+            Self::Response => "response",
+            Self::ResponseFailure => "response_failure",
+            Self::Error => "error",
+            Self::Startup => "startup",
+            Self::Shutdown => "shutdown",
+            Self::Configuration => "configuration",
+            Self::HealthCheck => "health_check",
+            Self::BackgroundTask => "background_task",
+            Self::Scheduling => "scheduling",
+            Self::Cache => "cache",
+            Self::ExternalApi => "external_api",
+            Self::Internal => "internal",
+            Self::Db => "db",
+            Self::Codec => "codec",
         }
     }
 }
@@ -101,32 +102,33 @@ pub enum LogComponent {
 }
 
 impl LogComponent {
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] 
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            LogComponent::Main => "main",
-            LogComponent::ServerSetup => "server_setup",
-            LogComponent::Config => "config",
-            LogComponent::Database => "database",
-            LogComponent::Cache => "cache",
-            LogComponent::Proxy => "proxy",
-            LogComponent::Builder => "builder",
-            LogComponent::Auth => "auth",
-            LogComponent::ApiKey => "api_key",
-            LogComponent::OAuth => "oauth",
-            LogComponent::Upstream => "upstream",
-            LogComponent::RequestTransform => "request_transform",
-            LogComponent::ResponseTransform => "response_transform",
-            LogComponent::Statistics => "statistics",
-            LogComponent::Tracing => "tracing",
-            LogComponent::TracingService => "tracing_service",
-            LogComponent::Scheduler => "scheduler",
-            LogComponent::HealthChecker => "health_checker",
-            LogComponent::SmartApiKeyProvider => "smart_api_key_provider",
-            LogComponent::GeminiClient => "gemini_client",
-            LogComponent::GeminiStrategy => "gemini_strategy",
-            LogComponent::OpenAIStrategy => "openai_strategy",
-            LogComponent::Sse => "sse",
-            LogComponent::ClaudeStrategy => "claude_strategy",
+            Self::Main => "main",
+            Self::ServerSetup => "server_setup",
+            Self::Config => "config",
+            Self::Database => "database",
+            Self::Cache => "cache",
+            Self::Proxy => "proxy",
+            Self::Builder => "builder",
+            Self::Auth => "auth",
+            Self::ApiKey => "api_key",
+            Self::OAuth => "oauth",
+            Self::Upstream => "upstream",
+            Self::RequestTransform => "request_transform",
+            Self::ResponseTransform => "response_transform",
+            Self::Statistics => "statistics",
+            Self::Tracing => "tracing",
+            Self::TracingService => "tracing_service",
+            Self::Scheduler => "scheduler",
+            Self::HealthChecker => "health_checker",
+            Self::SmartApiKeyProvider => "smart_api_key_provider",
+            Self::GeminiClient => "gemini_client",
+            Self::GeminiStrategy => "gemini_strategy",
+            Self::OpenAIStrategy => "openai_strategy",
+            Self::Sse => "sse",
+            Self::ClaudeStrategy => "claude_strategy",
         }
     }
 }
@@ -230,7 +232,7 @@ macro_rules! lerror {
 /// 格式化请求头为人类可读的字符串（带脱敏处理）
 pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
     let mut formatted = Vec::new();
-    for (name, value) in headers.headers.iter() {
+    for (name, value) in &headers.headers {
         let name_str = name.as_str();
         let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
 
@@ -251,10 +253,10 @@ pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
                         &value_str[value_str.len().saturating_sub(4)..]
                     )
                 } else {
-                    format!("{}: ****", name_str)
+                    format!("{name_str}: ****")
                 }
             }
-            _ => format!("{}: {}", name_str, value_str),
+            _ => format!("{name_str}: {value_str}"),
         };
         formatted.push(masked);
     }
@@ -265,9 +267,10 @@ pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
 }
 
 /// 格式化响应头为人类可读的字符串
+#[must_use] 
 pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String {
     let mut formatted = Vec::new();
-    for (name, value) in headers.headers.iter() {
+    for (name, value) in &headers.headers {
         let name_str = name.as_str();
         let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
 
@@ -298,19 +301,19 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
                                     format!("{}: ****; {}", name, cookie_parts[1..].join("="))
                                 }
                             } else {
-                                format!("{}: ****", name_str)
+                                format!("{name_str}: ****")
                             }
                         } else {
-                            format!("{}: ****", name_str)
+                            format!("{name_str}: ****")
                         }
                     } else {
-                        format!("{}: ****", name_str)
+                        format!("{name_str}: ****")
                     }
                 } else {
-                    format!("{}: ****", name_str)
+                    format!("{name_str}: ****")
                 }
             }
-            _ => format!("{}: {}", name_str, value_str),
+            _ => format!("{name_str}: {value_str}"),
         };
         formatted.push(masked);
     }
@@ -324,7 +327,7 @@ pub fn format_response_headers(headers: &pingora_http::ResponseHeader) -> String
 /// 注意：按当前仓库约定，此函数不做脱敏。
 pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for (name, value) in headers.headers.iter() {
+    for (name, value) in &headers.headers {
         let key = name.as_str().to_ascii_lowercase();
         let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
         map.insert(key, value_str.to_string());
@@ -334,11 +337,12 @@ pub fn headers_json_map_request(headers: &pingora_http::RequestHeader) -> BTreeM
 
 /// 将响应头转为 JSON 映射（键小写，按字母序）
 /// 注意：按当前仓库约定，此函数不做脱敏。
+#[must_use] 
 pub fn headers_json_map_response(
     headers: &pingora_http::ResponseHeader,
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for (name, value) in headers.headers.iter() {
+    for (name, value) in &headers.headers {
         let key = name.as_str().to_ascii_lowercase();
         let value_str = std::str::from_utf8(value.as_bytes()).unwrap_or("<binary>");
         map.insert(key, value_str.to_string());
@@ -352,11 +356,13 @@ pub fn headers_json_string_request(headers: &pingora_http::RequestHeader) -> Str
 }
 
 /// 将响应头直接序列化为 JSON 字符串（稳定字段顺序）
+#[must_use] 
 pub fn headers_json_string_response(headers: &pingora_http::ResponseHeader) -> String {
     serde_json::to_string(&headers_json_map_response(headers)).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// 脱敏API密钥
+#[must_use] 
 pub fn sanitize_api_key(api_key: &str) -> String {
     if api_key.len() > 8 {
         format!(
@@ -364,7 +370,7 @@ pub fn sanitize_api_key(api_key: &str) -> String {
             &api_key[..4],
             &api_key[api_key.len().saturating_sub(4)..]
         )
-    } else if api_key.len() > 0 {
+    } else if !api_key.is_empty() {
         "***".to_string()
     } else {
         "<empty>".to_string()
@@ -372,10 +378,11 @@ pub fn sanitize_api_key(api_key: &str) -> String {
 }
 
 /// 构建详细信息的字符串
+#[must_use] 
 pub fn build_details_string(details: &[(&str, String)]) -> String {
     details
         .iter()
-        .map(|(key, value)| format!("  {}: {}", key, value))
+        .map(|(key, value)| format!("  {key}: {value}"))
         .collect::<Vec<_>>()
         .join(
             "
@@ -384,6 +391,7 @@ pub fn build_details_string(details: &[(&str, String)]) -> String {
 }
 
 /// 构建请求信息的详细信息
+#[must_use] 
 pub fn build_request_details(method: &str, url: &str, headers: &str) -> String {
     let details = vec![
         ("方法", method.to_string()),
@@ -394,16 +402,18 @@ pub fn build_request_details(method: &str, url: &str, headers: &str) -> String {
 }
 
 /// 构建响应信息的详细信息
+#[must_use] 
 pub fn build_response_details(status_code: u16, headers: &str, duration_ms: u64) -> String {
     let details = vec![
         ("状态码", status_code.to_string()),
         ("响应头", headers.to_string()),
-        ("处理时间", format!("{}ms", duration_ms)),
+        ("处理时间", format!("{duration_ms}ms")),
     ];
     build_details_string(&details)
 }
 
 /// 构建错误信息的详细信息
+#[must_use] 
 pub fn build_error_details(error_message: &str, error_type: &str, context: &str) -> String {
     let details = vec![
         ("错误类型", error_type.to_string()),
@@ -419,7 +429,8 @@ pub fn build_error_details(error_message: &str, error_type: &str, context: &str)
 pub struct DbQueryFormatter;
 
 impl DbQueryFormatter {
-    /// 格式化SQLx查询日志
+    /// `格式化SQLx查询日志`
+    #[must_use] 
     pub fn format_sqlx_query(
         statement: &str,
         _summary: &str,
@@ -437,23 +448,21 @@ impl DbQueryFormatter {
         let time_str = if elapsed >= 1.0 {
             format!("{:.2}s", elapsed / 1000.0)
         } else if elapsed >= 0.1 {
-            format!("{:.1}ms", elapsed)
+            format!("{elapsed:.1}ms")
         } else {
-            format!("{:.2}ms", elapsed)
+            format!("{elapsed:.2}ms")
         };
 
         // 构建结果信息
         let mut result_parts = Vec::new();
-        if let Some(affected) = rows_affected {
-            if affected > 0 {
-                result_parts.push(format!("{}行受影响", affected));
+        if let Some(affected) = rows_affected
+            && affected > 0 {
+                result_parts.push(format!("{affected}行受影响"));
             }
-        }
-        if let Some(returned) = rows_returned {
-            if returned > 0 {
-                result_parts.push(format!("{}行返回", returned));
+        if let Some(returned) = rows_returned
+            && returned > 0 {
+                result_parts.push(format!("{returned}行返回"));
             }
-        }
         let result_str = if result_parts.is_empty() {
             String::new()
         } else {
@@ -461,8 +470,7 @@ impl DbQueryFormatter {
         };
 
         format!(
-            "{} {} (⏱ {}){}",
-            operation_icon, clean_sql, time_str, result_str
+            "{operation_icon} {clean_sql} (⏱ {time_str}){result_str}"
         )
     }
 
@@ -470,7 +478,7 @@ impl DbQueryFormatter {
     fn clean_sql_statement(statement: &str) -> String {
         statement
             .lines()
-            .map(|line| line.trim())
+            .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
             .join(" ")
@@ -515,7 +523,7 @@ pub struct LoggingConfig {
     pub db_query_level: String,
     /// Sea ORM 查询日志级别
     pub sea_orm_level: String,
-    /// SQLx 通用日志级别
+    /// `SQLx` 通用日志级别
     pub sqlx_level: String,
 }
 
@@ -533,6 +541,7 @@ impl Default for LoggingConfig {
 
 impl LoggingConfig {
     /// 创建生产环境配置
+    #[must_use] 
     pub fn production() -> Self {
         Self {
             default_level: "info".to_string(),
@@ -544,6 +553,7 @@ impl LoggingConfig {
     }
 
     /// 创建开发环境配置
+    #[must_use] 
     pub fn development() -> Self {
         Self {
             default_level: "debug".to_string(),
@@ -555,6 +565,7 @@ impl LoggingConfig {
     }
 
     /// 创建测试环境配置
+    #[must_use] 
     pub fn testing() -> Self {
         Self {
             default_level: "warn".to_string(),
@@ -566,6 +577,7 @@ impl LoggingConfig {
     }
 
     /// 构建日志过滤器字符串
+    #[must_use] 
     pub fn build_filter(&self) -> String {
         format!(
             "{},api_proxy={},sqlx::query={},sea_orm::query={},sqlx={}",
@@ -579,7 +591,7 @@ impl LoggingConfig {
 
     /// 从环境变量创建配置
     ///
-    /// 支持通过 LOG_MODE 环境变量选择预设模式：
+    /// 支持通过 `LOG_MODE` 环境变量选择预设模式：
     /// - "production": 生产环境（性能优先，关闭数据库查询日志）
     /// - "development": 开发环境（详细日志，启用数据库查询）
     /// - "testing": 测试环境（最小日志）
@@ -592,6 +604,7 @@ impl LoggingConfig {
     ///   - LOG_MODE=development  # 开发模式
     ///   - LOG_MODE=testing      # 测试模式
     /// ```
+    #[must_use] 
     pub fn from_env() -> Self {
         match env::var("LOG_MODE").ok().as_deref() {
             Some("development") => Self::development(),
@@ -619,7 +632,7 @@ pub fn init_optimized_logging(log_level: Option<&String>) {
     let filter_string = final_config.build_filter();
 
     // 从环境变量获取覆盖配置，如果没有则使用构建的配置
-    let log_filter = env::var("RUST_LOG").unwrap_or_else(|_| filter_string);
+    let log_filter = env::var("RUST_LOG").unwrap_or(filter_string);
 
     // 创建多层级订阅者
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -661,8 +674,7 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogComponent::Main,
             "log_init",
             &format!(
-                "🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {}",
-                actual_filter
+                "🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {actual_filter}"
             )
         );
     } else {
@@ -672,8 +684,7 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogComponent::Main,
             "log_init",
             &format!(
-                "📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {}",
-                actual_filter
+                "📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {actual_filter}"
             )
         );
     }
@@ -704,7 +715,7 @@ impl LogFormatValidator {
     /// 验证日志格式是否符合统一标准
     ///
     /// 检查点：
-    /// 1. 是否包含必需的 request_id 字段
+    /// 1. 是否包含必需的 `request_id` 字段
     /// 2. 是否包含 stage 字段
     /// 3. 是否包含 component 字段
     /// 4. 是否包含 operation 字段
@@ -793,7 +804,7 @@ impl LogFormatValidator {
             // 使用标准 tracing 记录（验证通过）
             let field_str = fields
                 .iter()
-                .map(|(key, value)| format!("{} = {}", key, value))
+                .map(|(key, value)| format!("{key} = {value}"))
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -802,7 +813,7 @@ impl LogFormatValidator {
                 stage,
                 component,
                 operation,
-                &format!("=== {} ===, {}", description, field_str)
+                &format!("=== {description} ===, {field_str}")
             );
         } else {
             lwarn!(
@@ -811,8 +822,7 @@ impl LogFormatValidator {
                 LogComponent::Config,
                 "log_validation_fail",
                 &format!(
-                    "日志格式验证失败，跳过记录: request_id={}, operation={}",
-                    request_id, operation
+                    "日志格式验证失败，跳过记录: request_id={request_id}, operation={operation}"
                 )
             );
         }
@@ -821,19 +831,19 @@ impl LogFormatValidator {
     /// 获取日志格式统计信息
     ///
     /// 返回当前系统中各种日志格式的使用情况
+    #[must_use] 
     pub fn get_format_stats() -> String {
-        format!(
-            "📊 日志格式统计:
+        "📊 日志格式统计:
   - 统一日志宏: proxy_info!, proxy_debug!, proxy_warn!, proxy_error!
   - 日志阶段: 7种 (RequestStart, Authentication, RequestModify, UpstreamRequest, Response, ResponseFailure, Error)
   - 组件类型: 8种 (Proxy, AuthService, RequestHandler, TracingService, Upstream, Builder, GeminiStrategy, Database)
-  - 优化文件: 6个 (authentication_service.rs, request_handler.rs, tracing_service.rs, builder.rs, pingora_proxy.rs, provider_strategy_gemini.rs)"
-        )
+  - 优化文件: 6个 (authentication_service.rs, request_handler.rs, tracing_service.rs, builder.rs, pingora_proxy.rs, provider_strategy_gemini.rs)".to_string()
     }
 
     /// 检查日志字段是否包含敏感信息
     ///
     /// 自动检测并警告潜在的敏感信息泄露
+    #[must_use] 
     pub fn check_sensitive_fields(fields: &[(&str, String)]) -> Vec<String> {
         let sensitive_keywords = vec![
             "password",
@@ -883,14 +893,14 @@ pub fn log_proxy_failure_details(
     let (error_message, error_details) = match error {
         Some(e) => {
             let message = match e.etype {
-                ErrorType::HTTPStatus(code) => format!("Pingora HTTP status error: {}", code),
-                ErrorType::CustomCode(_, code) => format!("Pingora custom status error: {}", code),
+                ErrorType::HTTPStatus(code) => format!("Pingora HTTP status error: {code}"),
+                ErrorType::CustomCode(_, code) => format!("Pingora custom status error: {code}"),
                 _ => format!("Pingora proxy error: {:?}", e.etype),
             };
             (message, e.to_string())
         }
         None => (
-            format!("HTTP {} response returned with error", status_code),
+            format!("HTTP {status_code} response returned with error"),
             response_body_preview.to_string(),
         ),
     };
@@ -920,17 +930,17 @@ pub fn log_complete_request(
     ctx: &ProxyContext,
 ) {
     // 读取请求体
-    let request_body = if !ctx.request_body.is_empty() {
-        String::from_utf8_lossy(&ctx.request_body).to_string()
+    let request_body = if ctx.request_body.is_empty() {
+        String::new()
     } else {
-        "".to_string()
+        String::from_utf8_lossy(&ctx.request_body).to_string()
     };
 
     // 过滤 request 字段
     let filtered_body = if path.contains("streamGenerateContent") {
         filter_request_field(&request_body)
     } else {
-        request_body.clone()
+        request_body
     };
 
     // 记录请求头

@@ -1,4 +1,4 @@
-//! OpenAI 提供商策略
+//! `OpenAI` 提供商策略
 //!
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use super::ProviderStrategy;
 
-/// OpenAI 429错误响应体结构
+/// `OpenAI` 429错误响应体结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAI429Error {
     pub error: OpenAIErrorDetail,
@@ -36,22 +36,19 @@ pub struct OpenAIErrorDetail {
     pub resets_in_seconds: Option<i64>,
 }
 
+#[derive(Default)]
 pub struct OpenAIStrategy {
     db: Option<Arc<DatabaseConnection>>,
 }
 
-impl Default for OpenAIStrategy {
-    fn default() -> Self {
-        Self { db: None }
-    }
-}
 
 impl OpenAIStrategy {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 从OpenAI access_token中解析chatgpt-account-id
+    /// `从OpenAI` access_token中解析chatgpt-account-id
     fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
         let jwt_parser = JWTParser::new().ok()?;
         jwt_parser.extract_chatgpt_account_id(access_token).ok()?
@@ -108,7 +105,7 @@ impl OpenAIStrategy {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(db.as_ref())
                 .await
-                .with_database_context(|| format!("查询API密钥失败，ID: {}", key_id))?
+                .with_database_context(|| format!("查询API密钥失败，ID: {key_id}"))?
                 .ok_or_else(|| proxy_err!(database, "API密钥不存在: {}", key_id))?
                 .into();
 
@@ -123,7 +120,7 @@ impl OpenAIStrategy {
 
         key.update(db.as_ref())
             .await
-            .with_database_context(|| format!("更新API密钥健康状态失败，ID: {}", key_id))?;
+            .with_database_context(|| format!("更新API密钥健康状态失败，ID: {key_id}"))?;
 
         linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "update_key_status", "OpenAI API密钥已更新为详细限流状态", key_id = key_id, error_type = %error_detail.r#type);
         Ok(())
@@ -146,8 +143,8 @@ impl ProviderStrategy for OpenAIStrategy {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<()> {
-        if let Some(backend) = &ctx.selected_backend {
-            if backend.auth_type == "oauth" {
+        if let Some(backend) = &ctx.selected_backend
+            && backend.auth_type == "oauth" {
                 upstream_request
                     .insert_header("host", "chatgpt.com")
                     .with_network_context(|| {
@@ -155,8 +152,7 @@ impl ProviderStrategy for OpenAIStrategy {
                     })?;
 
                 if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
-                {
-                    if let Some(account_id) = self.extract_chatgpt_account_id(token) {
+                    && let Some(account_id) = self.extract_chatgpt_account_id(token) {
                         ctx.account_id = Some(account_id.clone());
                         upstream_request
                             .insert_header("chatgpt-account-id", &account_id)
@@ -167,9 +163,7 @@ impl ProviderStrategy for OpenAIStrategy {
                                 )
                             })?;
                     }
-                }
             }
-        }
         Ok(())
     }
 
@@ -187,9 +181,9 @@ impl ProviderStrategy for OpenAIStrategy {
     }
 
     async fn should_retry_key(&self, key: &user_provider_keys::Model) -> Result<bool> {
-        if key.health_status == "rate_limited" {
-            if let Some(resets_at) = key.rate_limit_resets_at {
-                if Utc::now().naive_utc() > resets_at {
+        if key.health_status == "rate_limited"
+            && let Some(resets_at) = key.rate_limit_resets_at
+                && Utc::now().naive_utc() > resets_at {
                     linfo!(
                         "system",
                         LogStage::Internal,
@@ -200,12 +194,10 @@ impl ProviderStrategy for OpenAIStrategy {
                     );
                     return Ok(true);
                 }
-            }
-        }
         Ok(key.is_active && key.health_status == "healthy")
     }
 
     fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)> {
-        vec![("Authorization".to_string(), format!("Bearer {}", api_key))]
+        vec![("Authorization".to_string(), format!("Bearer {api_key}"))]
     }
 }

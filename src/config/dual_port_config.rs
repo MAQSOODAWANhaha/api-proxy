@@ -116,7 +116,7 @@ impl ListenerConfig {
         addr.parse().map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Invalid address '{}': {}", addr, e),
+                format!("Invalid address '{addr}': {e}"),
             )
         })
     }
@@ -132,8 +132,7 @@ impl DualPortServerConfig {
 
         if mgmt_port == proxy_port {
             return Err(format!(
-                "Management port ({}) conflicts with proxy port ({})",
-                mgmt_port, proxy_port
+                "Management port ({mgmt_port}) conflicts with proxy port ({proxy_port})"
             ));
         }
 
@@ -146,17 +145,18 @@ impl DualPortServerConfig {
         self.management
             .http
             .bind_address()
-            .map_err(|e| format!("Invalid management HTTP address: {}", e))?;
+            .map_err(|e| format!("Invalid management HTTP address: {e}"))?;
 
         self.proxy
             .http
             .bind_address()
-            .map_err(|e| format!("Invalid proxy HTTP address: {}", e))?;
+            .map_err(|e| format!("Invalid proxy HTTP address: {e}"))?;
 
         Ok(())
     }
 
     /// 获取所有监听地址 - 简化版（仅HTTP）
+    #[must_use] 
     pub fn get_all_listeners(&self) -> Vec<(String, SocketAddr, String)> {
         let mut listeners = Vec::new();
 

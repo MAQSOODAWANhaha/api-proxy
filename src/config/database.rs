@@ -41,8 +41,8 @@ impl DatabaseConfig {
             let db_path = Path::new(path_str);
 
             // 创建父目录
-            if let Some(parent) = db_path.parent() {
-                if !parent.exists() {
+            if let Some(parent) = db_path.parent()
+                && !parent.exists() {
                     std::fs::create_dir_all(parent).map_err(|e| {
                         ProxyError::config_with_source(
                             format!("无法创建数据库目录: {}", parent.display()),
@@ -58,7 +58,6 @@ impl DatabaseConfig {
                         &format!("创建数据库目录: {}", parent.display())
                     );
                 }
-            }
 
             // 如果数据库文件不存在，记录将要创建的信息
             if !db_path.exists() {
@@ -82,11 +81,13 @@ impl DatabaseConfig {
     }
 
     /// 检查是否为内存数据库
+    #[must_use] 
     pub fn is_memory_database(&self) -> bool {
         self.url.contains(":memory:")
     }
 
-    /// 检查是否为SQLite数据库
+    /// `检查是否为SQLite数据库`
+    #[must_use] 
     pub fn is_sqlite(&self) -> bool {
         self.url.starts_with("sqlite://")
     }

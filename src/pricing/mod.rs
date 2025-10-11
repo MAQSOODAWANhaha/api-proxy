@@ -49,7 +49,8 @@ pub struct CostCalculationResult {
 
 impl PricingCalculatorService {
     /// 创建新的费用计算服务
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+    #[must_use] 
+    pub const fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 
@@ -68,23 +69,19 @@ impl PricingCalculatorService {
         request_id: &str,
     ) -> Result<CostCalculationResult> {
         // 查找模型定价配置
-        let model_pricing = match self
+        let model_pricing = if let Some(pricing) = self
             .find_model_pricing(model_used, provider_type_id)
-            .await?
-        {
-            Some(pricing) => pricing,
-            None => {
-                lwarn!(
-                    request_id,
-                    LogStage::Internal,
-                    LogComponent::Statistics,
-                    "no_pricing_config",
-                    "No pricing configuration found for model, using fallback",
-                    model = %model_used,
-                    provider_type_id = provider_type_id,
-                );
-                return Ok(self.create_fallback_result());
-            }
+            .await? { pricing } else {
+            lwarn!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "no_pricing_config",
+                "No pricing configuration found for model, using fallback",
+                model = %model_used,
+                provider_type_id = provider_type_id,
+            );
+            return Ok(self.create_fallback_result());
         };
 
         linfo!(
@@ -176,7 +173,7 @@ impl PricingCalculatorService {
         })
     }
 
-    /// 查找模型定价配置并验证ProviderTypeId匹配
+    /// `查找模型定价配置并验证ProviderTypeId匹配`
     async fn find_model_pricing(
         &self,
         model_name: &str,

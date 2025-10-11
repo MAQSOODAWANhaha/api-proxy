@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// Gemini提供商名称常量
 const GEMINI_PROVIDER_NAME: &str = "gemini";
 
-/// OAuth认证类型常量
+/// `OAuth认证类型常量`
 const OAUTH_AUTH_TYPE: &str = "oauth";
 
 async fn prepare_oauth_schedule(
@@ -62,7 +62,7 @@ async fn prepare_oauth_schedule(
                 LogStage::Scheduling,
                 LogComponent::OAuth,
                 "prepare_schedule_fail",
-                &format!("Failed to prepare OAuth refresh schedule: {}", err),
+                &format!("Failed to prepare OAuth refresh schedule: {err}"),
                 user_id = user_id,
                 key_id = key_id,
                 session_id = session_id.as_str(),
@@ -90,11 +90,10 @@ pub async fn get_provider_keys_list(
     let mut select = UserProviderKey::find().filter(user_provider_keys::Column::UserId.eq(user_id));
 
     // 应用搜索筛选
-    if let Some(search) = &query.search {
-        if !search.is_empty() {
+    if let Some(search) = &query.search
+        && !search.is_empty() {
             select = select.filter(user_provider_keys::Column::Name.contains(search));
         }
-    }
 
     // 应用状态筛选 - 基于health_status而不是IsActive
     if let Some(status) = &query.status {
@@ -134,7 +133,7 @@ pub async fn get_provider_keys_list(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_fail",
-                &format!("Failed to count provider keys: {}", err)
+                &format!("Failed to count provider keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -159,7 +158,7 @@ pub async fn get_provider_keys_list(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_fail",
-                &format!("Failed to fetch provider keys: {}", err)
+                &format!("Failed to fetch provider keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -176,9 +175,7 @@ pub async fn get_provider_keys_list(
     let mut provider_keys_list = Vec::new();
 
     for (provider_key, provider_type_opt) in provider_keys {
-        let provider_name = provider_type_opt
-            .map(|pt| pt.display_name)
-            .unwrap_or_else(|| "Unknown".to_string());
+        let provider_name = provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
         // 获取该密钥的使用统计
         let key_stats = usage_stats
@@ -253,7 +250,7 @@ pub async fn get_provider_keys_list(
         provider_keys_list.push(response_key);
     }
 
-    let pages = (total + limit - 1) / limit;
+    let pages = total.div_ceil(limit);
 
     let data = json!({
         "provider_keys": provider_keys_list,
@@ -302,7 +299,7 @@ pub async fn create_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "check_exist_fail",
-                &format!("Failed to check existing provider key: {}", err)
+                &format!("Failed to check existing provider key: {err}")
             );
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to check existing provider key",
@@ -329,8 +326,8 @@ pub async fn create_provider_key(
     }
 
     // 验证OAuth会话存在性和所有权
-    if payload.auth_type == "oauth" {
-        if let Some(session_id) = &payload.api_key {
+    if payload.auth_type == "oauth"
+        && let Some(session_id) = &payload.api_key {
             use entity::oauth_client_sessions::{self, Entity as OAuthSession};
 
             match OAuthSession::find()
@@ -364,7 +361,7 @@ pub async fn create_provider_key(
                                 LogStage::Db,
                                 LogComponent::OAuth,
                                 "check_session_usage_fail",
-                                &format!("Failed to check OAuth session usage: {}", err)
+                                &format!("Failed to check OAuth session usage: {err}")
                             );
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
@@ -388,7 +385,7 @@ pub async fn create_provider_key(
                         LogStage::Db,
                         LogComponent::OAuth,
                         "validate_session_fail",
-                        &format!("Failed to validate OAuth session: {}", err)
+                        &format!("Failed to validate OAuth session: {err}")
                     );
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
@@ -397,7 +394,6 @@ pub async fn create_provider_key(
                 }
             }
         }
-    }
 
     // Gemini OAuth 场景处理
     let mut final_project_id = payload.project_id.clone();
@@ -412,8 +408,7 @@ pub async fn create_provider_key(
             entity::provider_types::Entity::find_by_id(payload.provider_type_id)
                 .one(db)
                 .await
-        {
-            if provider_type.name == GEMINI_PROVIDER_NAME {
+            && provider_type.name == GEMINI_PROVIDER_NAME {
                 // 需要访问 OAuth 会话拿 access_token
                 if let Some(session_id) = &payload.api_key {
                     use entity::oauth_client_sessions::{self, Entity as OAuthSession};
@@ -530,7 +525,6 @@ pub async fn create_provider_key(
                     health_status = ApiKeyHealthStatus::Unhealthy.to_string();
                 }
             }
-        }
     }
 
     let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
@@ -554,7 +548,7 @@ pub async fn create_provider_key(
         user_id: Set(user_id),
         provider_type_id: Set(payload.provider_type_id),
         name: Set(payload.name),
-        api_key: Set(payload.api_key.clone().unwrap_or_else(|| "".to_string())),
+        api_key: Set(payload.api_key.clone().unwrap_or_else(String::new)),
         auth_type: Set(payload.auth_type),
         auth_status: Set(Some(AuthStatus::Authorized.to_string())),
         weight: Set(payload.weight),
@@ -577,7 +571,7 @@ pub async fn create_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "create_key_fail",
-                &format!("Failed to create provider key: {}", err)
+                &format!("Failed to create provider key: {err}")
             );
             return crate::manage_error!(crate::error::ProxyError::database_with_source(
                 "Failed to create provider key",
@@ -594,7 +588,7 @@ pub async fn create_provider_key(
                     LogStage::Scheduling,
                     LogComponent::OAuth,
                     "enqueue_schedule_fail",
-                    &format!("Failed to enqueue OAuth refresh schedule: {}", err),
+                    &format!("Failed to enqueue OAuth refresh schedule: {err}"),
                     user_id = user_id,
                     key_id = result.id,
                 );
@@ -608,8 +602,7 @@ pub async fn create_provider_key(
                         LogComponent::Database,
                         "rollback_key_fail",
                         &format!(
-                            "Failed to rollback provider key after enqueue error: {}",
-                            delete_err
+                            "Failed to rollback provider key after enqueue error: {delete_err}"
                         ),
                         user_id = user_id,
                         key_id = result.id,
@@ -734,7 +727,7 @@ pub async fn get_provider_key_detail(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_detail_fail",
-                &format!("Failed to fetch provider key detail: {}", err)
+                &format!("Failed to fetch provider key detail: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -745,9 +738,7 @@ pub async fn get_provider_key_detail(
     };
 
     let provider_name = provider_key
-        .1
-        .map(|pt| pt.display_name)
-        .unwrap_or_else(|| "Unknown".to_string());
+        .1.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取使用统计
     let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id]).await;
@@ -899,7 +890,7 @@ pub async fn update_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "find_key_fail",
-                &format!("Failed to find provider key: {}", err)
+                &format!("Failed to find provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -941,7 +932,7 @@ pub async fn update_provider_key(
                     LogStage::Db,
                     LogComponent::Database,
                     "check_duplicate_fail",
-                    &format!("Failed to check duplicate name: {}", err)
+                    &format!("Failed to check duplicate name: {err}")
                 );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
@@ -970,8 +961,8 @@ pub async fn update_provider_key(
     }
 
     // 验证OAuth会话存在性和所有权
-    if payload.auth_type == "oauth" {
-        if let Some(session_id) = &payload.api_key {
+    if payload.auth_type == "oauth"
+        && let Some(session_id) = &payload.api_key {
             use entity::oauth_client_sessions::{self, Entity as OAuthSession};
 
             // 检查会话是否有效
@@ -1008,7 +999,7 @@ pub async fn update_provider_key(
                                 LogStage::Db,
                                 LogComponent::OAuth,
                                 "check_session_usage_fail",
-                                &format!("Failed to check OAuth session usage: {}", err)
+                                &format!("Failed to check OAuth session usage: {err}")
                             );
                             return crate::manage_error!(
                                 crate::error::ProxyError::database_with_source(
@@ -1032,7 +1023,7 @@ pub async fn update_provider_key(
                         LogStage::Db,
                         LogComponent::OAuth,
                         "validate_session_fail",
-                        &format!("Failed to validate OAuth session: {}", err)
+                        &format!("Failed to validate OAuth session: {err}")
                     );
                     return crate::manage_error!(crate::error::ProxyError::database_with_source(
                         "Failed to validate OAuth session",
@@ -1041,7 +1032,6 @@ pub async fn update_provider_key(
                 }
             }
         }
-    }
 
     let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
         match prepare_oauth_schedule(
@@ -1063,7 +1053,7 @@ pub async fn update_provider_key(
     let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
     active_model.provider_type_id = Set(payload.provider_type_id);
     active_model.name = Set(payload.name);
-    active_model.api_key = Set(payload.api_key.clone().unwrap_or_else(|| "".to_string()));
+    active_model.api_key = Set(payload.api_key.clone().unwrap_or_else(String::new));
     active_model.auth_type = Set(payload.auth_type);
     active_model.weight = Set(payload.weight);
     active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
@@ -1082,7 +1072,7 @@ pub async fn update_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_key_fail",
-                &format!("Failed to update provider key: {}", err)
+                &format!("Failed to update provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1101,8 +1091,7 @@ pub async fn update_provider_key(
                     LogComponent::OAuth,
                     "enqueue_schedule_update_fail",
                     &format!(
-                        "Failed to enqueue OAuth refresh schedule during update: {}",
-                        err
+                        "Failed to enqueue OAuth refresh schedule during update: {err}"
                     ),
                     user_id = user_id,
                     key_id = key_id,
@@ -1115,8 +1104,7 @@ pub async fn update_provider_key(
                         LogComponent::Database,
                         "rollback_key_update_fail",
                         &format!(
-                            "Failed to rollback provider key after enqueue error: {}",
-                            revert_err
+                            "Failed to rollback provider key after enqueue error: {revert_err}"
                         ),
                         user_id = user_id,
                         key_id = key_id,
@@ -1145,25 +1133,22 @@ pub async fn update_provider_key(
                 None
             };
 
-        if updated_session_id.as_deref() != Some(old_id.as_str()) {
-            if let Some(task) = refresh_task.as_ref() {
-                if let Err(err) = task.remove_session(&old_id).await {
+        if updated_session_id.as_deref() != Some(old_id.as_str())
+            && let Some(task) = refresh_task.as_ref()
+                && let Err(err) = task.remove_session(&old_id).await {
                     lwarn!(
                         "system",
                         LogStage::Scheduling,
                         LogComponent::OAuth,
                         "remove_old_session_fail",
                         &format!(
-                            "Failed to remove old OAuth session from refresh queue: {}",
-                            err
+                            "Failed to remove old OAuth session from refresh queue: {err}"
                         ),
                         user_id = user_id,
                         key_id = key_id,
                         session_id = old_id.as_str(),
                     );
                 }
-            }
-        }
     }
 
     let data = json!({
@@ -1211,7 +1196,7 @@ pub async fn delete_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "find_key_fail",
-                &format!("Failed to find provider key: {}", err)
+                &format!("Failed to find provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1238,7 +1223,7 @@ pub async fn delete_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "delete_key_fail",
-                &format!("Failed to delete provider key: {}", err)
+                &format!("Failed to delete provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1246,27 +1231,24 @@ pub async fn delete_provider_key(
                 err
             ));
         }
-    };
+    }
 
-    if let Some(session_id) = session_to_remove {
-        if let Some(task) = refresh_task.as_ref() {
-            if let Err(err) = task.remove_session(&session_id).await {
+    if let Some(session_id) = session_to_remove
+        && let Some(task) = refresh_task.as_ref()
+            && let Err(err) = task.remove_session(&session_id).await {
                 lwarn!(
                     "system",
                     LogStage::Scheduling,
                     LogComponent::OAuth,
                     "remove_session_after_delete_fail",
                     &format!(
-                        "Failed to remove OAuth session from refresh queue after delete: {}",
-                        err
+                        "Failed to remove OAuth session from refresh queue after delete: {err}"
                     ),
                     user_id = user_id,
                     key_id = key_id,
                     session_id = session_id.as_str(),
                 );
             }
-        }
-    }
 
     let data = json!({
         "id": key_id,
@@ -1311,7 +1293,7 @@ pub async fn get_provider_key_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_detail_fail",
-                &format!("Failed to fetch provider key: {}", err)
+                &format!("Failed to fetch provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1322,9 +1304,7 @@ pub async fn get_provider_key_stats(
     };
 
     let provider_name = provider_key
-        .1
-        .map(|pt| pt.display_name)
-        .unwrap_or_else(|| "Unknown".to_string());
+        .1.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取真实的统计数据
     let end_date = Utc::now().naive_utc();
@@ -1338,7 +1318,7 @@ pub async fn get_provider_key_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_trends_fail",
-                &format!("Failed to fetch provider key trends: {}", err)
+                &format!("Failed to fetch provider key trends: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1411,7 +1391,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_total_keys_fail",
-                &format!("Failed to count total keys: {}", err)
+                &format!("Failed to count total keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1435,7 +1415,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_active_keys_fail",
-                &format!("Failed to count active keys: {}", err)
+                &format!("Failed to count active keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1459,7 +1439,7 @@ pub async fn get_provider_keys_dashboard_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_fail",
-                &format!("Failed to fetch user provider keys: {}", err)
+                &format!("Failed to fetch user provider keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1492,7 +1472,7 @@ pub async fn get_provider_keys_dashboard_stats(
                     LogStage::Db,
                     LogComponent::Database,
                     "fetch_tracing_fail",
-                    &format!("Failed to fetch proxy tracing records: {}", err)
+                    &format!("Failed to fetch proxy tracing records: {err}")
                 );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
@@ -1553,7 +1533,7 @@ pub async fn get_simple_provider_keys_list(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_simple_keys_fail",
-                &format!("Failed to fetch simple provider keys: {}", err)
+                &format!("Failed to fetch simple provider keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1568,9 +1548,7 @@ pub async fn get_simple_provider_keys_list(
 
     for (provider_key, provider_type_opt) in provider_keys {
         let provider_name = provider_type_opt
-            .as_ref()
-            .map(|pt| pt.display_name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
+            .as_ref().map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
 
         let display_name = format!("{} ({})", provider_key.name, provider_name);
 
@@ -1626,7 +1604,7 @@ pub async fn health_check_provider_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "find_key_fail",
-                &format!("Failed to find provider key: {}", err)
+                &format!("Failed to find provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1654,11 +1632,11 @@ pub async fn health_check_provider_key(
                 LogStage::Db,
                 LogComponent::HealthChecker,
                 "update_health_fail",
-                &format!("Failed to update health status: {}", err)
+                &format!("Failed to update health status: {err}")
             );
             // 不返回错误，继续返回检查结果
         }
-    };
+    }
 
     let data = json!({
         "id": key_id,
@@ -1703,7 +1681,7 @@ pub struct CreateProviderKeyRequest {
     pub max_tokens_prompt_per_minute: Option<i32>,
     pub max_requests_per_day: Option<i32>,
     pub is_active: Option<bool>,
-    /// Gemini项目ID（仅适用于Google Gemini提供商的OAuth认证）
+    /// Gemini项目ID（仅适用于Google `Gemini提供商的OAuth认证`）
     pub project_id: Option<String>,
 }
 
@@ -1720,7 +1698,7 @@ pub struct UpdateProviderKeyRequest {
     pub max_tokens_prompt_per_minute: Option<i32>,
     pub max_requests_per_day: Option<i32>,
     pub is_active: Option<bool>,
-    /// Gemini项目ID（仅适用于Google Gemini提供商的OAuth认证）
+    /// Gemini项目ID（仅适用于Google `Gemini提供商的OAuth认证`）
     pub project_id: Option<String>,
 }
 
@@ -1742,7 +1720,7 @@ pub struct TrendQuery {
 }
 
 /// 默认查询天数
-fn default_days() -> u32 {
+const fn default_days() -> u32 {
     7
 }
 
@@ -1785,7 +1763,7 @@ async fn fetch_provider_keys_usage_stats(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_tracing_fail",
-                &format!("Failed to fetch proxy tracing records: {}", err)
+                &format!("Failed to fetch proxy tracing records: {err}")
             );
             return stats_map;
         }
@@ -1812,7 +1790,7 @@ async fn fetch_provider_keys_usage_stats(
 
         // 统计token数
         if let Some(tokens) = trace.tokens_total {
-            entry.total_tokens += tokens as i64;
+            entry.total_tokens += i64::from(tokens);
         }
 
         // 统计费用
@@ -1823,7 +1801,7 @@ async fn fetch_provider_keys_usage_stats(
         // 统计响应时间
         if let Some(duration) = trace.duration_ms {
             // 简单平均，实际应该加权平均
-            entry.avg_response_time = (entry.avg_response_time + duration) / 2;
+            entry.avg_response_time = i64::midpoint(entry.avg_response_time, duration);
         }
 
         // 更新最后使用时间
@@ -1836,7 +1814,7 @@ async fn fetch_provider_keys_usage_stats(
             || entry
                 .last_used_at
                 .as_ref()
-                .map_or(true, |last| last < &created_at)
+                .is_none_or(|last| last < &created_at)
         {
             entry.last_used_at = Some(created_at);
         }
@@ -1893,7 +1871,7 @@ pub async fn get_provider_key_trends(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_detail_fail",
-                &format!("Failed to fetch provider key: {}", err)
+                &format!("Failed to fetch provider key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1906,7 +1884,7 @@ pub async fn get_provider_key_trends(
     // 计算时间范围
     let days = query.days.min(30); // 最多查询30天
     let end_date = Utc::now().naive_utc();
-    let start_date = end_date - chrono::Duration::days(days as i64);
+    let start_date = end_date - chrono::Duration::days(i64::from(days));
 
     // 查询趋势数据
     let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
@@ -1917,7 +1895,7 @@ pub async fn get_provider_key_trends(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_trends_fail",
-                &format!("Failed to fetch provider key trends: {}", err)
+                &format!("Failed to fetch provider key trends: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1977,7 +1955,7 @@ pub async fn get_user_service_api_trends(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_api_fail",
-                &format!("Failed to fetch user service api: {}", err)
+                &format!("Failed to fetch user service api: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1990,7 +1968,7 @@ pub async fn get_user_service_api_trends(
     // 计算时间范围
     let days = query.days.min(30); // 最多查询30天
     let end_date = Utc::now().naive_utc();
-    let start_date = end_date - chrono::Duration::days(days as i64);
+    let start_date = end_date - chrono::Duration::days(i64::from(days));
 
     // 查询趋势数据
     let trends =
@@ -2002,7 +1980,7 @@ pub async fn get_user_service_api_trends(
                     LogStage::Db,
                     LogComponent::Database,
                     "fetch_service_api_trends_fail",
-                    &format!("Failed to fetch user service api trends: {}", err)
+                    &format!("Failed to fetch user service api trends: {err}")
                 );
                 return crate::manage_error!(crate::proxy_err!(
                     database,
@@ -2090,7 +2068,7 @@ async fn fetch_key_trends_data(
         let date_str = trace.created_at.format("%Y-%m-%d").to_string();
         let entry = daily_stats
             .entry(date_str)
-            .or_insert_with(|| DailyStats::default());
+            .or_insert_with(DailyStats::default);
 
         entry.total_requests += 1;
         if trace.is_success {
@@ -2098,7 +2076,7 @@ async fn fetch_key_trends_data(
         }
         entry.total_cost += trace.cost.unwrap_or(0.0);
         entry.total_response_time += trace.duration_ms.unwrap_or(0);
-        entry.total_tokens += trace.tokens_total.unwrap_or(0) as i64;
+        entry.total_tokens += i64::from(trace.tokens_total.unwrap_or(0));
     }
 
     // 生成日期序列和趋势数据
@@ -2198,6 +2176,7 @@ struct DailyStats {
 }
 
 /// 获取API密钥健康状态列表
+#[must_use] 
 pub fn get_provider_key_health_statuses() -> axum::response::Response {
     use crate::scheduler::types::ApiKeyHealthStatus;
 
@@ -2222,7 +2201,7 @@ pub fn get_provider_key_health_statuses() -> axum::response::Response {
     Json(statuses).into_response()
 }
 
-/// 异步执行自动获取project_id任务的辅助方法
+/// `异步执行自动获取project_id任务的辅助方法`
 async fn execute_auto_get_project_id_async(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
@@ -2333,9 +2312,8 @@ async fn get_access_token_for_key(
     let key_record = match UserProviderKey::find_by_id(key_id).one(db).await {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return Err(crate::ProxyError::business(&format!(
-                "未找到key记录: key_id={}, user_id={}",
-                key_id, user_id
+            return Err(crate::ProxyError::business(format!(
+                "未找到key记录: key_id={key_id}, user_id={user_id}"
             )));
         }
         Err(e) => {
@@ -2348,7 +2326,7 @@ async fn get_access_token_for_key(
 
     // 确保是OAuth类型的key
     if key_record.auth_type != OAUTH_AUTH_TYPE {
-        return Err(crate::ProxyError::business(&format!(
+        return Err(crate::ProxyError::business(format!(
             "key不是OAuth类型: auth_type={}",
             key_record.auth_type
         )));
@@ -2370,9 +2348,8 @@ async fn get_access_token_for_key(
     {
         Ok(Some(session)) => session,
         Ok(None) => {
-            return Err(crate::ProxyError::business(&format!(
-                "未找到授权的OAuth会话: session_id={}, user_id={}",
-                session_id, user_id
+            return Err(crate::ProxyError::business(format!(
+                "未找到授权的OAuth会话: session_id={session_id}, user_id={user_id}"
             )));
         }
         Err(e) => {
@@ -2385,7 +2362,9 @@ async fn get_access_token_for_key(
 
     // 检查access_token是否存在
     if let Some(ref access_token) = oauth_session.access_token {
-        if !access_token.is_empty() {
+        if access_token.is_empty() {
+            Err(crate::ProxyError::business("OAuth会话中的access_token为空"))
+        } else {
             ldebug!(
                 "system",
                 LogStage::BackgroundTask,
@@ -2397,8 +2376,6 @@ async fn get_access_token_for_key(
                 session_id = %session_id,
             );
             Ok(access_token.clone())
-        } else {
-            Err(crate::ProxyError::business("OAuth会话中的access_token为空"))
         }
     } else {
         Err(crate::ProxyError::business("OAuth会话中没有access_token"))

@@ -13,9 +13,16 @@ use pingora_proxy::Session;
 /// 响应转换服务
 pub struct ResponseTransformService;
 
+impl Default for ResponseTransformService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResponseTransformService {
     /// 创建新的响应转换服务
-    pub fn new() -> Self {
+    #[must_use] 
+    pub const fn new() -> Self {
         Self
     }
 

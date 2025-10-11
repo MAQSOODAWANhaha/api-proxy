@@ -35,7 +35,7 @@ pub struct ProxyService {
 
 impl ProxyService {
     /// 创建新的代理服务实例
-    pub fn new(
+    pub const fn new(
         db: Arc<DatabaseConnection>,
         auth_service: Arc<AuthenticationService>,
         stats_service: Arc<StatisticsService>,
@@ -55,7 +55,7 @@ impl ProxyService {
         })
     }
 
-    fn resolve_status_code(ctx: &ProxyContext, error: Option<&Error>) -> u16 {
+    const fn resolve_status_code(ctx: &ProxyContext, error: Option<&Error>) -> u16 {
         if let Some(status) = ctx.response_details.status_code {
             return status;
         }
@@ -211,11 +211,10 @@ impl ProxyHttp for ProxyService {
             ctx.request_body.extend_from_slice(chunk);
             // 如果需要修改请求体且不是流结束，按照 Pingora 官方示例清空分块
             // 保持 HTTP 流式语义，避免原始与改写后的内容混合发送
-            if ctx.will_modify_body && !end_of_stream {
-                if let Some(chunk) = body_chunk {
+            if ctx.will_modify_body && !end_of_stream
+                && let Some(chunk) = body_chunk {
                     chunk.clear();
                 }
-            }
         }
 
         // 流结束处理：处理完整的请求体
@@ -271,7 +270,7 @@ impl ProxyHttp for ProxyService {
                                                 LogStage::RequestModify,
                                                 LogComponent::Proxy,
                                                 "request_body_serialize_fail",
-                                                &format!("序列化修改后的 JSON 失败: {}", e)
+                                                &format!("序列化修改后的 JSON 失败: {e}")
                                             );
                                         }
                                     }
@@ -291,7 +290,7 @@ impl ProxyHttp for ProxyService {
                                         LogStage::RequestModify,
                                         LogComponent::Proxy,
                                         "request_body_modify_fail",
-                                        &format!("执行请求体修改策略失败: {}", e)
+                                        &format!("执行请求体修改策略失败: {e}")
                                     );
                                 }
                             }
@@ -302,7 +301,7 @@ impl ProxyHttp for ProxyService {
                                 LogStage::RequestModify,
                                 LogComponent::Proxy,
                                 "request_body_parse_fail",
-                                &format!("解析请求体 JSON 失败: {}", e),
+                                &format!("解析请求体 JSON 失败: {e}"),
                                 body_preview = %String::from_utf8_lossy(&ctx.request_body[..std::cmp::min(500, ctx.request_body.len())])
                             );
                         }
@@ -374,8 +373,8 @@ impl ProxyHttp for ProxyService {
         let status_code = Self::resolve_status_code(ctx, e);
         let success = status_code < 400;
 
-        if let Some(strategy) = &ctx.strategy {
-            if let Err(e) = strategy
+        if let Some(strategy) = &ctx.strategy
+            && let Err(e) = strategy
                 .handle_response_body(session, ctx, status_code, &ctx.response_body)
                 .await
             {
@@ -384,10 +383,9 @@ impl ProxyHttp for ProxyService {
                     LogStage::Response,
                     LogComponent::Proxy,
                     "strategy_response_fail",
-                    &format!("Provider strategy handle_response_body failed: {}", e)
+                    &format!("Provider strategy handle_response_body failed: {e}")
                 );
             }
-        }
 
         if success {
             let stats = crate::statistics::usage_model::finalize_eos(ctx);
@@ -414,7 +412,7 @@ impl ProxyHttp for ProxyService {
                         LogStage::Error,
                         LogComponent::Tracing,
                         "update_trace_model_info_failed",
-                        &format!("Failed to update trace model info: {}", err)
+                        &format!("Failed to update trace model info: {err}")
                     );
                 }
             }
@@ -453,7 +451,7 @@ impl ProxyHttp for ProxyService {
                     ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
                     ctx.usage_final
                         .as_ref()
-                        .and_then(|u| u.total_tokens.map(|t| t as u32)),
+                        .and_then(|u| u.total_tokens),
                     ctx.requested_model.clone(),
                     ctx.usage_final.as_ref().and_then(|u| u.cache_create_tokens),
                     ctx.usage_final.as_ref().and_then(|u| u.cache_read_tokens),
@@ -469,7 +467,7 @@ impl ProxyHttp for ProxyService {
                 (Some(format!("{:?}", err.etype)), Some(err.to_string()))
             } else {
                 (
-                    Some(format!("HTTP {}", status_code)),
+                    Some(format!("HTTP {status_code}")),
                     Some(String::from_utf8_lossy(&ctx.response_body).to_string()),
                 )
             };

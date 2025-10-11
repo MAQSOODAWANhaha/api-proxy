@@ -61,7 +61,7 @@ pub struct ProviderConfig {
     pub is_active: bool,
     /// 额外的JSON配置
     pub config_json: Option<serde_json::Value>,
-    /// Token字段映射配置JSON
+    /// `Token字段映射配置JSON`
     pub token_mappings_json: Option<String>,
     /// 模型提取规则配置JSON
     pub model_extraction_json: Option<String>,
@@ -111,7 +111,7 @@ impl ProviderConfigManager {
             .all(self.db.as_ref())
             .await
             .map_err(|e| {
-                ProxyError::database(&format!("Failed to fetch active providers: {}", e))
+                ProxyError::database(format!("Failed to fetch active providers: {e}"))
             })?;
 
         let mut configs = Vec::new();
@@ -126,8 +126,7 @@ impl ProviderConfigManager {
                         LogComponent::Config,
                         "parse_provider_config_fail",
                         &format!(
-                            "Failed to parse provider config for {}: {}",
-                            provider_name, e
+                            "Failed to parse provider config for {provider_name}: {e}"
                         )
                     );
                 }
@@ -146,7 +145,7 @@ impl ProviderConfigManager {
                 LogStage::Cache,
                 LogComponent::Config,
                 "cache_fail",
-                &format!("Failed to cache active providers: {}", e)
+                &format!("Failed to cache active providers: {e}")
             );
         }
 
@@ -178,7 +177,7 @@ impl ProviderConfigManager {
             .one(self.db.as_ref())
             .await
             .map_err(|e| {
-                crate::error::ProxyError::internal(format!("Database query error: {}", e))
+                crate::error::ProxyError::internal(format!("Database query error: {e}"))
             })?
         {
             return Ok(ProviderId::from_database_id(provider.id));
@@ -190,7 +189,7 @@ impl ProviderConfigManager {
             .all(self.db.as_ref())
             .await
             .map_err(|e| {
-                crate::error::ProxyError::internal(format!("Database query error: {}", e))
+                crate::error::ProxyError::internal(format!("Database query error: {e}"))
             })?;
 
         // 尝试多种匹配策略
@@ -215,14 +214,13 @@ impl ProviderConfigManager {
             .join(", ");
 
         Err(crate::error::ProxyError::config(format!(
-            "Unknown or inactive provider: '{}'. Available providers: {}",
-            normalized_name, available_providers
+            "Unknown or inactive provider: '{normalized_name}'. Available providers: {available_providers}"
         )))
     }
 
     /// 根据名称获取服务商配置
     pub async fn get_provider_by_name(&self, name: &str) -> Result<Option<ProviderConfig>> {
-        let cache_key = format!("provider_config:{}", name);
+        let cache_key = format!("provider_config:{name}");
 
         // 尝试从缓存获取
         if let Ok(Some(cached_config)) = self
@@ -241,7 +239,7 @@ impl ProviderConfigManager {
             .one(self.db.as_ref())
             .await
             .map_err(|e| {
-                ProxyError::database(&format!("Failed to fetch provider {}: {}", name, e))
+                ProxyError::database(format!("Failed to fetch provider {name}: {e}"))
             })?;
 
         if let Some(provider) = provider {
@@ -259,7 +257,7 @@ impl ProviderConfigManager {
                             LogStage::Cache,
                             LogComponent::Config,
                             "cache_fail",
-                            &format!("Failed to cache provider config for {}: {}", name, e)
+                            &format!("Failed to cache provider config for {name}: {e}")
                         );
                     }
                     Ok(Some(config))
@@ -270,7 +268,7 @@ impl ProviderConfigManager {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "parse_provider_config_fail",
-                        &format!("Failed to parse provider config for {}: {}", name, e)
+                        &format!("Failed to parse provider config for {name}: {e}")
                     );
                     Err(e)
                 }
@@ -282,7 +280,7 @@ impl ProviderConfigManager {
 
     /// 根据ID获取服务商配置
     pub async fn get_provider_by_id(&self, id: i32) -> Result<Option<ProviderConfig>> {
-        let cache_key = format!("provider_config_by_id:{}", id);
+        let cache_key = format!("provider_config_by_id:{id}");
 
         // 尝试从缓存获取
         if let Ok(Some(cached_config)) = self
@@ -299,7 +297,7 @@ impl ProviderConfigManager {
             .one(self.db.as_ref())
             .await
             .map_err(|e| {
-                ProxyError::database(&format!("Failed to fetch provider by id {}: {}", id, e))
+                ProxyError::database(format!("Failed to fetch provider by id {id}: {e}"))
             })?;
 
         if let Some(provider) = provider {
@@ -321,7 +319,7 @@ impl ProviderConfigManager {
                             LogStage::Cache,
                             LogComponent::Config,
                             "cache_fail",
-                            &format!("Failed to cache provider config for id {}: {}", id, e)
+                            &format!("Failed to cache provider config for id {id}: {e}")
                         );
                     }
                     Ok(Some(config))
@@ -332,7 +330,7 @@ impl ProviderConfigManager {
                         LogStage::Configuration,
                         LogComponent::Config,
                         "parse_provider_config_fail",
-                        &format!("Failed to parse provider config for id {}: {}", id, e)
+                        &format!("Failed to parse provider config for id {id}: {e}")
                     );
                     Err(e)
                 }
@@ -379,7 +377,7 @@ impl ProviderConfigManager {
         let https_url = if base_url.starts_with("http") {
             base_url.clone()
         } else {
-            format!("https://{}", base_url)
+            format!("https://{base_url}")
         };
 
         // 生成upstream地址（hostname:port格式）
@@ -461,7 +459,7 @@ impl ProviderConfigManager {
     fn parse_auth_configs_from_map(&self, map_str: &str) -> Result<Vec<MultiAuthConfig>> {
         let config_map: std::collections::HashMap<String, serde_json::Value> =
             serde_json::from_str(map_str).map_err(|e| {
-                ProxyError::config(&format!("Failed to parse auth_configs_map: {}", e))
+                ProxyError::config(format!("Failed to parse auth_configs_map: {e}"))
             })?;
 
         let mut auth_configs = Vec::new();
@@ -486,7 +484,7 @@ impl ProviderConfigManager {
                     LogStage::Configuration,
                     LogComponent::Config,
                     "unknown_auth_type",
-                    &format!("Unknown auth type in provider config: {}", auth_type_str)
+                    &format!("Unknown auth type in provider config: {auth_type_str}")
                 );
             }
         }
@@ -497,7 +495,7 @@ impl ProviderConfigManager {
     /// 解析支持的认证类型字符串
     fn parse_supported_auth_types(&self, json_str: &str) -> Result<Vec<AuthType>> {
         let type_strings: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
-            ProxyError::config(&format!("Failed to parse supported_auth_types: {}", e))
+            ProxyError::config(format!("Failed to parse supported_auth_types: {e}"))
         })?;
 
         let mut auth_types = Vec::new();
@@ -510,7 +508,7 @@ impl ProviderConfigManager {
                     LogStage::Configuration,
                     LogComponent::Config,
                     "unknown_auth_type",
-                    &format!("Unknown auth type in configuration: {}", type_str)
+                    &format!("Unknown auth type in configuration: {type_str}")
                 );
             }
         }
@@ -518,7 +516,7 @@ impl ProviderConfigManager {
         Ok(auth_types)
     }
 
-    /// 标准化base_url格式
+    /// `标准化base_url格式`
     fn normalize_base_url(&self, url: &str) -> String {
         let url = url.trim();
 
@@ -542,15 +540,16 @@ impl ProviderConfigManager {
         }
 
         // 默认使用443端口（HTTPS）
-        Ok(format!("{}:443", normalized))
+        Ok(format!("{normalized}:443"))
     }
 
     /// 获取服务商的完整API端点URL
+    #[must_use] 
     pub fn get_api_endpoint(&self, config: &ProviderConfig, path: &str) -> String {
         let path = if path.starts_with('/') {
             path
         } else {
-            &format!("/{}", path)
+            &format!("/{path}")
         };
         format!("{}{}", config.https_url, path)
     }

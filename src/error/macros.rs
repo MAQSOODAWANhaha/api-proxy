@@ -2,9 +2,9 @@
 
 /// 通用错误构造宏
 /// 用法：
-/// - proxy_err!(auth, "未认证")
-/// - proxy_err!(ai_provider, "OpenAI", "bad request")
-/// - proxy_err!(connection_timeout, "connect timeout", 30)
+/// - `proxy_err!(auth`, "未认证")
+/// - `proxy_err!(ai_provider`, "`OpenAI`", "bad request")
+/// - `proxy_err!(connection_timeout`, "connect timeout", 30)
 #[macro_export]
 macro_rules! proxy_err {
     (config, $($t:tt)*) => { $crate::error::ProxyError::config(format!($($t)*)) };
@@ -43,13 +43,13 @@ macro_rules! proxy_err {
     (mgmt_rate_limit, $($t:tt)*) => { $crate::error::ProxyError::management_rate_limit(format!($($t)*)) };
 }
 
-/// 直接返回错误：proxy_bail!(auth, "msg")
+/// `直接返回错误：proxy_bail!(auth`, "msg")
 #[macro_export]
 macro_rules! proxy_bail {
     ($($t:tt)*) => { return Err($crate::proxy_err!($($t)*)) };
 }
 
-/// 通用 ensure：proxy_ensure!(cond, auth, "msg")
+/// 通用 `ensure：proxy_ensure!(cond`, auth, "msg")
 #[macro_export]
 macro_rules! proxy_ensure {
     ($cond:expr, $($t:tt)*) => {
@@ -57,14 +57,14 @@ macro_rules! proxy_ensure {
     };
 }
 
-/// 将 ProxyError 转为 (StatusCode, JSON 字符串)
+/// 将 `ProxyError` 转为 (`StatusCode`, JSON 字符串)
 #[macro_export]
 macro_rules! http_error_body {
     ($err:expr) => {{ $err.to_http_status_and_body() }};
 }
 
-/// 将 ProxyError 直接转换为 Pingora 错误（ErrorType::HTTPStatus + JSON body）
-/// 用法：return Err(pingora_error!(err));
+/// 将 `ProxyError` 直接转换为 Pingora `错误（ErrorType::HTTPStatus` + JSON body）
+/// 用法：return `Err(pingora_error!(err))`;
 #[macro_export]
 macro_rules! pingora_error {
     ($err:expr) => {{
@@ -79,8 +79,8 @@ macro_rules! pingora_http {
     ($status:expr, $msg:expr) => {{ pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(($status) as u16), $msg) }};
 }
 
-/// 将 Result<T, ProxyError> 一步转换为 pingora_core::Result<T>
-/// 用法：let val = pingora_try!(expr_returning_proxy_result);
+/// 将 Result<T, `ProxyError`> 一步转换为 `pingora_core::Result`<T>
+/// 用法：let val = `pingora_try!(expr_returning_proxy_result)`;
 #[macro_export]
 macro_rules! pingora_try {
     ($expr:expr) => {{
@@ -107,14 +107,14 @@ macro_rules! pingora_respond {
     };
 }
 
-/// 管理端错误快速返回：将 ProxyError 转为标准管理端响应包裹
+/// 管理端错误快速返回：将 `ProxyError` 转为标准管理端响应包裹
 #[macro_export]
 macro_rules! manage_error {
     ($err:expr) => {{ $crate::management::response::app_error($err) }};
 }
 
 /// 管理端临时代码路径：用现有 code/status 直接返回标准错误包裹
-/// 便于逐步从手写 code 过渡到 ProxyError 语义映射
+/// 便于逐步从手写 code 过渡到 `ProxyError` 语义映射
 #[macro_export]
 macro_rules! manage_error_code {
     ($status:expr, $code:expr, $msg:expr) => {{ $crate::management::response::error($status, $code, $msg) }};

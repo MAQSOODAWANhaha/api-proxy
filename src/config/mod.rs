@@ -56,7 +56,7 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     // 验证双端口配置
     dual_port
         .validate()
-        .map_err(|e| crate::error::ProxyError::config(e))?;
+        .map_err(crate::error::ProxyError::config)?;
 
     // 验证数据库配置
     if config.database.url.is_empty() {

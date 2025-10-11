@@ -32,7 +32,8 @@ pub struct ProxyServerBuilder {
 
 impl ProxyServerBuilder {
     /// 创建新的构建器实例
-    pub fn new(config: Arc<AppConfig>) -> Self {
+    #[must_use] 
+    pub const fn new(config: Arc<AppConfig>) -> Self {
         Self {
             config,
             db: None,
@@ -43,12 +44,14 @@ impl ProxyServerBuilder {
     }
 
     /// 设置共享数据库连接
+    #[must_use] 
     pub fn with_database(mut self, db: Arc<DatabaseConnection>) -> Self {
         self.db = Some(db);
         self
     }
 
     /// 设置追踪系统
+    #[must_use] 
     pub fn with_trace_system(mut self, trace_system: Arc<TraceSystem>) -> Self {
         self.trace_system = Some(trace_system);
         self
@@ -62,16 +65,16 @@ impl ProxyServerBuilder {
         self.config
             .database
             .ensure_database_path()
-            .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {}", e)))?;
+            .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {e}")))?;
         let db_url = self
             .config
             .database
             .get_connection_url()
-            .map_err(|e| ProxyError::server_init(format!("数据库URL准备失败: {}", e)))?;
+            .map_err(|e| ProxyError::server_init(format!("数据库URL准备失败: {e}")))?;
         let db = Arc::new(
             sea_orm::Database::connect(&db_url)
                 .await
-                .map_err(|e| ProxyError::database(format!("数据库连接失败: {}", e)))?,
+                .map_err(|e| ProxyError::database(format!("数据库连接失败: {e}")))?,
         );
         self.db = Some(db.clone());
         Ok(db)
@@ -84,7 +87,7 @@ impl ProxyServerBuilder {
         }
         let cache = Arc::new(
             CacheManager::new(&self.config.cache)
-                .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {}", e)))?,
+                .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {e}")))?,
         );
         self.cache = Some(cache.clone());
         Ok(cache)
@@ -113,7 +116,7 @@ impl ProxyServerBuilder {
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
         let jwt_manager = Arc::new(
             crate::auth::JwtManager::new(auth_config.clone())
-                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {}", e)))?,
+                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {e}")))?,
         );
         let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(
             db.clone(),
@@ -165,7 +168,7 @@ impl ProxyServerBuilder {
         let auth_service = Arc::new(AuthenticationService::new(
             auth_manager,
             db.clone(),
-            cache.clone(),
+            cache,
             api_key_pool,
         ));
         let stats_service = Arc::new(StatisticsService::new(pricing_calculator));
@@ -179,7 +182,7 @@ impl ProxyServerBuilder {
         let resp_transform_service = Arc::new(ResponseTransformService::new());
 
         ProxyService::new(
-            db.clone(), // 直接注入DB
+            db, // 直接注入DB
             auth_service,
             stats_service,
             trace_service,
@@ -198,7 +201,7 @@ impl ProxyServerBuilder {
 
         let proxy_service = self
             .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
-            .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {}", e)))?;
+            .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {e}")))?;
 
         Ok(ProxyServerComponents {
             config: self.config.clone(),
@@ -211,6 +214,7 @@ impl ProxyServerBuilder {
     }
 
     /// 获取代理服务器监听地址
+    #[must_use] 
     pub fn get_server_address(&self) -> String {
         let proxy_port = self.config.get_proxy_port();
         let host = self
@@ -218,7 +222,7 @@ impl ProxyServerBuilder {
             .dual_port
             .as_ref()
             .map_or("0.0.0.0", |d| &d.proxy.http.host);
-        format!("{}:{}", host, proxy_port)
+        format!("{host}:{proxy_port}")
     }
 }
 

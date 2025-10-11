@@ -102,7 +102,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         Some(shared_services.smart_api_key_provider.clone()),
         Some(shared_services.oauth_token_refresh_task.clone()),
     )
-    .map_err(|e| ProxyError::server_init(format!("Failed to create management server: {}", e)))?;
+    .map_err(|e| ProxyError::server_init(format!("Failed to create management server: {e}")))?;
 
     // 创建代理服务器，传递数据库连接和追踪系统
     let proxy_server =
@@ -122,11 +122,10 @@ pub async fn run_dual_port_servers() -> Result<()> {
             LogStage::Startup,
             LogComponent::ServerSetup,
             "start_oauth_refresh_task_failed",
-            &format!("Failed to start OAuth token refresh task: {:?}", e)
+            &format!("Failed to start OAuth token refresh task: {e:?}")
         );
         return Err(ProxyError::server_init(format!(
-            "OAuth token refresh task startup failed: {}",
-            e
+            "OAuth token refresh task startup failed: {e}"
         )));
     }
     linfo!(
@@ -149,7 +148,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
     tokio::select! {
         // 启动 Axum 管理服务器
         result = management_server.serve() => {
-            lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "management_server_exit", &format!("Management server exited unexpectedly: {:?}", result));
+            lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "management_server_exit", &format!("Management server exited unexpectedly: {result:?}"));
             Err(ProxyError::server_start("Management server failed"))
         }
         // 启动 Pingora 代理服务器
@@ -159,7 +158,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
             match result {
                 Ok(proxy_result) => {
                     if let Err(e) = proxy_result {
-                        lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_fail", &format!("Proxy server failed: {:?}", e));
+                        lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_fail", &format!("Proxy server failed: {e:?}"));
                         Err(e)
                     } else {
                         lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_exit", "Proxy server exited unexpectedly");
@@ -167,7 +166,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_spawn_fail", &format!("Failed to spawn proxy server task: {:?}", e));
+                    lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_spawn_fail", &format!("Failed to spawn proxy server task: {e:?}"));
                     Err(ProxyError::server_start("Failed to spawn proxy server"))
                 }
             }
@@ -226,7 +225,7 @@ pub async fn initialize_shared_services() -> Result<(
                 LogStage::Startup,
                 LogComponent::ServerSetup,
                 "init_db_fail",
-                &format!("❌ Database connection failed: {:?}", e)
+                &format!("❌ Database connection failed: {e:?}")
             );
             return Err(e.into());
         }
@@ -246,7 +245,7 @@ pub async fn initialize_shared_services() -> Result<(
             LogStage::Startup,
             LogComponent::ServerSetup,
             "run_migrations_fail",
-            &format!("❌ Database migration failed: {:?}", e)
+            &format!("❌ Database migration failed: {e:?}")
         );
         return Err(e.into());
     }
@@ -273,13 +272,13 @@ pub async fn initialize_shared_services() -> Result<(
     let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
     let jwt_manager = Arc::new(
         crate::auth::jwt::JwtManager::new(auth_config.clone())
-            .map_err(|e| ProxyError::server_init(format!("JWT manager init failed: {}", e)))?,
+            .map_err(|e| ProxyError::server_init(format!("JWT manager init failed: {e}")))?,
     );
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
         crate::cache::abstract_cache::CacheManager::new(&config_arc.cache)
-            .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {}", e)))?,
+            .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {e}")))?,
     );
 
     let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
@@ -320,7 +319,7 @@ pub async fn initialize_shared_services() -> Result<(
             auth_service.clone(),
             auth_config,
             db.clone(),
-            unified_cache_manager.clone(),
+            unified_cache_manager,
         )
         ?,
     );
@@ -468,7 +467,7 @@ pub async fn initialize_shared_services() -> Result<(
         provider_config_manager,
         api_key_health_checker,
         oauth_client,
-        oauth_refresh_service: oauth_refresh_service.clone(),
+        oauth_refresh_service,
         smart_api_key_provider,
         oauth_token_refresh_task,
     };

@@ -19,7 +19,8 @@ pub struct RequestTransformService {
 
 impl RequestTransformService {
     /// 创建新的请求转换服务
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+    #[must_use] 
+    pub const fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 
@@ -81,7 +82,7 @@ impl RequestTransformService {
                 let auth_headers = if let Some(strategy) = &ctx.strategy {
                     strategy.build_auth_headers(api_key)
                 } else {
-                    vec![("Authorization".to_string(), format!("Bearer {}", api_key))]
+                    vec![("Authorization".to_string(), format!("Bearer {api_key}"))]
                 };
 
                 for (name, value) in auth_headers {
@@ -92,7 +93,7 @@ impl RequestTransformService {
             }
             ResolvedCredential::OAuthAccessToken(token) => {
                 upstream_request
-                    .insert_header("Authorization", &format!("Bearer {}", token))
+                    .insert_header("Authorization", format!("Bearer {token}"))
                     .map_err(|e| proxy_err!(internal, "Failed to set OAuth header: {}", e))?;
             }
         }

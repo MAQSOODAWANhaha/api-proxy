@@ -32,6 +32,7 @@ pub struct ApiKeyPoolManager {
 
 impl ApiKeyPoolManager {
     /// 创建新的API密钥池管理器
+    #[must_use] 
     pub fn new(db: Arc<DatabaseConnection>, health_checker: Arc<ApiKeyHealthChecker>) -> Self {
         Self {
             db,
@@ -43,6 +44,7 @@ impl ApiKeyPoolManager {
     }
 
     /// 创建带有智能密钥提供者的API密钥池管理器
+    #[must_use] 
     pub fn new_with_smart_provider(
         db: Arc<DatabaseConnection>,
         health_checker: Arc<ApiKeyHealthChecker>,
@@ -204,7 +206,7 @@ impl ApiKeyPoolManager {
         let scheduling_strategy = service_api
             .scheduling_strategy
             .as_deref()
-            .and_then(|s| SchedulingStrategy::from_str(s))
+            .and_then(SchedulingStrategy::from_str)
             .unwrap_or_default();
 
         // 获取或创建选择器
@@ -239,7 +241,7 @@ impl ApiKeyPoolManager {
 
     /// 使用智能提供者获取有效的API凭证（支持OAuth token刷新）
     ///
-    /// 这个方法集成了OAuth token的智能刷新功能：
+    /// `这个方法集成了OAuth` token的智能刷新功能：
     /// 1. 使用传统的密钥选择逻辑选择API密钥
     /// 2. 通过SmartApiKeyProvider获取有效凭证（自动处理OAuth token刷新）
     /// 3. 返回增强的选择结果，包含实际可用的凭证
@@ -324,7 +326,7 @@ impl ApiKeyPoolManager {
         user_id: i32,
         provider_type_id: i32,
     ) -> Result<Vec<user_provider_keys::Model>> {
-        let cache_key = format!("user_{}_{}", user_id, provider_type_id);
+        let cache_key = format!("user_{user_id}_{provider_type_id}");
 
         // 查询用户的API密钥
         let user_keys = entity::user_provider_keys::Entity::find()
@@ -350,7 +352,7 @@ impl ApiKeyPoolManager {
         user_id: i32,
         provider_type_id: i32,
     ) -> Option<Vec<user_provider_keys::Model>> {
-        let cache_key = format!("user_{}_{}", user_id, provider_type_id);
+        let cache_key = format!("user_{user_id}_{provider_type_id}");
         let pools = self.key_pools.read().await;
         pools.get(&cache_key).cloned()
     }
@@ -360,7 +362,7 @@ impl ApiKeyPoolManager {
         let mut pools = self.key_pools.write().await;
         let keys_to_remove: Vec<String> = pools
             .keys()
-            .filter(|key| key.starts_with(&format!("user_{}_", user_id)))
+            .filter(|key| key.starts_with(&format!("user_{user_id}_")))
             .cloned()
             .collect();
 
@@ -464,8 +466,8 @@ impl ApiKeyPoolManager {
                 }
 
                 // 2. 检查过期时间
-                if let Some(expires_at) = key.expires_at {
-                    if now >= expires_at {
+                if let Some(expires_at) = key.expires_at
+                    && now >= expires_at {
                         ldebug!(
                             "system",
                             LogStage::Scheduling,
@@ -478,7 +480,6 @@ impl ApiKeyPoolManager {
                         );
                         return false;
                     }
-                }
 
                 // 3. 检查健康状态（使用统一的三状态枚举）
                 match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
@@ -639,7 +640,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .check_api_key(key)
             .await
-            .map_err(|e| ProxyError::internal(&format!("Health check failed: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Health check failed: {e}")))
     }
 
     /// 批量检查多个API密钥的健康状态
@@ -650,7 +651,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .batch_check_keys(keys)
             .await
-            .map_err(|e| ProxyError::internal(&format!("Batch health check failed: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Batch health check failed: {e}")))
     }
 
     /// 手动标记API密钥为不健康
@@ -658,7 +659,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .mark_key_unhealthy(key_id, reason)
             .await
-            .map_err(|e| ProxyError::internal(&format!("Failed to mark key unhealthy: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Failed to mark key unhealthy: {e}")))
     }
 
     /// 获取API密钥的健康状态
@@ -679,7 +680,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .start()
             .await
-            .map_err(|e| ProxyError::internal(&format!("Failed to start health checker: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Failed to start health checker: {e}")))
     }
 
     /// 停止健康检查服务
@@ -687,7 +688,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .stop()
             .await
-            .map_err(|e| ProxyError::internal(&format!("Failed to stop health checker: {}", e)))
+            .map_err(|e| ProxyError::internal(format!("Failed to stop health checker: {e}")))
     }
 
     /// 获取密钥池统计信息
@@ -699,7 +700,7 @@ impl ApiKeyPoolManager {
 
         PoolStats {
             cached_pools: pools.len(),
-            total_keys: pools.values().map(|pool| pool.len()).sum(),
+            total_keys: pools.values().map(std::vec::Vec::len).sum(),
             active_selectors: selectors.len(),
             available_strategies: vec![
                 SchedulingStrategy::RoundRobin,
@@ -749,12 +750,14 @@ pub struct SmartApiKeySelectionResult {
 
 impl SmartApiKeySelectionResult {
     /// 获取实际可用的API凭证
+    #[must_use] 
     pub fn get_credential(&self) -> &str {
         &self.credential.credential
     }
 
-    /// 检查凭证是否是OAuth token
-    pub fn is_oauth_token(&self) -> bool {
+    /// `检查凭证是否是OAuth` token
+    #[must_use] 
+    pub const fn is_oauth_token(&self) -> bool {
         matches!(
             self.credential.auth_type,
             AuthCredentialType::OAuthToken { .. }
@@ -762,22 +765,26 @@ impl SmartApiKeySelectionResult {
     }
 
     /// 检查凭证是否刚刚刷新过
-    pub fn is_refreshed(&self) -> bool {
+    #[must_use] 
+    pub const fn is_refreshed(&self) -> bool {
         self.credential.refreshed
     }
 
     /// 获取选中的密钥ID
-    pub fn get_key_id(&self) -> i32 {
+    #[must_use] 
+    pub const fn get_key_id(&self) -> i32 {
         self.selection_result.selected_key.id
     }
 
     /// 获取选中的密钥名称
+    #[must_use] 
     pub fn get_key_name(&self) -> &str {
         &self.selection_result.selected_key.name
     }
 
     /// 获取用户ID
-    pub fn get_user_id(&self) -> i32 {
+    #[must_use] 
+    pub const fn get_user_id(&self) -> i32 {
         self.selection_result.selected_key.user_id
     }
 }

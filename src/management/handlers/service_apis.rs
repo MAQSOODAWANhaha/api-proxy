@@ -228,7 +228,7 @@ pub async fn get_user_service_cards(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_service_apis_fail",
-                &format!("Failed to count user service APIs: {}", err)
+                &format!("Failed to count user service APIs: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -252,7 +252,7 @@ pub async fn get_user_service_cards(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_active_service_apis_fail",
-                &format!("Failed to count active user service APIs: {}", err)
+                &format!("Failed to count active user service APIs: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -275,7 +275,7 @@ pub async fn get_user_service_cards(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_user_requests_fail",
-                &format!("Failed to count user requests: {}", err)
+                &format!("Failed to count user requests: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -316,12 +316,12 @@ pub async fn list_user_service_keys(
 
     // 应用筛选条件
     if let Some(name) = &query.name {
-        select = select.filter(user_service_apis::Column::Name.like(format!("%{}%", name)));
+        select = select.filter(user_service_apis::Column::Name.like(format!("%{name}%")));
     }
 
     if let Some(description) = &query.description {
         select = select
-            .filter(user_service_apis::Column::Description.like(format!("%{}%", description)));
+            .filter(user_service_apis::Column::Description.like(format!("%{description}%")));
     }
 
     if let Some(provider_type_id) = query.provider_type_id {
@@ -341,7 +341,7 @@ pub async fn list_user_service_keys(
                 LogStage::Db,
                 LogComponent::Database,
                 "count_service_apis_fail",
-                &format!("Failed to count user service APIs: {}", err)
+                &format!("Failed to count user service APIs: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -355,10 +355,10 @@ pub async fn list_user_service_keys(
     let apis = match UserServiceApi::find()
         .filter(user_service_apis::Column::UserId.eq(user_id))
         .apply_if(query.name, |query, name| {
-            query.filter(user_service_apis::Column::Name.like(format!("%{}%", name)))
+            query.filter(user_service_apis::Column::Name.like(format!("%{name}%")))
         })
         .apply_if(query.description, |query, description| {
-            query.filter(user_service_apis::Column::Description.like(format!("%{}%", description)))
+            query.filter(user_service_apis::Column::Description.like(format!("%{description}%")))
         })
         .apply_if(query.provider_type_id, |query, provider_type_id| {
             query.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id))
@@ -367,8 +367,8 @@ pub async fn list_user_service_keys(
             query.filter(user_service_apis::Column::IsActive.eq(is_active))
         })
         .find_also_related(ProviderType)
-        .offset(((page - 1) * limit) as u64)
-        .limit(limit as u64)
+        .offset(u64::from((page - 1) * limit))
+        .limit(u64::from(limit))
         .all(db)
         .await
     {
@@ -379,7 +379,7 @@ pub async fn list_user_service_keys(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service APIs: {}", err)
+                &format!("Failed to fetch user service APIs: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -409,7 +409,7 @@ pub async fn list_user_service_keys(
 
         // 计算成功率
         let success_rate = if total_requests > 0 {
-            (success_count as f64 / total_requests as f64) * 100.0
+            (f64::from(success_count) / f64::from(total_requests)) * 100.0
         } else {
             0.0
         };
@@ -417,7 +417,7 @@ pub async fn list_user_service_keys(
         // 计算平均响应时间
         let total_response_time: i64 = tracings.iter().filter_map(|t| t.duration_ms).sum();
         let avg_response_time = if success_count > 0 {
-            total_response_time / success_count as i64
+            total_response_time / i64::from(success_count)
         } else {
             0
         };
@@ -454,8 +454,7 @@ pub async fn list_user_service_keys(
 
         let provider_name = provider_type
             .as_ref()
-            .map(|pt| pt.display_name.clone())
-            .unwrap_or("Unknown".to_string());
+            .map_or("Unknown".to_string(), |pt| pt.display_name.clone());
 
         // API Key脱敏处理
         /* let masked_api_key = if api.api_key.len() > 8 {
@@ -470,7 +469,7 @@ pub async fn list_user_service_keys(
 
         let response_api = UserServiceKeyResponse {
             id: api.id,
-            name: api.name.unwrap_or("".to_string()),
+            name: api.name.unwrap_or(String::new()),
             description: api.description,
             provider: provider_name,
             provider_type_id: api.provider_type_id,
@@ -496,10 +495,10 @@ pub async fn list_user_service_keys(
     }
 
     let pagination = response::Pagination {
-        page: page as u64,
-        limit: limit as u64,
+        page: u64::from(page),
+        limit: u64::from(limit),
         total: total as u64,
-        pages: ((total as f64) / (limit as f64)).ceil() as u64,
+        pages: ((total as f64) / f64::from(limit)).ceil() as u64,
     };
 
     let data = json!({
@@ -545,7 +544,7 @@ pub async fn create_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "query_provider_type_fail",
-                &format!("Failed to query provider type: {}", err)
+                &format!("Failed to query provider type: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -570,7 +569,7 @@ pub async fn create_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "query_provider_keys_fail",
-                &format!("Failed to query provider keys: {}", err)
+                &format!("Failed to query provider keys: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -589,7 +588,7 @@ pub async fn create_user_service_key(
     }
 
     // 生成唯一的API密钥
-    let api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace("-", ""));
+    let api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace('-', ""));
 
     // 解析过期时间
     let expires_at = if let Some(expires_str) = &request.expires_at {
@@ -620,7 +619,7 @@ pub async fn create_user_service_key(
                     LogStage::Internal,
                     LogComponent::Database,
                     "serialize_ids_fail",
-                    &format!("Failed to serialize user_provider_keys_ids: {}", e)
+                    &format!("Failed to serialize user_provider_keys_ids: {e}")
                 );
                 e
             })
@@ -648,7 +647,7 @@ pub async fn create_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "insert_service_api_fail",
-                &format!("Failed to insert user service API: {}", e)
+                &format!("Failed to insert user service API: {e}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -710,7 +709,7 @@ pub async fn get_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -736,7 +735,7 @@ pub async fn get_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "query_provider_type_fail",
-                &format!("Failed to fetch provider type: {}", err)
+                &format!("Failed to fetch provider type: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -759,15 +758,14 @@ pub async fn get_user_service_key(
 
     let response = UserServiceKeyDetailResponse {
         id: api.id,
-        name: api.name.unwrap_or("".to_string()),
+        name: api.name.unwrap_or(String::new()),
         description: api.description,
         provider_type_id: api.provider_type_id,
         provider: provider_type.display_name,
         api_key: api.api_key,
         user_provider_keys_ids: serde_json::from_value::<Vec<i32>>(
             api.user_provider_keys_ids.clone(),
-        )
-        .map_or_else(|_| vec![], |ids| ids),
+        ).unwrap_or_else(|_| vec![]),
         scheduling_strategy: api.scheduling_strategy,
         retry_count: api.retry_count,
         timeout_seconds: api.timeout_seconds,
@@ -824,7 +822,7 @@ pub async fn update_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -909,7 +907,7 @@ pub async fn update_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_service_api_fail",
-                &format!("Failed to update user service API: {}", err)
+                &format!("Failed to update user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -965,7 +963,7 @@ pub async fn delete_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -984,7 +982,7 @@ pub async fn delete_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "delete_service_api_fail",
-                &format!("Failed to delete user service API: {}", err)
+                &format!("Failed to delete user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1039,7 +1037,7 @@ pub async fn get_user_service_key_usage(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1115,7 +1113,7 @@ pub async fn get_user_service_key_usage(
                 LogStage::Db,
                 LogComponent::Tracing,
                 "fetch_tracings_fail",
-                &format!("Failed to fetch proxy tracings: {}", err)
+                &format!("Failed to fetch proxy tracings: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1230,7 +1228,7 @@ pub async fn regenerate_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1241,7 +1239,7 @@ pub async fn regenerate_user_service_key(
     };
 
     // 生成新的API Key
-    let new_api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace("-", ""));
+    let new_api_key = format!("sk-usr-{}", Uuid::new_v4().to_string().replace('-', ""));
 
     // 更新API Key
     let update_model = user_service_apis::ActiveModel {
@@ -1259,7 +1257,7 @@ pub async fn regenerate_user_service_key(
                 LogStage::Db,
                 LogComponent::Database,
                 "regenerate_key_fail",
-                &format!("Failed to regenerate API key: {}", err)
+                &format!("Failed to regenerate API key: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1315,7 +1313,7 @@ pub async fn update_user_service_key_status(
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_service_apis_fail",
-                &format!("Failed to fetch user service API: {}", err)
+                &format!("Failed to fetch user service API: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -1341,7 +1339,7 @@ pub async fn update_user_service_key_status(
                 LogStage::Db,
                 LogComponent::Database,
                 "update_key_status_fail",
-                &format!("Failed to update API key status: {}", err)
+                &format!("Failed to update API key status: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,

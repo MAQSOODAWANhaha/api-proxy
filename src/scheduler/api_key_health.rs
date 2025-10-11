@@ -147,6 +147,7 @@ pub struct ApiKeyHealthChecker {
 
 impl ApiKeyHealthChecker {
     /// 创建新的API密钥健康检查器
+    #[must_use] 
     pub fn new(db: Arc<DatabaseConnection>, config: Option<ApiKeyHealthConfig>) -> Self {
         let client = Client::builder()
             .timeout(
@@ -332,10 +333,10 @@ impl ApiKeyHealthChecker {
             health_check_path.to_string()
         } else if provider_info.name == "gemini" || provider_info.name == "custom_gemini" {
             // Gemini特殊处理：在URL中包含API key
-            format!("{}{}?key={}", base_url, health_check_path, api_key)
+            format!("{base_url}{health_check_path}?key={api_key}")
         } else {
             // 标准拼接
-            format!("{}{}", base_url, health_check_path)
+            format!("{base_url}{health_check_path}")
         };
 
         ldebug!(
@@ -381,7 +382,7 @@ impl ApiKeyHealthChecker {
             request = request.header("X-goog-api-key", api_key);
         } else {
             // 其他服务商使用Authorization Bearer头部
-            request = request.header("Authorization", format!("Bearer {}", api_key));
+            request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
         // 添加User-Agent
@@ -553,7 +554,9 @@ impl ApiKeyHealthChecker {
         };
 
         // 准备健康状态详情
-        let health_status_detail = if !status.is_healthy {
+        let health_status_detail = if status.is_healthy {
+            None
+        } else {
             Some(
                 serde_json::json!({
                     "error_message": status.last_error,
@@ -566,8 +569,6 @@ impl ApiKeyHealthChecker {
                 })
                 .to_string(),
             )
-        } else {
-            None
         };
 
         // 确定429限流重置时间
@@ -592,10 +593,10 @@ impl ApiKeyHealthChecker {
         };
 
         // 最后错误时间
-        let last_error_time = if !status.is_healthy {
-            Some(chrono::Utc::now().naive_utc())
-        } else {
+        let last_error_time = if status.is_healthy {
             None
+        } else {
+            Some(chrono::Utc::now().naive_utc())
         };
 
         // 更新数据库
@@ -604,7 +605,7 @@ impl ApiKeyHealthChecker {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(&*self.db)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {}", key_id))?
+                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {key_id}"))?
                 .into();
 
         // 更新健康状态字段
@@ -630,27 +631,22 @@ impl ApiKeyHealthChecker {
         Ok(())
     }
 
-    /// 从错误消息中解析resets_in_seconds
+    /// `从错误消息中解析resets_in_seconds`
     fn parse_resets_in_seconds_from_error(&self, error_msg: &str) -> Option<i64> {
         // 尝试从OpenAI 429错误中解析resets_in_seconds
-        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(error_msg) {
-            if let Some(error_obj) = json_value.get("error") {
-                if let Some(resets_in_seconds) = error_obj.get("resets_in_seconds") {
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(error_msg)
+            && let Some(error_obj) = json_value.get("error")
+                && let Some(resets_in_seconds) = error_obj.get("resets_in_seconds") {
                     return resets_in_seconds.as_i64();
                 }
-            }
-        }
 
         // 尝试从文本中提取数字
-        if let Some(seconds_str) = error_msg.split("resets_in_seconds").nth(1) {
-            if let Some(start) = seconds_str.find(|c: char| c.is_ascii_digit()) {
-                if let Some(end) = seconds_str[start..].find(|c: char| !c.is_ascii_digit()) {
-                    if let Ok(seconds) = seconds_str[start..start + end].parse::<i64>() {
+        if let Some(seconds_str) = error_msg.split("resets_in_seconds").nth(1)
+            && let Some(start) = seconds_str.find(|c: char| c.is_ascii_digit())
+                && let Some(end) = seconds_str[start..].find(|c: char| !c.is_ascii_digit())
+                    && let Ok(seconds) = seconds_str[start..start + end].parse::<i64>() {
                         return Some(seconds);
                     }
-                }
-            }
-        }
 
         None
     }
@@ -719,7 +715,7 @@ impl ApiKeyHealthChecker {
             status.is_healthy = false;
             status.consecutive_failures += 1;
             status.consecutive_successes = 0;
-            status.last_error = Some(format!("Manually marked unhealthy: {}", reason));
+            status.last_error = Some(format!("Manually marked unhealthy: {reason}"));
 
             // 同步到数据库
             self.mark_key_unhealthy_in_database(key_id, &reason).await?;
@@ -737,7 +733,7 @@ impl ApiKeyHealthChecker {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(&*self.db)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {}", key_id))?
+                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {key_id}"))?
                 .into();
 
         // 更新健康状态字段
@@ -797,24 +793,23 @@ impl ApiKeyHealthChecker {
             status.is_healthy = key.health_status == "healthy";
 
             // 如果数据库中有健康状态详情，解析它
-            if let Some(ref detail) = key.health_status_detail {
-                if let Ok(detail_json) = serde_json::from_str::<serde_json::Value>(detail) {
+            if let Some(ref detail) = key.health_status_detail
+                && let Ok(detail_json) = serde_json::from_str::<serde_json::Value>(detail) {
                     if let Some(error_msg) =
                         detail_json.get("error_message").and_then(|v| v.as_str())
                     {
                         status.last_error = Some(error_msg.to_string());
                     }
-                    if let Some(score) = detail_json.get("health_score").and_then(|v| v.as_f64()) {
+                    if let Some(score) = detail_json.get("health_score").and_then(sea_orm::JsonValue::as_f64) {
                         status.health_score = score as f32;
                     }
                     if let Some(failures) = detail_json
                         .get("consecutive_failures")
-                        .and_then(|v| v.as_u64())
+                        .and_then(sea_orm::JsonValue::as_u64)
                     {
                         status.consecutive_failures = failures as u32;
                     }
                 }
-            }
 
             ldebug!(
                 "system",
@@ -899,6 +894,7 @@ impl ApiKeyHealthChecker {
 
 impl ApiKeyHealth {
     /// 检查是否应该进行下次检查
+    #[must_use] 
     pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
         if let Some(last_check) = self.last_check {
             let interval = if self.is_healthy {

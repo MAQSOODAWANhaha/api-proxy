@@ -40,7 +40,7 @@
 //! ### 4. 策略 (Strategy) - `provider_strategy/`
 //!
 //! - **`ProviderStrategy` Trait**: 定义了服务商特有的行为接口（如 `modify_request`, `build_auth_headers`）。
-//! - **具体实现 (e.g., `GeminiStrategy`, `OpenAIStrategy`)**: 封装了针对特定服务商（如Google Gemini, OpenAI）
+//! - **具体实现 (e.g., `GeminiStrategy`, `OpenAIStrategy`)**: 封装了针对特定服务商（如Google Gemini, `OpenAI`）
 //!   的定制化逻辑，例如请求体注入、特殊错误处理等。这使得核心代理逻辑保持通用，易于扩展以支持新的AI服务。
 //!
 //! ## 数据流

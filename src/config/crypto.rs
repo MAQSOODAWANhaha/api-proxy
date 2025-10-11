@@ -27,6 +27,7 @@ pub struct ConfigCrypto {
 
 impl ConfigCrypto {
     /// 创建新的配置加密器
+    #[must_use] 
     pub fn new(key: &[u8; 32]) -> Self {
         let key = Key::<Aes256Gcm>::from_slice(key);
         let cipher = Aes256Gcm::new(key);
@@ -67,13 +68,13 @@ impl ConfigCrypto {
             .map_err(|e| {
                 crate::error::ProxyError::config_with_source(
                     "配置加密失败",
-                    anyhow::anyhow!("AES-GCM encryption failed: {}", e),
+                    anyhow::anyhow!("AES-GCM encryption failed: {e}"),
                 )
             })?;
 
         Ok(EncryptedValue {
             data: general_purpose::STANDARD.encode(&ciphertext),
-            nonce: general_purpose::STANDARD.encode(&nonce),
+            nonce: general_purpose::STANDARD.encode(nonce),
         })
     }
 
@@ -99,7 +100,7 @@ impl ConfigCrypto {
             .map_err(|e| {
                 crate::error::ProxyError::config_with_source(
                     "配置解密失败",
-                    anyhow::anyhow!("AES-GCM decryption failed: {}", e),
+                    anyhow::anyhow!("AES-GCM decryption failed: {e}"),
                 )
             })?;
 
@@ -109,6 +110,7 @@ impl ConfigCrypto {
     }
 
     /// 生成新的加密密钥
+    #[must_use] 
     pub fn generate_key() -> String {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
@@ -125,6 +127,7 @@ pub struct SensitiveFields {
 
 impl SensitiveFields {
     /// 创建新的敏感字段配置
+    #[must_use] 
     pub fn new() -> Self {
         let mut fields = HashMap::new();
 
@@ -139,6 +142,7 @@ impl SensitiveFields {
     }
 
     /// 检查字段是否敏感
+    #[must_use] 
     pub fn is_sensitive(&self, field_path: &str) -> bool {
         // 直接匹配
         if self.fields.contains_key(field_path) {

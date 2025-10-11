@@ -75,7 +75,7 @@ pub struct AppState {
     pub provider_config_manager: Arc<ProviderConfigManager>,
     /// API密钥健康检查器
     pub api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
-    /// OAuth客户端
+    /// `OAuth客户端`
     pub oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
     /// 智能API密钥提供者
     pub smart_api_key_provider:
@@ -136,7 +136,7 @@ impl ManagementServer {
     /// 创建路由器
     fn create_router(state: AppState, config: &ManagementConfig) -> Result<Router> {
         // 使用统一的路由配置，现在认证中间件已在 routes.rs 中应用
-        let api_routes = super::routes::create_routes(state.clone());
+        let api_routes = super::routes::create_routes(state);
 
         // 静态文件服务配置
         let static_dir = std::path::Path::new("/app/static");
@@ -189,7 +189,7 @@ impl ManagementServer {
                         LogStage::Startup,
                         LogComponent::ServerSetup,
                         "ip_filter_config_fail",
-                        &format!("Failed to create IP filter config: {}, using default", e)
+                        &format!("Failed to create IP filter config: {e}, using default")
                     );
                     IpFilterConfig {
                         allowed_ips: vec![],
@@ -240,8 +240,7 @@ impl ManagementServer {
                             LogComponent::ServerSetup,
                             "cors_config_fail",
                             &format!(
-                                "Invalid CORS origin configuration: {}, falling back to allow any",
-                                e
+                                "Invalid CORS origin configuration: {e}, falling back to allow any"
                             )
                         );
                         cors_layer = cors_layer.allow_origin(Any);
@@ -273,7 +272,7 @@ impl ManagementServer {
             LogStage::Startup,
             LogComponent::ServerSetup,
             "server_start",
-            &format!("Starting management server on {}", addr)
+            &format!("Starting management server on {addr}")
         );
 
         let listener = TcpListener::bind(&addr).await?;
@@ -284,12 +283,13 @@ impl ManagementServer {
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("Management server error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Management server error: {e}"))?;
 
         Ok(())
     }
 
     /// 获取绑定地址
+    #[must_use] 
     pub fn bind_address(&self) -> SocketAddr {
         SocketAddr::new(self.config.bind_address.parse().unwrap(), self.config.port)
     }

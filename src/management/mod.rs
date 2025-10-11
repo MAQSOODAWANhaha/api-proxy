@@ -1,6 +1,6 @@
 //! # 管理API模块
 //!
-//! 提供RESTful API接口用于系统管理和监控
+//! `提供RESTful` API接口用于系统管理和监控
 
 pub mod handlers;
 pub mod middleware;

@@ -57,7 +57,7 @@ pub enum ProxyError {
     #[error("Gemini Code Assist API错误: {message}")]
     GeminiCodeAssistError { message: String },
 
-    /// Gemini项目ID获取错误
+    /// `Gemini项目ID获取错误`
     #[error("Gemini项目ID获取错误: {message}")]
     GeminiProjectIdError { message: String },
 
@@ -271,6 +271,7 @@ pub enum ProxyError {
 impl ProxyError {
     /// 将错误标准化为 (HTTP 状态码, 标准错误码, 人类可读消息)
     /// 可用于管理端(Axum)与代理端(Pingora)统一输出
+    #[must_use] 
     pub fn as_http_parts(&self) -> (StatusCode, &'static str, String) {
         let (status, code) = self.to_http_response_parts();
         let message = self.to_string();
@@ -291,108 +292,108 @@ impl ProxyError {
     }
 
     /// 直接转换为 Pingora 错误
+    #[must_use] 
     pub fn to_pingora_error(&self) -> pingora_core::Error {
         let (status, body) = self.to_http_status_and_body();
         *pingora_core::Error::explain(pingora_core::ErrorType::HTTPStatus(status.as_u16()), body)
     }
     /// 直接生成 (HTTP 状态码, JSON 字符串) 形式的响应体，便于快速返回
     /// JSON 结构: {"error": <message>, "code": <code>, [extras...]}
+    #[must_use] 
     pub fn to_http_status_and_body(&self) -> (StatusCode, String) {
         let (status, code) = self.to_http_response_parts();
 
         // 附加可选字段（如超时配置）
         match self {
-            ProxyError::ConnectionTimeout {
+            Self::ConnectionTimeout {
                 timeout_seconds, ..
             } => (
                 status,
                 format!(
-                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
-                    self, code, timeout_seconds
+                    "{{\"error\":\"{self}\",\"code\":\"{code}\",\"timeout_configured\":{timeout_seconds}}}"
                 ),
             ),
-            ProxyError::ReadTimeout {
+            Self::ReadTimeout {
                 timeout_seconds, ..
             } => (
                 status,
                 format!(
-                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
-                    self, code, timeout_seconds
+                    "{{\"error\":\"{self}\",\"code\":\"{code}\",\"timeout_configured\":{timeout_seconds}}}"
                 ),
             ),
-            ProxyError::WriteTimeout {
+            Self::WriteTimeout {
                 timeout_seconds, ..
             } => (
                 status,
                 format!(
-                    "{{\"error\":\"{}\",\"code\":\"{}\",\"timeout_configured\":{}}}",
-                    self, code, timeout_seconds
+                    "{{\"error\":\"{self}\",\"code\":\"{code}\",\"timeout_configured\":{timeout_seconds}}}"
                 ),
             ),
             _ => (
                 status,
-                format!("{{\"error\":\"{}\",\"code\":\"{}\"}}", self, code),
+                format!("{{\"error\":\"{self}\",\"code\":\"{code}\"}}"),
             ),
         }
     }
 
     /// 将错误转换为HTTP状态码和错误代码
-    pub fn to_http_response_parts(&self) -> (StatusCode, &'static str) {
+    #[must_use] 
+    pub const fn to_http_response_parts(&self) -> (StatusCode, &'static str) {
         match self {
-            ProxyError::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
-            ProxyError::Database { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
-            ProxyError::Network { .. } => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR"),
+            Self::Config { .. } => (StatusCode::BAD_REQUEST, "CONFIG_ERROR"),
+            Self::Database { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
+            Self::Network { .. } => (StatusCode::BAD_GATEWAY, "NETWORK_ERROR"),
 
-            ProxyError::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
-            ProxyError::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
-            ProxyError::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
-            ProxyError::Internal { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
-            ProxyError::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
-            ProxyError::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
-            ProxyError::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
-            ProxyError::ServerInit { .. } => {
+            Self::AiProvider { .. } => (StatusCode::BAD_GATEWAY, "AI_PROVIDER_ERROR"),
+            Self::Tls { .. } => (StatusCode::BAD_REQUEST, "TLS_ERROR"),
+            Self::Business { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
+            Self::Internal { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+            Self::Io { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR"),
+            Self::Serialization { .. } => (StatusCode::BAD_REQUEST, "SERIALIZATION_ERROR"),
+            Self::Cache { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
+            Self::ServerInit { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_INIT_ERROR")
             }
-            ProxyError::ServerStart { .. } => {
+            Self::ServerStart { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "SERVER_START_ERROR")
             }
-            ProxyError::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
-            ProxyError::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
-            ProxyError::UpstreamNotAvailable { .. } => {
+            Self::Authentication { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+            Self::UpstreamNotFound { .. } => (StatusCode::NOT_FOUND, "UPSTREAM_NOT_FOUND"),
+            Self::UpstreamNotAvailable { .. } => {
                 (StatusCode::SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE")
             }
-            ProxyError::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT"),
-            ProxyError::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
-            ProxyError::ConnectionTimeout { .. } => {
+            Self::RateLimit { .. } => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT"),
+            Self::BadGateway { .. } => (StatusCode::BAD_GATEWAY, "BAD_GATEWAY"),
+            Self::ConnectionTimeout { .. } => {
                 (StatusCode::GATEWAY_TIMEOUT, "CONNECTION_TIMEOUT")
             }
-            ProxyError::ReadTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "READ_TIMEOUT"),
-            ProxyError::WriteTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "WRITE_TIMEOUT"),
-            ProxyError::LoadBalancer { .. } => {
+            Self::ReadTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "READ_TIMEOUT"),
+            Self::WriteTimeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "WRITE_TIMEOUT"),
+            Self::LoadBalancer { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "LOAD_BALANCER_ERROR")
             }
-            ProxyError::HealthCheck { .. } => {
+            Self::HealthCheck { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "HEALTH_CHECK_ERROR")
             }
-            ProxyError::Statistics { .. } => {
+            Self::Statistics { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "STATISTICS_ERROR")
             }
-            ProxyError::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
-            ProxyError::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
-            ProxyError::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
-            ProxyError::ManagementValidation { .. } => {
+            Self::Tracing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "TRACING_ERROR"),
+            Self::ManagementAuth { .. } => (StatusCode::UNAUTHORIZED, "AUTH_ERROR"),
+            Self::ManagementPermission { .. } => (StatusCode::FORBIDDEN, "PERMISSION_ERROR"),
+            Self::ManagementValidation { .. } => {
                 (StatusCode::BAD_REQUEST, "VALIDATION_ERROR")
             }
-            ProxyError::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
-            ProxyError::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
-            ProxyError::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
-            ProxyError::ManagementRateLimit { .. } => {
+            Self::ManagementBusiness { .. } => (StatusCode::BAD_REQUEST, "BUSINESS_ERROR"),
+            Self::ManagementNotFound { .. } => (StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND"),
+            Self::ManagementConflict { .. } => (StatusCode::CONFLICT, "RESOURCE_CONFLICT"),
+            Self::ManagementRateLimit { .. } => {
                 (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED")
             }
-            ProxyError::GeminiCodeAssistError { .. } => {
+            Self::GeminiCodeAssistError { .. } => {
                 (StatusCode::BAD_GATEWAY, "GEMINI_CODE_ASSIST_ERROR")
             }
-            ProxyError::GeminiProjectIdError { .. } => {
+            Self::GeminiProjectIdError { .. } => {
                 (StatusCode::BAD_GATEWAY, "GEMINI_PROJECT_ID_ERROR")
             }
         }
@@ -947,7 +948,7 @@ impl ProxyError {
         }
     }
 
-    /// 创建Gemini项目ID获取错误
+    /// `创建Gemini项目ID获取错误`
     pub fn gemini_project_id<T: Into<String>>(message: T) -> Self {
         Self::GeminiProjectIdError {
             message: message.into(),
@@ -1025,7 +1026,7 @@ impl From<pingora_core::Error> for ProxyError {
 impl From<crate::auth::header_parser::AuthParseError> for ProxyError {
     fn from(err: crate::auth::header_parser::AuthParseError) -> Self {
         Self::Authentication {
-            message: format!("认证头解析失败: {}", err),
+            message: format!("认证头解析失败: {err}"),
             source: Some(anyhow::Error::new(err)),
         }
     }

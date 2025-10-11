@@ -22,7 +22,8 @@ pub struct TracingService {
 
 impl TracingService {
     /// 创建新的追踪服务
-    pub fn new(tracer: Option<Arc<ImmediateProxyTracer>>) -> Self {
+    #[must_use] 
+    pub const fn new(tracer: Option<Arc<ImmediateProxyTracer>>) -> Self {
         Self { tracer }
     }
 
@@ -292,7 +293,8 @@ impl TracingService {
     }
 
     /// 检查是否启用了追踪
-    pub fn is_tracing_enabled(&self) -> bool {
+    #[must_use] 
+    pub const fn is_tracing_enabled(&self) -> bool {
         self.tracer.is_some()
     }
 
@@ -362,34 +364,39 @@ impl TracingService {
 
 /// 追踪上下文助手
 ///
-/// 提供从ProxyContext中提取追踪所需信息的便捷方法
+/// `提供从ProxyContext中提取追踪所需信息的便捷方法`
 pub struct TracingContextHelper;
 
 impl TracingContextHelper {
-    /// 从ProxyContext提取用户服务API信息
+    /// `从ProxyContext提取用户服务API信息`
+    #[must_use] 
     pub fn extract_user_service_api_info(ctx: &ProxyContext) -> Option<(i32, Option<i32>)> {
         ctx.user_service_api
             .as_ref()
             .map(|api| (api.id, Some(api.user_id)))
     }
 
-    /// 从ProxyContext提取提供商信息
+    /// `从ProxyContext提取提供商信息`
+    #[must_use] 
     pub fn extract_provider_info(ctx: &ProxyContext) -> Option<i32> {
         ctx.provider_type.as_ref().map(|pt| pt.id)
     }
 
-    /// 从ProxyContext提取后端API密钥信息
+    /// `从ProxyContext提取后端API密钥信息`
+    #[must_use] 
     pub fn extract_backend_key_info(ctx: &ProxyContext) -> Option<i32> {
         ctx.selected_backend.as_ref().map(|backend| backend.id)
     }
 
-    /// 从ProxyContext提取模型信息
+    /// `从ProxyContext提取模型信息`
+    #[must_use] 
     pub fn extract_model_info(ctx: &ProxyContext) -> Option<String> {
         // 使用最新请求模型（统计阶段会同步更新）
         ctx.requested_model.clone()
     }
 
-    /// 从ProxyContext提取token信息
+    /// `从ProxyContext提取token信息`
+    #[must_use] 
     pub fn extract_token_info(ctx: &ProxyContext) -> (Option<u32>, Option<u32>, Option<u32>) {
         let usage = ctx.usage_final.as_ref();
         let prompt = usage.and_then(|u| u.prompt_tokens);
