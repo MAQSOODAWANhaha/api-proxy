@@ -48,137 +48,110 @@ impl TokenMapping {
     pub fn from_json(config: &Value) -> Result<Self> {
         let mapping_type = config
             .get("type")
-            .and_then(|v| v.as_str())
+            .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("Missing or invalid 'type' field"))?;
 
         match mapping_type {
-            "direct" => {
-                let path = config
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'path' field for direct mapping"))?;
-
-                // 解析可选的fallback
-                let fallback = if let Some(fallback_config) = config.get("fallback") {
-                    if fallback_config.is_null() {
-                        None
-                    } else {
-                        Some(Box::new(Self::from_json(fallback_config)?))
-                    }
-                } else {
-                    None
-                };
-
-                Ok(Self::Direct {
-                    path: path.to_string(),
-                    fallback,
-                })
-            }
-            "expression" => {
-                let formula = config
-                    .get("formula")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'formula' field for expression mapping"))?;
-
-                // 解析可选的fallback
-                let fallback = if let Some(fallback_config) = config.get("fallback") {
-                    if fallback_config.is_null() {
-                        None
-                    } else {
-                        Some(Box::new(Self::from_json(fallback_config)?))
-                    }
-                } else {
-                    None
-                };
-
-                Ok(Self::Expression {
-                    formula: formula.to_string(),
-                    fallback,
-                })
-            }
-            "default" => {
-                let value = config
-                    .get("value")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Missing 'value' field for default mapping"))?;
-
-                // 解析可选的fallback
-                let fallback = if let Some(fallback_config) = config.get("fallback") {
-                    if fallback_config.is_null() {
-                        None
-                    } else {
-                        Some(Box::new(Self::from_json(fallback_config)?))
-                    }
-                } else {
-                    None
-                };
-
-                Ok(Self::Default { value, fallback })
-            }
-            "conditional" => {
-                let condition = config
-                    .get("condition")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'condition' field for conditional mapping"))?;
-                let true_value = config
-                    .get("true_value")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'true_value' field for conditional mapping"))?;
-                let false_value = config.get("false_value").cloned().ok_or_else(|| {
-                    anyhow!("Missing 'false_value' field for conditional mapping")
-                })?;
-
-                // 解析可选的fallback
-                let fallback = if let Some(fallback_config) = config.get("fallback") {
-                    if fallback_config.is_null() {
-                        None
-                    } else {
-                        Some(Box::new(Self::from_json(fallback_config)?))
-                    }
-                } else {
-                    None
-                };
-
-                Ok(Self::Conditional {
-                    condition: condition.to_string(),
-                    true_value: true_value.to_string(),
-                    false_value,
-                    fallback,
-                })
-            }
-            "fallback" => {
-                let paths = config
-                    .get("paths")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| {
-                        anyhow!("Missing or invalid 'paths' field for fallback mapping")
-                    })?;
-
-                let mut path_strings = Vec::new();
-                for path in paths {
-                    if let Some(path_str) = path.as_str() {
-                        path_strings.push(path_str.to_string());
-                    }
-                }
-
-                // 解析可选的fallback
-                let fallback = if let Some(fallback_config) = config.get("fallback") {
-                    if fallback_config.is_null() {
-                        None
-                    } else {
-                        Some(Box::new(Self::from_json(fallback_config)?))
-                    }
-                } else {
-                    None
-                };
-
-                Ok(Self::Fallback {
-                    paths: path_strings,
-                    fallback,
-                })
-            }
+            "direct" => Self::parse_direct_mapping(config),
+            "expression" => Self::parse_expression_mapping(config),
+            "default" => Self::parse_default_mapping(config),
+            "conditional" => Self::parse_conditional_mapping(config),
+            "fallback" => Self::parse_fallback_mapping(config),
             _ => Err(anyhow!("Unknown mapping type: {mapping_type}")),
         }
+    }
+
+    fn parse_direct_mapping(config: &Value) -> Result<Self> {
+        let path = Self::require_string(config, "path", "Missing 'path' field for direct mapping")?;
+
+        Ok(Self::Direct {
+            path: path.to_string(),
+            fallback: Self::parse_optional_fallback(config)?,
+        })
+    }
+
+    fn parse_expression_mapping(config: &Value) -> Result<Self> {
+        let formula = Self::require_string(
+            config,
+            "formula",
+            "Missing 'formula' field for expression mapping",
+        )?;
+
+        Ok(Self::Expression {
+            formula: formula.to_string(),
+            fallback: Self::parse_optional_fallback(config)?,
+        })
+    }
+
+    fn parse_default_mapping(config: &Value) -> Result<Self> {
+        let value = config
+            .get("value")
+            .cloned()
+            .ok_or_else(|| anyhow!("Missing 'value' field for default mapping"))?;
+
+        Ok(Self::Default {
+            value,
+            fallback: Self::parse_optional_fallback(config)?,
+        })
+    }
+
+    fn parse_conditional_mapping(config: &Value) -> Result<Self> {
+        let condition = Self::require_string(
+            config,
+            "condition",
+            "Missing 'condition' field for conditional mapping",
+        )?;
+        let true_value = Self::require_string(
+            config,
+            "true_value",
+            "Missing 'true_value' field for conditional mapping",
+        )?;
+        let false_value = config
+            .get("false_value")
+            .cloned()
+            .ok_or_else(|| anyhow!("Missing 'false_value' field for conditional mapping"))?;
+
+        Ok(Self::Conditional {
+            condition: condition.to_string(),
+            true_value: true_value.to_string(),
+            false_value,
+            fallback: Self::parse_optional_fallback(config)?,
+        })
+    }
+
+    fn parse_fallback_mapping(config: &Value) -> Result<Self> {
+        let paths = config
+            .get("paths")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("Missing or invalid 'paths' field for fallback mapping"))?;
+
+        let mut collected_paths = Vec::new();
+        for path in paths {
+            if let Some(path_str) = path.as_str() {
+                collected_paths.push(path_str.to_string());
+            }
+        }
+
+        Ok(Self::Fallback {
+            paths: collected_paths,
+            fallback: Self::parse_optional_fallback(config)?,
+        })
+    }
+
+    fn parse_optional_fallback(config: &Value) -> Result<Option<Box<TokenMapping>>> {
+        match config.get("fallback") {
+            Some(fallback_config) if !fallback_config.is_null() => {
+                Ok(Some(Box::new(Self::from_json(fallback_config)?)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn require_string<'a>(config: &'a Value, field: &str, err: &str) -> Result<&'a str> {
+        config
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("{}", err))
     }
 }
 
@@ -274,19 +247,27 @@ impl TokenFieldExtractor {
                 Value::Number(n) => n
                     .as_u64()
                     .and_then(|v| u32::try_from(v).ok())
-                    .or_else(|| {
-                        n.as_f64().and_then(|f| {
-                            if f >= 0.0 && (f.fract().abs() < f64::EPSILON) {
-                                let rounded = f.round() as u64; // Allow truncation for integer extraction
-                                u32::try_from(rounded).ok()
-                            } else {
-                                None
-                            }
-                        })
-                    }),
+                    .or_else(|| n.as_f64().and_then(Self::float_to_u32)),
                 Value::String(s) => s.parse::<u32>().ok(),
                 _ => None,
             })
+    }
+
+    fn float_to_u32(value: f64) -> Option<u32> {
+        if !value.is_finite() {
+            return None;
+        }
+
+        let rounded = value.round();
+        if (rounded - value).abs() > f64::EPSILON {
+            return None;
+        }
+
+        if !(0.0..=f64::from(u32::MAX)).contains(&rounded) {
+            return None;
+        }
+
+        format!("{rounded:.0}").parse::<u32>().ok()
     }
 
     fn extract_by_mapping(&self, response: &Value, mapping: &TokenMapping) -> Option<Value> {

@@ -1,6 +1,7 @@
 //! # API密钥调度器类型定义
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::str::FromStr;
 
 /// 调度策略枚举
@@ -70,14 +71,13 @@ impl serde::Serialize for ApiKeyHealthStatus {
     }
 }
 
-impl ToString for ApiKeyHealthStatus {
-    fn to_string(&self) -> String {
+impl fmt::Display for ApiKeyHealthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Healthy => "healthy",
-            Self::RateLimited => "rate_limited",
-            Self::Unhealthy => "unhealthy",
+            Self::Healthy => write!(f, "healthy"),
+            Self::RateLimited => write!(f, "rate_limited"),
+            Self::Unhealthy => write!(f, "unhealthy"),
         }
-        .to_string()
     }
 }
 
@@ -100,18 +100,26 @@ impl Default for SchedulingStrategy {
     }
 }
 
+impl FromStr for SchedulingStrategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "round_robin" | "roundrobin" | "rr" => Ok(Self::RoundRobin),
+            "weighted" | "weight" | "w" => Ok(Self::Weighted),
+            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => {
+                Ok(Self::HealthBest)
+            }
+            _ => Err(format!("Unknown scheduling strategy: {s}")),
+        }
+    }
+}
+
 impl SchedulingStrategy {
     /// 从字符串解析调度策略
     #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
-            "weighted" | "weight" | "w" => Some(Self::Weighted),
-            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => {
-                Some(Self::HealthBest)
-            }
-            _ => None,
-        }
+    pub fn parse(s: &str) -> Option<Self> {
+        s.parse().ok()
     }
 
     /// 转换为字符串
@@ -132,18 +140,18 @@ mod tests {
     #[test]
     fn test_scheduling_strategy_parsing() {
         assert_eq!(
-            SchedulingStrategy::from_str("round_robin"),
+            SchedulingStrategy::parse("round_robin"),
             Some(SchedulingStrategy::RoundRobin)
         );
         assert_eq!(
-            SchedulingStrategy::from_str("weighted"),
+            SchedulingStrategy::parse("weighted"),
             Some(SchedulingStrategy::Weighted)
         );
         assert_eq!(
-            SchedulingStrategy::from_str("health_best"),
+            SchedulingStrategy::parse("health_best"),
             Some(SchedulingStrategy::HealthBest)
         );
-        assert_eq!(SchedulingStrategy::from_str("unknown"), None);
+        assert_eq!(SchedulingStrategy::parse("unknown"), None);
     }
 
     #[test]

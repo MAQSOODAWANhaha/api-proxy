@@ -403,8 +403,9 @@ pub async fn list_user_service_keys(
             .await
             .unwrap_or_default();
 
-        let success_count = i32::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(i32::MAX);
-        let failure_count = i32::try_from(tracings.len()).unwrap_or(i32::MAX) - success_count;
+        let success_count =
+            i32::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(0);
+        let failure_count = i32::try_from(tracings.len()).unwrap_or(0) - success_count;
         let total_requests = success_count + failure_count;
 
         // 计算成功率

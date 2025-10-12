@@ -12,7 +12,6 @@ use crate::{ldebug, lerror, linfo, lwarn};
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 /// API密钥池管理器
@@ -80,117 +79,20 @@ impl ApiKeyPoolManager {
             route_group = %context.route_group
         );
 
-        // 从service_api中解析user_provider_keys_ids JSON数组
-        let provider_key_ids: Vec<i32> = match &service_api.user_provider_keys_ids {
-            sea_orm::prelude::Json::Array(ids) => ids
-                .iter()
-                .filter_map(|id| id.as_i64().and_then(|i| i32::try_from(i).ok()))
-                .collect(),
-            _ => {
-                return Err(ProxyError::internal(
-                    "Invalid user_provider_keys_ids format",
-                ));
-            }
-        };
+        let provider_key_ids = Self::get_provider_key_ids(service_api, context)?;
+        let all_candidate_keys = self
+            .load_active_provider_keys(&provider_key_ids, context)
+            .await?;
+        let user_keys = Self::filter_valid_keys_with_logging(&all_candidate_keys, context)?;
+        let healthy_keys = self
+            .filter_healthy_keys_with_logging(&user_keys, service_api, context)
+            .await;
+        Self::log_key_limits(&user_keys);
 
-        if provider_key_ids.is_empty() {
-            return Err(ProxyError::internal(
-                "No provider keys configured in service API",
-            ));
-        }
-
-        ldebug!(
-            &context.request_id,
-            LogStage::Scheduling,
-            LogComponent::Scheduler,
-            "configured_keys",
-            "Found configured provider key IDs",
-            key_ids = ?provider_key_ids
-        );
-
-        // 查询指定的API密钥，并应用基础筛选条件
-        let all_candidate_keys = entity::user_provider_keys::Entity::find()
-            .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids))
-            .filter(entity::user_provider_keys::Column::IsActive.eq(true))
-            .order_by_asc(entity::user_provider_keys::Column::Id)
-            .all(&*self.db)
-            .await
-            .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;
-
-        ldebug!(
-            &context.request_id,
-            LogStage::Scheduling,
-            LogComponent::Scheduler,
-            "candidate_keys_count",
-            "Retrieved candidate keys from DB",
-            count = all_candidate_keys.len()
-        );
-
-        // 应用更智能的筛选逻辑，考虑认证状态和过期时间
-        let user_keys = self.filter_valid_keys(&all_candidate_keys);
-
-        if user_keys.is_empty() {
-            return Err(ProxyError::internal(
-                "No active provider keys found for configured IDs",
-            ));
-        }
-
-        ldebug!(
-            &context.request_id,
-            LogStage::Scheduling,
-            LogComponent::Scheduler,
-            "valid_keys_count",
-            "Keys remaining after initial validation filter",
-            count = user_keys.len()
-        );
-
-        // 过滤健康的密钥
-        let healthy_keys = self.filter_healthy_keys(&user_keys).await;
-
-        ldebug!(
-            &context.request_id,
-            LogStage::Scheduling,
-            LogComponent::Scheduler,
-            "healthy_keys_count",
-            "Keys remaining after health filter",
-            count = healthy_keys.len()
-        );
-
-        // 记录密钥限制信息用于调试
-        self.log_key_limits(&user_keys);
-
-        if healthy_keys.is_empty() {
-            // 如果没有健康的密钥，记录警告并使用所有密钥（降级模式）
-            lwarn!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::Scheduler,
-                "no_healthy_keys",
-                "No healthy API keys available, using all keys in degraded mode",
-                service_api_id = service_api.id,
-                total_keys = user_keys.len(),
-            );
-        } else if healthy_keys.len() != user_keys.len() {
-            ldebug!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::Scheduler,
-                "unhealthy_keys_filtered",
-                &format!(
-                    "Filtered out {} unhealthy API keys",
-                    user_keys.len() - healthy_keys.len()
-                ),
-                service_api_id = service_api.id,
-                total_keys = user_keys.len(),
-                healthy_keys = healthy_keys.len(),
-            );
-        }
-
-        // 选择要使用的密钥集合（优先使用健康的，降级时使用全部）
         let keys_to_use = if healthy_keys.is_empty() {
-            &user_keys
+            user_keys.as_slice()
         } else {
-            &healthy_keys
+            healthy_keys.as_slice()
         };
 
         linfo!(
@@ -202,17 +104,9 @@ impl ApiKeyPoolManager {
             count = keys_to_use.len()
         );
 
-        // 使用配置的调度策略
-        let scheduling_strategy = service_api
-            .scheduling_strategy
-            .as_deref()
-            .and_then(SchedulingStrategy::from_str)
-            .unwrap_or_default();
-
-        // 获取或创建选择器
+        let scheduling_strategy = Self::resolve_strategy(service_api);
         let selector = self.get_selector(scheduling_strategy).await;
 
-        // 执行密钥选择
         selector.select_key(keys_to_use, context).await
     }
 
@@ -373,11 +267,8 @@ impl ApiKeyPoolManager {
 
     /// 清理所有缓存
     pub async fn clear_cache(&self) {
-        let mut pools = self.key_pools.write().await;
-        pools.clear();
-
-        let mut selectors = self.selectors.write().await;
-        selectors.clear();
+        self.key_pools.write().await.clear();
+        self.selectors.write().await.clear();
     }
 
     /// 获取或创建API密钥选择器
@@ -401,167 +292,309 @@ impl ApiKeyPoolManager {
     }
 
     /// 过滤有效的API密钥 - 综合考虑认证状态、过期时间等条件
-    fn filter_valid_keys(
-        &self,
-        keys: &[user_provider_keys::Model],
-    ) -> Vec<user_provider_keys::Model> {
+    fn filter_valid_keys(keys: &[user_provider_keys::Model]) -> Vec<user_provider_keys::Model> {
         let now = chrono::Utc::now().naive_utc();
 
         keys.iter()
-            .filter(|key| {
-                // 1. 检查认证状态
-                if let Some(auth_status) = &key.auth_status {
-                    let status_enum = AuthStatus::from(auth_status.as_str());
-                    match status_enum {
-                        AuthStatus::Authorized => {} // 认证成功，继续检查其他条件
-                        AuthStatus::Pending => {
-                            ldebug!(
-                                "system",
-                                LogStage::Scheduling,
-                                LogComponent::Scheduler,
-                                "key_pending",
-                                "API key is pending authorization, skipping",
-                                key_id = key.id,
-                                key_name = %key.name,
-                            );
-                            return false;
-                        }
-                        AuthStatus::Expired => {
-                            ldebug!(
-                                "system",
-                                LogStage::Scheduling,
-                                LogComponent::Scheduler,
-                                "key_expired",
-                                "API key authorization has expired, skipping",
-                                key_id = key.id,
-                                key_name = %key.name,
-                            );
-                            return false;
-                        }
-                        AuthStatus::Error => {
-                            ldebug!(
-                                "system",
-                                LogStage::Scheduling,
-                                LogComponent::Scheduler,
-                                "key_auth_error",
-                                "API key has authorization error, skipping",
-                                key_id = key.id,
-                                key_name = %key.name,
-                            );
-                            return false;
-                        }
-                        AuthStatus::Revoked => {
-                            ldebug!(
-                                "system",
-                                LogStage::Scheduling,
-                                LogComponent::Scheduler,
-                                "key_revoked",
-                                "API key has been revoked, skipping",
-                                key_id = key.id,
-                                key_name = %key.name,
-                            );
-                            return false;
-                        }
-                    }
-                }
-
-                // 2. 检查过期时间
-                if let Some(expires_at) = key.expires_at
-                    && now >= expires_at
-                {
-                    ldebug!(
-                        "system",
-                        LogStage::Scheduling,
-                        LogComponent::Scheduler,
-                        "key_expired",
-                        "API key has expired, skipping",
-                        key_id = key.id,
-                        key_name = %key.name,
-                        expires_at = %expires_at,
-                    );
-                    return false;
-                }
-
-                // 3. 检查健康状态（使用统一的三状态枚举）
-                match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
-                    Ok(ApiKeyHealthStatus::Healthy) => {
-                        // 健康状态允许通过
-                        true
-                    }
-                    Ok(ApiKeyHealthStatus::RateLimited) => {
-                        // 限流状态：检查是否已经解除
-                        key.rate_limit_resets_at.map_or_else(
-                            || {
-                                // 没有重置时间，保守地认为不健康
-                                ldebug!(
-                                    "system",
-                                    LogStage::Scheduling,
-                                    LogComponent::Scheduler,
-                                    "key_rate_limited_no_reset",
-                                    "API key is rate limited without reset time, skipping",
-                                    key_id = key.id,
-                                    key_name = %key.name,
-                                    health_status = %key.health_status,
-                                );
-                                false
-                            },
-                            |resets_at| {
-                                let now = chrono::Utc::now().naive_utc();
-                                if now > resets_at {
-                                    // 限流已解除，允许通过
-                                    true
-                                } else {
-                                    ldebug!(
-                                        "system",
-                                        LogStage::Scheduling,
-                                        LogComponent::Scheduler,
-                                        "key_rate_limited",
-                                        "API key is still rate limited, skipping",
-                                        key_id = key.id,
-                                        key_name = %key.name,
-                                        health_status = %key.health_status,
-                                        rate_limit_resets_at = ?resets_at,
-                                    );
-                                    false
-                                }
-                            },
-                        )
-                    }
-                    Ok(ApiKeyHealthStatus::Unhealthy) => {
-                        ldebug!(
-                            "system",
-                            LogStage::Scheduling,
-                            LogComponent::Scheduler,
-                            "key_unhealthy",
-                            "API key is unhealthy, skipping",
-                            key_id = key.id,
-                            key_name = %key.name,
-                            health_status = %key.health_status,
-                        );
-                        false
-                    }
-                    Err(_) => {
-                        // 无法解析的状态都归类为不健康（包括原来的 unknown 和 error）
-                        ldebug!(
-                            "system",
-                            LogStage::Scheduling,
-                            LogComponent::Scheduler,
-                            "key_unknown_health",
-                            "Unknown health status, treating as unhealthy",
-                            key_id = key.id,
-                            key_name = %key.name,
-                            unknown_health = %key.health_status,
-                        );
-                        false
-                    }
-                }
-            })
+            .filter(|key| Self::is_key_valid(key, &now))
             .cloned()
             .collect()
     }
 
+    fn is_key_valid(key: &user_provider_keys::Model, now: &chrono::NaiveDateTime) -> bool {
+        Self::passes_auth_checks(key)
+            && Self::is_not_expired(key, now)
+            && Self::passes_health_checks(key, now)
+    }
+
+    fn passes_auth_checks(key: &user_provider_keys::Model) -> bool {
+        key.auth_status.as_deref().map_or(true, |auth_status| {
+            let status = AuthStatus::from(auth_status);
+            Self::auth_status_allows_usage(key, status)
+        })
+    }
+
+    fn auth_status_allows_usage(key: &user_provider_keys::Model, status: AuthStatus) -> bool {
+        match status {
+            AuthStatus::Authorized => true,
+            AuthStatus::Pending => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_pending",
+                    "API key is pending authorization, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                );
+                false
+            }
+            AuthStatus::Expired => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_expired",
+                    "API key authorization has expired, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                );
+                false
+            }
+            AuthStatus::Error => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_auth_error",
+                    "API key has authorization error, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                );
+                false
+            }
+            AuthStatus::Revoked => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_revoked",
+                    "API key has been revoked, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                );
+                false
+            }
+        }
+    }
+
+    fn is_not_expired(key: &user_provider_keys::Model, now: &chrono::NaiveDateTime) -> bool {
+        if let Some(expires_at) = key.expires_at.as_ref() {
+            if now >= expires_at {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_expired",
+                    "API key has expired, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                    expires_at = %expires_at,
+                );
+                return false;
+            }
+        }
+        true
+    }
+
+    fn passes_health_checks(key: &user_provider_keys::Model, now: &chrono::NaiveDateTime) -> bool {
+        match key.health_status.as_str().parse::<ApiKeyHealthStatus>() {
+            Ok(ApiKeyHealthStatus::Healthy) => true,
+            Ok(ApiKeyHealthStatus::RateLimited) => Self::is_rate_limit_recovered(key, now),
+            Ok(ApiKeyHealthStatus::Unhealthy) => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_unhealthy",
+                    "API key is unhealthy, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                    health_status = %key.health_status,
+                );
+                false
+            }
+            Err(_) => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_unknown_health",
+                    "Unknown health status, treating as unhealthy",
+                    key_id = key.id,
+                    key_name = %key.name,
+                    unknown_health = %key.health_status,
+                );
+                false
+            }
+        }
+    }
+
+    fn is_rate_limit_recovered(
+        key: &user_provider_keys::Model,
+        now: &chrono::NaiveDateTime,
+    ) -> bool {
+        match key.rate_limit_resets_at.as_ref() {
+            Some(resets_at) if now > resets_at => true,
+            Some(resets_at) => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_rate_limited",
+                    "API key is still rate limited, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                    health_status = %key.health_status,
+                    rate_limit_resets_at = ?resets_at,
+                );
+                false
+            }
+            None => {
+                ldebug!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "key_rate_limited_no_reset",
+                    "API key is rate limited without reset time, skipping",
+                    key_id = key.id,
+                    key_name = %key.name,
+                    health_status = %key.health_status,
+                );
+                false
+            }
+        }
+    }
+
+    async fn load_active_provider_keys(
+        &self,
+        provider_key_ids: &[i32],
+        context: &SelectionContext,
+    ) -> Result<Vec<user_provider_keys::Model>> {
+        let keys = entity::user_provider_keys::Entity::find()
+            .filter(entity::user_provider_keys::Column::Id.is_in(provider_key_ids.to_vec()))
+            .filter(entity::user_provider_keys::Column::IsActive.eq(true))
+            .order_by_asc(entity::user_provider_keys::Column::Id)
+            .all(&*self.db)
+            .await
+            .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "candidate_keys_count",
+            "Retrieved candidate keys from DB",
+            count = keys.len()
+        );
+
+        Ok(keys)
+    }
+
+    fn get_provider_key_ids(
+        service_api: &entity::user_service_apis::Model,
+        context: &SelectionContext,
+    ) -> Result<Vec<i32>> {
+        let ids = match &service_api.user_provider_keys_ids {
+            sea_orm::prelude::Json::Array(values) => values
+                .iter()
+                .filter_map(|id| id.as_i64().and_then(|i| i32::try_from(i).ok()))
+                .collect::<Vec<_>>(),
+            _ => {
+                return Err(ProxyError::internal(
+                    "Invalid user_provider_keys_ids format",
+                ));
+            }
+        };
+
+        if ids.is_empty() {
+            return Err(ProxyError::internal(
+                "No provider keys configured in service API",
+            ));
+        }
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "configured_keys",
+            "Found configured provider key IDs",
+            key_ids = ?ids
+        );
+
+        Ok(ids)
+    }
+
+    fn filter_valid_keys_with_logging(
+        candidate_keys: &[user_provider_keys::Model],
+        context: &SelectionContext,
+    ) -> Result<Vec<user_provider_keys::Model>> {
+        let filtered = Self::filter_valid_keys(candidate_keys);
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "valid_keys_count",
+            "Keys remaining after initial validation filter",
+            count = filtered.len()
+        );
+
+        if filtered.is_empty() {
+            Err(ProxyError::internal(
+                "No active provider keys found for configured IDs",
+            ))
+        } else {
+            Ok(filtered)
+        }
+    }
+
+    async fn filter_healthy_keys_with_logging(
+        &self,
+        user_keys: &[user_provider_keys::Model],
+        service_api: &entity::user_service_apis::Model,
+        context: &SelectionContext,
+    ) -> Vec<user_provider_keys::Model> {
+        let healthy_keys = self.filter_healthy_keys(user_keys).await;
+
+        ldebug!(
+            &context.request_id,
+            LogStage::Scheduling,
+            LogComponent::Scheduler,
+            "healthy_keys_count",
+            "Keys remaining after health filter",
+            count = healthy_keys.len()
+        );
+
+        if healthy_keys.is_empty() {
+            lwarn!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "no_healthy_keys",
+                "No healthy API keys available, using all keys in degraded mode",
+                service_api_id = service_api.id,
+                total_keys = user_keys.len(),
+            );
+        } else if healthy_keys.len() != user_keys.len() {
+            ldebug!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "unhealthy_keys_filtered",
+                &format!(
+                    "Filtered out {} unhealthy API keys",
+                    user_keys.len() - healthy_keys.len()
+                ),
+                service_api_id = service_api.id,
+                total_keys = user_keys.len(),
+                healthy_keys = healthy_keys.len(),
+            );
+        }
+
+        healthy_keys
+    }
+
+    fn resolve_strategy(service_api: &entity::user_service_apis::Model) -> SchedulingStrategy {
+        service_api
+            .scheduling_strategy
+            .as_deref()
+            .and_then(SchedulingStrategy::parse)
+            .unwrap_or_default()
+    }
+
     /// 记录密钥限制信息
-    fn log_key_limits(&self, keys: &[user_provider_keys::Model]) {
+    fn log_key_limits(keys: &[user_provider_keys::Model]) {
         for key in keys {
             ldebug!(
                 "system",
@@ -596,7 +629,7 @@ impl ApiKeyPoolManager {
 
                 // 然后检查本地的健康状态字段，考虑限流状态的自动恢复
                 let is_locally_healthy =
-                    match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
+                    match key.health_status.as_str().parse::<ApiKeyHealthStatus>() {
                         Ok(ApiKeyHealthStatus::Healthy) => true,
                         Ok(ApiKeyHealthStatus::RateLimited) => {
                             key.rate_limit_resets_at.is_some_and(|resets_at| {
