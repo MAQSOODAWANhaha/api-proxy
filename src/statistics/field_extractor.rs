@@ -277,7 +277,7 @@ impl TokenFieldExtractor {
                     .or_else(|| {
                         n.as_f64().and_then(|f| {
                             if f >= 0.0 && (f.fract().abs() < f64::EPSILON) {
-                                let rounded = f.round() as u64;
+                                let rounded = f.round() as u64; // Allow truncation for integer extraction
                                 u32::try_from(rounded).ok()
                             } else {
                                 None

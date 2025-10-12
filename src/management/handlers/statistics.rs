@@ -214,7 +214,9 @@ pub async fn get_today_dashboard_cards(
     // 使用 collect + len 避免与 SeaORM count 混淆
     let successes_today = today_traces.iter().filter(|t| t.is_success).count() as i64;
     let success_rate_today = if requests_today > 0 {
-        (successes_today as f64 / requests_today as f64) * 100.0
+        let successes_f64 = f64::from(u32::try_from(successes_today).unwrap_or(0));
+        let requests_f64 = f64::from(u32::try_from(requests_today).unwrap_or(1));
+        (successes_f64 / requests_f64) * 100.0
     } else {
         0.0
     };
@@ -235,7 +237,9 @@ pub async fn get_today_dashboard_cards(
     let requests_yesterday = yesterday_traces.len() as i64;
     let successes_yesterday = yesterday_traces.iter().filter(|t| t.is_success).count() as i64;
     let success_rate_yesterday = if requests_yesterday > 0 {
-        (successes_yesterday as f64 / requests_yesterday as f64) * 100.0
+        let successes_f64 = f64::from(u32::try_from(successes_yesterday).unwrap_or(0));
+        let requests_f64 = f64::from(u32::try_from(requests_yesterday).unwrap_or(1));
+        (successes_f64 / requests_f64) * 100.0
     } else {
         0.0
     };
@@ -346,7 +350,9 @@ pub async fn get_models_usage_rate(
     if model_vec.len() <= 6 {
         for (model, usage, cost, successful, failed) in model_vec {
             let success_rate = if usage > 0 {
-                (successful as f64 / usage as f64) * 100.0
+                let successful_f64 = f64::from(u32::try_from(successful).unwrap_or(0));
+                let usage_f64 = f64::from(u32::try_from(usage).unwrap_or(1));
+                (successful_f64 / usage_f64) * 100.0
             } else {
                 0.0
             };
@@ -363,7 +369,9 @@ pub async fn get_models_usage_rate(
         // 前5个模型
         for (model, usage, cost, successful, failed) in model_vec.iter().take(5) {
             let success_rate = if *usage > 0 {
-                (*successful as f64 / *usage as f64) * 100.0
+                let successful_f64 = f64::from(u32::try_from(*successful).unwrap_or(0));
+                let usage_f64 = f64::from(u32::try_from(*usage).unwrap_or(1));
+                (successful_f64 / usage_f64) * 100.0
             } else {
                 0.0
             };
@@ -398,7 +406,9 @@ pub async fn get_models_usage_rate(
             .map(|(_, _, _, _, failed)| failed)
             .sum();
         let other_success_rate = if other_usage > 0 {
-            (other_successful as f64 / other_usage as f64) * 100.0
+            let other_successful_f64 = f64::from(u32::try_from(other_successful).unwrap_or(0));
+            let other_usage_f64 = f64::from(u32::try_from(other_usage).unwrap_or(1));
+            (other_successful_f64 / other_usage_f64) * 100.0
         } else {
             0.0
         };
@@ -457,11 +467,9 @@ pub async fn get_models_statistics(
     let total_requests: i64 = traces
         .iter()
         .filter(|t| {
-            if let Some(model_name) = &t.model_used {
-                !model_name.trim().is_empty()
-            } else {
-                false
-            }
+            t.model_used
+                .as_ref()
+                .map_or(false, |model_name| !model_name.trim().is_empty())
         })
         .count() as i64;
 
@@ -485,7 +493,9 @@ pub async fn get_models_statistics(
         .into_iter()
         .map(|(model, (usage, cost))| {
             let percentage = if total_requests > 0 {
-                (usage as f64 / total_requests as f64) * 100.0
+                let usage_f64 = f64::from(u32::try_from(usage).unwrap_or(0));
+                let total_requests_f64 = f64::from(u32::try_from(total_requests).unwrap_or(1));
+                (usage_f64 / total_requests_f64) * 100.0
             } else {
                 0.0
             };
@@ -857,7 +867,9 @@ fn calculate_growth_rate(current: i64, previous: i64) -> String {
             "0%".to_string()
         }
     } else {
-        let rate = ((current - previous) as f64 / previous as f64) * 100.0;
+        let current_f64 = f64::from(u32::try_from(current).unwrap_or(0));
+        let previous_f64 = f64::from(u32::try_from(previous).unwrap_or(1));
+        let rate = ((current_f64 - previous_f64) / previous_f64) * 100.0;
         if rate > 0.0 {
             format!("+{rate:.1}%")
         } else {

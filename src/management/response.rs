@@ -22,7 +22,7 @@ pub struct Pagination {
 
 /// # 标准成功响应
 #[derive(Debug, Serialize)]
-pub struct SuccessResponse<T: Serialize> {
+pub struct SuccessResponse<T> {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
@@ -33,7 +33,7 @@ pub struct SuccessResponse<T: Serialize> {
 
 /// # 分页成功响应
 #[derive(Debug, Serialize)]
-pub struct PaginatedResponse<T: Serialize> {
+pub struct PaginatedResponse<T> {
     pub success: bool,
     pub data: Vec<T>,
     pub pagination: Pagination,

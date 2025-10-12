@@ -257,7 +257,19 @@ impl PricingCalculatorService {
         pricing_tiers: &[model_pricing_tiers::Model],
         request_id: &str,
     ) -> f64 {
-        let token_count_i32 = token_count as i32;
+        // 尝试将 u32 转换为 i32，如果失败说明 token 数量异常大
+        let token_count = i32::try_from(token_count).unwrap_or_else(|_| {
+            lerror!(
+                request_id,
+                LogStage::Internal,
+                LogComponent::Statistics,
+                "token_count_overflow",
+                "Token count exceeds i32::MAX, this is likely an error",
+                token_type = %token_type,
+                token_count = token_count,
+            );
+            return 0;
+        });
 
         // 筛选出对应token类型的阶梯定价
         let relevant_tiers: Vec<_> = pricing_tiers
@@ -286,7 +298,7 @@ impl PricingCalculatorService {
 
         for tier in &sorted_tiers {
             // 计算在此阶梯内使用的token数量
-            let tokens_in_tier = tier.calculate_tokens_in_tier(token_count_i32);
+            let tokens_in_tier = tier.calculate_tokens_in_tier(token_count);
             if tokens_in_tier > 0 {
                 let tier_cost = tier.calculate_cost(tokens_in_tier);
                 total_cost += tier_cost;

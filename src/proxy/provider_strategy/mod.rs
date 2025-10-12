@@ -147,27 +147,26 @@ pub fn make_strategy(
     name: &str,
     db: Option<Arc<DatabaseConnection>>,
 ) -> Option<Arc<dyn ProviderStrategy>> {
-    if let Some(provider_type) = ProviderType::from_str(name) {
-        match provider_type {
+    ProviderType::from_str(name).map_or_else(
+        || None,
+        |provider_type| match provider_type {
             ProviderType::Gemini => {
                 let mut strategy = GeminiStrategy::default();
                 strategy.set_db_connection(db);
-                Some(Arc::new(strategy))
+                Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
             ProviderType::OpenAI => {
                 let mut strategy = OpenAIStrategy::new();
                 strategy.set_db_connection(db);
-                Some(Arc::new(strategy))
+                Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
             ProviderType::Anthropic => {
                 let mut strategy = ClaudeStrategy::default();
                 strategy.set_db_connection(db);
-                Some(Arc::new(strategy))
+                Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
-        }
-    } else {
-        None
-    }
+        },
+    )
 }
 
 #[cfg(test)]

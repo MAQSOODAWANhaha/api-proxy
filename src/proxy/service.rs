@@ -132,13 +132,19 @@ impl ProxyHttp for ProxyService {
         if let (Some(user_api), Some(provider_type)) =
             (ctx.user_service_api.as_ref(), ctx.provider_type.as_ref())
         {
+            // 获取超时配置，确保为正数，默认120秒
             let timeout = user_api
                 .timeout_seconds
                 .or(provider_type.timeout_seconds)
-                .unwrap_or(30) as u64;
-            ctx.timeout_seconds = Some(timeout as i32);
-            session.set_read_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
-            session.set_write_timeout(Some(std::time::Duration::from_secs(timeout * 2)));
+                .unwrap_or(120)
+                .max(120); // 确保至少120秒，避免负数或0
+
+            ctx.timeout_seconds = Some(timeout);
+
+            // 设置读写超时为配置超时的2倍
+            let timeout_duration = std::time::Duration::from_secs(timeout as u64 * 2);
+            session.set_read_timeout(Some(timeout_duration));
+            session.set_write_timeout(Some(timeout_duration));
 
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
             {
@@ -429,7 +435,8 @@ impl ProxyHttp for ProxyService {
                         cache_create_tokens: usage.cache_create_tokens,
                         cache_read_tokens: usage.cache_read_tokens,
                     };
-                    (self.stats_service
+                    (self
+                        .stats_service
                         .calculate_cost_direct(model, provider.id, &pricing_usage, &ctx.request_id)
                         .await)
                         .unwrap_or_default()

@@ -54,20 +54,20 @@ impl ProviderStrategy for GeminiStrategy {
         let Some(backend) = &ctx.selected_backend else {
             return Ok(None);
         };
-        let mode = match backend.auth_type.as_str() {
-            "oauth" => {
-                if let Some(pid) = &backend.project_id {
-                    if pid.is_empty() {
-                        GeminiProxyMode::OAuthWithoutProject
-                    } else {
-                        GeminiProxyMode::OAuthWithProject(pid.clone())
-                    }
-                } else {
-                    GeminiProxyMode::OAuthWithoutProject
-                }
-            }
-            _ => GeminiProxyMode::ApiKey,
-        };
+        let mode =
+            match backend.auth_type.as_str() {
+                "oauth" => backend.project_id.as_ref().map_or(
+                    GeminiProxyMode::OAuthWithoutProject,
+                    |pid| {
+                        if pid.is_empty() {
+                            GeminiProxyMode::OAuthWithoutProject
+                        } else {
+                            GeminiProxyMode::OAuthWithProject(pid.clone())
+                        }
+                    },
+                ),
+                _ => GeminiProxyMode::ApiKey,
+            };
         Ok(Some(mode.upstream_host().to_string()))
     }
 
@@ -129,15 +129,13 @@ impl ProviderStrategy for GeminiStrategy {
 
         // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
         let modified = if ctx.will_modify_body {
-            if let Some(project_id) = &backend.project_id {
+            backend.project_id.as_ref().map_or(false, |project_id| {
                 if project_id.is_empty() {
                     false
                 } else {
                     inject_generatecontent_fields(json_value, project_id)
                 }
-            } else {
-                false
-            }
+            })
         } else {
             false
         };

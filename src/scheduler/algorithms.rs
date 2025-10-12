@@ -392,7 +392,19 @@ impl ApiKeySelector for WeightedApiKeySelector {
         let mut weighted_list: Vec<&user_provider_keys::Model> = Vec::new();
         for key in &active_keys {
             // 如果权重为None或无效，则默认为1
-            let weight = key.weight.unwrap_or(1).max(0) as usize;
+            let weight_i32 = key.weight.unwrap_or(1).max(0);
+            let weight = usize::try_from(weight_i32).unwrap_or_else(|_| {
+                lwarn!(
+                    &context.request_id,
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "weight_overflow",
+                    "Weight value overflow, using default weight 1",
+                    key_id = key.id,
+                    weight = weight_i32
+                );
+                1
+            });
             for _ in 0..weight {
                 weighted_list.push(key);
             }

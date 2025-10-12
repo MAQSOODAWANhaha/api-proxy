@@ -49,26 +49,29 @@ impl ProviderStrategy for ClaudeStrategy {
     }
 
     async fn select_upstream_host(&self, ctx: &ProxyContext) -> Result<Option<String>> {
-        if let Some(provider) = &ctx.provider_type {
-            linfo!(
-                &ctx.request_id,
-                LogStage::RequestModify,
-                LogComponent::ClaudeStrategy,
-                "using_provider_base_url",
-                "使用数据库配置的BaseUrl",
-                base_url = %provider.base_url
-            );
-            Ok(Some(provider.base_url.clone()))
-        } else {
-            lwarn!(
-                &ctx.request_id,
-                LogStage::RequestModify,
-                LogComponent::ClaudeStrategy,
-                "no_provider_config",
-                "未找到提供商配置，无法确定上游地址"
-            );
-            Ok(None)
-        }
+        ctx.provider_type.as_ref().map_or_else(
+            || {
+                lwarn!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::ClaudeStrategy,
+                    "no_provider_config",
+                    "未找到提供商配置，无法确定上游地址"
+                );
+                Ok(None)
+            },
+            |provider| {
+                linfo!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::ClaudeStrategy,
+                    "using_provider_base_url",
+                    "使用数据库配置的BaseUrl",
+                    base_url = %provider.base_url
+                );
+                Ok(Some(provider.base_url.clone()))
+            },
+        )
     }
 
     async fn modify_request(

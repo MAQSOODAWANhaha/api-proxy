@@ -2,6 +2,8 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
+#![allow(clippy::used_underscore_binding)]
+
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -221,7 +223,7 @@ pub async fn get_user_service_cards(
         .count(db)
         .await
     {
-        Ok(count) => count as i32,
+        Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
         Err(err) => {
             lerror!(
                 "system",
@@ -245,7 +247,7 @@ pub async fn get_user_service_cards(
         .count(db)
         .await
     {
-        Ok(count) => count as i32,
+        Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
         Err(err) => {
             lerror!(
                 "system",
@@ -268,6 +270,7 @@ pub async fn get_user_service_cards(
         .count(db)
         .await
     {
+        #[allow(clippy::cast_possible_wrap)]
         Ok(count) => count as i64,
         Err(err) => {
             lerror!(
@@ -400,8 +403,8 @@ pub async fn list_user_service_keys(
             .await
             .unwrap_or_default();
 
-        let success_count = tracings.iter().filter(|t| t.is_success).count() as i32;
-        let failure_count = tracings.len() as i32 - success_count;
+        let success_count = i32::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(i32::MAX);
+        let failure_count = i32::try_from(tracings.len()).unwrap_or(i32::MAX) - success_count;
         let total_requests = success_count + failure_count;
 
         // 计算成功率
@@ -494,8 +497,8 @@ pub async fn list_user_service_keys(
     let pagination = response::Pagination {
         page: u64::from(page),
         limit: u64::from(limit),
-        total: total as u64,
-        pages: ((total as f64) / f64::from(limit)).ceil() as u64,
+        total,
+        pages: ((f64::from(total.try_into().unwrap_or(u32::MAX))) / f64::from(limit)).ceil() as u64,
     };
 
     let data = json!({
@@ -1120,6 +1123,7 @@ pub async fn get_user_service_key_usage(
     let total_requests = tracings.len() as i64;
     let successful_requests = tracings.iter().filter(|t| t.is_success).count() as i64;
     let failed_requests = total_requests - successful_requests;
+    #[allow(clippy::cast_precision_loss)]
     let success_rate = if total_requests > 0 {
         (successful_requests as f64 / total_requests as f64) * 100.0
     } else {

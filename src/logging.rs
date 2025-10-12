@@ -836,7 +836,7 @@ pub fn log_proxy_failure_details(
         .response_details
         .content_encoding
         .as_deref()
-        .map_or(false, |encoding| encoding.contains("gzip"))
+        .is_some_and(|encoding| encoding.contains("gzip"))
     {
         let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
         let mut decompressed = Vec::new();

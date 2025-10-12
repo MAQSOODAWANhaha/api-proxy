@@ -84,7 +84,7 @@ impl ApiKeyPoolManager {
         let provider_key_ids: Vec<i32> = match &service_api.user_provider_keys_ids {
             sea_orm::prelude::Json::Array(ids) => ids
                 .iter()
-                .filter_map(|id| id.as_i64().map(|i| i as i32))
+                .filter_map(|id| id.as_i64().and_then(|i| i32::try_from(i).ok()))
                 .collect(),
             _ => {
                 return Err(ProxyError::internal(
@@ -490,39 +490,42 @@ impl ApiKeyPoolManager {
                     }
                     Ok(ApiKeyHealthStatus::RateLimited) => {
                         // 限流状态：检查是否已经解除
-                        if let Some(resets_at) = key.rate_limit_resets_at {
-                            let now = chrono::Utc::now().naive_utc();
-                            if now > resets_at {
-                                // 限流已解除，允许通过
-                                true
-                            } else {
+                        key.rate_limit_resets_at.map_or_else(
+                            || {
+                                // 没有重置时间，保守地认为不健康
                                 ldebug!(
                                     "system",
                                     LogStage::Scheduling,
                                     LogComponent::Scheduler,
-                                    "key_rate_limited",
-                                    "API key is still rate limited, skipping",
+                                    "key_rate_limited_no_reset",
+                                    "API key is rate limited without reset time, skipping",
                                     key_id = key.id,
                                     key_name = %key.name,
                                     health_status = %key.health_status,
-                                    rate_limit_resets_at = ?resets_at,
                                 );
                                 false
-                            }
-                        } else {
-                            // 没有重置时间，保守地认为不健康
-                            ldebug!(
-                                "system",
-                                LogStage::Scheduling,
-                                LogComponent::Scheduler,
-                                "key_rate_limited_no_reset",
-                                "API key is rate limited without reset time, skipping",
-                                key_id = key.id,
-                                key_name = %key.name,
-                                health_status = %key.health_status,
-                            );
-                            false
-                        }
+                            },
+                            |resets_at| {
+                                let now = chrono::Utc::now().naive_utc();
+                                if now > resets_at {
+                                    // 限流已解除，允许通过
+                                    true
+                                } else {
+                                    ldebug!(
+                                        "system",
+                                        LogStage::Scheduling,
+                                        LogComponent::Scheduler,
+                                        "key_rate_limited",
+                                        "API key is still rate limited, skipping",
+                                        key_id = key.id,
+                                        key_name = %key.name,
+                                        health_status = %key.health_status,
+                                        rate_limit_resets_at = ?resets_at,
+                                    );
+                                    false
+                                }
+                            },
+                        )
                     }
                     Ok(ApiKeyHealthStatus::Unhealthy) => {
                         ldebug!(
@@ -595,12 +598,12 @@ impl ApiKeyPoolManager {
                 let is_locally_healthy =
                     match ApiKeyHealthStatus::from_str(key.health_status.as_str()) {
                         Ok(ApiKeyHealthStatus::Healthy) => true,
-                        Ok(ApiKeyHealthStatus::RateLimited) => key
-                            .rate_limit_resets_at
-                            .map_or(false, |resets_at| {
+                        Ok(ApiKeyHealthStatus::RateLimited) => {
+                            key.rate_limit_resets_at.is_some_and(|resets_at| {
                                 let now = chrono::Utc::now().naive_utc();
                                 now > resets_at
-                            }),
+                            })
+                        }
                         Ok(ApiKeyHealthStatus::Unhealthy) | Err(_) => false,
                     };
 

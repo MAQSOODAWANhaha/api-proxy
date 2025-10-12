@@ -32,17 +32,13 @@ pub async fn auth(
         .get("Authorization")
         .and_then(|header| header.to_str().ok());
 
-    let auth_header = if let Some(header) = auth_header {
-        header
-    } else {
+    let Some(auth_header) = auth_header else {
         // 如果没有 Authorization 头，直接拒绝
         return Err(StatusCode::UNAUTHORIZED);
     };
 
     // 提取 Bearer Token
-    let token = if let Some(token) = AuthUtils::extract_bearer_token(auth_header) {
-        token
-    } else {
+    let Some(token) = AuthUtils::extract_bearer_token(auth_header) else {
         return Err(StatusCode::UNAUTHORIZED);
     };
 

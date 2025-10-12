@@ -227,7 +227,7 @@ impl ApiKeyHealthChecker {
             .one(&*self.db)
             .await?
             .ok_or_else(|| {
-                anyhow::anyhow!("Provider type not found: {}", key_model.provider_type_id)
+                anyhow::anyhow!("Provider type {} not found", key_model.provider_type_id)
             })?;
 
         ldebug!(
@@ -246,7 +246,18 @@ impl ApiKeyHealthChecker {
             .check_provider_key(&key_model.api_key, &provider_info)
             .await;
 
-        let response_time_ms = start_time.elapsed().as_millis() as u64;
+        let response_time_ms =
+            u64::try_from(start_time.elapsed().as_millis()).unwrap_or_else(|_| {
+                lwarn!(
+                    "system",
+                    LogStage::HealthCheck,
+                    LogComponent::HealthChecker,
+                    "response_time_overflow",
+                    "Response time exceeds u64::MAX milliseconds, using 0",
+                    key_id = key_model.id
+                );
+                0
+            });
 
         let check_result = match result {
             Ok((status_code, success)) => {
@@ -396,7 +407,7 @@ impl ApiKeyHealthChecker {
         let success = match status_code {
             200..=299 => true,
             401 | 403 | 429 => false, // 密钥无效, 权限不足, 配额耗尽
-            _ => status_code < 500, // 4xx可能是配置问题，5xx是服务器问题
+            _ => status_code < 500,   // 4xx可能是配置问题，5xx是服务器问题
         };
 
         ldebug!(
@@ -468,7 +479,7 @@ impl ApiKeyHealthChecker {
         } else {
             status.consecutive_failures += 1;
             status.consecutive_successes = 0;
-            status.last_error = check_result.error_message.clone();
+            status.last_error.clone_from(&check_result.error_message);
         }
 
         // 添加检查结果到历史记录
@@ -573,16 +584,16 @@ impl ApiKeyHealthChecker {
         let rate_limit_resets_at = if check_result.status_code == Some(429) {
             // 从错误消息中尝试解析resets_in_seconds
             if let Some(ref error_msg) = status.last_error {
-                if let Some(resets_in_seconds) = self.parse_resets_in_seconds_from_error(error_msg)
-                {
-                    Some(
-                        chrono::Utc::now().naive_utc()
-                            + chrono::Duration::seconds(resets_in_seconds),
+                self.parse_resets_in_seconds_from_error(error_msg)
+                    .map_or_else(
+                        || Some(chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1)),
+                        |resets_in_seconds| {
+                            Some(
+                                chrono::Utc::now().naive_utc()
+                                    + chrono::Duration::seconds(resets_in_seconds),
+                            )
+                        },
                     )
-                } else {
-                    // 默认1分钟后重试
-                    Some(chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1))
-                }
             } else {
                 None
             }
@@ -677,7 +688,7 @@ impl ApiKeyHealthChecker {
             score -= penalty;
         }
 
-        score.max(0.0).min(100.0)
+        score.clamp(0.0, 100.0)
     }
 
     /// 获取所有健康的API密钥
@@ -803,13 +814,13 @@ impl ApiKeyHealthChecker {
                     .get("health_score")
                     .and_then(sea_orm::JsonValue::as_f64)
                 {
-                    status.health_score = score as f32;
+                    status.health_score = score as f32; // Allow truncation for health score storage
                 }
                 if let Some(failures) = detail_json
                     .get("consecutive_failures")
                     .and_then(sea_orm::JsonValue::as_u64)
                 {
-                    status.consecutive_failures = failures as u32;
+                    status.consecutive_failures = u32::try_from(failures).unwrap_or(0);
                 }
             }
 
@@ -898,7 +909,7 @@ impl ApiKeyHealth {
     /// 检查是否应该进行下次检查
     #[must_use]
     pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
-        if let Some(last_check) = self.last_check {
+        self.last_check.map_or(true, |last_check| {
             let interval = if self.is_healthy {
                 config.healthy_check_interval
             } else {
@@ -908,10 +919,7 @@ impl ApiKeyHealth {
             let next_check_time =
                 last_check + chrono::Duration::from_std(interval).unwrap_or_default();
             Utc::now() > next_check_time
-        } else {
-            // 从未检查过，立即检查
-            true
-        }
+        })
     }
 }
 

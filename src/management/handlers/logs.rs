@@ -222,20 +222,25 @@ async fn calculate_dashboard_stats(
     db: &DatabaseConnection,
 ) -> Result<LogsDashboardStatsResponse, DbErr> {
     // 获取总请求数
-    let total_requests = ProxyTracing::find().count(db).await? as i64;
+    let total_requests = i64::try_from(ProxyTracing::find().count(db).await?).unwrap_or(0);
 
     // 获取成功请求数
-    let successful_requests = ProxyTracing::find()
-        .filter(proxy_tracing::Column::IsSuccess.eq(true))
-        .count(db)
-        .await? as i64;
+    let successful_requests = i64::try_from(
+        ProxyTracing::find()
+            .filter(proxy_tracing::Column::IsSuccess.eq(true))
+            .count(db)
+            .await?,
+    )
+    .unwrap_or(0);
 
     // 计算失败请求数
-    let failed_requests = total_requests - successful_requests;
+    let failed_requests = total_requests.saturating_sub(successful_requests);
 
     // 计算成功率
     let success_rate = if total_requests > 0 {
-        (successful_requests as f64 / total_requests as f64) * 100.0
+        let successful = f64::from(u32::try_from(successful_requests).unwrap_or(0));
+        let total = f64::from(u32::try_from(total_requests).unwrap_or(1));
+        (successful / total) * 100.0
     } else {
         0.0
     };
@@ -727,13 +732,15 @@ async fn fetch_logs_analytics(
         .all(db)
         .await?;
 
-    let total_requests = base_query.clone().count(db).await? as i64;
+    let total_requests = i64::try_from(base_query.clone().count(db).await?).unwrap_or(0);
 
     let model_distribution: Vec<ModelDistribution> = model_stats
         .into_iter()
         .map(|(model, request_count, token_count, cost)| {
             let percentage = if total_requests > 0 {
-                (request_count as f64 / total_requests as f64) * 100.0
+                let request_count_f64 = f64::from(u32::try_from(request_count).unwrap_or(0));
+                let total_requests_f64 = f64::from(u32::try_from(total_requests).unwrap_or(1));
+                (request_count_f64 / total_requests_f64) * 100.0
             } else {
                 0.0
             };
@@ -776,7 +783,9 @@ async fn fetch_logs_analytics(
         .into_iter()
         .map(|(provider_name, (total, success, total_duration))| {
             let success_rate = if total > 0 {
-                (success as f64 / total as f64) * 100.0
+                let success_f64 = f64::from(u32::try_from(success).unwrap_or(0));
+                let total_f64 = f64::from(u32::try_from(total).unwrap_or(1));
+                (success_f64 / total_f64) * 100.0
             } else {
                 0.0
             };
@@ -808,7 +817,9 @@ async fn fetch_logs_analytics(
         .into_iter()
         .map(|(status_code, count)| {
             let percentage = if total_requests > 0 {
-                (count as f64 / total_requests as f64) * 100.0
+                let count_f64 = f64::from(u32::try_from(count).unwrap_or(0));
+                let total_requests_f64 = f64::from(u32::try_from(total_requests).unwrap_or(1));
+                (count_f64 / total_requests_f64) * 100.0
             } else {
                 0.0
             };
@@ -826,16 +837,22 @@ async fn fetch_logs_analytics(
     let time_series = vec![TimeSeriesData {
         timestamp: now,
         total_requests,
-        successful_requests: base_query
-            .clone()
-            .filter(proxy_tracing::Column::IsSuccess.eq(true))
-            .count(db)
-            .await? as i64,
-        failed_requests: base_query
-            .clone()
-            .filter(proxy_tracing::Column::IsSuccess.eq(false))
-            .count(db)
-            .await? as i64,
+        successful_requests: i64::try_from(
+            base_query
+                .clone()
+                .filter(proxy_tracing::Column::IsSuccess.eq(true))
+                .count(db)
+                .await?,
+        )
+        .unwrap_or(0),
+        failed_requests: i64::try_from(
+            base_query
+                .clone()
+                .filter(proxy_tracing::Column::IsSuccess.eq(false))
+                .count(db)
+                .await?,
+        )
+        .unwrap_or(0),
         total_tokens: base_query
             .clone()
             .select_only()
