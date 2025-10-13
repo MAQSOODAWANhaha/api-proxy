@@ -17,15 +17,18 @@ use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
 use axum::response::Json;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
+
+use entity::user_provider_keys;
 
 /// Gemini提供商名称常量
 const GEMINI_PROVIDER_NAME: &str = "gemini";
@@ -75,7 +78,6 @@ async fn prepare_oauth_schedule(
 }
 
 /// 获取提供商密钥列表
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn get_provider_keys_list(
     State(state): State<AppState>,
     Query(query): Query<ProviderKeysListQuery>,
@@ -176,81 +178,12 @@ pub async fn get_provider_keys_list(
     let usage_stats = fetch_provider_keys_usage_stats(db, &provider_key_ids).await;
 
     // 构建响应数据
-    let mut provider_keys_list = Vec::new();
-
-    for (provider_key, provider_type_opt) in provider_keys {
-        let provider_name =
-            provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
-
-        // 获取该密钥的使用统计
-        let key_stats = usage_stats
-            .get(&provider_key.id)
-            .cloned()
-            .unwrap_or_default();
-
-        // 隐藏API Key敏感信息
-        let masked_api_key = if provider_key.api_key.len() > 8 {
-            format!(
-                "{}****{}",
-                &provider_key.api_key[..4],
-                &provider_key.api_key[provider_key.api_key.len() - 4..]
-            )
-        } else {
-            "****".to_string()
-        };
-
-        // 计算限流剩余时间（秒）
-        let rate_limit_remaining_seconds =
-            provider_key.rate_limit_resets_at.and_then(|resets_at| {
-                let now = Utc::now().naive_utc();
-                if resets_at > now {
-                    let seconds = resets_at.signed_duration_since(now).num_seconds().max(0);
-                    u64::try_from(seconds).ok()
-                } else {
-                    None
-                }
-            });
-
-        let response_key = json!({
-            "id": provider_key.id,
-            "provider": provider_name,
-            "name": provider_key.name,
-            "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { provider_key.api_key.clone() },
-            "project_id": provider_key.project_id,
-            "auth_type": provider_key.auth_type,
-            "auth_status": provider_key.auth_status,
-            "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
-            "weight": provider_key.weight,
-            "max_requests_per_minute": provider_key.max_requests_per_minute,
-            "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
-            "max_requests_per_day": provider_key.max_requests_per_day,
-            "is_active": provider_key.is_active,
-            "usage": {
-                "total_requests": key_stats.total_requests,
-                "successful_requests": key_stats.successful_requests,
-                "failed_requests": key_stats.failed_requests,
-                "success_rate": key_stats.success_rate,
-                "total_tokens": key_stats.total_tokens,
-                "total_cost": key_stats.total_cost,
-                "avg_response_time": key_stats.avg_response_time,
-                "last_used_at": key_stats.last_used_at
-            },
-            "limits": {
-                "max_requests_per_minute": provider_key.max_requests_per_minute,
-                "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
-                "max_requests_per_day": provider_key.max_requests_per_day
-            },
-            "status": {
-                "is_active": provider_key.is_active,
-                "health_status": provider_key.health_status,
-                "rate_limit_remaining_seconds": rate_limit_remaining_seconds
-            },
-            "created_at": provider_key.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-            "updated_at": provider_key.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-        });
-
-        provider_keys_list.push(response_key);
-    }
+    let provider_keys_list = provider_keys
+        .into_iter()
+        .map(|(provider_key, provider_type_opt)| {
+            build_provider_key_json(&provider_key, provider_type_opt, &usage_stats)
+        })
+        .collect::<Vec<_>>();
 
     let pages = total.div_ceil(limit);
 
@@ -268,397 +201,63 @@ pub async fn get_provider_keys_list(
 }
 
 /// 创建提供商密钥
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn create_provider_key(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(payload): Json<CreateProviderKeyRequest>,
 ) -> axum::response::Response {
-    use entity::user_provider_keys::{self, Entity as UserProviderKey};
-
     let db = state.database.as_ref();
     let refresh_task = state.oauth_token_refresh_task.clone();
     let user_id = auth_context.user_id;
 
-    // 检查同名密钥是否已存在
-    let existing = UserProviderKey::find()
-        .filter(user_provider_keys::Column::UserId.eq(user_id))
-        .filter(user_provider_keys::Column::Name.eq(&payload.name))
-        .filter(user_provider_keys::Column::ProviderTypeId.eq(payload.provider_type_id))
-        .one(db)
-        .await;
-
-    match existing {
-        Ok(Some(_)) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "ProviderKey conflict: {}",
-                &payload.name
-            ));
-        }
-        Err(err) => {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "check_exist_fail",
-                &format!("Failed to check existing provider key: {err}")
-            );
-            return crate::manage_error!(crate::error::ProxyError::database_with_source(
-                "Failed to check existing provider key",
-                err,
-            ));
-        }
-        _ => {}
+    if let Err(err) = ensure_unique_provider_key(db, user_id, &payload).await {
+        return crate::manage_error!(err);
     }
 
-    // 验证认证类型和相应参数
-    if payload.auth_type == "api_key" && payload.api_key.is_none() {
-        return crate::manage_error!(crate::proxy_err!(
-            business,
-            "API Key认证类型需要提供api_key字段 (field: api_key)"
-        ));
+    if let Err(err) = validate_create_payload(&payload) {
+        return crate::manage_error!(err);
     }
 
-    // OAuth类型需要通过api_key字段提供session_id
-    if payload.auth_type == "oauth" && payload.api_key.is_none() {
-        return crate::manage_error!(crate::proxy_err!(
-            business,
-            "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)"
-        ));
+    if let Err(err) = validate_oauth_session_for_creation(db, user_id, &payload).await {
+        return crate::manage_error!(err);
     }
 
-    // 验证OAuth会话存在性和所有权
-    if payload.auth_type == "oauth"
-        && let Some(session_id) = &payload.api_key
-    {
-        use entity::oauth_client_sessions::{self, Entity as OAuthSession};
+    let PrepareGeminiContext {
+        final_project_id,
+        health_status,
+        needs_auto_get_project_id_async,
+    } = match prepare_gemini_context(db, user_id, &payload).await {
+        Ok(ctx) => ctx,
+        Err(err) => return crate::manage_error!(err),
+    };
 
-        match OAuthSession::find()
-            .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-            .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-            .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
-            .one(db)
-            .await
-        {
-            Ok(Some(_)) => {
-                // OAuth会话存在且属于当前用户，检查是否已被其他provider key使用
-                let existing_usage = UserProviderKey::find()
-                    .filter(user_provider_keys::Column::ApiKey.eq(session_id))
-                    .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-                    .filter(user_provider_keys::Column::IsActive.eq(true))
-                    .one(db)
-                    .await;
-
-                match existing_usage {
-                    Ok(Some(_)) => {
-                        return crate::manage_error!(crate::proxy_err!(
-                            business,
-                            "指定的OAuth会话已被其他provider key使用"
-                        ));
-                    }
-                    Err(err) => {
-                        lerror!(
-                            "system",
-                            LogStage::Db,
-                            LogComponent::OAuth,
-                            "check_session_usage_fail",
-                            &format!("Failed to check OAuth session usage: {err}")
-                        );
-                        return crate::manage_error!(
-                            crate::error::ProxyError::database_with_source(
-                                "Failed to check OAuth session usage",
-                                err,
-                            )
-                        );
-                    }
-                    _ => {} // 会话可用
-                }
-            }
-            Ok(None) => {
-                return crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "指定的OAuth会话不存在或未完成授权 (field: api_key)"
-                ));
-            }
-            Err(err) => {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::OAuth,
-                    "validate_session_fail",
-                    &format!("Failed to validate OAuth session: {err}")
-                );
-                return crate::manage_error!(crate::error::ProxyError::database_with_source(
-                    "Failed to validate OAuth session",
-                    err,
-                ));
-            }
-        }
-    }
-
-    // Gemini OAuth 场景处理
-    let mut final_project_id = payload.project_id.clone();
-    let mut health_status = ApiKeyHealthStatus::Healthy.to_string();
-
-    // 异步任务标志
-    let mut needs_auto_get_project_id_async = false;
-
-    if payload.auth_type == OAUTH_AUTH_TYPE {
-        // 查询 provider 类型确认是否为 gemini
-        if let Ok(Some(provider_type)) =
-            entity::provider_types::Entity::find_by_id(payload.provider_type_id)
-                .one(db)
-                .await
-            && provider_type.name == GEMINI_PROVIDER_NAME
-        {
-            // 需要访问 OAuth 会话拿 access_token
-            if let Some(session_id) = &payload.api_key {
-                use entity::oauth_client_sessions::{self, Entity as OAuthSession};
-                if let Ok(Some(oauth_session)) = OAuthSession::find()
-                    .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
-                    .filter(oauth_client_sessions::Column::UserId.eq(user_id))
-                    .filter(
-                        oauth_client_sessions::Column::Status
-                            .eq(AuthStatus::Authorized.to_string()),
-                    )
-                    .one(db)
-                    .await
-                {
-                    let access_token = oauth_session.access_token.as_deref().unwrap_or("");
-                    let gemini_client = GeminiCodeAssistClient::new();
-
-                    // 如果用户传递了 project_id, 直接带 project_id 调用 loadCodeAssist
-                    if let Some(provided_pid) = final_project_id.clone() {
-                        linfo!(
-                            "system",
-                            LogStage::Authentication,
-                            LogComponent::OAuth,
-                            "gemini_load_assist_with_project",
-                            "Gemini OAuth: Using user-provided project_id to call loadCodeAssist",
-                            user_id = user_id,
-                            project_id = %provided_pid,
-                        );
-                        match gemini_client
-                            .load_code_assist(access_token, Some(&provided_pid), None)
-                            .await
-                        {
-                            Ok(resp) => {
-                                // 如果后端返回了 cloudaicompanionProject 则以其为准
-                                if let Some(server_pid) = resp.cloudaicompanionProject {
-                                    final_project_id = Some(server_pid);
-                                } else {
-                                    // 没有返回 cloudaicompanionProject，说明用户提供的 project_id 无效或不存在
-                                    // 需要走自动获取流程来获取正确的 project_id
-                                    linfo!(
-                                        "system",
-                                        LogStage::Authentication,
-                                        LogComponent::OAuth,
-                                        "gemini_invalid_project_id",
-                                        "loadCodeAssist did not return cloudaicompanionProject, user-provided project_id is invalid",
-                                        user_id = user_id,
-                                        provided_project_id = %provided_pid,
-                                    );
-
-                                    // 设置为不健康状态，用户提供的project_id无效，需要自动获取
-                                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                                    needs_auto_get_project_id_async = true;
-                                    final_project_id = None; // 清空无效的project_id
-
-                                    linfo!(
-                                        "system",
-                                        LogStage::Authentication,
-                                        LogComponent::OAuth,
-                                        "gemini_auto_get_project_id",
-                                        "Gemini OAuth: User-provided project_id is invalid, will auto-get project_id",
-                                        user_id = user_id,
-                                        provided_project_id = %provided_pid,
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                                lerror!("system", LogStage::Authentication, LogComponent::OAuth, "gemini_load_assist_fail", "Gemini OAuth: loadCodeAssist call failed (with project_id)", user_id = user_id, error = %e);
-                            }
-                        }
-                    } else {
-                        // 未提供 project_id: 走自动流程（loadCodeAssist -> 若无则 onboardUser）
-                        linfo!(
-                            "system",
-                            LogStage::Authentication,
-                            LogComponent::OAuth,
-                            "gemini_auto_get_project_id_async",
-                            "Gemini OAuth: No project_id provided, will auto-get asynchronously (loadCodeAssist / onboardUser)",
-                            user_id = user_id,
-                        );
-
-                        // 设置为不健康状态，标记需要异步执行自动获取 project_id
-                        health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                        needs_auto_get_project_id_async = true;
-
-                        linfo!(
-                            "system",
-                            LogStage::Authentication,
-                            LogComponent::OAuth,
-                            "gemini_mark_unhealthy_for_auto_get",
-                            "Gemini OAuth: Marked as unhealthy for async auto-get of project_id",
-                            user_id = user_id,
-                        );
-                    }
-                } else {
-                    lerror!(
-                        "system",
-                        LogStage::Authentication,
-                        LogComponent::OAuth,
-                        "gemini_no_auth_session",
-                        "Gemini OAuth: Authorized OAuth session not found, cannot validate project_id",
-                        user_id = user_id,
-                    );
-                    health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-                }
-            } else {
-                lerror!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "gemini_missing_session_id",
-                    "Gemini OAuth: Missing session_id (api_key field), cannot complete validation",
-                    user_id = user_id,
-                );
-                health_status = ApiKeyHealthStatus::Unhealthy.to_string();
-            }
-        }
-    }
-
-    let pending_schedule = if payload.auth_type == OAUTH_AUTH_TYPE {
-        match prepare_oauth_schedule(
-            refresh_task.as_ref(),
-            payload.api_key.as_ref(),
-            user_id,
-            None,
-        )
-        .await
-        {
+    let pending_schedule =
+        match schedule_oauth_if_needed(refresh_task.as_ref(), &payload, user_id, None).await {
             Ok(schedule) => schedule,
             Err(err) => return crate::manage_error!(err),
-        }
-    } else {
-        None
-    };
+        };
 
-    // 创建新密钥
-    let new_provider_key = user_provider_keys::ActiveModel {
-        user_id: Set(user_id),
-        provider_type_id: Set(payload.provider_type_id),
-        name: Set(payload.name),
-        api_key: Set(payload.api_key.clone().unwrap_or_else(String::new)),
-        auth_type: Set(payload.auth_type),
-        auth_status: Set(Some(AuthStatus::Authorized.to_string())),
-        weight: Set(payload.weight),
-        max_requests_per_minute: Set(payload.max_requests_per_minute),
-        max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
-        max_requests_per_day: Set(payload.max_requests_per_day),
-        is_active: Set(payload.is_active.unwrap_or(true)),
-        project_id: Set(final_project_id),
-        health_status: Set(health_status),
-        created_at: Set(Utc::now().naive_utc()),
-        updated_at: Set(Utc::now().naive_utc()),
-        ..Default::default()
-    };
+    let result =
+        match insert_provider_key_record(db, user_id, &payload, final_project_id, health_status)
+            .await
+        {
+            Ok(model) => model,
+            Err(err) => return crate::manage_error!(err),
+        };
 
-    let result = match new_provider_key.insert(db).await {
-        Ok(model) => model,
-        Err(err) => {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "create_key_fail",
-                &format!("Failed to create provider key: {err}")
-            );
-            return crate::manage_error!(crate::error::ProxyError::database_with_source(
-                "Failed to create provider key",
-                err,
-            ));
-        }
-    };
-
-    if let Some(schedule) = pending_schedule {
-        if let Some(task) = refresh_task.as_ref() {
-            if let Err(err) = task.enqueue_schedule(schedule).await {
-                lerror!(
-                    "system",
-                    LogStage::Scheduling,
-                    LogComponent::OAuth,
-                    "enqueue_schedule_fail",
-                    &format!("Failed to enqueue OAuth refresh schedule: {err}"),
-                    user_id = user_id,
-                    key_id = result.id,
-                );
-                if let Err(delete_err) = user_provider_keys::Entity::delete_by_id(result.id)
-                    .exec(db)
-                    .await
-                {
-                    lerror!(
-                        "system",
-                        LogStage::Db,
-                        LogComponent::Database,
-                        "rollback_key_fail",
-                        &format!(
-                            "Failed to rollback provider key after enqueue error: {delete_err}"
-                        ),
-                        user_id = user_id,
-                        key_id = result.id,
-                    );
-                }
-                return crate::manage_error!(err);
-            }
-        } else {
-            lwarn!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::OAuth,
-                "task_unavailable_no_enqueue",
-                "OAuth refresh task unavailable, schedule not enqueued",
-                user_id = user_id,
-                key_id = result.id,
-            );
-        }
+    if let Err(err) = enqueue_oauth_schedule(
+        refresh_task.as_ref(),
+        pending_schedule,
+        db,
+        user_id,
+        &result,
+    )
+    .await
+    {
+        return crate::manage_error!(err);
     }
 
-    // 启动异步任务处理Gemini OAuth
-    if needs_auto_get_project_id_async {
-        let key_id = result.id;
-        let user_id_for_task = user_id.to_string();
-        let db_clone = db.clone();
-
-        tokio::spawn(async move {
-            linfo!(
-                "system",
-                LogStage::BackgroundTask,
-                LogComponent::OAuth,
-                "start_auto_get_project_id_task",
-                "Starting async auto-get project_id task",
-                user_id = user_id_for_task,
-                key_id = %key_id,
-            );
-
-            if let Err(e) =
-                execute_auto_get_project_id_async(&db_clone, key_id, &user_id_for_task).await
-            {
-                lerror!(
-                    "system",
-                    LogStage::BackgroundTask,
-                    LogComponent::OAuth,
-                    "auto_get_project_id_task_fail",
-                    "Async auto-get project_id task failed",
-                    user_id = user_id_for_task,
-                    key_id = %key_id,
-                    error = %e,
-                );
-            }
-        });
-    }
+    spawn_gemini_project_task(needs_auto_get_project_id_async, db, user_id, result.id);
 
     // 获取provider类型信息
     let provider_name = match entity::provider_types::Entity::find_by_id(payload.provider_type_id)
@@ -693,6 +292,477 @@ pub async fn create_provider_key(
     });
 
     response::success_with_message(data, &message)
+}
+
+struct PrepareGeminiContext {
+    final_project_id: Option<String>,
+    health_status: String,
+    needs_auto_get_project_id_async: bool,
+}
+
+fn validate_create_payload(payload: &CreateProviderKeyRequest) -> Result<(), ProxyError> {
+    if payload.auth_type == "api_key" && payload.api_key.is_none() {
+        return Err(crate::proxy_err!(
+            business,
+            "API Key认证类型需要提供api_key字段 (field: api_key)"
+        ));
+    }
+
+    if payload.auth_type == "oauth" && payload.api_key.is_none() {
+        return Err(crate::proxy_err!(
+            business,
+            "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)"
+        ));
+    }
+
+    Ok(())
+}
+
+async fn ensure_unique_provider_key(
+    db: &DatabaseConnection,
+    user_id: i32,
+    payload: &CreateProviderKeyRequest,
+) -> Result<(), ProxyError> {
+    let existing = entity::user_provider_keys::Entity::find()
+        .filter(entity::user_provider_keys::Column::UserId.eq(user_id))
+        .filter(entity::user_provider_keys::Column::Name.eq(&payload.name))
+        .filter(entity::user_provider_keys::Column::ProviderTypeId.eq(payload.provider_type_id))
+        .one(db)
+        .await;
+
+    match existing {
+        Ok(Some(_)) => Err(crate::proxy_err!(
+            business,
+            "ProviderKey conflict: {}",
+            &payload.name
+        )),
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "check_exist_fail",
+                &format!("Failed to check existing provider key: {err}")
+            );
+            Err(crate::error::ProxyError::database_with_source(
+                "Failed to check existing provider key",
+                err,
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn validate_oauth_session_for_creation(
+    db: &DatabaseConnection,
+    user_id: i32,
+    payload: &CreateProviderKeyRequest,
+) -> Result<(), ProxyError> {
+    if payload.auth_type != "oauth" {
+        return Ok(());
+    }
+
+    let Some(session_id) = &payload.api_key else {
+        return Ok(());
+    };
+
+    match entity::oauth_client_sessions::Entity::find()
+        .filter(entity::oauth_client_sessions::Column::SessionId.eq(session_id))
+        .filter(entity::oauth_client_sessions::Column::UserId.eq(user_id))
+        .filter(
+            entity::oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
+        )
+        .one(db)
+        .await
+    {
+        Ok(Some(_)) => {
+            let existing_usage = entity::user_provider_keys::Entity::find()
+                .filter(entity::user_provider_keys::Column::ApiKey.eq(session_id))
+                .filter(entity::user_provider_keys::Column::AuthType.eq("oauth"))
+                .filter(entity::user_provider_keys::Column::IsActive.eq(true))
+                .one(db)
+                .await;
+
+            match existing_usage {
+                Ok(Some(_)) => Err(crate::proxy_err!(
+                    business,
+                    "指定的OAuth会话已被其他provider key使用"
+                )),
+                Err(err) => {
+                    lerror!(
+                        "system",
+                        LogStage::Db,
+                        LogComponent::OAuth,
+                        "check_session_usage_fail",
+                        &format!("Failed to check OAuth session usage: {err}")
+                    );
+                    Err(crate::error::ProxyError::database_with_source(
+                        "Failed to check OAuth session usage",
+                        err,
+                    ))
+                }
+                _ => Ok(()),
+            }
+        }
+        Ok(None) => Err(crate::proxy_err!(
+            business,
+            "指定的OAuth会话不存在或未完成授权 (field: api_key)"
+        )),
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::OAuth,
+                "validate_session_fail",
+                &format!("Failed to validate OAuth session: {err}")
+            );
+            Err(crate::error::ProxyError::database_with_source(
+                "Failed to validate OAuth session",
+                err,
+            ))
+        }
+    }
+}
+
+async fn prepare_gemini_context(
+    db: &DatabaseConnection,
+    user_id: i32,
+    payload: &CreateProviderKeyRequest,
+) -> Result<PrepareGeminiContext, ProxyError> {
+    let mut context = PrepareGeminiContext {
+        final_project_id: payload.project_id.clone(),
+        health_status: ApiKeyHealthStatus::Healthy.to_string(),
+        needs_auto_get_project_id_async: false,
+    };
+
+    if !is_gemini_oauth_flow(db, payload).await? {
+        return Ok(context);
+    }
+
+    let Some(session_id) = payload.api_key.as_deref() else {
+        log_missing_session_id(user_id);
+        context.health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+        return Ok(context);
+    };
+
+    let Some(oauth_session) = fetch_authorized_session(db, user_id, session_id).await? else {
+        log_missing_authorized_session(user_id);
+        context.health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+        return Ok(context);
+    };
+
+    let access_token = oauth_session.access_token.as_deref().unwrap_or("");
+    let gemini_client = GeminiCodeAssistClient::new();
+
+    if let Some(provided_pid) = context.final_project_id.clone() {
+        process_provided_project_id(
+            &gemini_client,
+            access_token,
+            provided_pid,
+            user_id,
+            &mut context,
+        )
+        .await;
+    } else {
+        mark_project_id_pending(user_id, &mut context);
+    }
+
+    Ok(context)
+}
+
+async fn is_gemini_oauth_flow(
+    db: &DatabaseConnection,
+    payload: &CreateProviderKeyRequest,
+) -> Result<bool, ProxyError> {
+    if payload.auth_type != OAUTH_AUTH_TYPE {
+        return Ok(false);
+    }
+
+    match entity::provider_types::Entity::find_by_id(payload.provider_type_id)
+        .one(db)
+        .await
+    {
+        Ok(Some(provider_type)) => Ok(provider_type.name == GEMINI_PROVIDER_NAME),
+        Ok(None) => Ok(false),
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "gemini_provider_query_fail",
+                &format!("Failed to query provider type for Gemini validation: {err}"),
+            );
+            Err(crate::error::ProxyError::database_with_source(
+                "Failed to query provider type",
+                err,
+            ))
+        }
+    }
+}
+
+async fn fetch_authorized_session(
+    db: &DatabaseConnection,
+    user_id: i32,
+    session_id: &str,
+) -> Result<Option<entity::oauth_client_sessions::Model>, ProxyError> {
+    entity::oauth_client_sessions::Entity::find()
+        .filter(entity::oauth_client_sessions::Column::SessionId.eq(session_id))
+        .filter(entity::oauth_client_sessions::Column::UserId.eq(user_id))
+        .filter(
+            entity::oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()),
+        )
+        .one(db)
+        .await
+        .map_err(|err| {
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "gemini_session_query_fail",
+                &format!(
+                    "Gemini OAuth: Failed to query OAuth session while validating project_id: {err}"
+                ),
+                user_id = user_id,
+            );
+            crate::error::ProxyError::database_with_source("Failed to validate OAuth session", err)
+        })
+}
+
+fn log_missing_session_id(user_id: i32) {
+    lerror!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::OAuth,
+        "gemini_missing_session_id",
+        "Gemini OAuth: Missing session_id (api_key field), cannot complete validation",
+        user_id = user_id,
+    );
+}
+
+fn log_missing_authorized_session(user_id: i32) {
+    lerror!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::OAuth,
+        "gemini_no_auth_session",
+        "Gemini OAuth: Authorized OAuth session not found, cannot validate project_id",
+        user_id = user_id,
+    );
+}
+
+async fn process_provided_project_id(
+    gemini_client: &GeminiCodeAssistClient,
+    access_token: &str,
+    provided_pid: String,
+    user_id: i32,
+    context: &mut PrepareGeminiContext,
+) {
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::OAuth,
+        "gemini_load_assist_with_project",
+        "Gemini OAuth: Using user-provided project_id to call loadCodeAssist",
+        user_id = user_id,
+        project_id = %provided_pid,
+    );
+
+    match gemini_client
+        .load_code_assist(access_token, Some(&provided_pid), None)
+        .await
+    {
+        Ok(resp) => {
+            if let Some(server_pid) = resp.cloudaicompanionProject {
+                context.final_project_id = Some(server_pid);
+            } else {
+                linfo!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "gemini_invalid_project_id",
+                    "loadCodeAssist did not return cloudaicompanionProject, user-provided project_id is invalid",
+                    user_id = user_id,
+                    provided_project_id = %provided_pid,
+                );
+                context.health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+                context.needs_auto_get_project_id_async = true;
+                context.final_project_id = None;
+            }
+        }
+        Err(e) => {
+            context.health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "gemini_load_assist_fail",
+                "Gemini OAuth: loadCodeAssist call failed (with project_id)",
+                user_id = user_id,
+                error = %e
+            );
+        }
+    }
+}
+
+fn mark_project_id_pending(user_id: i32, context: &mut PrepareGeminiContext) {
+    linfo!(
+        "system",
+        LogStage::Authentication,
+        LogComponent::OAuth,
+        "gemini_auto_get_project_id_async",
+        "Gemini OAuth: No project_id provided, will auto-get asynchronously (loadCodeAssist / onboardUser)",
+        user_id = user_id,
+    );
+    context.health_status = ApiKeyHealthStatus::Unhealthy.to_string();
+    context.needs_auto_get_project_id_async = true;
+}
+
+async fn schedule_oauth_if_needed(
+    refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+    payload: &CreateProviderKeyRequest,
+    user_id: i32,
+    key_id: Option<i32>,
+) -> Result<Option<ScheduledTokenRefresh>, ProxyError> {
+    if payload.auth_type != OAUTH_AUTH_TYPE {
+        return Ok(None);
+    }
+
+    prepare_oauth_schedule(refresh_task, payload.api_key.as_ref(), user_id, key_id).await
+}
+
+async fn insert_provider_key_record(
+    db: &DatabaseConnection,
+    user_id: i32,
+    payload: &CreateProviderKeyRequest,
+    final_project_id: Option<String>,
+    health_status: String,
+) -> Result<entity::user_provider_keys::Model, ProxyError> {
+    let new_provider_key = user_provider_keys::ActiveModel {
+        user_id: Set(user_id),
+        provider_type_id: Set(payload.provider_type_id),
+        name: Set(payload.name.clone()),
+        api_key: Set(payload.api_key.clone().unwrap_or_default()),
+        auth_type: Set(payload.auth_type.clone()),
+        auth_status: Set(Some(AuthStatus::Authorized.to_string())),
+        weight: Set(payload.weight),
+        max_requests_per_minute: Set(payload.max_requests_per_minute),
+        max_tokens_prompt_per_minute: Set(payload.max_tokens_prompt_per_minute),
+        max_requests_per_day: Set(payload.max_requests_per_day),
+        is_active: Set(payload.is_active.unwrap_or(true)),
+        project_id: Set(final_project_id),
+        health_status: Set(health_status),
+        created_at: Set(Utc::now().naive_utc()),
+        updated_at: Set(Utc::now().naive_utc()),
+        ..Default::default()
+    };
+
+    new_provider_key.insert(db).await.map_err(|err| {
+        lerror!(
+            "system",
+            LogStage::Db,
+            LogComponent::Database,
+            "create_key_fail",
+            &format!("Failed to create provider key: {err}")
+        );
+        crate::error::ProxyError::database_with_source("Failed to create provider key", err)
+    })
+}
+
+async fn enqueue_oauth_schedule(
+    refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+    pending_schedule: Option<ScheduledTokenRefresh>,
+    db: &DatabaseConnection,
+    user_id: i32,
+    inserted_key: &entity::user_provider_keys::Model,
+) -> Result<(), ProxyError> {
+    let Some(schedule) = pending_schedule else {
+        return Ok(());
+    };
+
+    let Some(task) = refresh_task else {
+        lwarn!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::OAuth,
+            "task_unavailable_no_enqueue",
+            "OAuth refresh task unavailable, schedule not enqueued",
+            user_id = user_id,
+            key_id = inserted_key.id,
+        );
+        return Ok(());
+    };
+
+    if let Err(err) = task.enqueue_schedule(schedule).await {
+        lerror!(
+            "system",
+            LogStage::Scheduling,
+            LogComponent::OAuth,
+            "enqueue_schedule_fail",
+            &format!("Failed to enqueue OAuth refresh schedule: {err}"),
+            user_id = user_id,
+            key_id = inserted_key.id,
+        );
+
+        if let Err(delete_err) = user_provider_keys::Entity::delete_by_id(inserted_key.id)
+            .exec(db)
+            .await
+        {
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "rollback_key_fail",
+                &format!("Failed to rollback provider key after enqueue error: {delete_err}"),
+                user_id = user_id,
+                key_id = inserted_key.id,
+            );
+        }
+
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+fn spawn_gemini_project_task(
+    needs_auto_get_project_id_async: bool,
+    db: &DatabaseConnection,
+    user_id: i32,
+    key_id: i32,
+) {
+    if !needs_auto_get_project_id_async {
+        return;
+    }
+
+    let db_clone = db.clone();
+    let user_id_for_task = user_id.to_string();
+
+    tokio::spawn(async move {
+        linfo!(
+            "system",
+            LogStage::BackgroundTask,
+            LogComponent::OAuth,
+            "start_auto_get_project_id_task",
+            "Starting async auto-get project_id task",
+            user_id = user_id_for_task,
+            key_id = %key_id,
+        );
+
+        if let Err(e) =
+            execute_auto_get_project_id_async(&db_clone, key_id, &user_id_for_task).await
+        {
+            lerror!(
+                "system",
+                LogStage::BackgroundTask,
+                LogComponent::OAuth,
+                "auto_get_project_id_task_fail",
+                "Async auto-get project_id task failed",
+                user_id = user_id_for_task,
+                key_id = %key_id,
+                error = %e,
+            );
+        }
+    });
 }
 
 /// 获取提供商密钥详情
@@ -1733,9 +1803,9 @@ const fn default_days() -> u32 {
 /// 密钥使用统计
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ProviderKeyUsageStats {
-    pub total_requests: i64,
-    pub successful_requests: i64,
-    pub failed_requests: i64,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
     pub success_rate: f64,
     pub total_tokens: i64,
     pub total_cost: f64,
@@ -1743,104 +1813,101 @@ pub struct ProviderKeyUsageStats {
     pub last_used_at: Option<String>,
 }
 
+#[derive(Debug, Default, FromQueryResult)]
+struct ProviderKeyStatsRow {
+    user_provider_key_id: Option<i32>,
+    total_requests: Option<i64>,
+    successful_requests: Option<i64>,
+    total_tokens: Option<i64>,
+    total_cost: Option<f64>,
+    total_duration: Option<i64>,
+    duration_count: Option<i64>,
+    last_used_at: Option<chrono::NaiveDateTime>,
+}
+
 /// 获取提供商密钥的使用统计数据
 async fn fetch_provider_keys_usage_stats(
-    db: &sea_orm::DatabaseConnection,
+    db: &DatabaseConnection,
     provider_key_ids: &[i32],
 ) -> HashMap<i32, ProviderKeyUsageStats> {
     use entity::proxy_tracing::{Column, Entity as ProxyTracing};
-
-    let mut stats_map = HashMap::new();
+    use sea_orm::{query::QuerySelect, sea_query::Expr};
 
     if provider_key_ids.is_empty() {
-        return stats_map;
+        return HashMap::new();
     }
 
-    // 批量查询所有密钥的使用记录
-    let traces = match ProxyTracing::find()
+    let select = ProxyTracing::find()
+        .select_only()
+        .column(Column::UserProviderKeyId)
+        .column_as(Column::Id.count(), "total_requests")
+        .column_as(
+            Expr::cust("SUM(CASE WHEN is_success = true THEN 1 ELSE 0 END)"),
+            "successful_requests",
+        )
+        .column_as(Column::TokensTotal.sum(), "total_tokens")
+        .column_as(Column::Cost.sum(), "total_cost")
+        .column_as(Column::DurationMs.sum(), "total_duration")
+        .column_as(Column::DurationMs.count(), "duration_count")
+        .column_as(Column::CreatedAt.max(), "last_used_at")
         .filter(Column::UserProviderKeyId.is_in(provider_key_ids.to_vec()))
-        .all(db)
-        .await
-    {
-        Ok(records) => records,
+        .group_by(Column::UserProviderKeyId);
+
+    let stats_rows = match select.into_model::<ProviderKeyStatsRow>().all(db).await {
+        Ok(rows) => rows,
         Err(err) => {
             lerror!(
                 "system",
                 LogStage::Db,
                 LogComponent::Database,
-                "fetch_tracing_fail",
-                &format!("Failed to fetch proxy tracing records: {err}")
+                "fetch_tracing_aggregate_fail",
+                &format!("Failed to aggregate proxy tracing records: {err}")
             );
-            return stats_map;
+            return HashMap::new();
         }
     };
 
-    // 按密钥ID分组统计
-    for trace in &traces {
-        let Some(key_id) = trace.user_provider_key_id else {
+    let mut stats_map = HashMap::with_capacity(stats_rows.len());
+    for row in stats_rows {
+        let Some(key_id) = row.user_provider_key_id else {
             continue;
         };
 
-        let entry = stats_map
-            .entry(key_id)
-            .or_insert_with(ProviderKeyUsageStats::default);
-
-        // 统计请求数
-        entry.total_requests += 1;
-        if trace.is_success {
-            entry.successful_requests += 1;
+        let total = u64::try_from(row.total_requests.unwrap_or(0)).unwrap_or(0);
+        let success = u64::try_from(row.successful_requests.unwrap_or(0)).unwrap_or(0);
+        let failed = total.saturating_sub(success);
+        let rate = if total == 0 {
+            0.0
         } else {
-            entry.failed_requests += 1;
-        }
+            let percentage = ratio_as_percentage(success, total);
+            (percentage * 100.0).round() / 100.0
+        };
 
-        // 统计token数
-        if let Some(tokens) = trace.tokens_total {
-            entry.total_tokens += i64::from(tokens);
-        }
+        let duration_sum = row.total_duration.unwrap_or(0);
+        let duration_count = row.duration_count.unwrap_or(0);
+        let avg_response_time = if duration_count > 0 {
+            duration_sum / duration_count
+        } else {
+            0
+        };
 
-        // 统计费用
-        if let Some(cost) = trace.cost {
-            entry.total_cost += cost;
-        }
+        let last_used_at = row
+            .last_used_at
+            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339());
 
-        // 统计响应时间
-        if let Some(duration) = trace.duration_ms {
-            // 简单平均，实际应该加权平均
-            entry.avg_response_time = i64::midpoint(entry.avg_response_time, duration);
-        }
-
-        // 更新最后使用时间
-        let created_at = trace
-            .created_at
-            .and_utc()
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        if entry.last_used_at.is_none()
-            || entry
-                .last_used_at
-                .as_ref()
-                .is_none_or(|last| last < &created_at)
-        {
-            entry.last_used_at = Some(created_at);
-        }
-    }
-
-    // 计算成功率
-    for stats in stats_map.values_mut() {
-        if stats.total_requests > 0 {
-            if let (Ok(success), Ok(total)) = (
-                u64::try_from(stats.successful_requests),
-                u64::try_from(stats.total_requests),
-            ) {
-                stats.success_rate = ratio_as_percentage(success, total);
-                stats.success_rate = (stats.success_rate * 100.0).round() / 100.0; // 保留两位小数
-            } else {
-                stats.success_rate = 0.0;
-            }
-        }
-
-        // 格式化费用
-        stats.total_cost = (stats.total_cost * 100.0).round() / 100.0;
+        stats_map.insert(
+            key_id,
+            ProviderKeyUsageStats {
+                total_requests: total,
+                successful_requests: success,
+                failed_requests: failed,
+                success_rate: rate,
+                total_tokens: row.total_tokens.unwrap_or(0),
+                total_cost: (row.total_cost.unwrap_or(0.0) * 100.0).round() / 100.0,
+                avg_response_time,
+                last_used_at,
+            },
+        );
     }
 
     stats_map
@@ -2395,4 +2462,76 @@ async fn get_access_token_for_key(
             }
         },
     )
+}
+
+fn build_provider_key_json(
+    provider_key: &entity::user_provider_keys::Model,
+    provider_type_opt: Option<entity::provider_types::Model>,
+    usage_stats: &HashMap<i32, ProviderKeyUsageStats>,
+) -> serde_json::Value {
+    let provider_name =
+        provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
+
+    let key_stats = usage_stats
+        .get(&provider_key.id)
+        .cloned()
+        .unwrap_or_default();
+
+    let masked_api_key = if provider_key.api_key.len() > 8 {
+        format!(
+            "{}****{}",
+            &provider_key.api_key[..4],
+            &provider_key.api_key[provider_key.api_key.len() - 4..]
+        )
+    } else {
+        "****".to_string()
+    };
+
+    let rate_limit_remaining_seconds = provider_key.rate_limit_resets_at.and_then(|resets_at| {
+        let now = Utc::now().naive_utc();
+        if resets_at > now {
+            let seconds = resets_at.signed_duration_since(now).num_seconds().max(0);
+            u64::try_from(seconds).ok()
+        } else {
+            None
+        }
+    });
+
+    json!({
+        "id": provider_key.id,
+        "provider": provider_name,
+        "name": provider_key.name,
+        "api_key": if provider_key.auth_type == "api_key" { masked_api_key } else { provider_key.api_key.clone() },
+        "project_id": provider_key.project_id,
+        "auth_type": provider_key.auth_type,
+        "auth_status": provider_key.auth_status,
+        "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        "weight": provider_key.weight,
+        "max_requests_per_minute": provider_key.max_requests_per_minute,
+        "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
+        "max_requests_per_day": provider_key.max_requests_per_day,
+        "is_active": provider_key.is_active,
+        "usage": {
+            "total_requests": key_stats.total_requests,
+            "successful_requests": key_stats.successful_requests,
+            "failed_requests": key_stats.failed_requests,
+            "success_rate": key_stats.success_rate,
+            "total_tokens": key_stats.total_tokens,
+            "total_cost": key_stats.total_cost,
+            "avg_response_time": key_stats.avg_response_time,
+            "last_used_at": key_stats.last_used_at
+        },
+        "limits": {
+            "max_requests_per_minute": provider_key.max_requests_per_minute,
+            "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
+            "max_requests_per_day": provider_key.max_requests_per_day
+        },
+        "status": {
+            "is_active": provider_key.is_active,
+            "health_status": provider_key.health_status,
+            "rate_limit_remaining_seconds": rate_limit_remaining_seconds
+        },
+        "created_at": provider_key.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "updated_at": provider_key.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    })
 }
