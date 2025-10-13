@@ -21,6 +21,7 @@ use tokio::sync::RwLock;
 
 use super::types::ApiKeyHealthStatus;
 use crate::proxy::types::ProviderId;
+use crate::types::ProviderTypeId;
 use entity::{provider_types, user_provider_keys};
 use sea_orm::{ActiveModelTrait, Set};
 /// API密钥健康状态
@@ -29,7 +30,7 @@ pub struct ApiKeyHealth {
     /// 密钥ID
     pub key_id: i32,
     /// 提供商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 提供商ID
     pub provider_id: ProviderId,
     /// 当前健康状态
@@ -451,7 +452,7 @@ impl ApiKeyHealthChecker {
     async fn update_health_status(
         &self,
         key_id: i32,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
         check_result: ApiKeyCheckResult,
     ) -> Result<()> {
         let mut health_map = self.health_status.write().await;
@@ -666,40 +667,47 @@ impl ApiKeyHealthChecker {
         None
     }
 
-    /// 计算健康分数
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-    fn calculate_health_score(status: &ApiKeyHealth) -> f32 {
-        if status.recent_results.is_empty() {
-            return 100.0;
+        /// 计算健康分数
+        fn calculate_health_score(status: &ApiKeyHealth) -> f32 {
+            if status.recent_results.is_empty() {
+                return 100.0;
+            }
+
+            let recent_count = std::cmp::min(status.recent_results.len(), 10);
+            let recent_results =
+                &status.recent_results[status.recent_results.len() - recent_count..];
+
+            // 基础成功率
+            let success_count = recent_results.iter().filter(|r| r.is_success).count();
+            let success_count = u8::try_from(success_count).unwrap_or(u8::MAX);
+            let recent_len = u8::try_from(recent_results.len()).unwrap_or(u8::MAX);
+            let mut score = if recent_len == 0 {
+                0.0
+            } else {
+                (f32::from(success_count) / f32::from(recent_len)) * 100.0
+            };
+
+            // 响应时间惩罚
+            if status.avg_response_time_ms > 3000 {
+                let penalty_ms = status
+                    .avg_response_time_ms
+                    .saturating_sub(3000)
+                    .min(4000);
+                let penalty =
+                    (f32::from(u16::try_from(penalty_ms).unwrap_or(4000)) / 1000.0) * 5.0;
+                score -= penalty.min(20.0);
+            }
+
+            // 连续失败惩罚
+            if status.consecutive_failures > 0 {
+                let failure_penalty_cap = status.consecutive_failures.min(5);
+                let penalty =
+                    (f32::from(u8::try_from(failure_penalty_cap).unwrap_or(5)) * 10.0).min(50.0);
+                score -= penalty;
+            }
+
+            score.clamp(0.0, 100.0)
         }
-
-        let recent_count = std::cmp::min(status.recent_results.len(), 10);
-        let recent_results = &status.recent_results[status.recent_results.len() - recent_count..];
-
-        // 基础成功率
-        let success_count = recent_results.iter().filter(|r| r.is_success).count();
-        let success_count = u32::try_from(success_count).unwrap_or(u32::MAX);
-        let recent_len = u32::try_from(recent_results.len()).unwrap_or(u32::MAX);
-        let mut score = if recent_len == 0 {
-            0.0
-        } else {
-            (success_count as f32 / recent_len as f32) * 100.0
-        };
-
-        // 响应时间惩罚
-        if status.avg_response_time_ms > 3000 {
-            let penalty = ((status.avg_response_time_ms - 3000) as f32 / 1000.0) * 5.0;
-            score -= penalty.min(20.0);
-        }
-
-        // 连续失败惩罚
-        if status.consecutive_failures > 0 {
-            let penalty = (status.consecutive_failures as f32 * 10.0).min(50.0);
-            score -= penalty;
-        }
-
-        score.clamp(0.0, 100.0)
-    }
 
     /// 获取所有健康的API密钥
     pub async fn get_healthy_keys(&self) -> Vec<i32> {

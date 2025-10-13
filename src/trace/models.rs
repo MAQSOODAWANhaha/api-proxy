@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::types::{ratio_as_f64, ProviderKeyId, ProviderTypeId, RequestCount, TokenCount};
+
 /// 请求追踪数据 - 完整的请求生命周期记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestTrace {
@@ -14,11 +16,11 @@ pub struct RequestTrace {
     /// 用户 ID
     pub user_id: i32,
     /// 提供商类型 ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 提供商名称
     pub provider_name: String,
     /// 后端 API 密钥 ID
-    pub backend_key_id: i32,
+    pub backend_key_id: ProviderKeyId,
     /// 请求路径
     pub request_path: String,
     /// HTTP 方法
@@ -53,11 +55,11 @@ pub struct RequestTrace {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     /// 输入 token 数
-    pub prompt_tokens: u32,
+    pub prompt_tokens: TokenCount,
     /// 输出 token 数
-    pub completion_tokens: u32,
+    pub completion_tokens: TokenCount,
     /// 总 token 数
-    pub total_tokens: u32,
+    pub total_tokens: TokenCount,
     /// Token 使用效率（输出/输入比率）
     pub efficiency_ratio: Option<f64>,
 }
@@ -117,7 +119,7 @@ pub enum PhaseStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthMetrics {
     /// 提供商类型 ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 提供商名称
     pub provider_name: String,
     /// 时间窗口开始
@@ -127,11 +129,11 @@ pub struct HealthMetrics {
     /// 时间窗口大小（分钟）
     pub window_minutes: u32,
     /// 总请求数
-    pub total_requests: u64,
+    pub total_requests: RequestCount,
     /// 成功请求数
-    pub successful_requests: u64,
+    pub successful_requests: RequestCount,
     /// 失败请求数
-    pub failed_requests: u64,
+    pub failed_requests: RequestCount,
     /// 成功率
     pub success_rate: f64,
     /// 平均响应时间（毫秒）
@@ -158,11 +160,11 @@ pub struct HealthMetrics {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenStats {
     /// 总输入 token 数
-    pub total_prompt_tokens: u64,
+    pub total_prompt_tokens: TokenCount,
     /// 总输出 token 数
-    pub total_completion_tokens: u64,
+    pub total_completion_tokens: TokenCount,
     /// 总 token 数
-    pub total_tokens: u64,
+    pub total_tokens: TokenCount,
     /// 平均每请求 token 数
     pub avg_tokens_per_request: f64,
     /// 平均 token 使用效率
@@ -321,15 +323,12 @@ impl RequestTrace {
     }
 
     /// 设置 token 使用
-    pub fn set_token_usage(&mut self, prompt_tokens: u32, completion_tokens: u32) {
+    pub fn set_token_usage(&mut self, prompt_tokens: TokenCount, completion_tokens: TokenCount) {
         self.token_usage.prompt_tokens = prompt_tokens;
         self.token_usage.completion_tokens = completion_tokens;
         self.token_usage.total_tokens = prompt_tokens + completion_tokens;
 
-        if prompt_tokens > 0 {
-            self.token_usage.efficiency_ratio =
-                Some(f64::from(completion_tokens) / f64::from(prompt_tokens));
-        }
+        self.token_usage.efficiency_ratio = ratio_as_f64(completion_tokens, prompt_tokens);
     }
 
     /// 添加标签
@@ -341,16 +340,12 @@ impl RequestTrace {
 impl TokenUsage {
     /// 计算使用效率
     pub fn calculate_efficiency(&mut self) {
-        if self.prompt_tokens > 0 {
-            self.efficiency_ratio =
-                Some(f64::from(self.completion_tokens) / f64::from(self.prompt_tokens));
-        }
+        self.efficiency_ratio = ratio_as_f64(self.completion_tokens, self.prompt_tokens);
     }
 }
 
 impl HealthMetrics {
     /// 计算健康评分
-    #[allow(clippy::cast_precision_loss)] // 对于错误类型数量的精度损失是可接受的
     pub fn calculate_health_score(&mut self) {
         let mut score = 100.0;
 
@@ -370,9 +365,10 @@ impl HealthMetrics {
         }
 
         // 错误多样性权重 10%
-        if self.error_distribution.len() > 3 {
-            // 错误类型数量通常不会很多，精度损失是可接受的
-            score += (self.error_distribution.len() as f64 - 3.0) * -2.5;
+        if self.error_distribution.len() > 3
+            && let Ok(len_u32) = u32::try_from(self.error_distribution.len())
+        {
+            score += (f64::from(len_u32) - 3.0) * -2.5;
         }
 
         self.health_score = score.clamp(0.0, 100.0);

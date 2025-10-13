@@ -4,6 +4,7 @@
 
 use super::types::SchedulingStrategy;
 use crate::error::{ProxyError, Result};
+use crate::types::ProviderTypeId;
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -24,7 +25,7 @@ pub struct SelectionContext {
     /// 用户服务API ID
     pub user_service_api_id: i32,
     /// 提供商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 路由分组（通常为请求路径）
     pub route_group: String,
 }
@@ -35,7 +36,7 @@ impl SelectionContext {
         request_id: String,
         user_id: i32,
         user_service_api_id: i32,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
         route_group: String,
     ) -> Self {
         Self {

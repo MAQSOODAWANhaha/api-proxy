@@ -86,11 +86,11 @@ pub fn extract_tokens_from_json(
     if let Some(p) = provider
         && let Some(extractor) = get_or_build_extractor(p)
     {
-        usage.prompt_tokens = extractor.extract_token_u32(json, "tokens_prompt");
-        usage.completion_tokens = extractor.extract_token_u32(json, "tokens_completion");
-        usage.total_tokens = extractor.extract_token_u32(json, "tokens_total");
-        usage.cache_create_tokens = extractor.extract_token_u32(json, "cache_create_tokens");
-        usage.cache_read_tokens = extractor.extract_token_u32(json, "cache_read_tokens");
+        usage.prompt_tokens = extractor.extract_token_count(json, "tokens_prompt");
+        usage.completion_tokens = extractor.extract_token_count(json, "tokens_completion");
+        usage.total_tokens = extractor.extract_token_count(json, "tokens_total");
+        usage.cache_create_tokens = extractor.extract_token_count(json, "cache_create_tokens");
+        usage.cache_read_tokens = extractor.extract_token_count(json, "cache_read_tokens");
     }
     normalize(&mut usage);
     usage

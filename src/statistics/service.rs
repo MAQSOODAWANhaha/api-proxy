@@ -5,6 +5,7 @@
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
+use crate::types::ProviderTypeId;
 use crate::proxy::ProxyContext;
 use crate::statistics::types::{RequestDetails, RequestStats, ResponseStats};
 use crate::{ldebug, linfo, lwarn};
@@ -33,7 +34,7 @@ impl StatisticsService {
     pub async fn calculate_cost_direct(
         &self,
         model: &str,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
         usage: &crate::pricing::TokenUsage,
         request_id: &str,
     ) -> Result<(Option<f64>, Option<String>), ProxyError> {

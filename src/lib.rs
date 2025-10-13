@@ -19,6 +19,7 @@ pub mod proxy;
 pub mod scheduler;
 pub mod statistics;
 pub mod trace;
+pub mod types;
 /// 通用工具和辅助函数模块
 pub mod utils;
 

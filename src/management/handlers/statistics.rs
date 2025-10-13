@@ -5,7 +5,6 @@
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::result_large_err,
     clippy::significant_drop_tightening,

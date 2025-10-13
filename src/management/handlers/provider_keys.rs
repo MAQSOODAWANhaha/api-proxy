@@ -12,6 +12,7 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
 use crate::scheduler::types::ApiKeyHealthStatus;
+use crate::types::{ratio_as_percentage, ProviderTypeId};
 use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
@@ -1676,7 +1677,7 @@ pub struct ProviderKeysListQuery {
 /// 创建提供商密钥请求
 #[derive(Debug, Deserialize)]
 pub struct CreateProviderKeyRequest {
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     pub name: String,
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth"
@@ -1693,7 +1694,7 @@ pub struct CreateProviderKeyRequest {
 /// 更新提供商密钥请求
 #[derive(Debug, Deserialize)]
 pub struct UpdateProviderKeyRequest {
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     pub name: String,
     pub api_key: Option<String>,
     pub auth_type: String, // "api_key", "oauth"
@@ -1711,7 +1712,7 @@ pub struct UpdateProviderKeyRequest {
 #[derive(Debug, Deserialize)]
 pub struct UserProviderKeyQuery {
     /// 服务商类型ID筛选
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     /// 是否启用筛选
     pub is_active: Option<bool>,
 }
@@ -1743,7 +1744,6 @@ pub struct ProviderKeyUsageStats {
 }
 
 /// 获取提供商密钥的使用统计数据
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 async fn fetch_provider_keys_usage_stats(
     db: &sea_orm::DatabaseConnection,
     provider_key_ids: &[i32],
@@ -1828,9 +1828,15 @@ async fn fetch_provider_keys_usage_stats(
     // 计算成功率
     for stats in stats_map.values_mut() {
         if stats.total_requests > 0 {
-            stats.success_rate =
-                (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0;
-            stats.success_rate = (stats.success_rate * 100.0).round() / 100.0; // 保留两位小数
+            if let (Ok(success), Ok(total)) = (
+                u64::try_from(stats.successful_requests),
+                u64::try_from(stats.total_requests),
+            ) {
+                stats.success_rate = ratio_as_percentage(success, total);
+                stats.success_rate = (stats.success_rate * 100.0).round() / 100.0; // 保留两位小数
+            } else {
+                stats.success_rate = 0.0;
+            }
         }
 
         // 格式化费用
@@ -2040,7 +2046,6 @@ fn round_two_decimal(value: f64) -> f64 {
 }
 
 /// 获取趋势数据的通用函数
-#[allow(clippy::cast_precision_loss)]
 async fn fetch_key_trends_data(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
@@ -2100,10 +2105,12 @@ async fn fetch_key_trends_data(
                 0
             };
 
-            let success_rate = if stats.total_requests > 0 {
-                (stats.successful_requests as f64 / stats.total_requests as f64) * 100.0
-            } else {
-                0.0
+            let success_rate = match (
+                u64::try_from(stats.successful_requests),
+                u64::try_from(stats.total_requests),
+            ) {
+                (Ok(success), Ok(total)) => ratio_as_percentage(success, total),
+                _ => 0.0,
             };
 
             trend_data.trend_data.push(TrendDataPoint {
@@ -2157,13 +2164,12 @@ async fn fetch_key_trends_data(
             0
         };
 
-        trend_data.success_rate = if trend_data.total_requests > 0 {
-            let rate = (trend_data.total_successful_requests as f64
-                / trend_data.total_requests as f64)
-                * 100.0;
-            round_two_decimal(rate)
-        } else {
-            0.0
+        trend_data.success_rate = match (
+            u64::try_from(trend_data.total_successful_requests),
+            u64::try_from(trend_data.total_requests),
+        ) {
+            (Ok(success), Ok(total)) => round_two_decimal(ratio_as_percentage(success, total)),
+            _ => 0.0,
         };
     }
 

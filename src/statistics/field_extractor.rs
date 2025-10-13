@@ -5,6 +5,7 @@
 use crate::{
     ldebug,
     logging::{LogComponent, LogStage},
+    types::TokenCount,
 };
 use anyhow::{Result, anyhow};
 use regex::Regex;
@@ -239,21 +240,20 @@ impl TokenFieldExtractor {
         )
     }
 
-    /// 提取u32 token值
+    /// 提取token数量（使用统一TokenCount类型）
     #[must_use]
-    pub fn extract_token_u32(&self, response: &Value, field_name: &str) -> Option<u32> {
+    pub fn extract_token_count(&self, response: &Value, field_name: &str) -> Option<TokenCount> {
         self.extract_token_field(response, field_name)
             .and_then(|v| match v {
                 Value::Number(n) => n
                     .as_u64()
-                    .and_then(|v| u32::try_from(v).ok())
-                    .or_else(|| n.as_f64().and_then(Self::float_to_u32)),
-                Value::String(s) => s.parse::<u32>().ok(),
+                    .or_else(|| n.as_f64().and_then(Self::float_to_u64)),
+                Value::String(s) => s.parse::<TokenCount>().ok(),
                 _ => None,
             })
     }
 
-    fn float_to_u32(value: f64) -> Option<u32> {
+    fn float_to_u64(value: f64) -> Option<u64> {
         if !value.is_finite() {
             return None;
         }
@@ -263,11 +263,7 @@ impl TokenFieldExtractor {
             return None;
         }
 
-        if !(0.0..=f64::from(u32::MAX)).contains(&rounded) {
-            return None;
-        }
-
-        format!("{rounded:.0}").parse::<u32>().ok()
+        format!("{rounded:.0}").parse::<u64>().ok()
     }
 
     fn extract_by_mapping(&self, response: &Value, mapping: &TokenMapping) -> Option<Value> {

@@ -6,6 +6,7 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
+use crate::types::ProviderTypeId;
 use crate::{lerror, linfo};
 use ::entity::{
     ProviderTypes, ProxyTracing, UserProviderKeys, UserServiceApis, proxy_tracing,
@@ -60,7 +61,7 @@ pub struct ProxyTraceListEntry {
     pub error_type: Option<String>,
     pub error_message: Option<String>,
     pub retry_count: i32,
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub duration_ms: Option<i64>,
@@ -96,7 +97,7 @@ pub struct ProxyTraceEntry {
     pub error_type: Option<String>,
     pub error_message: Option<String>,
     pub retry_count: i32,
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub duration_ms: Option<i64>,
@@ -177,7 +178,7 @@ pub struct LogsListQuery {
     pub status_code: Option<i32>,
     pub is_success: Option<bool>,
     pub model_used: Option<String>,
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     pub user_service_api_id: Option<i32>,
     pub user_service_api_name: Option<String>,
     pub user_provider_key_name: Option<String>,

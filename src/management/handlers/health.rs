@@ -14,6 +14,7 @@ use entity::{provider_types, user_provider_keys};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// API密钥健康检查信息
@@ -68,7 +69,7 @@ pub struct ProviderHealthStats {
     /// 该提供商的健康密钥数
     pub healthy_keys: usize,
     /// 平均健康分数
-    pub avg_health_score: f32,
+    pub avg_health_score: f64,
 }
 
 /// 简单健康检查处理器（系统存活检查）
@@ -382,17 +383,14 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
         .into_iter()
         .map(|(provider_name, (total, healthy, scores))| {
             let avg_health_score = if scores.is_empty() {
-                0.0_f32
+                0.0
             } else {
-                let sum: f32 = scores.iter().copied().sum();
-                match scores.len() {
-                    0 => 0.0_f32,
-                    count => {
-                        #[allow(clippy::cast_precision_loss)]
-                        {
-                            sum / count as f32
-                        }
-                    }
+                let sum: f64 = scores.iter().map(|&v| f64::from(v)).sum();
+                let count_u32 = u32::try_from(scores.len()).unwrap_or(u32::MAX);
+                if count_u32 == 0 {
+                    0.0
+                } else {
+                    sum / f64::from(count_u32)
                 }
             };
 

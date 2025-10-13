@@ -1,8 +1,8 @@
 //! # 系统信息处理器
-#![allow(clippy::cast_precision_loss)]
 
 use crate::management::response;
 use crate::management::server::AppState;
+use crate::types::ratio_as_percentage;
 use axum::extract::State;
 use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
@@ -92,14 +92,14 @@ struct SystemMetrics {
 struct MemoryMetrics {
     total_mb: u64,
     used_mb: u64,
-    usage_percentage: f32,
+    usage_percentage: f64,
 }
 
 #[derive(Serialize)]
 struct DiskMetrics {
     total_gb: u64,
     used_gb: u64,
-    usage_percentage: f32,
+    usage_percentage: f64,
 }
 
 /// 获取系统指标 - 匹配API文档格式
@@ -122,11 +122,7 @@ pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::respons
         let memory = MemoryMetrics {
             total_mb: total_memory / 1024 / 1024,
             used_mb: used_memory / 1024 / 1024,
-            usage_percentage: if total_memory == 0 {
-                0.0
-            } else {
-                (used_memory as f32 / total_memory as f32) * 100.0
-            },
+            usage_percentage: ratio_as_percentage(used_memory, total_memory),
         };
 
         drop(sys);
@@ -151,11 +147,7 @@ pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::respons
         let disk = DiskMetrics {
             total_gb: total_disk / 1024 / 1024 / 1024,
             used_gb: used_disk / 1024 / 1024 / 1024,
-            usage_percentage: if total_disk == 0 {
-                0.0
-            } else {
-                (used_disk as f32 / total_disk as f32) * 100.0
-            },
+            usage_percentage: ratio_as_percentage(used_disk, total_disk),
         };
 
         SystemMetrics {

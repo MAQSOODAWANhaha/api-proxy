@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::types::ProviderTypeId;
+
 /// 用户信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
@@ -37,7 +39,7 @@ pub struct ApiKeyInfo {
     /// 用户ID
     pub user_id: i32,
     /// 提供商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 认证类型 (`api_key`, oauth)
     pub auth_type: String,
     /// 密钥名称
@@ -129,7 +131,7 @@ pub struct ProxyAuthResult {
     /// 用户ID
     pub user_id: i32,
     /// 服务商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
 }
 
 /// 认证令牌类型

@@ -27,6 +27,7 @@ pub use session_manager::SessionManager;
 pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
 use crate::auth::types::AuthStatus;
+use crate::types::ProviderTypeId;
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -280,7 +281,7 @@ impl OAuthClient {
     }
 
     /// 提取提供商类型ID
-    const fn extract_provider_type_id(_provider_name: &str) -> Option<i32> {
+    const fn extract_provider_type_id(_provider_name: &str) -> Option<ProviderTypeId> {
         // 解析provider_type_id（如果provider_name包含了类型信息，如"gemini:oauth"）
         // 这里可以通过数据库查询获取真正的provider_type_id
         // 现在暂时设为None，后续可以完善
@@ -291,7 +292,7 @@ impl OAuthClient {
     fn log_session_creation_start(
         user_id: i32,
         provider_name: &str,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
     ) {
         ldebug!(
             "system",
@@ -337,7 +338,7 @@ impl OAuthClient {
         &self,
         user_id: i32,
         provider_name: &str,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
         name: &str,
         description: Option<&str>,
     ) -> OAuthResult<AuthorizeUrlResponse> {

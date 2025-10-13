@@ -3,7 +3,6 @@
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
 )]
@@ -401,11 +400,18 @@ pub async fn list_users(
         user_responses.push(UserResponse::from_user_with_stats(user, &user_stats));
     }
 
+    let limit_u64 = u64::from(limit);
+    let pages = if limit_u64 == 0 {
+        0
+    } else {
+        total.div_ceil(limit_u64)
+    };
+
     let pagination = response::Pagination {
         page: u64::from(page),
         limit: u64::from(limit),
         total,
-        pages: ((total as f64) / f64::from(limit)).ceil() as u64,
+        pages,
     };
 
     response::paginated(user_responses, pagination)

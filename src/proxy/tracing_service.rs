@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
+use crate::types::{ProviderTypeId, TokenCount};
 use crate::{ldebug, linfo, lwarn, proxy_err};
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ impl TracingService {
         request_id: &str,
         user_service_api_id: i32,
         user_id: Option<i32>,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
         user_provider_key_id: Option<i32>,
         method: &str,
         path: Option<String>,
@@ -88,7 +89,7 @@ impl TracingService {
     pub async fn update_trace_model_info(
         &self,
         request_id: &str,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
         model_used: Option<String>,
         user_provider_key_id: Option<i32>,
     ) -> Result<()> {
@@ -136,12 +137,12 @@ impl TracingService {
         &self,
         request_id: &str,
         status_code: u16,
-        tokens_prompt: Option<u32>,
-        tokens_completion: Option<u32>,
-        tokens_total: Option<u32>,
+        tokens_prompt: Option<TokenCount>,
+        tokens_completion: Option<TokenCount>,
+        tokens_total: Option<TokenCount>,
         model_used: Option<String>,
-        cache_create_tokens: Option<u32>,
-        cache_read_tokens: Option<u32>,
+        cache_create_tokens: Option<TokenCount>,
+        cache_read_tokens: Option<TokenCount>,
         cost: Option<f64>,
         cost_currency: Option<String>,
     ) -> Result<()> {
@@ -380,7 +381,7 @@ impl TracingContextHelper {
 
     /// `从ProxyContext提取提供商信息`
     #[must_use]
-    pub fn extract_provider_info(ctx: &ProxyContext) -> Option<i32> {
+    pub fn extract_provider_info(ctx: &ProxyContext) -> Option<ProviderTypeId> {
         ctx.provider_type.as_ref().map(|pt| pt.id)
     }
 
@@ -399,7 +400,7 @@ impl TracingContextHelper {
 
     /// `从ProxyContext提取token信息`
     #[must_use]
-    pub fn extract_token_info(ctx: &ProxyContext) -> (Option<u32>, Option<u32>, Option<u32>) {
+    pub fn extract_token_info(ctx: &ProxyContext) -> (Option<TokenCount>, Option<TokenCount>, Option<TokenCount>) {
         let usage = ctx.usage_final.as_ref();
         let prompt = usage.and_then(|u| u.prompt_tokens);
         let completion = usage.and_then(|u| u.completion_tokens);

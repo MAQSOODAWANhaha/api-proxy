@@ -8,7 +8,6 @@
     clippy::too_many_lines,
     clippy::cast_possible_wrap,
     clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
 
@@ -16,6 +15,7 @@ use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
+use crate::types::{ratio_as_percentage, ProviderTypeId};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -23,6 +23,7 @@ use sea_orm::QueryOrder; // for order_by()
 use sea_orm::prelude::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -38,7 +39,7 @@ pub struct UserServiceKeyQuery {
     /// 描述筛选
     pub description: Option<String>,
     /// 服务类型筛选
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     /// 状态筛选
     pub is_active: Option<bool>,
 }
@@ -51,7 +52,7 @@ pub struct CreateUserServiceKeyRequest {
     /// 描述信息
     pub description: Option<String>,
     /// 服务商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 关联的提供商密钥ID列表
     pub user_provider_keys_ids: Vec<i32>,
     /// 调度策略
@@ -142,7 +143,7 @@ pub struct UserServiceKeyResponse {
     /// 服务商
     pub provider: String,
     /// 服务商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// API密钥(脱敏)
     pub api_key: String,
     /// 使用统计
@@ -181,7 +182,7 @@ pub struct UserServiceKeyDetailResponse {
     /// 描述
     pub description: Option<String>,
     /// 服务商类型ID
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     /// 服务商
     pub provider: String,
     /// API密钥(脱敏)
@@ -307,13 +308,12 @@ pub async fn get_user_service_cards(
 }
 
 /// 2. 用户API Keys列表
-#[allow(
-    clippy::cognitive_complexity,
-    clippy::too_many_lines,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss
-)]
+    #[allow(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
 pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
@@ -1140,11 +1140,12 @@ pub async fn get_user_service_key_usage(
     let total_requests = tracings.len() as i64;
     let successful_requests = tracings.iter().filter(|t| t.is_success).count() as i64;
     let failed_requests = total_requests - successful_requests;
-    #[allow(clippy::cast_precision_loss)]
-    let success_rate = if total_requests > 0 {
-        (successful_requests as f64 / total_requests as f64) * 100.0
-    } else {
-        0.0
+    let success_rate = match (
+        u64::try_from(successful_requests),
+        u64::try_from(total_requests),
+    ) {
+        (Ok(success), Ok(total)) => ratio_as_percentage(success, total),
+        _ => 0.0,
     };
 
     let total_tokens = tracings

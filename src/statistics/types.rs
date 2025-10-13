@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 
+use crate::types::TokenCount;
+
 // === 请求/响应概览类型（采集层） ===
 #[derive(Debug, Clone)]
 pub struct RequestStats {
@@ -44,20 +46,20 @@ pub struct ResponseDetails {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct TokenUsageMetrics {
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
-    pub total_tokens: Option<u32>,
-    pub cache_create_tokens: Option<u32>,
-    pub cache_read_tokens: Option<u32>,
+    pub prompt_tokens: Option<TokenCount>,
+    pub completion_tokens: Option<TokenCount>,
+    pub total_tokens: Option<TokenCount>,
+    pub cache_create_tokens: Option<TokenCount>,
+    pub cache_read_tokens: Option<TokenCount>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PartialUsage {
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
-    pub total_tokens: Option<u32>,
-    pub cache_create_tokens: Option<u32>,
-    pub cache_read_tokens: Option<u32>,
+    pub prompt_tokens: Option<TokenCount>,
+    pub completion_tokens: Option<TokenCount>,
+    pub total_tokens: Option<TokenCount>,
+    pub cache_create_tokens: Option<TokenCount>,
+    pub cache_read_tokens: Option<TokenCount>,
 }
 
 impl PartialUsage {

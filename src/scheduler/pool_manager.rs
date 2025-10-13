@@ -9,6 +9,7 @@ use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, typ
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
+use crate::types::ProviderTypeId;
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
@@ -218,7 +219,7 @@ impl ApiKeyPoolManager {
     pub async fn cache_user_key_pool(
         &self,
         user_id: i32,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
     ) -> Result<Vec<user_provider_keys::Model>> {
         let cache_key = format!("user_{user_id}_{provider_type_id}");
 
@@ -244,7 +245,7 @@ impl ApiKeyPoolManager {
     pub async fn get_cached_key_pool(
         &self,
         user_id: i32,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
     ) -> Option<Vec<user_provider_keys::Model>> {
         let cache_key = format!("user_{user_id}_{provider_type_id}");
         let pools = self.key_pools.read().await;

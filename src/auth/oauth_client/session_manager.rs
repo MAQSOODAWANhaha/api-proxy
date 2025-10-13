@@ -6,6 +6,7 @@
 use super::pkce::PkceParams;
 use super::{OAuthError, OAuthProviderConfig, OAuthResult, OAuthSessionInfo, OAuthTokenResponse};
 use crate::auth::types::AuthStatus;
+use crate::types::ProviderTypeId;
 use chrono::{Duration, Utc};
 use entity::{OAuthClientSessions, oauth_client_sessions};
 use sea_orm::{
@@ -20,7 +21,7 @@ use uuid::Uuid;
 pub struct CreateSessionParams {
     pub user_id: i32,
     pub provider_name: String,
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     pub name: String,
     pub description: Option<String>,
     pub expires_in_minutes: Option<i32>,
@@ -44,7 +45,7 @@ impl SessionManager {
         &self,
         user_id: i32,
         provider_name: &str,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
         name: &str,
         description: Option<&str>,
         _config: &OAuthProviderConfig,
@@ -254,7 +255,7 @@ impl SessionManager {
     pub async fn list_user_active_sessions_by_provider_id(
         &self,
         user_id: i32,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
     ) -> OAuthResult<Vec<oauth_client_sessions::Model>> {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
@@ -273,7 +274,7 @@ impl SessionManager {
         &self,
         user_id: i32,
         provider_name: Option<&str>,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
     ) -> OAuthResult<Vec<oauth_client_sessions::Model>> {
         let mut query = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))

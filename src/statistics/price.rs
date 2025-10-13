@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::error::ProxyError;
 use crate::pricing::PricingCalculatorService;
 use crate::statistics::types::TokenUsageMetrics;
+use crate::types::ProviderTypeId;
 use crate::{
     logging::{LogComponent, LogStage},
     lwarn,
@@ -14,7 +15,7 @@ use crate::{
 pub async fn calculate(
     pricing: &Arc<PricingCalculatorService>,
     model: &str,
-    provider_type_id: i32,
+    provider_type_id: ProviderTypeId,
     usage: &TokenUsageMetrics,
     request_id: &str,
 ) -> Result<(Option<f64>, Option<String>), ProxyError> {

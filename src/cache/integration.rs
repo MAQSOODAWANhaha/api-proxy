@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
 use crate::error::{ProxyError, Result};
+use crate::types::ProviderTypeId;
 use entity::{ProviderTypes, UserServiceApis, provider_types, user_service_apis};
 
 /// 缓存的提供商配置结构
@@ -37,7 +38,7 @@ pub struct ProviderConfig {
 pub struct UserApiConfig {
     pub id: i32,
     pub user_id: i32,
-    pub provider_type_id: i32,
+    pub provider_type_id: ProviderTypeId,
     pub api_key: String,
     pub user_provider_keys_ids: Vec<i32>,
     pub name: Option<String>,

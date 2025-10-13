@@ -29,24 +29,24 @@ fn test_array_index_path_extraction() {
     });
 
     // Debug: Check individual field extraction
-    let prompt_result = extractor.extract_token_u32(&response, "tokens_prompt");
-    let completion_result = extractor.extract_token_u32(&response, "tokens_completion");
-    let total_result = extractor.extract_token_u32(&response, "tokens_total");
+    let prompt_result = extractor.extract_token_count(&response, "tokens_prompt");
+    let completion_result = extractor.extract_token_count(&response, "tokens_completion");
+    let total_result = extractor.extract_token_count(&response, "tokens_total");
 
     println!("Prompt result: {prompt_result:?}");
     println!("Completion result: {completion_result:?}");
     println!("Total result: {total_result:?}");
 
     assert_eq!(
-        extractor.extract_token_u32(&response, "tokens_prompt"),
+        extractor.extract_token_count(&response, "tokens_prompt"),
         Some(15)
     );
     assert_eq!(
-        extractor.extract_token_u32(&response, "tokens_completion"),
+        extractor.extract_token_count(&response, "tokens_completion"),
         Some(25)
     );
     assert_eq!(
-        extractor.extract_token_u32(&response, "tokens_total"),
+        extractor.extract_token_count(&response, "tokens_total"),
         Some(40) // 15 + 25
     );
 }
@@ -107,7 +107,7 @@ fn test_array_index_out_of_bounds() {
 
     // 数组索引越界，应该返回None
     assert_eq!(
-        extractor.extract_token_u32(&response, "tokens_prompt"),
+        extractor.extract_token_count(&response, "tokens_prompt"),
         None
     );
 }

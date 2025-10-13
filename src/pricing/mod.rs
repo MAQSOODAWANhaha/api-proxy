@@ -4,6 +4,7 @@
 #![allow(clippy::float_cmp, clippy::items_after_statements)]
 
 use crate::logging::{LogComponent, LogStage};
+use crate::types::{CostValue, ProviderTypeId, TokenCount};
 use crate::{ldebug, lerror, linfo, lwarn};
 use anyhow::Result;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
@@ -26,24 +27,24 @@ pub struct PricingCalculatorService {
 #[derive(Debug, Clone, Default)]
 pub struct TokenUsage {
     /// 输入tokens
-    pub prompt_tokens: Option<u32>,
+    pub prompt_tokens: Option<TokenCount>,
     /// 输出tokens
-    pub completion_tokens: Option<u32>,
+    pub completion_tokens: Option<TokenCount>,
     /// 缓存创建tokens
-    pub cache_create_tokens: Option<u32>,
+    pub cache_create_tokens: Option<TokenCount>,
     /// 缓存读取tokens
-    pub cache_read_tokens: Option<u32>,
+    pub cache_read_tokens: Option<TokenCount>,
 }
 
 /// 费用计算结果
 #[derive(Debug, Clone)]
 pub struct CostCalculationResult {
     /// 总费用
-    pub total_cost: f64,
+    pub total_cost: CostValue,
     /// 货币单位
     pub currency: String,
     /// 详细费用分解
-    pub cost_breakdown: HashMap<String, f64>,
+    pub cost_breakdown: HashMap<String, CostValue>,
     /// 是否使用了fallback定价
     pub used_fallback: bool,
 }
@@ -66,7 +67,7 @@ impl PricingCalculatorService {
     pub async fn calculate_cost(
         &self,
         model_used: &str,
-        provider_type_id: i32,
+        provider_type_id: ProviderTypeId,
         token_usage: &TokenUsage,
         request_id: &str,
     ) -> Result<CostCalculationResult> {
@@ -116,8 +117,8 @@ impl PricingCalculatorService {
         }
 
         // 计算各类型token的费用
-        let mut cost_breakdown = HashMap::new();
-        let mut total_cost = 0.0;
+        let mut cost_breakdown: HashMap<String, CostValue> = HashMap::new();
+        let mut total_cost: CostValue = 0.0;
 
         // 计算prompt tokens费用
         if let Some(prompt_tokens) = token_usage.prompt_tokens {
@@ -187,7 +188,7 @@ impl PricingCalculatorService {
     async fn find_model_pricing(
         &self,
         model_name: &str,
-        expected_provider_type_id: i32,
+        expected_provider_type_id: ProviderTypeId,
     ) -> Result<Option<model_pricing::Model>> {
         let pricing = ModelPricing::find()
             .filter(model_pricing::Column::ModelName.eq(model_name))
@@ -252,11 +253,11 @@ impl PricingCalculatorService {
     /// 计算特定token类型的阶梯费用
     fn calculate_tiered_cost(
         token_type: &str,
-        token_count: u32,
+        token_count: TokenCount,
         pricing_tiers: &[model_pricing_tiers::Model],
         request_id: &str,
-    ) -> f64 {
-        // 尝试将 u32 转换为 i32，如果失败说明 token 数量异常大
+    ) -> CostValue {
+        // 尝试将 TokenCount 转换为 i32，如果失败说明 token 数量异常大
         let token_count = i32::try_from(token_count).unwrap_or_else(|_| {
             lerror!(
                 request_id,
@@ -293,7 +294,7 @@ impl PricingCalculatorService {
         let mut sorted_tiers = relevant_tiers.clone();
         sorted_tiers.sort_by_key(|tier| tier.min_tokens);
 
-        let mut total_cost = 0.0;
+        let mut total_cost: CostValue = 0.0;
 
         for tier in &sorted_tiers {
             // 计算在此阶梯内使用的token数量

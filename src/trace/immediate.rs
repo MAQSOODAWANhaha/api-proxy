@@ -3,6 +3,7 @@
 //! 解决长时间请求的内存占用和数据丢失问题，采用即时数据库写入模式
 
 use crate::logging::{LogComponent, LogStage};
+use crate::types::{ratio_as_f64, ProviderTypeId, TokenCount};
 use crate::{ldebug, lerror, linfo, lwarn};
 use anyhow::Result;
 use chrono::Utc;
@@ -18,8 +19,8 @@ pub struct SimpleCompleteTraceParams {
     pub request_id: String,
     pub status_code: u16,
     pub is_success: bool,
-    pub tokens_prompt: Option<u32>,
-    pub tokens_completion: Option<u32>,
+    pub tokens_prompt: Option<TokenCount>,
+    pub tokens_completion: Option<TokenCount>,
     pub error_type: Option<String>,
     pub error_message: Option<String>,
 }
@@ -29,12 +30,12 @@ pub struct SimpleCompleteTraceParams {
 pub struct CompleteTraceParams {
     pub status_code: u16,
     pub is_success: bool,
-    pub tokens_prompt: Option<u32>,
-    pub tokens_completion: Option<u32>,
+    pub tokens_prompt: Option<TokenCount>,
+    pub tokens_completion: Option<TokenCount>,
     pub error_type: Option<String>,
     pub error_message: Option<String>,
-    pub cache_create_tokens: Option<u32>,
-    pub cache_read_tokens: Option<u32>,
+    pub cache_create_tokens: Option<TokenCount>,
+    pub cache_read_tokens: Option<TokenCount>,
     pub cost: Option<f64>,
     pub cost_currency: Option<String>,
 }
@@ -45,7 +46,7 @@ pub struct StartTraceParams {
     pub request_id: String,
     pub user_service_api_id: i32,
     pub user_id: Option<i32>,
-    pub provider_type_id: Option<i32>,
+    pub provider_type_id: Option<ProviderTypeId>,
     pub user_provider_key_id: Option<i32>,
     pub method: String,
     pub path: Option<String>,
@@ -188,7 +189,7 @@ impl ImmediateProxyTracer {
     pub async fn update_trace_model_info(
         &self,
         request_id: &str,
-        provider_type_id: Option<i32>,
+        provider_type_id: Option<ProviderTypeId>,
         model_used: Option<String>,
         user_provider_key_id: Option<i32>,
     ) -> Result<()> {
@@ -307,7 +308,7 @@ impl ImmediateProxyTracer {
         };
 
         let token_efficiency_ratio = match (params.tokens_prompt, params.tokens_completion) {
-            (Some(p), Some(c)) if p > 0 => Some(f64::from(c) / f64::from(p)),
+            (Some(p), Some(c)) => ratio_as_f64(c, p),
             _ => None,
         };
 
