@@ -39,16 +39,16 @@ impl RequestTransformService {
         }
 
         // 2. 构建并注入认证头
-        self.build_and_inject_auth_headers(upstream_request, ctx)?;
+        Self::build_and_inject_auth_headers(upstream_request, ctx)?;
 
         // 3. 清理代理相关和不必要的头部
-        self.cleanup_headers(upstream_request);
+        Self::cleanup_headers(upstream_request);
 
         // 4. 确保必要的头部存在（如 User-Agent, Accept）
-        self.ensure_essential_headers(session, upstream_request);
+        Self::ensure_essential_headers(session, upstream_request);
 
         // 5. 处理 Content-Length
-        self.handle_content_length(session, upstream_request, ctx);
+        Self::handle_content_length(session, upstream_request, ctx);
 
         linfo!(
             &ctx.request_id,
@@ -66,7 +66,6 @@ impl RequestTransformService {
 
     /// 构建并注入上游认证头
     fn build_and_inject_auth_headers(
-        &self,
         upstream_request: &mut RequestHeader,
         ctx: &ProxyContext,
     ) -> Result<()> {
@@ -75,15 +74,14 @@ impl RequestTransformService {
             .as_ref()
             .ok_or_else(|| proxy_err!(internal, "Resolved credential not set"))?;
 
-        self.clear_auth_headers(upstream_request);
+        Self::clear_auth_headers(upstream_request);
 
         match credential {
             ResolvedCredential::ApiKey(api_key) => {
-                let auth_headers = if let Some(strategy) = &ctx.strategy {
-                    strategy.build_auth_headers(api_key)
-                } else {
-                    vec![("Authorization".to_string(), format!("Bearer {api_key}"))]
-                };
+                let auth_headers = ctx.strategy.as_ref().map_or_else(
+                    || vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
+                    |strategy| strategy.build_auth_headers(api_key),
+                );
 
                 for (name, value) in auth_headers {
                     upstream_request
@@ -102,7 +100,7 @@ impl RequestTransformService {
     }
 
     /// 清理所有可能的认证头
-    fn clear_auth_headers(&self, upstream_request: &mut RequestHeader) {
+    fn clear_auth_headers(upstream_request: &mut RequestHeader) {
         upstream_request.remove_header("authorization");
         upstream_request.remove_header("x-goog-api-key");
         upstream_request.remove_header("x-api-key");
@@ -110,7 +108,7 @@ impl RequestTransformService {
     }
 
     /// 清理代理相关的头部
-    fn cleanup_headers(&self, upstream_request: &mut RequestHeader) {
+    fn cleanup_headers(upstream_request: &mut RequestHeader) {
         let headers_to_remove = [
             "x-forwarded-for",
             "x-forwarded-host",
@@ -126,7 +124,7 @@ impl RequestTransformService {
     }
 
     /// 确保通用头部存在
-    fn ensure_essential_headers(&self, session: &Session, upstream_request: &mut RequestHeader) {
+    fn ensure_essential_headers(session: &Session, upstream_request: &mut RequestHeader) {
         if upstream_request.headers.get("user-agent").is_none() {
             let ua = session
                 .req_header()
@@ -144,7 +142,6 @@ impl RequestTransformService {
 
     /// 处理 Content-Length
     fn handle_content_length(
-        &self,
         session: &Session,
         upstream_request: &mut RequestHeader,
         ctx: &ProxyContext,

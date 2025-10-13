@@ -308,14 +308,15 @@ impl ApiKeyPoolManager {
     }
 
     fn passes_auth_checks(key: &user_provider_keys::Model) -> bool {
-        key.auth_status.as_deref().map_or(true, |auth_status| {
+        key.auth_status.as_deref().is_none_or(|auth_status| {
             let status = AuthStatus::from(auth_status);
-            Self::auth_status_allows_usage(key, status)
+            Self::auth_status_allows_usage(key, &status)
         })
     }
 
-    fn auth_status_allows_usage(key: &user_provider_keys::Model, status: AuthStatus) -> bool {
-        match status {
+    #[allow(clippy::cognitive_complexity)]
+    fn auth_status_allows_usage(key: &user_provider_keys::Model, status: &AuthStatus) -> bool {
+        match *status {
             AuthStatus::Authorized => true,
             AuthStatus::Pending => {
                 ldebug!(
@@ -369,20 +370,20 @@ impl ApiKeyPoolManager {
     }
 
     fn is_not_expired(key: &user_provider_keys::Model, now: &chrono::NaiveDateTime) -> bool {
-        if let Some(expires_at) = key.expires_at.as_ref() {
-            if now >= expires_at {
-                ldebug!(
-                    "system",
-                    LogStage::Scheduling,
-                    LogComponent::Scheduler,
-                    "key_expired",
-                    "API key has expired, skipping",
-                    key_id = key.id,
-                    key_name = %key.name,
-                    expires_at = %expires_at,
-                );
-                return false;
-            }
+        if let Some(expires_at) = key.expires_at.as_ref()
+            && now >= expires_at
+        {
+            ldebug!(
+                "system",
+                LogStage::Scheduling,
+                LogComponent::Scheduler,
+                "key_expired",
+                "API key has expired, skipping",
+                key_id = key.id,
+                key_name = %key.name,
+                expires_at = %expires_at,
+            );
+            return false;
         }
         true
     }

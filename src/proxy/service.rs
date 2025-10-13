@@ -12,6 +12,7 @@ use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sea_orm::DatabaseConnection;
 use serde_json::Value;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -55,11 +56,44 @@ impl ProxyService {
         })
     }
 
-    const fn resolve_status_code(ctx: &ProxyContext, error: Option<&Error>) -> u16 {
-        if let Some(status) = ctx.response_details.status_code {
-            return status;
+    /// 检测是否为连接失败错误
+    fn is_connection_failure(error: Option<&Error>) -> bool {
+        error.is_some_and(|err| match err.etype {
+            ErrorType::ConnectionClosed
+            | ErrorType::ConnectTimedout
+            | ErrorType::ReadTimedout
+            | ErrorType::WriteTimedout
+            | ErrorType::HTTPStatus(0) => true,
+            ErrorType::CustomCode(_, code) => (500..600).contains(&code),
+            _ => false,
+        })
+    }
+
+    /// 检测是否为部分响应错误（收到响应头但响应体不完整）
+    fn is_partial_response_error(ctx: &ProxyContext, error: Option<&Error>) -> bool {
+        // 检查是否有响应状态码但有连接错误
+        let has_response_status = ctx.response_details.status_code.is_some();
+        let has_connection_error = Self::is_connection_failure(error);
+
+        has_response_status && has_connection_error
+    }
+
+    /// 重构的状态码解析函数 - 优先使用Pingora错误信息
+    fn resolve_status_code(ctx: &ProxyContext, error: Option<&Error>) -> u16 {
+        // 第一优先级：检查连接失败错误
+        if Self::is_connection_failure(error) {
+            // 如果有连接失败，优先返回502/504而不是缓存的HTTP状态码
+            if let Some(err) = error {
+                return match err.etype {
+                    ErrorType::ReadTimedout | ErrorType::WriteTimedout => 504,
+                    ErrorType::CustomCode(_, code) if (500..600).contains(&code) => code,
+                    _ => 502,
+                };
+            }
+            return 502;
         }
 
+        // 第二优先级：检查Pingora错误中的HTTP状态码
         if let Some(err) = error {
             match err.etype {
                 ErrorType::HTTPStatus(code) | ErrorType::CustomCode(_, code) => return code,
@@ -67,7 +101,19 @@ impl ProxyService {
             }
         }
 
-        if error.is_some() { 500 } else { 200 }
+        // 第三优先级：只有在没有错误时才使用上下文中的状态码
+        if error.is_none()
+            && let Some(status) = ctx.response_details.status_code
+        {
+            return status;
+        }
+
+        // 最后回退：根据错误情况返回默认状态码
+        if error.is_some() {
+            500 // 服务器内部错误
+        } else {
+            200 // 没有错误且没有状态码时默认成功
+        }
     }
 }
 
@@ -142,7 +188,8 @@ impl ProxyHttp for ProxyService {
             ctx.timeout_seconds = Some(timeout);
 
             // 设置读写超时为配置超时的2倍
-            let timeout_duration = std::time::Duration::from_secs(timeout as u64 * 2);
+            let timeout_u64 = u64::try_from(timeout).unwrap_or(120);
+            let timeout_duration = std::time::Duration::from_secs(timeout_u64 * 2);
             session.set_read_timeout(Some(timeout_duration));
             session.set_write_timeout(Some(timeout_duration));
 
@@ -203,6 +250,7 @@ impl ProxyHttp for ProxyService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn request_body_filter(
         &self,
         session: &mut Session,
@@ -365,6 +413,7 @@ impl ProxyHttp for ProxyService {
             ctx.response_body.extend_from_slice(chunk);
         }
         if end_of_stream {
+            // 简单记录响应体接收完成
             linfo!(
                 &ctx.request_id,
                 LogStage::Response,
@@ -377,6 +426,7 @@ impl ProxyHttp for ProxyService {
         Ok(None)
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
         let status_code = Self::resolve_status_code(ctx, e);
         let success = status_code < 400;

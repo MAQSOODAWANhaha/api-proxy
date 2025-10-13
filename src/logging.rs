@@ -820,18 +820,114 @@ impl LogFormatValidator {
 
 // ================ Gemini Provider 日志工具 ================
 
+/// 分析错误类型和分类
+fn analyze_error_type(
+    error: Option<&Error>,
+    status_code: u16,
+    _ctx: &ProxyContext,
+) -> (String, String, String) {
+    error.map_or_else(
+        || {
+            if status_code >= 400 {
+                match status_code {
+                    400..=499 => (
+                        "client_error".to_string(),
+                        "客户端错误".to_string(),
+                        format!("HTTP客户端错误 {status_code}"),
+                    ),
+                    500..=599 => (
+                        "server_error".to_string(),
+                        "服务器错误".to_string(),
+                        format!("HTTP服务器错误 {status_code}"),
+                    ),
+                    _ => (
+                        "http_error".to_string(),
+                        "HTTP错误".to_string(),
+                        format!("HTTP错误 {status_code}"),
+                    ),
+                }
+            } else {
+                (
+                    "unknown_failure".to_string(),
+                    "未知失败".to_string(),
+                    "请求失败但具体原因不明".to_string(),
+                )
+            }
+        },
+        |err| match err.etype {
+            ErrorType::ConnectionClosed => (
+                "connection_failure".to_string(),
+                "连接关闭".to_string(),
+                format!("连接关闭: {err}"),
+            ),
+            ErrorType::ConnectTimedout => (
+                "connection_timeout".to_string(),
+                "连接超时".to_string(),
+                format!("连接上游服务器超时: {err}"),
+            ),
+            ErrorType::ReadTimedout => (
+                "read_timeout".to_string(),
+                "读取超时".to_string(),
+                format!("读取响应数据超时: {err}"),
+            ),
+            ErrorType::WriteTimedout => (
+                "write_timeout".to_string(),
+                "写入超时".to_string(),
+                format!("发送请求数据超时: {err}"),
+            ),
+            ErrorType::HTTPStatus(code) => {
+                if code == 0 {
+                    (
+                        "connection_error".to_string(),
+                        "连接错误".to_string(),
+                        format!("连接中断，未收到HTTP响应: {err}"),
+                    )
+                } else {
+                    (
+                        "http_error".to_string(),
+                        "HTTP错误响应".to_string(),
+                        format!("上游返回HTTP错误 {code}: {err}"),
+                    )
+                }
+            }
+            ErrorType::CustomCode(_, code) => (
+                "custom_error".to_string(),
+                "自定义错误".to_string(),
+                format!("自定义错误 {code}: {err}"),
+            ),
+            _ => (
+                "unknown_error".to_string(),
+                "未知错误".to_string(),
+                format!("未知错误类型: {:?}", err.etype),
+            ),
+        },
+    )
+}
+
 /// 记录详细的代理失败信息
+#[allow(clippy::cognitive_complexity)]
 pub fn log_proxy_failure_details(
     request_id: &str,
     status_code: u16,
     error: Option<&Error>,
     ctx: &ProxyContext,
 ) {
-    // Safely get request body
-    let request_body = String::from_utf8_lossy(&ctx.request_body);
-    let request_body_preview = request_body.as_ref();
+    // 分析错误类型
+    let (error_category, error_type_cn, error_message) =
+        analyze_error_type(error, status_code, ctx);
 
-    // Decompress response body if gzipped
+    // 获取Pingora错误详情
+    let pingora_error_details = error.map_or_else(|| "无Pingora错误".to_string(), Error::to_string);
+
+    // 安全获取请求体
+    let request_body = String::from_utf8_lossy(&ctx.request_body);
+    let request_body_preview = if request_body.len() > 4096 {
+        format!("{}...", &request_body[..4096])
+    } else {
+        request_body.to_string()
+    };
+
+    // 处理响应体
     let response_body_preview = if ctx
         .response_details
         .content_encoding
@@ -841,49 +937,86 @@ pub fn log_proxy_failure_details(
         let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
         let mut decompressed = Vec::new();
         if decoder.read_to_end(&mut decompressed).is_ok() {
-            String::from_utf8_lossy(&decompressed).to_string()
+            let body_str = String::from_utf8_lossy(&decompressed);
+            if body_str.len() > 4096 {
+                format!("{}...", &body_str[..4096])
+            } else {
+                body_str.to_string()
+            }
         } else {
-            // Fallback to lossy conversion if decompression fails
             String::from_utf8_lossy(&ctx.response_body).to_string()
         }
     } else {
-        String::from_utf8_lossy(&ctx.response_body).to_string()
+        let body_str = String::from_utf8_lossy(&ctx.response_body);
+        if body_str.len() > 4096 {
+            format!("{}...", &body_str[..4096])
+        } else {
+            body_str.to_string()
+        }
     };
 
-    let (error_message, error_details) = error.map_or_else(
-        || {
-            (
-                format!("HTTP {status_code} response returned with error"),
-                response_body_preview.clone(),
-            )
-        },
-        |e| {
-            let message = match e.etype {
-                ErrorType::HTTPStatus(code) => format!("Pingora HTTP status error: {code}"),
-                ErrorType::CustomCode(_, code) => {
-                    format!("Pingora custom status error: {code}")
-                }
-                _ => format!("Pingora proxy error: {:?}", e.etype),
-            };
-            (message, e.to_string())
-        },
-    );
+    // 检测状态码不一致问题
+    let context_status_code = ctx.response_details.status_code;
+    let status_code_consistent = context_status_code.is_none_or(|ctx_code| ctx_code == status_code);
 
+    // 记录详细的错误信息
     lerror!(
         request_id,
         LogStage::ResponseFailure,
         LogComponent::Proxy,
         "proxy_request_failed",
-        "Proxy request failed",
+        "代理请求失败 - 详细分析",
         status_code = status_code,
+        context_status_code = ?context_status_code,
+        status_code_consistent = status_code_consistent,
+        error_category = %error_category,
+        error_type_cn = %error_type_cn,
         error_message = %error_message,
-        error_details = %error_details,
+        pingora_error_details = %pingora_error_details,
         path = %ctx.request_details.path,
         method = %ctx.request_details.method,
         client_ip = %ctx.request_details.client_ip,
+        user_agent = ?ctx.request_details.user_agent,
+        request_body_size = ctx.request_body.len(),
+        response_body_size = ctx.response_body.len(),
         request_body_preview = %request_body_preview,
-        response_body_preview = %response_body_preview
+        response_body_preview = %response_body_preview,
+        has_selected_backend = ctx.selected_backend.is_some(),
+        provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
+        request_duration_ms = ctx.start_time.elapsed().as_millis()
     );
+
+    // 针对连接失败的特殊日志
+    if matches!(
+        error_category.as_str(),
+        "connection_failure" | "connection_timeout" | "connection_error"
+    ) {
+        lwarn!(
+            request_id,
+            LogStage::ResponseFailure,
+            LogComponent::Proxy,
+            "connection_failure_analysis",
+            "连接失败分析 - 可能需要检查网络或上游服务状态",
+            error_category = %error_category,
+            client_ip = %ctx.request_details.client_ip,
+            selected_backend_id = ?ctx.selected_backend.as_ref().map(|b| b.id),
+            provider_name = ?ctx.provider_type.as_ref().map(|p| &p.name)
+        );
+    }
+
+    // 针对状态码不一致的警告
+    if !status_code_consistent {
+        lwarn!(
+            request_id,
+            LogStage::ResponseFailure,
+            LogComponent::Proxy,
+            "status_code_inconsistency",
+            "检测到状态码不一致 - 可能存在部分响应接收问题",
+            resolved_status_code = status_code,
+            context_status_code = ?context_status_code,
+            error_category = %error_category
+        );
+    }
 }
 
 /// 记录 Gemini 完整请求信息

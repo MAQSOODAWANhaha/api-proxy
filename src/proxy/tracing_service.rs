@@ -30,6 +30,7 @@ impl TracingService {
     /// 开始请求追踪
     ///
     /// 在认证成功后调用，记录请求开始信息
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_trace(
         &self,
         request_id: &str,
@@ -130,6 +131,7 @@ impl TracingService {
     /// 完成请求追踪（成功情况）（第二层：批量更新统计信息）
     ///
     /// 在请求成功处理完成时调用，一次性更新所有统计字段
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete_trace_success(
         &self,
         request_id: &str,

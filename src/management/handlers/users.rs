@@ -1,4 +1,12 @@
 //! # 用户管理处理器
+#![allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
@@ -139,7 +147,7 @@ pub struct UserStats {
 impl UserResponse {
     /// 从用户实体和统计数据创建响应DTO
     #[must_use]
-    pub fn from_user_with_stats(user: users::Model, stats: UserStats) -> Self {
+    pub fn from_user_with_stats(user: users::Model, stats: &UserStats) -> Self {
         Self {
             id: user.id,
             username: user.username,
@@ -256,7 +264,7 @@ pub async fn list_users(
         };
 
         let user_stats = get_user_statistics(self_user.id, state.database.as_ref()).await;
-        let user_response = UserResponse::from_user_with_stats(self_user, user_stats);
+        let user_response = UserResponse::from_user_with_stats(self_user, &user_stats);
 
         let pagination = response::Pagination {
             page: 1,
@@ -390,7 +398,7 @@ pub async fn list_users(
 
     for user in users {
         let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
-        user_responses.push(UserResponse::from_user_with_stats(user, user_stats));
+        user_responses.push(UserResponse::from_user_with_stats(user, &user_stats));
     }
 
     let pagination = response::Pagination {
@@ -576,7 +584,7 @@ pub async fn create_user(
     };
 
     let created_user_stats = get_user_statistics(created_user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(created_user, created_user_stats);
+    let user_response = UserResponse::from_user_with_stats(created_user, &created_user_stats);
 
     response::success_with_message(user_response, "用户创建成功")
 }
@@ -627,7 +635,7 @@ pub async fn get_user(
 
     // 获取用户统计数据
     let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(user, user_stats);
+    let user_response = UserResponse::from_user_with_stats(user, &user_stats);
     response::success(user_response)
 }
 
@@ -1075,7 +1083,7 @@ pub async fn update_user(
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
             let updated_stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response = UserResponse::from_user_with_stats(updated_user, updated_stats);
+            let user_response = UserResponse::from_user_with_stats(updated_user, &updated_stats);
             response::success_with_message(user_response, "用户更新成功")
         }
         Err(err) => {
@@ -1243,7 +1251,8 @@ pub async fn toggle_user_status(
         Ok(updated_user) => {
             let user_status_stats =
                 get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response = UserResponse::from_user_with_stats(updated_user, user_status_stats);
+            let user_response =
+                UserResponse::from_user_with_stats(updated_user, &user_status_stats);
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {

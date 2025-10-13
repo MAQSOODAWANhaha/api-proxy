@@ -1,4 +1,5 @@
 //! # 系统信息处理器
+#![allow(clippy::cast_precision_loss)]
 
 use crate::management::response;
 use crate::management::server::AppState;
@@ -128,20 +129,24 @@ pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::respons
             },
         };
 
+        drop(sys);
+
         // Disk: Handled by the separate `Disks` struct
         let disks = Disks::new_with_refreshed_list();
         let (total_disk, used_disk) = disks
             .iter()
             .find(|d| d.mount_point() == std::path::Path::new("/"))
-            .map(|d| (d.total_space(), d.total_space() - d.available_space()))
-            .unwrap_or_else(|| {
-                disks.iter().fold((0, 0), |(total, used), disk| {
-                    (
-                        total + disk.total_space(),
-                        used + (disk.total_space() - disk.available_space()),
-                    )
-                })
-            });
+            .map_or_else(
+                || {
+                    disks.iter().fold((0, 0), |(total, used), disk| {
+                        (
+                            total + disk.total_space(),
+                            used + (disk.total_space() - disk.available_space()),
+                        )
+                    })
+                },
+                |d| (d.total_space(), d.total_space() - d.available_space()),
+            );
 
         let disk = DiskMetrics {
             total_gb: total_disk / 1024 / 1024 / 1024,
@@ -208,19 +213,21 @@ fn format_uptime(uptime_seconds: u64) -> String {
 
 /// 掩盖敏感信息
 fn mask_sensitive_info(url: &str) -> String {
-    if url.contains("://") {
-        if let Some(at_pos) = url.find('@') {
-            if let Some(scheme_end) = url.find("://") {
-                let scheme = &url[..scheme_end + 3];
-                let after_at = &url[at_pos + 1..];
-                format!("{scheme}***:***@{after_at}")
-            } else {
-                url.to_string()
-            }
-        } else {
-            url.to_string()
-        }
-    } else {
-        "***".to_string()
+    if !url.contains("://") {
+        return "***".to_string();
     }
+
+    url.find('@').map_or_else(
+        || url.to_string(),
+        |at_pos| {
+            url.find("://").map_or_else(
+                || url.to_string(),
+                |scheme_end| {
+                    let scheme = &url[..scheme_end + 3];
+                    let after_at = &url[at_pos + 1..];
+                    format!("{scheme}***:***@{after_at}")
+                },
+            )
+        },
+    )
 }

@@ -129,12 +129,8 @@ impl ProviderStrategy for GeminiStrategy {
 
         // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
         let modified = if ctx.will_modify_body {
-            backend.project_id.as_ref().map_or(false, |project_id| {
-                if project_id.is_empty() {
-                    false
-                } else {
-                    inject_generatecontent_fields(json_value, project_id)
-                }
+            backend.project_id.as_ref().is_some_and(|project_id| {
+                !project_id.is_empty() && inject_generatecontent_fields(json_value, project_id)
             })
         } else {
             false

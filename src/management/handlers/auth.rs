@@ -64,6 +64,7 @@ pub struct Claims {
 }
 
 /// 用户登录（完整密码验证版本）
+#[allow(clippy::cognitive_complexity)]
 pub async fn login(
     State(state): State<AppState>,
     Json(request): Json<LoginRequest>,
@@ -204,6 +205,7 @@ pub struct RefreshTokenResponse {
 }
 
 /// 用户登出
+#[allow(clippy::cognitive_complexity)]
 pub async fn logout(
     State(_state): State<AppState>,
     headers: HeaderMap,
@@ -290,6 +292,7 @@ pub async fn logout(
 }
 
 /// 验证JWT Token
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn validate_token(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -460,6 +463,7 @@ pub async fn validate_token(
 }
 
 /// 刷新access token
+#[allow(clippy::cognitive_complexity)]
 pub async fn refresh_token(
     State(state): State<AppState>,
     Json(request): Json<RefreshTokenRequest>,

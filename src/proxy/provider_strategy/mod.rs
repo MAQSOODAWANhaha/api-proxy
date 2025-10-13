@@ -38,6 +38,7 @@ impl ProviderType {
     /// - Gemini: "gemini", "google"
     /// - Anthropic: "anthropic", "claude"
     #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             // OpenAI 及其别名

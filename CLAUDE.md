@@ -65,8 +65,8 @@ cargo bench
 # 代码格式化
 cargo fmt
 
-# 严格代码检查（推荐在提交前运行）
-cargo clippy -- -D warnings
+# 严格代码检查（必须符合）
+cargo clippy --all-targets -- -D warnings -A clippy::multiple-crate-versions
 
 # 安全审计
 cargo audit

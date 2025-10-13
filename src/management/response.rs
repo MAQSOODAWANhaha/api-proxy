@@ -169,6 +169,7 @@ pub fn error(status: StatusCode, code: &str, message: &str) -> axum::response::R
 
 /// # 便捷函数：应用错误响应
 #[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn app_error(error: ProxyError) -> axum::response::Response {
     // 与 IntoResponse(AppError) 分支一致：用 as_http_parts() 保持包裹结构
     let (status, code, message) = error.as_http_parts();

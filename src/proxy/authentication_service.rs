@@ -125,7 +125,7 @@ impl AuthenticationService {
         session: &Session,
         request_id: &str,
     ) -> Result<user_service_apis::Model> {
-        let user_auth = self.detect_user_auth_from_request(session)?;
+        let user_auth = Self::detect_user_auth_from_request(session)?;
         let proxy_auth_result = self
             .auth_manager
             .authenticate_proxy_request(&user_auth.auth_value)
@@ -145,7 +145,7 @@ impl AuthenticationService {
     }
 
     /// 从请求中检测用户认证信息
-    fn detect_user_auth_from_request(&self, session: &Session) -> Result<Authorization> {
+    fn detect_user_auth_from_request(session: &Session) -> Result<Authorization> {
         let req_header = session.req_header();
 
         if let Some(query) = req_header.uri.query() {

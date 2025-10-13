@@ -138,7 +138,7 @@ impl TokenMapping {
         })
     }
 
-    fn parse_optional_fallback(config: &Value) -> Result<Option<Box<TokenMapping>>> {
+    fn parse_optional_fallback(config: &Value) -> Result<Option<Box<Self>>> {
         match config.get("fallback") {
             Some(fallback_config) if !fallback_config.is_null() => {
                 Ok(Some(Box::new(Self::from_json(fallback_config)?)))
@@ -151,7 +151,7 @@ impl TokenMapping {
         config
             .get(field)
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("{}", err))
+            .ok_or_else(|| anyhow!("{err}"))
     }
 }
 

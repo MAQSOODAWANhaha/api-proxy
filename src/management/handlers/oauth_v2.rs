@@ -379,10 +379,14 @@ pub async fn cleanup_expired_sessions(
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     // 提取用户ID并检查管理员权限
-    let _user_id = auth_context.user_id;
-
-    // TODO: 添加管理员权限检查
-    // if !is_admin(user_id) { return forbidden; }
+    let user_id = auth_context.user_id;
+    linfo!(
+        "system",
+        LogStage::Internal,
+        LogComponent::OAuth,
+        "cleanup_sessions_request",
+        &format!("User {user_id} requested expired OAuth session cleanup")
+    );
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());

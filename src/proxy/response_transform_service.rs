@@ -51,10 +51,10 @@ impl ResponseTransformService {
         }
 
         // 2. 添加CORS头部，实现跨域支持
-        self.add_cors_headers(upstream_response)?;
+        Self::add_cors_headers(upstream_response)?;
 
         // 3. 清理可能暴露服务器信息的头部
-        self.cleanup_headers(upstream_response);
+        Self::cleanup_headers(upstream_response);
 
         linfo!(
             &ctx.request_id,
@@ -69,7 +69,7 @@ impl ResponseTransformService {
     }
 
     /// 添加CORS头部
-    fn add_cors_headers(&self, upstream_response: &mut ResponseHeader) -> Result<()> {
+    fn add_cors_headers(upstream_response: &mut ResponseHeader) -> Result<()> {
         if upstream_response
             .headers
             .get("access-control-allow-origin")
@@ -107,7 +107,7 @@ impl ResponseTransformService {
     }
 
     /// 清理敏感或不必要的响应头
-    fn cleanup_headers(&self, upstream_response: &mut ResponseHeader) {
+    fn cleanup_headers(upstream_response: &mut ResponseHeader) {
         upstream_response.remove_header("x-powered-by");
         upstream_response.remove_header("server"); // 也可以选择保留或替换
     }

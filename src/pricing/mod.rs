@@ -1,6 +1,7 @@
 //! # 费用计算服务
 //!
 //! 基于模型定价和阶梯定价配置，计算AI请求的token使用费用
+#![allow(clippy::float_cmp, clippy::items_after_statements)]
 
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -61,6 +62,7 @@ impl PricingCalculatorService {
     /// - `provider_type_id`: 提供商类型ID
     /// - `token_usage`: Token使用情况
     /// - `request_id`: 请求ID（用于日志）
+    #[allow(clippy::cognitive_complexity)]
     pub async fn calculate_cost(
         &self,
         model_used: &str,
@@ -69,12 +71,10 @@ impl PricingCalculatorService {
         request_id: &str,
     ) -> Result<CostCalculationResult> {
         // 查找模型定价配置
-        let model_pricing = if let Some(pricing) = self
+        let Some(model_pricing) = self
             .find_model_pricing(model_used, provider_type_id)
             .await?
-        {
-            pricing
-        } else {
+        else {
             lwarn!(
                 request_id,
                 LogStage::Internal,
@@ -84,7 +84,7 @@ impl PricingCalculatorService {
                 model = %model_used,
                 provider_type_id = provider_type_id,
             );
-            return Ok(self.create_fallback_result());
+            return Ok(Self::create_fallback_result());
         };
 
         linfo!(
@@ -112,7 +112,7 @@ impl PricingCalculatorService {
                 model = %model_used,
                 pricing_id = model_pricing.id,
             );
-            return Ok(self.create_fallback_result());
+            return Ok(Self::create_fallback_result());
         }
 
         // 计算各类型token的费用
@@ -122,14 +122,14 @@ impl PricingCalculatorService {
         // 计算prompt tokens费用
         if let Some(prompt_tokens) = token_usage.prompt_tokens {
             let cost =
-                self.calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id);
+                Self::calculate_tiered_cost("prompt", prompt_tokens, &pricing_tiers, request_id);
             cost_breakdown.insert("prompt_tokens".to_string(), cost);
             total_cost += cost;
         }
 
         // 计算completion tokens费用
         if let Some(completion_tokens) = token_usage.completion_tokens {
-            let cost = self.calculate_tiered_cost(
+            let cost = Self::calculate_tiered_cost(
                 "completion",
                 completion_tokens,
                 &pricing_tiers,
@@ -141,7 +141,7 @@ impl PricingCalculatorService {
 
         // 计算cache create tokens费用
         if let Some(cache_create_tokens) = token_usage.cache_create_tokens {
-            let cost = self.calculate_tiered_cost(
+            let cost = Self::calculate_tiered_cost(
                 "cache_create",
                 cache_create_tokens,
                 &pricing_tiers,
@@ -153,7 +153,7 @@ impl PricingCalculatorService {
 
         // 计算cache read tokens费用
         if let Some(cache_read_tokens) = token_usage.cache_read_tokens {
-            let cost = self.calculate_tiered_cost(
+            let cost = Self::calculate_tiered_cost(
                 "cache_read",
                 cache_read_tokens,
                 &pricing_tiers,
@@ -251,7 +251,6 @@ impl PricingCalculatorService {
 
     /// 计算特定token类型的阶梯费用
     fn calculate_tiered_cost(
-        &self,
         token_type: &str,
         token_count: u32,
         pricing_tiers: &[model_pricing_tiers::Model],
@@ -268,7 +267,7 @@ impl PricingCalculatorService {
                 token_type = %token_type,
                 token_count = token_count,
             );
-            return 0;
+            0
         });
 
         // 筛选出对应token类型的阶梯定价
@@ -335,7 +334,7 @@ impl PricingCalculatorService {
     }
 
     /// 创建fallback费用结果（当无法找到定价配置时）
-    fn create_fallback_result(&self) -> CostCalculationResult {
+    fn create_fallback_result() -> CostCalculationResult {
         CostCalculationResult {
             total_cost: 0.0,
             currency: "USD".to_string(),

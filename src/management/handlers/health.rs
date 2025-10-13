@@ -382,18 +382,25 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
         .into_iter()
         .map(|(provider_name, (total, healthy, scores))| {
             let avg_health_score = if scores.is_empty() {
-                0.0
+                0.0_f32
             } else {
-                let sum: f64 = scores.iter().map(|&x| f64::from(x)).sum();
-                let count = f64::from(scores.len().try_into().unwrap_or(u32::MAX));
-                sum / count
+                let sum: f32 = scores.iter().copied().sum();
+                match scores.len() {
+                    0 => 0.0_f32,
+                    count => {
+                        #[allow(clippy::cast_precision_loss)]
+                        {
+                            sum / count as f32
+                        }
+                    }
+                }
             };
 
             ProviderHealthStats {
                 provider_name,
                 total_keys: total,
                 healthy_keys: healthy,
-                avg_health_score: avg_health_score as f32,
+                avg_health_score,
             }
         })
         .collect();

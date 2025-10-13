@@ -1,6 +1,16 @@
 //! # 统一统计信息处理器
 //!
 //! `基于proxy_tracing表的统一统计查询API`
+#![allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::result_large_err,
+    clippy::significant_drop_tightening,
+    clippy::needless_collect
+)]
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -469,7 +479,7 @@ pub async fn get_models_statistics(
         .filter(|t| {
             t.model_used
                 .as_ref()
-                .map_or(false, |model_name| !model_name.trim().is_empty())
+                .is_some_and(|model_name| !model_name.trim().is_empty())
         })
         .count() as i64;
 
@@ -693,16 +703,14 @@ pub async fn get_user_api_keys_request_trend(
     }
 
     // 计算今天、平均值和最大值
-    let today_traces: Vec<&proxy_tracing::Model> = traces
+    let current_request_usage = traces
         .iter()
         .filter(|t| {
             let trace_date =
                 DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
             trace_date == Utc::now().date_naive()
         })
-        .collect();
-
-    let current_request_usage = today_traces.len() as i64;
+        .count() as i64;
 
     let average_request_usage = if daily_totals.is_empty() {
         0

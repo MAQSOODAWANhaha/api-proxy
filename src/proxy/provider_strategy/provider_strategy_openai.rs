@@ -48,7 +48,7 @@ impl OpenAIStrategy {
     }
 
     /// `从OpenAI` access_token中解析chatgpt-account-id
-    fn extract_chatgpt_account_id(&self, access_token: &str) -> Option<String> {
+    fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
         let jwt_parser = JWTParser::new().ok()?;
         jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
@@ -62,7 +62,7 @@ impl OpenAIStrategy {
             return Ok(());
         };
 
-        if let Some(error_info) = self.parse_429_response(body) {
+        if let Some(error_info) = Self::parse_429_response(body) {
             linfo!(
                 &ctx.request_id,
                 LogStage::Internal,
@@ -85,7 +85,7 @@ impl OpenAIStrategy {
     }
 
     /// 解析429错误响应体
-    fn parse_429_response(&self, body: &[u8]) -> Option<OpenAI429Error> {
+    fn parse_429_response(body: &[u8]) -> Option<OpenAI429Error> {
         serde_json::from_slice(body).ok()
     }
 
@@ -152,7 +152,7 @@ impl ProviderStrategy for OpenAIStrategy {
                 })?;
 
             if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
-                && let Some(account_id) = self.extract_chatgpt_account_id(token)
+                && let Some(account_id) = Self::extract_chatgpt_account_id(token)
             {
                 ctx.account_id = Some(account_id.clone());
                 upstream_request

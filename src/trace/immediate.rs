@@ -258,13 +258,45 @@ impl ImmediateProxyTracer {
             .await
     }
 
+    /// 验证状态码一致性 - 检测并报告状态码不匹配问题
+    fn validate_status_code_consistency(request_id: &str, reported_status: u16, is_success: bool) {
+        // 检查状态码与成功标志的一致性
+        let actual_success = reported_status < 400;
+        if actual_success != is_success {
+            lwarn!(
+                request_id,
+                LogStage::Response,
+                LogComponent::Tracing,
+                "status_code_success_mismatch",
+                "状态码与成功标志不一致",
+                reported_status = reported_status,
+                is_success_flag = is_success,
+                actual_success = actual_success
+            );
+        }
+
+        // 检查连接失败相关的状态码
+        if reported_status == 502 || reported_status == 504 {
+            linfo!(
+                request_id,
+                LogStage::Response,
+                LogComponent::Tracing,
+                "connection_failure_detected",
+                "检测到连接失败状态码",
+                status_code = reported_status,
+                is_success = is_success
+            );
+        }
+    }
+
     /// 完成追踪 - `使用TraceStats`
     pub async fn complete_trace_with_stats(
         &self,
         request_id: &str,
         params: CompleteTraceParams,
     ) -> Result<()> {
-        // 强制追踪所有请求，移除配置开关
+        // 验证状态码一致性
+        Self::validate_status_code_consistency(request_id, params.status_code, params.is_success);
 
         let end_time = Utc::now().naive_utc();
 

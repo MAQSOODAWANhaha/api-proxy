@@ -327,6 +327,7 @@ pub async fn get_traces_list(
 }
 
 /// 获取日志列表数据
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 async fn fetch_traces_list(
     db: &DatabaseConnection,
     query: &LogsListQuery,
@@ -700,6 +701,7 @@ pub async fn get_logs_analytics(
 }
 
 /// 获取日志统计分析数据
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 async fn fetch_logs_analytics(
     db: &DatabaseConnection,
     time_range: &str,

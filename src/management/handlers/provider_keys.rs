@@ -23,6 +23,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Gemini提供商名称常量
@@ -73,6 +74,7 @@ async fn prepare_oauth_schedule(
 }
 
 /// 获取提供商密钥列表
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn get_provider_keys_list(
     State(state): State<AppState>,
     Query(query): Query<ProviderKeysListQuery>,
@@ -198,18 +200,15 @@ pub async fn get_provider_keys_list(
 
         // 计算限流剩余时间（秒）
         let rate_limit_remaining_seconds =
-            if let Some(resets_at) = provider_key.rate_limit_resets_at {
+            provider_key.rate_limit_resets_at.and_then(|resets_at| {
                 let now = Utc::now().naive_utc();
                 if resets_at > now {
-                    let duration = resets_at.signed_duration_since(now);
-                    let seconds = duration.num_seconds();
-                    Some(seconds.max(0) as u64)
+                    let seconds = resets_at.signed_duration_since(now).num_seconds().max(0);
+                    u64::try_from(seconds).ok()
                 } else {
                     None
                 }
-            } else {
-                None
-            };
+            });
 
         let response_key = json!({
             "id": provider_key.id,
@@ -268,6 +267,7 @@ pub async fn get_provider_keys_list(
 }
 
 /// 创建提供商密钥
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn create_provider_key(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -695,6 +695,7 @@ pub async fn create_provider_key(
 }
 
 /// 获取提供商密钥详情
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn get_provider_key_detail(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
@@ -777,20 +778,21 @@ pub async fn get_provider_key_detail(
         );
 
         if resets_at > now {
-            let duration = resets_at.signed_duration_since(now);
-            let seconds = duration.num_seconds();
-            let remaining_seconds = seconds.max(0) as u64;
-            linfo!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::Scheduler,
-                "rate_limit_not_lifted",
-                "Rate limit not lifted, calculating remaining seconds",
-                key_id = provider_key.0.id,
-                remaining_seconds = remaining_seconds,
-                duration_seconds = duration.num_seconds(),
-            );
-            Some(remaining_seconds)
+            let seconds = resets_at.signed_duration_since(now).num_seconds().max(0);
+            let remaining = u64::try_from(seconds).ok();
+            if let Some(remaining_seconds) = remaining {
+                linfo!(
+                    "system",
+                    LogStage::Scheduling,
+                    LogComponent::Scheduler,
+                    "rate_limit_not_lifted",
+                    "Rate limit not lifted, calculating remaining seconds",
+                    key_id = provider_key.0.id,
+                    remaining_seconds = remaining_seconds,
+                    duration_seconds = seconds,
+                );
+            }
+            remaining
         } else {
             linfo!(
                 "system",
@@ -859,6 +861,7 @@ pub async fn get_provider_key_detail(
 }
 
 /// 更新提供商密钥
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn update_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
@@ -1162,6 +1165,7 @@ pub async fn update_provider_key(
 }
 
 /// 删除提供商密钥
+#[allow(clippy::cognitive_complexity)]
 pub async fn delete_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
@@ -1367,6 +1371,7 @@ pub async fn get_provider_key_stats(
 }
 
 /// 获取提供商密钥卡片统计数据
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn get_provider_keys_dashboard_stats(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -1738,6 +1743,7 @@ pub struct ProviderKeyUsageStats {
 }
 
 /// 获取提供商密钥的使用统计数据
+#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 async fn fetch_provider_keys_usage_stats(
     db: &sea_orm::DatabaseConnection,
     provider_key_ids: &[i32],
@@ -1771,9 +1777,8 @@ async fn fetch_provider_keys_usage_stats(
 
     // 按密钥ID分组统计
     for trace in &traces {
-        let key_id = match trace.user_provider_key_id {
-            Some(id) => id,
-            None => continue,
+        let Some(key_id) = trace.user_provider_key_id else {
+            continue;
         };
 
         let entry = stats_map
@@ -2006,6 +2011,7 @@ pub async fn get_user_service_api_trends(
 
 /// 趋势数据结构
 #[derive(Debug, Default, Serialize)]
+#[allow(clippy::struct_field_names)]
 struct TrendData {
     trend_data: Vec<TrendDataPoint>,
     total_requests: i64,
@@ -2034,6 +2040,7 @@ fn round_two_decimal(value: f64) -> f64 {
 }
 
 /// 获取趋势数据的通用函数
+#[allow(clippy::cast_precision_loss)]
 async fn fetch_key_trends_data(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
@@ -2202,6 +2209,7 @@ pub fn get_provider_key_health_statuses() -> axum::response::Response {
 }
 
 /// `异步执行自动获取project_id任务的辅助方法`
+#[allow(clippy::cognitive_complexity)]
 async fn execute_auto_get_project_id_async(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
@@ -2361,23 +2369,24 @@ async fn get_access_token_for_key(
     };
 
     // 检查access_token是否存在
-    if let Some(ref access_token) = oauth_session.access_token {
-        if access_token.is_empty() {
-            Err(crate::ProxyError::business("OAuth会话中的access_token为空"))
-        } else {
-            ldebug!(
-                "system",
-                LogStage::BackgroundTask,
-                LogComponent::OAuth,
-                "get_access_token_success",
-                "Successfully got access token",
-                user_id = user_id,
-                key_id = %key_id,
-                session_id = %session_id,
-            );
-            Ok(access_token.clone())
-        }
-    } else {
-        Err(crate::ProxyError::business("OAuth会话中没有access_token"))
-    }
+    oauth_session.access_token.as_ref().map_or_else(
+        || Err(crate::ProxyError::business("OAuth会话中没有access_token")),
+        |access_token| {
+            if access_token.is_empty() {
+                Err(crate::ProxyError::business("OAuth会话中的access_token为空"))
+            } else {
+                ldebug!(
+                    "system",
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "get_access_token_success",
+                    "Successfully got access token",
+                    user_id = user_id,
+                    key_id = %key_id,
+                    session_id = %session_id,
+                );
+                Ok(access_token.clone())
+            }
+        },
+    )
 }

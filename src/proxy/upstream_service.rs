@@ -9,6 +9,7 @@ use crate::proxy::context::ProxyContext;
 use crate::proxy_err;
 use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use sea_orm::DatabaseConnection;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,16 +33,18 @@ impl UpstreamService {
             .ok_or_else(|| proxy_err!(internal, "Provider type not set in context"))?;
 
         // 优先由 ProviderStrategy 决定上游地址
-        let mut upstream_addr: Option<String> = None;
-        if let Some(strategy) = &ctx.strategy
-            && let Ok(Some(host)) = strategy.select_upstream_host(ctx).await
-        {
-            upstream_addr = Some(if host.contains(':') {
-                host
-            } else {
-                format!("{host}:443")
-            });
-        }
+        let upstream_addr = if let Some(strategy) = &ctx.strategy {
+            match strategy.select_upstream_host(ctx).await {
+                Ok(Some(host)) => Some(if host.contains(':') {
+                    host
+                } else {
+                    format!("{host}:443")
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         // 回退：使用 provider_types.base_url
         let final_addr = upstream_addr.unwrap_or_else(|| {
@@ -70,7 +73,7 @@ impl UpstreamService {
             .to_string();
         let mut peer = HttpPeer::new(&final_addr, true, sni);
 
-        let timeout = ctx.timeout_seconds.unwrap_or(30) as u64;
+        let timeout = u64::try_from(ctx.timeout_seconds.unwrap_or(30).max(0)).unwrap_or(30);
         let total_timeout_secs = timeout + 5;
         let read_timeout_secs = timeout * 2;
 

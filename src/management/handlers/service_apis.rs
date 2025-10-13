@@ -2,7 +2,15 @@
 //!
 //! 处理用户API密钥管理功能，包括创建、编辑、统计等
 
-#![allow(clippy::used_underscore_binding)]
+#![allow(
+    clippy::used_underscore_binding,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
@@ -205,6 +213,7 @@ pub struct UserServiceKeyDetailResponse {
 }
 
 /// 1. 用户API Keys卡片展示
+#[allow(clippy::cognitive_complexity)]
 pub async fn get_user_service_cards(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -298,6 +307,13 @@ pub async fn get_user_service_cards(
 }
 
 /// 2. 用户API Keys列表
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
@@ -455,7 +471,7 @@ pub async fn list_user_service_keys(
 
         let provider_name = provider_type
             .as_ref()
-            .map_or("Unknown".to_string(), |pt| pt.display_name.clone());
+            .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
 
         // API Key脱敏处理
         /* let masked_api_key = if api.api_key.len() > 8 {

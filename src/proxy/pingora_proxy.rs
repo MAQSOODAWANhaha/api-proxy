@@ -56,7 +56,7 @@ impl PingoraProxyServer {
     }
 
     /// 创建Pingora服务器选项（基本配置）
-    fn create_pingora_options(&self) -> Result<Opt> {
+    fn create_pingora_options() -> Opt {
         let opt = Opt::default();
 
         linfo!(
@@ -67,13 +67,14 @@ impl PingoraProxyServer {
             "创建Pingora基础配置选项",
         );
 
-        Ok(opt)
+        opt
     }
 
     // 超时配置现在从数据库 user_service_apis.timeout_seconds 动态获取
     // 不再需要全局的超时配置方法
 
     /// 启动服务器
+    #[allow(clippy::cognitive_complexity)]
     pub async fn start(self) -> Result<()> {
         // 跳过env_logger初始化，因为我们已经使用tracing了
         // env_logger::init();
@@ -86,7 +87,7 @@ impl PingoraProxyServer {
             "creating_server_config",
             "创建Pingora服务器配置"
         );
-        let opt = self.create_pingora_options()?;
+        let opt = Self::create_pingora_options();
         let mut server = Server::new(Some(opt)).map_err(|e| {
             ProxyError::server_init(format!("Failed to create Pingora server: {e}"))
         })?;

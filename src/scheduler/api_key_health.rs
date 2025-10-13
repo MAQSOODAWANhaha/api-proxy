@@ -14,6 +14,7 @@ use sea_orm::{DatabaseConnection, EntityTrait};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -178,6 +179,7 @@ impl ApiKeyHealthChecker {
         self.load_health_status_from_database().await?;
 
         *running = true;
+        drop(running);
         linfo!(
             "system",
             LogStage::HealthCheck,
@@ -192,6 +194,7 @@ impl ApiKeyHealthChecker {
     pub async fn stop(&self) -> Result<()> {
         let mut running = self.is_running.write().await;
         *running = false;
+        drop(running);
         linfo!(
             "system",
             LogStage::HealthCheck,
@@ -203,6 +206,7 @@ impl ApiKeyHealthChecker {
     }
 
     /// 检查单个API密钥的健康状态
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub async fn check_api_key(
         &self,
         key_model: &user_provider_keys::Model,
@@ -285,7 +289,7 @@ impl ApiKeyHealthChecker {
                 }
             }
             Err(e) => {
-                let error_category = self.categorize_error(&e);
+                let error_category = Self::categorize_error(&e);
                 lwarn!(
                     "system",
                     LogStage::HealthCheck,
@@ -425,7 +429,7 @@ impl ApiKeyHealthChecker {
     }
 
     /// 分类错误类型
-    fn categorize_error(&self, error: &anyhow::Error) -> ApiKeyErrorCategory {
+    fn categorize_error(error: &anyhow::Error) -> ApiKeyErrorCategory {
         let error_string = error.to_string().to_lowercase();
 
         if error_string.contains("unauthorized") || error_string.contains("invalid") {
@@ -512,15 +516,19 @@ impl ApiKeyHealthChecker {
         }
 
         // 计算健康分数
-        status.health_score = self.calculate_health_score(status);
+        status.health_score = Self::calculate_health_score(status);
+        let is_healthy_now = status.is_healthy;
+        let status_snapshot = status.clone();
+
+        drop(health_map);
 
         // 同步状态到数据库
-        self.sync_health_status_to_database(key_id, status, &check_result)
+        self.sync_health_status_to_database(key_id, &status_snapshot, &check_result)
             .await?;
 
         // 记录状态变化
-        if was_healthy != status.is_healthy {
-            if status.is_healthy {
+        if was_healthy != is_healthy_now {
+            if is_healthy_now {
                 linfo!(
                     "system",
                     LogStage::HealthCheck,
@@ -537,8 +545,8 @@ impl ApiKeyHealthChecker {
                     "key_unhealthy",
                     "API key marked as unhealthy",
                     key_id = key_id,
-                    consecutive_failures = status.consecutive_failures,
-                    last_error = ?status.last_error
+                    consecutive_failures = status_snapshot.consecutive_failures,
+                    last_error = ?status_snapshot.last_error
                 );
             }
         }
@@ -582,21 +590,17 @@ impl ApiKeyHealthChecker {
 
         // 确定429限流重置时间
         let rate_limit_resets_at = if check_result.status_code == Some(429) {
-            // 从错误消息中尝试解析resets_in_seconds
-            if let Some(ref error_msg) = status.last_error {
-                self.parse_resets_in_seconds_from_error(error_msg)
-                    .map_or_else(
-                        || Some(chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1)),
-                        |resets_in_seconds| {
-                            Some(
-                                chrono::Utc::now().naive_utc()
-                                    + chrono::Duration::seconds(resets_in_seconds),
-                            )
-                        },
-                    )
-            } else {
-                None
-            }
+            status.last_error.as_ref().and_then(|error_msg| {
+                Self::parse_resets_in_seconds_from_error(error_msg).map_or_else(
+                    || Some(chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1)),
+                    |resets_in_seconds| {
+                        Some(
+                            chrono::Utc::now().naive_utc()
+                                + chrono::Duration::seconds(resets_in_seconds),
+                        )
+                    },
+                )
+            })
         } else {
             None
         };
@@ -641,7 +645,7 @@ impl ApiKeyHealthChecker {
     }
 
     /// `从错误消息中解析resets_in_seconds`
-    fn parse_resets_in_seconds_from_error(&self, error_msg: &str) -> Option<i64> {
+    fn parse_resets_in_seconds_from_error(error_msg: &str) -> Option<i64> {
         // 尝试从OpenAI 429错误中解析resets_in_seconds
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(error_msg)
             && let Some(error_obj) = json_value.get("error")
@@ -663,7 +667,8 @@ impl ApiKeyHealthChecker {
     }
 
     /// 计算健康分数
-    fn calculate_health_score(&self, status: &ApiKeyHealth) -> f32 {
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn calculate_health_score(status: &ApiKeyHealth) -> f32 {
         if status.recent_results.is_empty() {
             return 100.0;
         }
@@ -673,8 +678,13 @@ impl ApiKeyHealthChecker {
 
         // 基础成功率
         let success_count = recent_results.iter().filter(|r| r.is_success).count();
-        let success_rate = success_count as f32 / recent_results.len() as f32;
-        let mut score = success_rate * 100.0;
+        let success_count = u32::try_from(success_count).unwrap_or(u32::MAX);
+        let recent_len = u32::try_from(recent_results.len()).unwrap_or(u32::MAX);
+        let mut score = if recent_len == 0 {
+            0.0
+        } else {
+            (success_count as f32 / recent_len as f32) * 100.0
+        };
 
         // 响应时间惩罚
         if status.avg_response_time_ms > 3000 {
@@ -721,17 +731,29 @@ impl ApiKeyHealthChecker {
     /// 强制标记密钥为不健康
     pub async fn mark_key_unhealthy(&self, key_id: i32, reason: String) -> Result<()> {
         let mut health_map = self.health_status.write().await;
-
-        if let Some(status) = health_map.get_mut(&key_id) {
+        let should_sync = if let Some(status) = health_map.get_mut(&key_id) {
             status.is_healthy = false;
             status.consecutive_failures += 1;
             status.consecutive_successes = 0;
             status.last_error = Some(format!("Manually marked unhealthy: {reason}"));
+            true
+        } else {
+            false
+        };
 
-            // 同步到数据库
+        drop(health_map);
+
+        if should_sync {
             self.mark_key_unhealthy_in_database(key_id, &reason).await?;
-
-            lwarn!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "mark_unhealthy", "Manually marked API key as unhealthy", key_id = key_id, reason = %reason);
+            lwarn!(
+                "system",
+                LogStage::HealthCheck,
+                LogComponent::HealthChecker,
+                "mark_unhealthy",
+                "Manually marked API key as unhealthy",
+                key_id = key_id,
+                reason = %reason
+            );
         }
 
         Ok(())
@@ -814,7 +836,10 @@ impl ApiKeyHealthChecker {
                     .get("health_score")
                     .and_then(sea_orm::JsonValue::as_f64)
                 {
-                    status.health_score = score as f32; // Allow truncation for health score storage
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        status.health_score = score as f32; // Allow truncation for health score storage
+                    }
                 }
                 if let Some(failures) = detail_json
                     .get("consecutive_failures")
@@ -835,15 +860,15 @@ impl ApiKeyHealthChecker {
             );
         }
 
+        let total_loaded = health_map.len();
+        drop(health_map);
+
         linfo!(
             "system",
             LogStage::Db,
             LogComponent::HealthChecker,
             "load_status_from_db",
-            &format!(
-                "Loaded {} API keys health status from database",
-                health_map.len()
-            )
+            &format!("Loaded {total_loaded} API keys health status from database")
         );
         Ok(())
     }
@@ -909,7 +934,7 @@ impl ApiKeyHealth {
     /// 检查是否应该进行下次检查
     #[must_use]
     pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
-        self.last_check.map_or(true, |last_check| {
+        self.last_check.is_none_or(|last_check| {
             let interval = if self.is_healthy {
                 config.healthy_check_interval
             } else {
@@ -938,27 +963,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_categorization() {
-        let db = Arc::new(sea_orm::DatabaseConnection::Disconnected);
-        let checker = ApiKeyHealthChecker::new(db, None);
-
         let error = anyhow::anyhow!("unauthorized access");
         assert_eq!(
-            checker.categorize_error(&error),
+            ApiKeyHealthChecker::categorize_error(&error),
             ApiKeyErrorCategory::InvalidKey
         );
 
         let error = anyhow::anyhow!("rate limit exceeded");
         assert_eq!(
-            checker.categorize_error(&error),
+            ApiKeyHealthChecker::categorize_error(&error),
             ApiKeyErrorCategory::QuotaExceeded
         );
     }
 
     #[tokio::test]
     async fn test_health_score_calculation() {
-        let db = Arc::new(sea_orm::DatabaseConnection::Disconnected);
-        let checker = ApiKeyHealthChecker::new(db, None);
-
         let mut status = ApiKeyHealth {
             key_id: 1,
             provider_type_id: 1,
@@ -985,14 +1004,14 @@ mod tests {
             ],
         };
 
-        let score = checker.calculate_health_score(&status);
+        let score = ApiKeyHealthChecker::calculate_health_score(&status);
         assert!(score > 90.0);
         assert!(score <= 100.0);
 
         // 测试连续失败的情况
         status.consecutive_failures = 3;
         status.consecutive_successes = 0;
-        let score = checker.calculate_health_score(&status);
+        let score = ApiKeyHealthChecker::calculate_health_score(&status);
         assert!(score < 80.0);
     }
 }

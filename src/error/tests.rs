@@ -142,6 +142,7 @@ fn test_timeout_errors() {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)]
 fn test_error_macros() {
     let err = crate::proxy_err!(config, "配置错误");
     assert!(matches!(err, ProxyError::Config { .. }));

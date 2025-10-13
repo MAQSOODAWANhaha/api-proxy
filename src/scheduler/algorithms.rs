@@ -231,19 +231,14 @@ impl HealthBestApiKeySelector {
     /// - unknown: 80分
     /// - `rate_limited`: 根据剩余时间计算，最多60分
     /// - unhealthy/error: 0分
-    fn calculate_health_score(
-        &self,
-        key: &user_provider_keys::Model,
-        now: chrono::NaiveDateTime,
-    ) -> i32 {
+    fn calculate_health_score(key: &user_provider_keys::Model, now: chrono::NaiveDateTime) -> i32 {
         match key.health_status.as_str() {
             "healthy" => 100,
             "unknown" => 80,
             "rate_limited" => {
-                if let Some(resets_at) = key.rate_limit_resets_at {
+                key.rate_limit_resets_at.map_or(20, |resets_at| {
                     if now > resets_at {
-                        // 限流已解除，给予较高分数
-                        90
+                        90 // 限流已解除，给予较高分数
                     } else {
                         // 根据剩余限流时间计算分数
                         let duration = resets_at.signed_duration_since(now);
@@ -258,9 +253,7 @@ impl HealthBestApiKeySelector {
                             10 // 更长时间
                         }
                     }
-                } else {
-                    20 // 没有重置时间，给予较低分数
-                }
+                })
             }
             "unhealthy" | "error" => 0,
             _ => 50, // 未知状态，中等分数
@@ -303,13 +296,13 @@ impl ApiKeySelector for HealthBestApiKeySelector {
         // 按健康状态排序，优先选择健康状态最好的密钥
         let now = chrono::Utc::now().naive_utc();
         active_keys.sort_by(|a, b| {
-            let health_score_a = self.calculate_health_score(a.1, now);
-            let health_score_b = self.calculate_health_score(b.1, now);
+            let health_score_a = Self::calculate_health_score(a.1, now);
+            let health_score_b = Self::calculate_health_score(b.1, now);
             health_score_b.cmp(&health_score_a) // 降序排列，分数高的优先
         });
 
         let (selected_index, selected_key) = active_keys[0];
-        let health_score = self.calculate_health_score(selected_key, now);
+        let health_score = Self::calculate_health_score(selected_key, now);
 
         let reason = format!(
             "Health-based selection: health_score={}, health_status={}, key_id={}",

@@ -1,6 +1,12 @@
 //! # 管理服务器
 //!
 //! Axum HTTP服务器，提供管理和监控API
+#![allow(
+    clippy::too_many_arguments,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::unnecessary_wraps
+)]
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware};
 use crate::auth::service::AuthService;

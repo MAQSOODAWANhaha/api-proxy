@@ -96,6 +96,7 @@ impl IpFilterConfig {
     }
 
     /// 检查IP是否被允许访问
+    #[allow(clippy::cognitive_complexity)]
     pub fn is_allowed(&self, ip: IpAddr) -> bool {
         // 首先检查是否在拒绝列表中
         for denied_network in &self.denied_ips {
