@@ -4,8 +4,6 @@
 #![allow(
     clippy::cognitive_complexity,
     clippy::too_many_lines,
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
     clippy::result_large_err,
     clippy::significant_drop_tightening,
     clippy::needless_collect
@@ -15,16 +13,17 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
+use crate::types::ratio_as_percentage;
 use axum::extract::{Extension, Query, State};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use sea_orm::{
-    ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
-    query::{QueryFilter, QuerySelect},
-    sea_query::{Alias, Expr},
+    entity::{ColumnTrait, EntityTrait},
+    query::QueryFilter,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 // 导入JWT Claims结构体
@@ -156,99 +155,35 @@ pub struct UserApiKeysTokenTrendResponse {
     pub max_token_usage: i64,
 }
 
-#[derive(Debug, Default, FromQueryResult)]
-struct DailyStats {
-    requests: i64,
-    successes: i64,
-    tokens: Option<i64>,
-    avg_response_time: Option<f64>,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct ModelUsageResult {
-    model: String,
-    usage: i64,
-    cost: f64,
-    successful_requests: i64,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct ModelStatsResult {
-    model: String,
-    usage: i64,
-    cost: f64,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct DailyTokenStats {
-    date: NaiveDate,
-    cache_create_tokens: Option<i64>,
-    cache_read_tokens: Option<i64>,
-    tokens_prompt: Option<i64>,
-    tokens_completion: Option<i64>,
-    cost: Option<f64>,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct DailyRequestStats {
-    date: NaiveDate,
-    requests: i64,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct DailyTokenTotalStats {
-    date: NaiveDate,
-    total_tokens: Option<i64>,
-}
-
-async fn get_daily_stats(
-    db: &DatabaseConnection,
-    user_id: i32,
-    date: NaiveDate,
-) -> Result<DailyStats, sea_orm::DbErr> {
-    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap();
-    let end_of_day = date.and_hms_opt(23, 59, 59).unwrap();
-
-    ProxyTracing::find()
-        .select_only()
-        .column_as(proxy_tracing::Column::Id.count(), "requests")
-        .column_as(
-            Expr::cust("SUM(CASE WHEN IsSuccess = true THEN 1 ELSE 0 END)"),
-            "successes",
-        )
-        .column_as(proxy_tracing::Column::TokensTotal.sum(), "tokens")
-        .column_as(Expr::cust("AVG(DurationMs)"), "avg_response_time")
-        .filter(
-            Condition::all()
-                .add(proxy_tracing::Column::UserId.eq(user_id))
-                .add(proxy_tracing::Column::CreatedAt.between(start_of_day, end_of_day)),
-        )
-        .into_model::<DailyStats>()
-        .one(db)
-        .await
-        .map(Option::unwrap_or_default)
-}
-
 /// 1. 今日仪表板卡片API: /api/statistics/today/cards
-#[allow(clippy::cast_precision_loss)]
 pub async fn get_today_dashboard_cards(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
-    let db = state.database.as_ref();
-    let today = Utc::now().date_naive();
-    let yesterday = today - Duration::days(1);
 
-    let today_stats = match get_daily_stats(db, user_id, today).await {
-        Ok(daily_stats) => daily_stats,
+    let now = Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let yesterday_start = (now - Duration::days(1))
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    // 获取今天的数据
+    let today_traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(today_start))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
                 LogStage::Db,
                 LogComponent::Database,
-                "fetch_today_stats_fail",
-                &format!("Failed to fetch today's stats: {err}")
+                "fetch_today_traces_fail",
+                &format!("Failed to fetch today's traces: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -258,15 +193,22 @@ pub async fn get_today_dashboard_cards(
         }
     };
 
-    let yesterday_stats = match get_daily_stats(db, user_id, yesterday).await {
-        Ok(daily_stats) => daily_stats,
+    // 获取昨天的数据
+    let yesterday_traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(yesterday_start))
+        .filter(proxy_tracing::Column::CreatedAt.lt(today_start))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .all(state.database.as_ref())
+        .await
+    {
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
                 LogStage::Db,
                 LogComponent::Database,
-                "fetch_yesterday_stats_fail",
-                &format!("Failed to fetch yesterday's stats: {err}")
+                "fetch_yesterday_traces_fail",
+                &format!("Failed to fetch yesterday's traces: {err}")
             );
             return crate::manage_error!(crate::proxy_err!(
                 database,
@@ -276,37 +218,64 @@ pub async fn get_today_dashboard_cards(
         }
     };
 
-    let success_rate_today = if today_stats.requests > 0 {
-        (today_stats.successes as f64 / today_stats.requests as f64) * 100.0
-    } else {
-        0.0
+    // 计算今天的统计数据
+    let requests_today_count = today_traces.len();
+    let successes_today_count = today_traces.iter().filter(|t| t.is_success).count();
+    let requests_today = usize_to_i64(requests_today_count);
+    let success_rate_today = ratio_as_percentage(
+        usize_to_u64(successes_today_count),
+        usize_to_u64(requests_today_count),
+    );
+
+    let tokens_today: i64 = today_traces
+        .iter()
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
+        .sum();
+
+    let response_times: Vec<i64> = today_traces.iter().filter_map(|t| t.duration_ms).collect();
+    let avg_response_time_today = match i64::try_from(response_times.len()) {
+        Ok(count) if count > 0 => response_times.iter().sum::<i64>() / count,
+        _ => 0,
     };
 
-    let success_rate_yesterday = if yesterday_stats.requests > 0 {
-        (yesterday_stats.successes as f64 / yesterday_stats.requests as f64) * 100.0
-    } else {
-        0.0
+    // 计算昨天的统计数据用于比较
+    let requests_yesterday_count = yesterday_traces.len();
+    let successes_yesterday_count = yesterday_traces.iter().filter(|t| t.is_success).count();
+    let requests_yesterday = usize_to_i64(requests_yesterday_count);
+    let success_rate_yesterday = ratio_as_percentage(
+        usize_to_u64(successes_yesterday_count),
+        usize_to_u64(requests_yesterday_count),
+    );
+
+    let tokens_yesterday: i64 = yesterday_traces
+        .iter()
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
+        .sum();
+
+    let response_times_yesterday: Vec<i64> = yesterday_traces
+        .iter()
+        .filter_map(|t| t.duration_ms)
+        .collect();
+    let avg_response_time_yesterday = match i64::try_from(response_times_yesterday.len()) {
+        Ok(count) if count > 0 => response_times_yesterday.iter().sum::<i64>() / count,
+        _ => 0,
     };
 
-    let rate_requests = calculate_growth_rate(today_stats.requests, yesterday_stats.requests);
+    // 计算增长率
+    let rate_requests = calculate_growth_rate(requests_today, requests_yesterday);
     let rate_successes = calculate_growth_rate_f64(success_rate_today, success_rate_yesterday);
-    let rate_tokens = calculate_growth_rate(
-        today_stats.tokens.unwrap_or(0),
-        yesterday_stats.tokens.unwrap_or(0),
-    );
-    let rate_response_time = calculate_growth_rate(
-        today_stats.avg_response_time.unwrap_or(0.0) as i64,
-        yesterday_stats.avg_response_time.unwrap_or(0.0) as i64,
-    );
+    let rate_tokens = calculate_growth_rate(tokens_today, tokens_yesterday);
+    let rate_response_time =
+        calculate_growth_rate(avg_response_time_today, avg_response_time_yesterday);
 
     let cards = TodayDashboardCards {
-        requests_today: today_stats.requests,
+        requests_today,
         rate_requests_today: rate_requests,
         successes_today: success_rate_today,
         rate_successes_today: rate_successes,
-        tokens_today: today_stats.tokens.unwrap_or(0),
+        tokens_today,
         rate_tokens_today: rate_tokens,
-        avg_response_time_today: today_stats.avg_response_time.unwrap_or(0.0) as i64,
+        avg_response_time_today,
         rate_avg_response_time_today: rate_response_time,
     };
 
@@ -314,7 +283,6 @@ pub async fn get_today_dashboard_cards(
 }
 
 /// 2. 模型使用占比API: /api/statistics/models/rate
-#[allow(clippy::cast_precision_loss)]
 pub async fn get_models_usage_rate(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
@@ -327,28 +295,14 @@ pub async fn get_models_usage_rate(
         Err(error_response) => return error_response,
     };
 
-    let model_stats_result = match ProxyTracing::find()
-        .select_only()
-        .column_as(proxy_tracing::Column::ModelUsed, "model")
-        .column_as(proxy_tracing::Column::Id.count(), "usage")
-        .column_as(proxy_tracing::Column::Cost.sum(), "cost")
-        .column_as(
-            Expr::cust("SUM(CASE WHEN IsSuccess = true THEN 1 ELSE 0 END)"),
-            "successful_requests",
-        )
-        .filter(
-            Condition::all()
-                .add(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
-                .add(proxy_tracing::Column::UserId.eq(user_id))
-                .add(proxy_tracing::Column::ModelUsed.is_not_null())
-                .add(proxy_tracing::Column::ModelUsed.ne("")),
-        )
-        .group_by(proxy_tracing::Column::ModelUsed)
-        .into_model::<ModelUsageResult>()
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
         .await
     {
-        Ok(results) => results,
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
@@ -365,62 +319,116 @@ pub async fn get_models_usage_rate(
         }
     };
 
-    let mut model_vec: Vec<ModelUsage> = model_stats_result
-        .into_iter()
-        .map(|res| {
-            let success_rate = if res.usage > 0 {
-                (res.successful_requests as f64 / res.usage as f64) * 100.0
-            } else {
-                0.0
-            };
-            ModelUsage {
-                model: res.model,
-                usage: res.usage,
-                cost: res.cost,
-                successful_requests: res.successful_requests,
-                failed_requests: res.usage - res.successful_requests,
-                success_rate,
+    // 按模型统计使用次数、成本和成功失败情况
+    let mut model_stats: HashMap<String, (i64, f64, i64, i64)> = HashMap::new();
+    for trace in traces {
+        // 过滤空模型数据
+        if let Some(model_name) = &trace.model_used {
+            // 检查模型名称是否有效（非空、非空白字符）
+            if !model_name.trim().is_empty() {
+                let cost = trace.cost.unwrap_or(0.0);
+                let successful = i64::from(trace.is_success);
+                let failed = i64::from(!trace.is_success);
+                let entry = model_stats
+                    .entry(model_name.clone())
+                    .or_insert((0, 0.0, 0, 0));
+                entry.0 += 1; // usage count
+                entry.1 += cost; // total cost
+                entry.2 += successful; // successful requests
+                entry.3 += failed; // failed requests
             }
-        })
+        }
+    }
+
+    // 按使用次数排序
+    let mut model_vec: Vec<(String, i64, f64, i64, i64)> = model_stats
+        .into_iter()
+        .map(|(model, (usage, cost, successful, failed))| (model, usage, cost, successful, failed))
         .collect();
+    model_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
-    model_vec.sort_by(|a, b| b.usage.cmp(&a.usage));
-
-    let response = ModelsRateResponse {
-        model_usage: if model_vec.len() > 6 {
-            let other_usage: i64 = model_vec.iter().skip(5).map(|m| m.usage).sum();
-            let other_cost: f64 = model_vec.iter().skip(5).map(|m| m.cost).sum();
-            let other_successful: i64 = model_vec
-                .iter()
-                .skip(5)
-                .map(|m| m.successful_requests)
-                .sum();
-            let other_failed: i64 = model_vec.iter().skip(5).map(|m| m.failed_requests).sum();
-            let other_success_rate = if other_usage > 0 {
-                (other_successful as f64 / other_usage as f64) * 100.0
+    // 限制最多6个模型，其余合并为"其他"
+    let mut model_usage = Vec::new();
+    if model_vec.len() <= 6 {
+        for (model, usage, cost, successful, failed) in model_vec {
+            let success_rate = if usage > 0 {
+                let successful_f64 = f64::from(u32::try_from(successful).unwrap_or(0));
+                let usage_f64 = f64::from(u32::try_from(usage).unwrap_or(1));
+                (successful_f64 / usage_f64) * 100.0
             } else {
                 0.0
             };
-
-            let mut model_usage: Vec<ModelUsage> = model_vec.into_iter().take(5).collect();
             model_usage.push(ModelUsage {
-                model: "其他".to_string(),
-                usage: other_usage,
-                cost: other_cost,
-                successful_requests: other_successful,
-                failed_requests: other_failed,
-                success_rate: other_success_rate,
+                model,
+                usage,
+                cost,
+                successful_requests: successful,
+                failed_requests: failed,
+                success_rate,
             });
-            model_usage
+        }
+    } else {
+        // 前5个模型
+        for (model, usage, cost, successful, failed) in model_vec.iter().take(5) {
+            let success_rate = if *usage > 0 {
+                let successful_f64 = f64::from(u32::try_from(*successful).unwrap_or(0));
+                let usage_f64 = f64::from(u32::try_from(*usage).unwrap_or(1));
+                (successful_f64 / usage_f64) * 100.0
+            } else {
+                0.0
+            };
+            model_usage.push(ModelUsage {
+                model: model.clone(),
+                usage: *usage,
+                cost: *cost,
+                successful_requests: *successful,
+                failed_requests: *failed,
+                success_rate,
+            });
+        }
+        // 其余模型合并为"其他"
+        let other_usage: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, usage, _, _, _)| usage)
+            .sum();
+        let other_cost: f64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, cost, _, _)| cost)
+            .sum();
+        let other_successful: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, _, successful, _)| successful)
+            .sum();
+        let other_failed: i64 = model_vec
+            .iter()
+            .skip(5)
+            .map(|(_, _, _, _, failed)| failed)
+            .sum();
+        let other_success_rate = if other_usage > 0 {
+            let other_successful_f64 = f64::from(u32::try_from(other_successful).unwrap_or(0));
+            let other_usage_f64 = f64::from(u32::try_from(other_usage).unwrap_or(1));
+            (other_successful_f64 / other_usage_f64) * 100.0
         } else {
-            model_vec
-        },
-    };
+            0.0
+        };
+        model_usage.push(ModelUsage {
+            model: "其他".to_string(),
+            usage: other_usage,
+            cost: other_cost,
+            successful_requests: other_successful,
+            failed_requests: other_failed,
+            success_rate: other_success_rate,
+        });
+    }
+
+    let response = ModelsRateResponse { model_usage };
     response::success(response)
 }
 
 /// 3. 模型详细统计API: /api/statistics/models/statistics
-#[allow(clippy::cast_precision_loss)]
 pub async fn get_models_statistics(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
@@ -433,25 +441,14 @@ pub async fn get_models_statistics(
         Err(error_response) => return error_response,
     };
 
-    let model_stats_results = match ProxyTracing::find()
-        .select_only()
-        .column_as(proxy_tracing::Column::ModelUsed, "model")
-        .column_as(proxy_tracing::Column::Id.count(), "usage")
-        .column_as(proxy_tracing::Column::Cost.sum(), "cost")
-        .filter(
-            Condition::all()
-                .add(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
-                .add(proxy_tracing::Column::UserId.eq(user_id))
-                .add(proxy_tracing::Column::IsSuccess.eq(true))
-                .add(proxy_tracing::Column::ModelUsed.is_not_null())
-                .add(proxy_tracing::Column::ModelUsed.ne("")),
-        )
-        .group_by(proxy_tracing::Column::ModelUsed)
-        .into_model::<ModelStatsResult>()
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
         .await
     {
-        Ok(results) => results,
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
@@ -468,21 +465,42 @@ pub async fn get_models_statistics(
         }
     };
 
-    let total_requests: i64 = model_stats_results.iter().map(|res| res.usage).sum();
+    // 计算有效请求总数（过滤空模型数据后）
+    let total_requests = traces
+        .iter()
+        .filter(|t| {
+            t.model_used
+                .as_ref()
+                .is_some_and(|model_name| !model_name.trim().is_empty())
+        })
+        .count();
+    let total_requests_u64 = usize_to_u64(total_requests);
 
-    let mut model_usage: Vec<ModelStatistics> = model_stats_results
+    // 按模型统计详细数据（使用次数和费用）
+    let mut model_stats: HashMap<String, (u64, f64)> = HashMap::new();
+    for trace in traces {
+        // 过滤空模型数据
+        if let Some(model_name) = &trace.model_used {
+            // 检查模型名称是否有效（非空、非空白字符）
+            if !model_name.trim().is_empty() {
+                let cost = trace.cost.unwrap_or(0.0);
+                let entry = model_stats.entry(model_name.clone()).or_insert((0, 0.0));
+                entry.0 = entry.0.saturating_add(1); // usage count
+                entry.1 += cost; // total cost
+            }
+        }
+    }
+
+    // 转换为响应格式
+    let mut model_usage: Vec<ModelStatistics> = model_stats
         .into_iter()
-        .map(|res| {
-            let percentage = if total_requests > 0 {
-                (res.usage as f64 / total_requests as f64) * 100.0
-            } else {
-                0.0
-            };
+        .map(|(model, (usage, cost))| {
+            let percentage = ratio_as_percentage(usage, total_requests_u64);
             ModelStatistics {
-                model: res.model,
-                usage: res.usage,
+                model,
+                usage: i64::try_from(usage).unwrap_or(i64::MAX),
                 percentage,
-                cost: res.cost,
+                cost,
             }
         })
         .collect();
@@ -497,35 +515,20 @@ pub async fn get_models_statistics(
 /// 4. `Token使用趋势API`: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
     State(state): State<AppState>,
-    Extension(_auth_context): Extension<Arc<AuthContext>>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let db = state.database.as_ref();
+    let user_id = auth_context.user_id;
 
-    let daily_stats_result = match ProxyTracing::find()
-        .select_only()
-        .column_as(
-            Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")),
-            "date",
-        )
-        .column_as(
-            proxy_tracing::Column::CacheCreateTokens.sum(),
-            "cache_create_tokens",
-        )
-        .column_as(
-            proxy_tracing::Column::CacheReadTokens.sum(),
-            "cache_read_tokens",
-        )
-        .column_as(proxy_tracing::Column::TokensPrompt.sum(), "tokens_prompt")
-        .column_as(
-            proxy_tracing::Column::TokensCompletion.sum(),
-            "tokens_completion",
-        )
-        .group_by(Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")))
-        .into_model::<DailyTokenStats>()
-        .all(db)
+    // 固定获取最近30天的数据
+    let start_time = Utc::now() - Duration::days(30);
+
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .all(state.database.as_ref())
         .await
     {
-        Ok(results) => results,
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
@@ -542,35 +545,42 @@ pub async fn get_tokens_trend(
         }
     };
 
-    let daily_stats_map: HashMap<NaiveDate, DailyTokenStats> = daily_stats_result
-        .into_iter()
-        .map(|stats| (stats.date, stats))
-        .collect();
+    // 按天分组统计Token使用情况
+    let mut daily_stats: HashMap<String, (i64, i64, i64, i64, f64)> = HashMap::new();
+    for trace in &traces {
+        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%Y-%m-%d")
+            .to_string();
 
+        let entry = daily_stats.entry(date).or_insert((0, 0, 0, 0, 0.0));
+        entry.0 += i64::from(trace.cache_create_tokens.unwrap_or(0));
+        entry.1 += i64::from(trace.cache_read_tokens.unwrap_or(0));
+        entry.2 += i64::from(trace.tokens_prompt.unwrap_or(0));
+        entry.3 += i64::from(trace.tokens_completion.unwrap_or(0));
+        entry.4 += trace.cost.unwrap_or(0.0);
+    }
+
+    // 生成30天的时间序列数据
     let mut token_usage = Vec::new();
     let mut daily_totals = Vec::new();
-    let today = Utc::now().date_naive();
-    let mut current_token_usage = 0;
 
     for i in 0..30 {
-        let date = today - Duration::days(29 - i);
-        let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339();
+        let date = (Utc::now() - Duration::days(29 - i))
+            .format("%Y-%m-%d")
+            .to_string();
+        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
 
-        if let Some(stats) = daily_stats_map.get(&date) {
-            let total_tokens =
-                stats.tokens_prompt.unwrap_or(0) + stats.tokens_completion.unwrap_or(0);
+        if let Some((cache_create, cache_read, prompt, completion, cost)) = daily_stats.get(&date) {
+            let total_tokens = prompt + completion;
             daily_totals.push(total_tokens);
-            if date == today {
-                current_token_usage = total_tokens;
-            }
 
             token_usage.push(TokenTrendPoint {
                 timestamp,
-                cache_create_tokens: stats.cache_create_tokens.unwrap_or(0),
-                cache_read_tokens: stats.cache_read_tokens.unwrap_or(0),
-                tokens_prompt: stats.tokens_prompt.unwrap_or(0),
-                tokens_completion: stats.tokens_completion.unwrap_or(0),
-                cost: stats.cost.unwrap_or(0.0),
+                cache_create_tokens: *cache_create,
+                cache_read_tokens: *cache_read,
+                tokens_prompt: *prompt,
+                tokens_completion: *completion,
+                cost: *cost,
             });
         } else {
             daily_totals.push(0);
@@ -585,12 +595,26 @@ pub async fn get_tokens_trend(
         }
     }
 
-    let total_token_usage: i64 = daily_totals.iter().sum();
-    let average_token_usage = if daily_totals.is_empty() {
-        0
-    } else {
-        total_token_usage / daily_totals.len() as i64
+    // 计算今天、平均值和最大值
+    let today_traces: Vec<&proxy_tracing::Model> = traces
+        .iter()
+        .filter(|t| {
+            let trace_date =
+                DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
+            trace_date == Utc::now().date_naive()
+        })
+        .collect();
+
+    let current_token_usage: i64 = today_traces
+        .iter()
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
+        .sum();
+
+    let average_token_usage = match i64::try_from(daily_totals.len()) {
+        Ok(count) if count > 0 => daily_totals.iter().sum::<i64>() / count,
+        _ => 0,
     };
+
     let max_token_usage = daily_totals.iter().max().copied().unwrap_or(0);
 
     let response = TokensTrendResponse {
@@ -606,22 +630,20 @@ pub async fn get_tokens_trend(
 /// 5. 用户API `Keys请求趋势API`: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
     State(state): State<AppState>,
-    Extension(_auth_context): Extension<Arc<AuthContext>>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
-    let db = state.database.as_ref();
+    let user_id = auth_context.user_id;
 
-    let daily_stats_result = match ProxyTracing::find()
-        .select_only()
-        .column_as(
-            Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")),
-            "date",
-        )
-        .group_by(Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")))
-        .into_model::<DailyRequestStats>()
-        .all(db)
+    // 固定获取最近30天的数据
+    let start_time = Utc::now() - Duration::days(30);
+
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .all(state.database.as_ref())
         .await
     {
-        Ok(results) => results,
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
@@ -638,33 +660,51 @@ pub async fn get_user_api_keys_request_trend(
         }
     };
 
-    let daily_requests_map: HashMap<NaiveDate, i64> = daily_stats_result
-        .into_iter()
-        .map(|stats| (stats.date, stats.requests))
-        .collect();
+    // 按天分组统计请求次数
+    let mut daily_requests: HashMap<String, i64> = HashMap::new();
+    for trace in &traces {
+        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%Y-%m-%d")
+            .to_string();
+        *daily_requests.entry(date).or_insert(0) += 1;
+    }
 
+    // 生成30天的时间序列数据
     let mut request_usage = Vec::new();
     let mut daily_totals = Vec::new();
-    let today = Utc::now().date_naive();
 
     for i in 0..30 {
-        let date = today - Duration::days(29 - i);
-        let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339();
-        let request_count = daily_requests_map.get(&date).copied().unwrap_or(0);
+        let date = (Utc::now() - Duration::days(29 - i))
+            .format("%Y-%m-%d")
+            .to_string();
+        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
+
+        let request_count = daily_requests.get(&date).copied().unwrap_or(0);
         daily_totals.push(request_count);
+
         request_usage.push(UserApiKeysRequestTrendPoint {
             timestamp,
             request: request_count,
         });
     }
 
-    let current_request_usage = daily_requests_map.get(&today).copied().unwrap_or(0);
-    let total_requests: i64 = daily_totals.iter().sum();
-    let average_request_usage = if daily_totals.is_empty() {
-        0
-    } else {
-        total_requests / daily_totals.len() as i64
+    // 计算今天、平均值和最大值
+    let current_request_usage = usize_to_i64(
+        traces
+            .iter()
+            .filter(|t| {
+                let trace_date =
+                    DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
+                trace_date == Utc::now().date_naive()
+            })
+            .count(),
+    );
+
+    let average_request_usage = match i64::try_from(daily_totals.len()) {
+        Ok(count) if count > 0 => daily_totals.iter().sum::<i64>() / count,
+        _ => 0,
     };
+
     let max_request_usage = daily_totals.iter().max().copied().unwrap_or(0);
 
     let response = UserApiKeysRequestTrendResponse {
@@ -683,27 +723,17 @@ pub async fn get_user_api_keys_token_trend(
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
-    let db = state.database.as_ref();
+
+    // 固定获取最近30天的数据
     let start_time = Utc::now() - Duration::days(30);
 
-    let daily_stats_result = match ProxyTracing::find()
-        .select_only()
-        .column_as(
-            Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")),
-            "date",
-        )
-        .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
-        .filter(
-            Condition::all()
-                .add(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
-                .add(proxy_tracing::Column::UserId.eq(user_id)),
-        )
-        .group_by(Expr::col(proxy_tracing::Column::CreatedAt).cast_as(Alias::new("date")))
-        .into_model::<DailyTokenTotalStats>()
-        .all(db)
+    let traces = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::UserId.eq(user_id))
+        .all(state.database.as_ref())
         .await
     {
-        Ok(results) => results,
+        Ok(traces) => traces,
         Err(err) => {
             lerror!(
                 "system",
@@ -720,33 +750,55 @@ pub async fn get_user_api_keys_token_trend(
         }
     };
 
-    let daily_tokens_map: HashMap<NaiveDate, i64> = daily_stats_result
-        .into_iter()
-        .map(|stats| (stats.date, stats.total_tokens.unwrap_or(0)))
-        .collect();
+    // 按天分组统计Token使用量
+    let mut daily_tokens: HashMap<String, i64> = HashMap::new();
+    for trace in &traces {
+        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
+            .format("%Y-%m-%d")
+            .to_string();
+        let tokens = i64::from(trace.tokens_total.unwrap_or(0));
+        *daily_tokens.entry(date).or_insert(0) += tokens;
+    }
 
+    // 生成30天的时间序列数据
     let mut token_usage = Vec::new();
     let mut daily_totals = Vec::new();
-    let today = Utc::now().date_naive();
 
     for i in 0..30 {
-        let date = today - Duration::days(29 - i);
-        let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().to_rfc3339();
-        let total_token = daily_tokens_map.get(&date).copied().unwrap_or(0);
+        let date = (Utc::now() - Duration::days(29 - i))
+            .format("%Y-%m-%d")
+            .to_string();
+        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
+
+        let total_token = daily_tokens.get(&date).copied().unwrap_or(0);
         daily_totals.push(total_token);
+
         token_usage.push(UserApiKeysTokenTrendPoint {
             timestamp,
             total_token,
         });
     }
 
-    let current_token_usage = daily_tokens_map.get(&today).copied().unwrap_or(0);
-    let total_tokens: i64 = daily_totals.iter().sum();
-    let average_token_usage = if daily_totals.is_empty() {
-        0
-    } else {
-        total_tokens / daily_totals.len() as i64
+    // 计算今天、平均值和最大值
+    let today_traces: Vec<&proxy_tracing::Model> = traces
+        .iter()
+        .filter(|t| {
+            let trace_date =
+                DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
+            trace_date == Utc::now().date_naive()
+        })
+        .collect();
+
+    let current_token_usage: i64 = today_traces
+        .iter()
+        .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
+        .sum();
+
+    let average_token_usage = match i64::try_from(daily_totals.len()) {
+        Ok(count) if count > 0 => daily_totals.iter().sum::<i64>() / count,
+        _ => 0,
     };
+
     let max_token_usage = daily_totals.iter().max().copied().unwrap_or(0);
 
     let response = UserApiKeysTokenTrendResponse {
@@ -760,6 +812,14 @@ pub async fn get_user_api_keys_token_trend(
 }
 
 // ===== 辅助函数 =====
+
+fn usize_to_i64(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
 
 /// 解析时间范围参数
 fn parse_time_range(

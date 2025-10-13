@@ -1,11 +1,5 @@
 //! # 用户管理处理器
-#![allow(
-    clippy::cognitive_complexity,
-    clippy::too_many_lines,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
+#![allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
@@ -20,12 +14,11 @@ use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use rand::{Rng, distributions::Alphanumeric};
 use sea_orm::{
-    DatabaseConnection, FromQueryResult,
+    DatabaseConnection,
     entity::{ActiveModelTrait, ColumnTrait, EntityTrait, Set},
     query::{PaginatorTrait, QueryFilter, QueryOrder, QuerySelect},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 // Removed unused serde_json imports
 
@@ -137,7 +130,7 @@ impl From<users::Model> for UserResponse {
 }
 
 /// 用户统计数据
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug)]
 pub struct UserStats {
     pub total_requests: i64,
     pub total_cost: f64,
@@ -358,12 +351,13 @@ pub async fn list_users(
     };
 
     // 分页查询
-    let users = match select
+    let users_result = select
         .offset(u64::from(offset))
         .limit(u64::from(limit))
         .all(state.database.as_ref())
-        .await
-    {
+        .await;
+
+    let users = match users_result {
         Ok(users) => users,
         Err(err) => {
             lerror!(
@@ -392,55 +386,13 @@ pub async fn list_users(
         }
     };
 
-    // 批量获取用户统计数据
-    let user_ids: Vec<i32> = users.iter().map(|u| u.id).collect();
-    let user_stats_map: HashMap<i32, UserStats> = if user_ids.is_empty() {
-        HashMap::new()
-    } else {
-        #[derive(Debug, FromQueryResult)]
-        struct UserStatsResult {
-            user_id: i32,
-            total_requests: i64,
-            total_cost: Option<f64>,
-            total_tokens: Option<i64>,
-        }
+    // 获取用户统计数据并转换为响应DTO
+    let mut user_responses: Vec<UserResponse> = Vec::new();
 
-        let stats_results = ProxyTracing::find()
-            .select_only()
-            .column(proxy_tracing::Column::UserId)
-            .column_as(proxy_tracing::Column::Id.count(), "total_requests")
-            .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
-            .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
-            .filter(proxy_tracing::Column::UserId.is_in(user_ids))
-            .group_by(proxy_tracing::Column::UserId)
-            .into_model::<UserStatsResult>()
-            .all(state.database.as_ref())
-            .await
-            .unwrap_or_default();
-
-        stats_results
-            .into_iter()
-            .map(|res| {
-                (
-                    res.user_id,
-                    UserStats {
-                        total_requests: res.total_requests,
-                        total_cost: res.total_cost.unwrap_or(0.0),
-                        total_tokens: res.total_tokens.unwrap_or(0),
-                    },
-                )
-            })
-            .collect()
-    };
-
-    // 组合用户数据和统计数据
-    let user_responses: Vec<UserResponse> = users
-        .into_iter()
-        .map(|user| {
-            let user_stats = user_stats_map.get(&user.id).copied().unwrap_or_default();
-            UserResponse::from_user_with_stats(user, &user_stats)
-        })
-        .collect();
+    for user in users {
+        let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
+        user_responses.push(UserResponse::from_user_with_stats(user, &user_stats));
+    }
 
     let limit_u64 = u64::from(limit);
     let pages = if limit_u64 == 0 {

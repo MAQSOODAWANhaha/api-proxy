@@ -5,10 +5,7 @@
 #![allow(
     clippy::used_underscore_binding,
     clippy::cognitive_complexity,
-    clippy::too_many_lines,
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::too_many_lines
 )]
 
 use crate::lerror;
@@ -19,11 +16,12 @@ use crate::types::{ProviderTypeId, ratio_as_percentage};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use chrono::{DateTime, NaiveDate, Utc};
+use entity::proxy_tracing::{self, Entity as ProxyTracing};
+use entity::user_service_apis;
 use sea_orm::prelude::Decimal;
-use sea_orm::{FromQueryResult, QuerySelect}; // for order_by()
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder}; // for order_by()
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -281,8 +279,7 @@ pub async fn get_user_service_cards(
         .count(db)
         .await
     {
-        #[allow(clippy::cast_possible_wrap)]
-        Ok(count) => count as i64,
+        Ok(count) => i64::try_from(count).unwrap_or(i64::MAX),
         Err(err) => {
             lerror!(
                 "system",
@@ -308,38 +305,21 @@ pub async fn get_user_service_cards(
     response::success(response)
 }
 
-#[derive(Debug, Default, Clone)]
-struct ApiStats {
-    successful_requests: i64,
-    failed_requests: i64,
-    total_requests: i64,
-    avg_response_time: i64,
-    total_cost: f64,
-    total_tokens: i64,
-    last_used_at: Option<DateTime<Utc>>,
-}
-
 /// 2. 用户API Keys列表
-#[allow(
-    clippy::cognitive_complexity,
-    clippy::too_many_lines,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-#[allow(clippy::cast_precision_loss)]
 pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
-    use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, sea_query::Expr};
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait};
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(10);
+    let offset = u64::from(page.saturating_sub(1)) * u64::from(limit);
     let db = state.database.as_ref();
+
     let user_id = auth_context.user_id;
 
     // 构建基础查询
@@ -349,13 +329,16 @@ pub async fn list_user_service_keys(
     if let Some(name) = &query.name {
         select = select.filter(user_service_apis::Column::Name.like(format!("%{name}%")));
     }
+
     if let Some(description) = &query.description {
         select =
             select.filter(user_service_apis::Column::Description.like(format!("%{description}%")));
     }
+
     if let Some(provider_type_id) = query.provider_type_id {
         select = select.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id));
     }
+
     if let Some(is_active) = query.is_active {
         select = select.filter(user_service_apis::Column::IsActive.eq(is_active));
     }
@@ -379,10 +362,23 @@ pub async fn list_user_service_keys(
         }
     };
 
-    // 分页查询
-    let apis = match select
+    // 分页查询，使用手动JOIN避免重复
+    let apis = match UserServiceApi::find()
+        .filter(user_service_apis::Column::UserId.eq(user_id))
+        .apply_if(query.name, |query, name| {
+            query.filter(user_service_apis::Column::Name.like(format!("%{name}%")))
+        })
+        .apply_if(query.description, |query, description| {
+            query.filter(user_service_apis::Column::Description.like(format!("%{description}%")))
+        })
+        .apply_if(query.provider_type_id, |query, provider_type_id| {
+            query.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id))
+        })
+        .apply_if(query.is_active, |query, is_active| {
+            query.filter(user_service_apis::Column::IsActive.eq(is_active))
+        })
         .find_also_related(ProviderType)
-        .offset(u64::from((page - 1) * limit))
+        .offset(offset)
         .limit(u64::from(limit))
         .all(db)
         .await
@@ -404,116 +400,114 @@ pub async fn list_user_service_keys(
         }
     };
 
-    // 批量获取统计数据
-    let api_ids: Vec<i32> = apis.iter().map(|(api, _)| api.id).collect();
-    let stats_map: HashMap<i32, ApiStats> = if api_ids.is_empty() {
-        HashMap::new()
-    } else {
-        #[derive(Debug, FromQueryResult)]
-        struct StatsResult {
-            user_service_api_id: i32,
-            total_requests: i64,
-            successful_requests: i64,
-            total_cost: Option<f64>,
-            total_tokens: Option<i64>,
-            avg_response_time: Option<f64>,
-            last_used_at: Option<chrono::NaiveDateTime>,
-        }
-
-        let stats_results = ProxyTracing::find()
-            .select_only()
-            .column(proxy_tracing::Column::UserServiceApiId)
-            .column_as(proxy_tracing::Column::Id.count(), "total_requests")
-            .column_as(
-                Expr::cust("SUM(CASE WHEN IsSuccess = true THEN 1 ELSE 0 END)"),
-                "successful_requests",
-            )
-            .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
-            .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
-            .column_as(Expr::cust("AVG(DurationMs)"), "avg_response_time")
-            .column_as(proxy_tracing::Column::CreatedAt.max(), "last_used_at")
-            .filter(proxy_tracing::Column::UserServiceApiId.is_in(api_ids))
-            .group_by(proxy_tracing::Column::UserServiceApiId)
-            .into_model::<StatsResult>()
-            .all(db)
-            .await
-            .unwrap_or_default();
-
-        stats_results
-            .into_iter()
-            .map(|res| {
-                let total_requests = res.total_requests;
-                let successful_requests = res.successful_requests;
-                let api_stats = ApiStats {
-                    total_requests,
-                    successful_requests,
-                    failed_requests: total_requests - successful_requests,
-                    avg_response_time: res.avg_response_time.unwrap_or(0.0) as i64,
-                    total_cost: res.total_cost.unwrap_or(0.0),
-                    total_tokens: res.total_tokens.unwrap_or(0),
-                    last_used_at: res.last_used_at.map(|ndt| ndt.and_utc()),
-                };
-                (res.user_service_api_id, api_stats)
-            })
-            .collect()
-    };
-
     // 构建响应数据
-    let service_api_keys: Vec<UserServiceKeyResponse> = apis
-        .into_iter()
-        .map(|(api, provider_type)| {
-            let api_stats = stats_map.get(&api.id).cloned().unwrap_or_default();
-            let success_rate = if api_stats.total_requests > 0 {
-                (api_stats.successful_requests as f64 / api_stats.total_requests as f64) * 100.0
-            } else {
-                0.0
-            };
+    let mut service_api_keys = Vec::new();
+    for (api, provider_type) in apis {
+        if let Some(response_api) = build_user_service_key_response(db, api, provider_type).await {
+            service_api_keys.push(response_api);
+        }
+    }
 
-            let usage = json!({
-                "successful_requests": api_stats.successful_requests,
-                "failed_requests": api_stats.failed_requests,
-                "total_requests": api_stats.total_requests,
-                "success_rate": success_rate,
-                "avg_response_time": api_stats.avg_response_time,
-                "total_cost": api_stats.total_cost,
-                "total_tokens": api_stats.total_tokens,
-            });
-
-            let provider_name = provider_type
-                .as_ref()
-                .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
-
-            UserServiceKeyResponse {
-                id: api.id,
-                name: api.name.unwrap_or_default(),
-                description: api.description,
-                provider: provider_name,
-                provider_type_id: api.provider_type_id,
-                api_key: api.api_key,
-                usage: Some(usage),
-                is_active: api.is_active,
-                last_used_at: api_stats.last_used_at.map(|dt| dt.to_rfc3339()),
-                created_at: api.created_at.and_utc().to_rfc3339(),
-                expires_at: api.expires_at.map(|dt| dt.and_utc().to_rfc3339()),
-                scheduling_strategy: api.scheduling_strategy,
-                retry_count: api.retry_count,
-                timeout_seconds: api.timeout_seconds,
-                max_request_per_min: api.max_request_per_min,
-                max_requests_per_day: api.max_requests_per_day,
-                max_tokens_per_day: api.max_tokens_per_day,
-                max_cost_per_day: api.max_cost_per_day,
-            }
-        })
-        .collect();
+    let limit_u64 = u64::from(limit);
+    let pages = if limit_u64 == 0 {
+        0
+    } else {
+        total.saturating_add(limit_u64.saturating_sub(1)) / limit_u64
+    };
 
     let pagination = response::Pagination {
         page: u64::from(page),
-        limit: u64::from(limit),
+        limit: limit_u64,
         total,
-        pages: total.div_ceil(u64::from(limit)),
+        pages,
     };
 
-    response::paginated(service_api_keys, pagination)
+    let data = json!({
+        "service_api_keys": service_api_keys,
+        "pagination": pagination
+    });
+
+    response::success(data)
+}
+
+async fn build_user_service_key_response(
+    db: &DatabaseConnection,
+    api: user_service_apis::Model,
+    provider_type: Option<entity::provider_types::Model>,
+) -> Option<UserServiceKeyResponse> {
+    use sea_orm::Order;
+
+    let tracings = ProxyTracing::find()
+        .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
+        .all(db)
+        .await
+        .unwrap_or_default();
+
+    let success_count =
+        u64::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(0);
+    let total_requests = u64::try_from(tracings.len()).unwrap_or(success_count);
+    let failure_count = total_requests.saturating_sub(success_count);
+
+    let success_rate = ratio_as_percentage(success_count, total_requests);
+
+    let total_response_time: i64 = tracings.iter().map(|t| t.duration_ms.unwrap_or(0)).sum();
+    let avg_response_time = match i64::try_from(success_count) {
+        Ok(count) if count > 0 => total_response_time / count,
+        _ => 0,
+    };
+
+    let total_cost: f64 = tracings.iter().map(|t| t.cost.unwrap_or(0.0)).sum();
+    let total_tokens: i32 = tracings.iter().map(|t| t.tokens_total.unwrap_or(0)).sum();
+
+    let last_used_at = match ProxyTracing::find()
+        .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
+        .order_by(proxy_tracing::Column::CreatedAt, Order::Desc)
+        .one(db)
+        .await
+    {
+        Ok(Some(tracing)) => {
+            Some(DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc).to_rfc3339())
+        }
+        _ => None,
+    };
+
+    let usage = json!({
+        "successful_requests": success_count,
+        "failed_requests": failure_count,
+        "total_requests": total_requests,
+        "success_rate": success_rate,
+        "avg_response_time": avg_response_time,
+        "total_cost": total_cost,
+        "total_tokens": total_tokens,
+        "last_used_at": last_used_at
+    });
+
+    let provider_name = provider_type
+        .as_ref()
+        .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
+
+    Some(UserServiceKeyResponse {
+        id: api.id,
+        name: api.name.unwrap_or_default(),
+        description: api.description,
+        provider: provider_name,
+        provider_type_id: api.provider_type_id,
+        api_key: api.api_key,
+        usage: Some(usage),
+        is_active: api.is_active,
+        last_used_at,
+        created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc).to_rfc3339(),
+        expires_at: api
+            .expires_at
+            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+        scheduling_strategy: api.scheduling_strategy,
+        retry_count: api.retry_count,
+        timeout_seconds: api.timeout_seconds,
+        max_request_per_min: api.max_request_per_min,
+        max_requests_per_day: api.max_requests_per_day,
+        max_tokens_per_day: api.max_tokens_per_day,
+        max_cost_per_day: api.max_cost_per_day,
+    })
 }
 
 /// 3. 新增API Key
@@ -1127,16 +1121,11 @@ pub async fn get_user_service_key_usage(
     };
 
     // 计算统计数据
-    let total_requests = tracings.len() as i64;
-    let successful_requests = tracings.iter().filter(|t| t.is_success).count() as i64;
-    let failed_requests = total_requests - successful_requests;
-    let success_rate = match (
-        u64::try_from(successful_requests),
-        u64::try_from(total_requests),
-    ) {
-        (Ok(success), Ok(total)) => ratio_as_percentage(success, total),
-        _ => 0.0,
-    };
+    let total_requests = u64::try_from(tracings.len()).unwrap_or(u64::MAX);
+    let successful_requests =
+        u64::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(total_requests);
+    let failed_requests = total_requests.saturating_sub(successful_requests);
+    let success_rate = ratio_as_percentage(successful_requests, total_requests);
 
     let total_tokens = tracings
         .iter()
@@ -1161,14 +1150,12 @@ pub async fn get_user_service_key_usage(
 
     let total_cost = tracings.iter().map(|t| t.cost.unwrap_or(0.0)).sum::<f64>();
 
-    let avg_response_time = if tracings.is_empty() {
-        0
-    } else {
-        tracings
-            .iter()
-            .map(|t| t.duration_ms.unwrap_or(0))
-            .sum::<i64>()
-            / tracings.len() as i64
+    let avg_response_time = match i64::try_from(total_requests) {
+        Ok(count) if count > 0 => {
+            let total_duration: i64 = tracings.iter().map(|t| t.duration_ms.unwrap_or(0)).sum();
+            total_duration / count
+        }
+        _ => 0,
     };
 
     let last_used = tracings
