@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::types::{ratio_as_f64, ProviderKeyId, ProviderTypeId, RequestCount, TokenCount};
+use crate::types::{ProviderKeyId, ProviderTypeId, RequestCount, TokenCount, ratio_as_f64};
 
 /// 请求追踪数据 - 完整的请求生命周期记录
 #[derive(Debug, Clone, Serialize, Deserialize)]

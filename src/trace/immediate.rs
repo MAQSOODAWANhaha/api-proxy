@@ -3,7 +3,7 @@
 //! 解决长时间请求的内存占用和数据丢失问题，采用即时数据库写入模式
 
 use crate::logging::{LogComponent, LogStage};
-use crate::types::{ratio_as_f64, ProviderTypeId, TokenCount};
+use crate::types::{ProviderTypeId, TokenCount, ratio_as_f64};
 use crate::{ldebug, lerror, linfo, lwarn};
 use anyhow::Result;
 use chrono::Utc;

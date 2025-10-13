@@ -667,47 +667,42 @@ impl ApiKeyHealthChecker {
         None
     }
 
-        /// 计算健康分数
-        fn calculate_health_score(status: &ApiKeyHealth) -> f32 {
-            if status.recent_results.is_empty() {
-                return 100.0;
-            }
-
-            let recent_count = std::cmp::min(status.recent_results.len(), 10);
-            let recent_results =
-                &status.recent_results[status.recent_results.len() - recent_count..];
-
-            // 基础成功率
-            let success_count = recent_results.iter().filter(|r| r.is_success).count();
-            let success_count = u8::try_from(success_count).unwrap_or(u8::MAX);
-            let recent_len = u8::try_from(recent_results.len()).unwrap_or(u8::MAX);
-            let mut score = if recent_len == 0 {
-                0.0
-            } else {
-                (f32::from(success_count) / f32::from(recent_len)) * 100.0
-            };
-
-            // 响应时间惩罚
-            if status.avg_response_time_ms > 3000 {
-                let penalty_ms = status
-                    .avg_response_time_ms
-                    .saturating_sub(3000)
-                    .min(4000);
-                let penalty =
-                    (f32::from(u16::try_from(penalty_ms).unwrap_or(4000)) / 1000.0) * 5.0;
-                score -= penalty.min(20.0);
-            }
-
-            // 连续失败惩罚
-            if status.consecutive_failures > 0 {
-                let failure_penalty_cap = status.consecutive_failures.min(5);
-                let penalty =
-                    (f32::from(u8::try_from(failure_penalty_cap).unwrap_or(5)) * 10.0).min(50.0);
-                score -= penalty;
-            }
-
-            score.clamp(0.0, 100.0)
+    /// 计算健康分数
+    fn calculate_health_score(status: &ApiKeyHealth) -> f32 {
+        if status.recent_results.is_empty() {
+            return 100.0;
         }
+
+        let recent_count = std::cmp::min(status.recent_results.len(), 10);
+        let recent_results = &status.recent_results[status.recent_results.len() - recent_count..];
+
+        // 基础成功率
+        let success_count = recent_results.iter().filter(|r| r.is_success).count();
+        let success_count = u8::try_from(success_count).unwrap_or(u8::MAX);
+        let recent_len = u8::try_from(recent_results.len()).unwrap_or(u8::MAX);
+        let mut score = if recent_len == 0 {
+            0.0
+        } else {
+            (f32::from(success_count) / f32::from(recent_len)) * 100.0
+        };
+
+        // 响应时间惩罚
+        if status.avg_response_time_ms > 3000 {
+            let penalty_ms = status.avg_response_time_ms.saturating_sub(3000).min(4000);
+            let penalty = (f32::from(u16::try_from(penalty_ms).unwrap_or(4000)) / 1000.0) * 5.0;
+            score -= penalty.min(20.0);
+        }
+
+        // 连续失败惩罚
+        if status.consecutive_failures > 0 {
+            let failure_penalty_cap = status.consecutive_failures.min(5);
+            let penalty =
+                (f32::from(u8::try_from(failure_penalty_cap).unwrap_or(5)) * 10.0).min(50.0);
+            score -= penalty;
+        }
+
+        score.clamp(0.0, 100.0)
+    }
 
     /// 获取所有健康的API密钥
     pub async fn get_healthy_keys(&self) -> Vec<i32> {

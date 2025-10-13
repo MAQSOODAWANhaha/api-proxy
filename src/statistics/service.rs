@@ -5,9 +5,9 @@
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
-use crate::types::ProviderTypeId;
 use crate::proxy::ProxyContext;
 use crate::statistics::types::{RequestDetails, RequestStats, ResponseStats};
+use crate::types::ProviderTypeId;
 use crate::{ldebug, linfo, lwarn};
 use anyhow::Result;
 use pingora_http::ResponseHeader;

@@ -12,8 +12,8 @@ use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
-use crate::{ldebug, linfo, proxy_err};
 use crate::types::ProviderTypeId;
+use crate::{ldebug, linfo, proxy_err};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
@@ -258,7 +258,10 @@ impl AuthenticationService {
     }
 
     /// 3. 获取提供商类型配置
-    async fn get_provider_type(&self, provider_type_id: ProviderTypeId) -> Result<provider_types::Model> {
+    async fn get_provider_type(
+        &self,
+        provider_type_id: ProviderTypeId,
+    ) -> Result<provider_types::Model> {
         let cache_key = format!("provider_type:{provider_type_id}");
         if let Ok(Some(provider_type)) = self
             .cache

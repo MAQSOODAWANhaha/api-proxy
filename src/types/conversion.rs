@@ -4,20 +4,18 @@ use super::domain::{RequestCount, TimeoutSeconds, TokenCount};
 
 #[derive(Debug)]
 pub enum ConversionError {
-    NegativeValue {
-        field: &'static str,
-        value: i64,
-    },
-    Overflow {
-        field: &'static str,
-    },
+    NegativeValue { field: &'static str, value: i64 },
+    Overflow { field: &'static str },
 }
 
 impl fmt::Display for ConversionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NegativeValue { field, value } => {
-                write!(f, "field `{field}` expected non-negative value, got {value}")
+                write!(
+                    f,
+                    "field `{field}` expected non-negative value, got {value}"
+                )
             }
             Self::Overflow { field } => write!(f, "field `{field}` overflowed target type"),
         }
@@ -33,15 +31,20 @@ pub fn timeout_from_i32(value: Option<i32>, fallback: TimeoutSeconds) -> Timeout
         .map_or(fallback, TimeoutSeconds::new)
 }
 
-pub fn request_count_from_i64(value: i64, field: &'static str) -> Result<RequestCount, ConversionError> {
+pub fn request_count_from_i64(
+    value: i64,
+    field: &'static str,
+) -> Result<RequestCount, ConversionError> {
     if value < 0 {
         return Err(ConversionError::NegativeValue { field, value });
     }
-    u64::try_from(value)
-        .map_err(|_| ConversionError::Overflow { field })
+    u64::try_from(value).map_err(|_| ConversionError::Overflow { field })
 }
 
-pub fn token_count_from_i64(value: i64, field: &'static str) -> Result<TokenCount, ConversionError> {
+pub fn token_count_from_i64(
+    value: i64,
+    field: &'static str,
+) -> Result<TokenCount, ConversionError> {
     request_count_from_i64(value, field)
 }
 
@@ -49,9 +52,7 @@ pub fn option_token_count_from_i64(
     value: Option<i64>,
     field: &'static str,
 ) -> Result<Option<TokenCount>, ConversionError> {
-    value
-        .map(|v| token_count_from_i64(v, field))
-        .transpose()
+    value.map(|v| token_count_from_i64(v, field)).transpose()
 }
 
 const F64_EXACT_INTEGER_MAX: u64 = 1u64 << f64::MANTISSA_DIGITS;

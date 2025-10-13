@@ -3,7 +3,7 @@
 //! 处理敏感配置信息的加密和解密
 
 use aes_gcm::{
-    Aes256Gcm, Key, Nonce,
+    Aes256Gcm,
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use base64::{Engine as _, engine::general_purpose};
@@ -29,8 +29,9 @@ impl ConfigCrypto {
     /// 创建新的配置加密器
     #[must_use]
     pub fn new(key: &[u8; 32]) -> Self {
-        let key = Key::<Aes256Gcm>::from_slice(key);
-        let cipher = Aes256Gcm::new(key);
+        let key: [u8; 32] = *key;
+        let key = key.into();
+        let cipher = Aes256Gcm::new(&key);
         Self { cipher }
     }
 
@@ -92,11 +93,12 @@ impl ConfigCrypto {
             return Err(crate::error::ProxyError::config("加密随机数长度错误"));
         }
 
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce_bytes: [u8; 12] = nonce_bytes.try_into().unwrap();
+        let nonce = nonce_bytes.into();
 
         let plaintext = self
             .cipher
-            .decrypt(nonce, ciphertext.as_ref())
+            .decrypt(&nonce, ciphertext.as_ref())
             .map_err(|e| {
                 crate::error::ProxyError::config_with_source(
                     "配置解密失败",

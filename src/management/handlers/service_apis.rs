@@ -15,14 +15,15 @@ use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::types::{ratio_as_percentage, ProviderTypeId};
+use crate::types::{ProviderTypeId, ratio_as_percentage};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use chrono::{DateTime, NaiveDate, Utc};
-use sea_orm::QueryOrder; // for order_by()
 use sea_orm::prelude::Decimal;
+use sea_orm::{FromQueryResult, QuerySelect}; // for order_by()
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -307,13 +308,25 @@ pub async fn get_user_service_cards(
     response::success(response)
 }
 
+#[derive(Debug, Default, Clone)]
+struct ApiStats {
+    successful_requests: i64,
+    failed_requests: i64,
+    total_requests: i64,
+    avg_response_time: i64,
+    total_cost: f64,
+    total_tokens: i64,
+    last_used_at: Option<DateTime<Utc>>,
+}
+
 /// 2. 用户API Keys列表
-    #[allow(
-        clippy::cognitive_complexity,
-        clippy::too_many_lines,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+#[allow(clippy::cast_precision_loss)]
 pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
@@ -322,12 +335,11 @@ pub async fn list_user_service_keys(
     use entity::provider_types::Entity as ProviderType;
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
-    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait};
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, sea_query::Expr};
 
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(10);
     let db = state.database.as_ref();
-
     let user_id = auth_context.user_id;
 
     // 构建基础查询
@@ -337,16 +349,13 @@ pub async fn list_user_service_keys(
     if let Some(name) = &query.name {
         select = select.filter(user_service_apis::Column::Name.like(format!("%{name}%")));
     }
-
     if let Some(description) = &query.description {
         select =
             select.filter(user_service_apis::Column::Description.like(format!("%{description}%")));
     }
-
     if let Some(provider_type_id) = query.provider_type_id {
         select = select.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id));
     }
-
     if let Some(is_active) = query.is_active {
         select = select.filter(user_service_apis::Column::IsActive.eq(is_active));
     }
@@ -370,21 +379,8 @@ pub async fn list_user_service_keys(
         }
     };
 
-    // 分页查询，使用手动JOIN避免重复
-    let apis = match UserServiceApi::find()
-        .filter(user_service_apis::Column::UserId.eq(user_id))
-        .apply_if(query.name, |query, name| {
-            query.filter(user_service_apis::Column::Name.like(format!("%{name}%")))
-        })
-        .apply_if(query.description, |query, description| {
-            query.filter(user_service_apis::Column::Description.like(format!("%{description}%")))
-        })
-        .apply_if(query.provider_type_id, |query, provider_type_id| {
-            query.filter(user_service_apis::Column::ProviderTypeId.eq(provider_type_id))
-        })
-        .apply_if(query.is_active, |query, is_active| {
-            query.filter(user_service_apis::Column::IsActive.eq(is_active))
-        })
+    // 分页查询
+    let apis = match select
         .find_also_related(ProviderType)
         .offset(u64::from((page - 1) * limit))
         .limit(u64::from(limit))
@@ -408,122 +404,116 @@ pub async fn list_user_service_keys(
         }
     };
 
-    // 构建响应数据
-    let mut service_api_keys = Vec::new();
+    // 批量获取统计数据
+    let api_ids: Vec<i32> = apis.iter().map(|(api, _)| api.id).collect();
+    let stats_map: HashMap<i32, ApiStats> = if api_ids.is_empty() {
+        HashMap::new()
+    } else {
+        #[derive(Debug, FromQueryResult)]
+        struct StatsResult {
+            user_service_api_id: i32,
+            total_requests: i64,
+            successful_requests: i64,
+            total_cost: Option<f64>,
+            total_tokens: Option<i64>,
+            avg_response_time: Option<f64>,
+            last_used_at: Option<chrono::NaiveDateTime>,
+        }
 
-    for (api, provider_type) in apis {
-        // 获取完整的使用统计
-        let tracings = ProxyTracing::find()
-            .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
+        let stats_results = ProxyTracing::find()
+            .select_only()
+            .column(proxy_tracing::Column::UserServiceApiId)
+            .column_as(proxy_tracing::Column::Id.count(), "total_requests")
+            .column_as(
+                Expr::cust("SUM(CASE WHEN IsSuccess = true THEN 1 ELSE 0 END)"),
+                "successful_requests",
+            )
+            .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
+            .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
+            .column_as(Expr::cust("AVG(DurationMs)"), "avg_response_time")
+            .column_as(proxy_tracing::Column::CreatedAt.max(), "last_used_at")
+            .filter(proxy_tracing::Column::UserServiceApiId.is_in(api_ids))
+            .group_by(proxy_tracing::Column::UserServiceApiId)
+            .into_model::<StatsResult>()
             .all(db)
             .await
             .unwrap_or_default();
 
-        let success_count =
-            i32::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(0);
-        let failure_count = i32::try_from(tracings.len()).unwrap_or(0) - success_count;
-        let total_requests = success_count + failure_count;
+        stats_results
+            .into_iter()
+            .map(|res| {
+                let total_requests = res.total_requests;
+                let successful_requests = res.successful_requests;
+                let api_stats = ApiStats {
+                    total_requests,
+                    successful_requests,
+                    failed_requests: total_requests - successful_requests,
+                    avg_response_time: res.avg_response_time.unwrap_or(0.0) as i64,
+                    total_cost: res.total_cost.unwrap_or(0.0),
+                    total_tokens: res.total_tokens.unwrap_or(0),
+                    last_used_at: res.last_used_at.map(|ndt| ndt.and_utc()),
+                };
+                (res.user_service_api_id, api_stats)
+            })
+            .collect()
+    };
 
-        // 计算成功率
-        let success_rate = if total_requests > 0 {
-            (f64::from(success_count) / f64::from(total_requests)) * 100.0
-        } else {
-            0.0
-        };
+    // 构建响应数据
+    let service_api_keys: Vec<UserServiceKeyResponse> = apis
+        .into_iter()
+        .map(|(api, provider_type)| {
+            let api_stats = stats_map.get(&api.id).cloned().unwrap_or_default();
+            let success_rate = if api_stats.total_requests > 0 {
+                (api_stats.successful_requests as f64 / api_stats.total_requests as f64) * 100.0
+            } else {
+                0.0
+            };
 
-        // 计算平均响应时间
-        let total_response_time: i64 = tracings.iter().filter_map(|t| t.duration_ms).sum();
-        let avg_response_time = if success_count > 0 {
-            total_response_time / i64::from(success_count)
-        } else {
-            0
-        };
+            let usage = json!({
+                "successful_requests": api_stats.successful_requests,
+                "failed_requests": api_stats.failed_requests,
+                "total_requests": api_stats.total_requests,
+                "success_rate": success_rate,
+                "avg_response_time": api_stats.avg_response_time,
+                "total_cost": api_stats.total_cost,
+                "total_tokens": api_stats.total_tokens,
+            });
 
-        // 计算总成本
-        let total_cost: f64 = tracings.iter().filter_map(|t| t.cost).sum();
+            let provider_name = provider_type
+                .as_ref()
+                .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
 
-        // 计算总token数
-        let total_tokens: i32 = tracings.iter().filter_map(|t| t.tokens_total).sum();
-
-        // 获取最后使用时间
-        let last_used_at = match ProxyTracing::find()
-            .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
-            .order_by(proxy_tracing::Column::CreatedAt, sea_orm::Order::Desc)
-            .one(db)
-            .await
-        {
-            Ok(Some(tracing)) => Some(
-                DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc).to_rfc3339(),
-            ),
-            _ => None,
-        };
-
-        let usage = json!({
-            "successful_requests": success_count,
-            "failed_requests": failure_count,
-            "total_requests": total_requests,
-            "success_rate": success_rate,
-            "avg_response_time": avg_response_time,
-            "total_cost": total_cost,
-            "total_tokens": total_tokens,
-            "last_used_at": last_used_at
-        });
-
-        let provider_name = provider_type
-            .as_ref()
-            .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name.clone());
-
-        // API Key脱敏处理
-        /* let masked_api_key = if api.api_key.len() > 8 {
-            format!(
-                "{}****{}",
-                &api.api_key[..4],
-                &api.api_key[api.api_key.len() - 4..]
-            )
-        } else {
-            "****".to_string()
-        }; */
-
-        let response_api = UserServiceKeyResponse {
-            id: api.id,
-            name: api.name.unwrap_or(String::new()),
-            description: api.description,
-            provider: provider_name,
-            provider_type_id: api.provider_type_id,
-            api_key: api.api_key,
-            usage: Some(usage),
-            is_active: api.is_active,
-            last_used_at,
-            created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc)
-                .to_rfc3339(),
-            expires_at: api
-                .expires_at
-                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
-            scheduling_strategy: api.scheduling_strategy,
-            retry_count: api.retry_count,
-            timeout_seconds: api.timeout_seconds,
-            max_request_per_min: api.max_request_per_min,
-            max_requests_per_day: api.max_requests_per_day,
-            max_tokens_per_day: api.max_tokens_per_day,
-            max_cost_per_day: api.max_cost_per_day,
-        };
-
-        service_api_keys.push(response_api);
-    }
+            UserServiceKeyResponse {
+                id: api.id,
+                name: api.name.unwrap_or_default(),
+                description: api.description,
+                provider: provider_name,
+                provider_type_id: api.provider_type_id,
+                api_key: api.api_key,
+                usage: Some(usage),
+                is_active: api.is_active,
+                last_used_at: api_stats.last_used_at.map(|dt| dt.to_rfc3339()),
+                created_at: api.created_at.and_utc().to_rfc3339(),
+                expires_at: api.expires_at.map(|dt| dt.and_utc().to_rfc3339()),
+                scheduling_strategy: api.scheduling_strategy,
+                retry_count: api.retry_count,
+                timeout_seconds: api.timeout_seconds,
+                max_request_per_min: api.max_request_per_min,
+                max_requests_per_day: api.max_requests_per_day,
+                max_tokens_per_day: api.max_tokens_per_day,
+                max_cost_per_day: api.max_cost_per_day,
+            }
+        })
+        .collect();
 
     let pagination = response::Pagination {
         page: u64::from(page),
         limit: u64::from(limit),
         total,
-        pages: ((f64::from(total.try_into().unwrap_or(u32::MAX))) / f64::from(limit)).ceil() as u64,
+        pages: total.div_ceil(u64::from(limit)),
     };
 
-    let data = json!({
-        "service_api_keys": service_api_keys,
-        "pagination": pagination
-    });
-
-    response::success(data)
+    response::paginated(service_api_keys, pagination)
 }
 
 /// 3. 新增API Key

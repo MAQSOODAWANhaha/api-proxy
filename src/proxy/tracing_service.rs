@@ -400,7 +400,9 @@ impl TracingContextHelper {
 
     /// `从ProxyContext提取token信息`
     #[must_use]
-    pub fn extract_token_info(ctx: &ProxyContext) -> (Option<TokenCount>, Option<TokenCount>, Option<TokenCount>) {
+    pub fn extract_token_info(
+        ctx: &ProxyContext,
+    ) -> (Option<TokenCount>, Option<TokenCount>, Option<TokenCount>) {
         let usage = ctx.usage_final.as_ref();
         let prompt = usage.and_then(|u| u.prompt_tokens);
         let completion = usage.and_then(|u| u.completion_tokens);
