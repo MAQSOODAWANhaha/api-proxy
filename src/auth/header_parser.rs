@@ -2,6 +2,7 @@
 //!
 //! 解析各种HTTP认证头格式，支持标准的 "Header-Name: Header-Value" 格式
 
+use crate::error::auth::AuthParseError;
 use serde::{Deserialize, Serialize};
 
 /// 解析后的认证头信息
@@ -22,28 +23,6 @@ impl AuthHeader {
             value: value.to_string(),
         }
     }
-}
-
-/// 认证头解析错误
-#[derive(Debug, thiserror::Error)]
-pub enum AuthParseError {
-    #[error(
-        "Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'"
-    )]
-    /// 认证头格式无效
-    InvalidFormat(String),
-
-    #[error("Empty header name in format: '{0}'")]
-    /// 认证头名称为空
-    EmptyHeaderName(String),
-
-    #[error("Empty header value template in format: '{0}'")]
-    /// 认证头值模板为空
-    EmptyHeaderValue(String),
-
-    #[error("Missing key placeholder '{{key}}' in header value: '{0}'")]
-    /// 缺少密钥占位符
-    MissingKeyPlaceholder(String),
 }
 
 /// 通用认证头解析器
@@ -309,6 +288,7 @@ impl AuthHeaderParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::auth::AuthParseError;
 
     #[test]
     fn test_parse_authorization_bearer() {

@@ -3,7 +3,7 @@
 //! 提供统一的缓存接口，支持内存缓存和 Redis 缓存
 
 use crate::config::{CacheConfig, CacheType, RedisConfig};
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result};
 use crate::{
     linfo,
     logging::{LogComponent, LogStage},
@@ -148,15 +148,14 @@ impl MemoryCache {
     where
         T: Serialize + Send + Sync,
     {
-        serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
+        serde_json::to_vec(value).context("序列化缓存值失败")
     }
 
     fn decode<T>(value: &[u8]) -> Result<T>
     where
         T: DeserializeOwned + Send,
     {
-        serde_json::from_slice(value)
-            .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))
+        serde_json::from_slice(value).context("反序列化缓存值失败")
     }
 }
 
@@ -279,7 +278,7 @@ pub struct RedisCache {
 impl RedisCache {
     pub fn new(redis_config: &RedisConfig) -> Result<Self> {
         let client = redis::Client::open(redis_config.url.as_str())
-            .map_err(|e| ProxyError::cache_with_source("创建 Redis 客户端失败", e))?;
+            .context("创建 Redis 客户端失败")?;
 
         Ok(Self {
             client,
@@ -296,7 +295,7 @@ impl RedisCache {
             .get_or_try_init(|| async {
                 redis::aio::ConnectionManager::new(client)
                     .await
-                    .map_err(|e| ProxyError::cache_with_source("建立 Redis 连接失败", e))
+                    .context("建立 Redis 连接失败")
             })
             .await?;
         Ok(manager.clone())
@@ -306,15 +305,14 @@ impl RedisCache {
     where
         T: Serialize + Send + Sync,
     {
-        serde_json::to_vec(value).map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))
+        serde_json::to_vec(value).context("序列化缓存值失败")
     }
 
     fn decode<T>(bytes: &[u8]) -> Result<T>
     where
         T: DeserializeOwned + Send,
     {
-        serde_json::from_slice(bytes)
-            .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))
+        serde_json::from_slice(bytes).context("反序列化缓存值失败")
     }
 }
 
@@ -332,19 +330,19 @@ impl CacheProvider for RedisCache {
                 let _: () = conn
                     .set(key, serialized)
                     .await
-                    .map_err(|e| ProxyError::cache_with_source("Redis SET 失败", e))?;
+                    .context("Redis SET 失败")?;
             }
             Some(duration) => {
                 let _: () = conn
                     .set_ex(key, serialized, duration.as_secs())
                     .await
-                    .map_err(|e| ProxyError::cache_with_source("Redis SETEX 失败", e))?;
+                    .context("Redis SETEX 失败")?;
             }
             None => {
                 let _: () = conn
                     .set(key, serialized)
                     .await
-                    .map_err(|e| ProxyError::cache_with_source("Redis SET 失败", e))?;
+                    .context("Redis SET 失败")?;
             }
         }
 
@@ -356,10 +354,7 @@ impl CacheProvider for RedisCache {
         T: DeserializeOwned + Send,
     {
         let mut conn = self.connection().await?;
-        let result: Option<Vec<u8>> = conn
-            .get(key)
-            .await
-            .map_err(|e| ProxyError::cache_with_source("Redis GET 失败", e))?;
+        let result: Option<Vec<u8>> = conn.get(key).await.context("Redis GET 失败")?;
 
         result.map_or_else(
             || {
@@ -375,29 +370,24 @@ impl CacheProvider for RedisCache {
 
     async fn delete(&self, key: &str) -> Result<()> {
         let mut conn = self.connection().await?;
-        let _: usize = conn
-            .del(key)
-            .await
-            .map_err(|e| ProxyError::cache_with_source("Redis DEL 失败", e))?;
+        let _: usize = conn.del(key).await.context("Redis DEL 失败")?;
         Ok(())
     }
 
     async fn exists(&self, key: &str) -> Result<bool> {
         let mut conn = self.connection().await?;
-        conn.exists(key)
-            .await
-            .map_err(|e| ProxyError::cache_with_source("Redis EXISTS 失败", e))
+        conn.exists(key).await.context("Redis EXISTS 失败")
     }
 
     async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
         let mut conn = self.connection().await?;
         // Redis 的 EXPIRE 命令期望 i64 类型，这里转换是安全的
         let expire_seconds = i64::try_from(ttl.as_secs())
-            .map_err(|_| ProxyError::cache("TTL 转换失败，超出 i64 范围"))?;
+            .map_err(|_| crate::error!(Internal, "TTL 转换失败，超出 i64 范围"))?;
         let _: bool = conn
             .expire(key, expire_seconds)
             .await
-            .map_err(|e| ProxyError::cache_with_source("Redis EXPIRE 失败", e))?;
+            .context("Redis EXPIRE 失败")?;
         Ok(())
     }
 
@@ -405,15 +395,12 @@ impl CacheProvider for RedisCache {
         let mut conn = self.connection().await?;
         conn.incr(key, delta)
             .await
-            .map_err(|e| ProxyError::cache_with_source("Redis INCRBY 失败", e))
+            .context("Redis INCRBY 失败")
     }
 
     async fn clear(&self) -> Result<()> {
         let mut conn = self.connection().await?;
-        let _: () = conn
-            .flushdb()
-            .await
-            .map_err(|e| ProxyError::cache_with_source("Redis FLUSHDB 失败", e))?;
+        let _: () = conn.flushdb().await.context("Redis FLUSHDB 失败")?;
         Ok(())
     }
 
@@ -423,7 +410,7 @@ impl CacheProvider for RedisCache {
             .arg("keyspace")
             .query_async(&mut conn)
             .await
-            .map_err(|e| ProxyError::cache_with_source("Redis INFO 失败", e))?;
+            .context("Redis INFO 失败")?;
 
         let total_keys = info
             .lines()
@@ -555,7 +542,7 @@ impl CacheManager {
                 let redis_config = config
                     .redis
                     .as_ref()
-                    .ok_or_else(|| ProxyError::cache("Redis 缓存未提供配置"))?;
+                    .ok_or_else(|| crate::error!(Internal, "Redis 缓存未提供配置"))?;
                 linfo!(
                     "system",
                     LogStage::Cache,

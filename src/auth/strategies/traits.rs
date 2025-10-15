@@ -36,12 +36,12 @@ pub trait AuthStrategy: Send + Sync {
 
     /// 刷新认证凭据（如果支持）
     async fn refresh(&self, _refresh_token: &str) -> Result<OAuthTokenResult> {
-        Err(crate::proxy_err!(config, "刷新操作不支持"))
+        Err(crate::error!(Config, "刷新操作不支持"))
     }
 
     /// 撤销认证（如果支持）
     async fn revoke(&self, _token: &str) -> Result<()> {
-        Err(crate::proxy_err!(config, "撤销操作不支持"))
+        Err(crate::error!(Config, "撤销操作不支持"))
     }
 
     /// 验证配置是否有效
@@ -49,11 +49,11 @@ pub trait AuthStrategy: Send + Sync {
 
     /// 获取认证URL（用于OAuth流程）
     async fn get_auth_url(&self, _state: &str, _redirect_uri: &str) -> Result<String> {
-        Err(crate::proxy_err!(config, "不支持授权URL生成"))
+        Err(crate::error!(Config, "不支持授权URL生成"))
     }
 
     /// 处理回调（用于OAuth流程）
     async fn handle_callback(&self, _code: &str, _state: &str) -> Result<OAuthTokenResult> {
-        Err(crate::proxy_err!(config, "不支持回调处理"))
+        Err(crate::error!(Config, "不支持回调处理"))
     }
 }

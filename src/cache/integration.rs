@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result};
 use crate::types::ProviderTypeId;
 use entity::{ProviderTypes, UserServiceApis, provider_types, user_service_apis};
 
@@ -67,15 +67,16 @@ impl CacheFacade {
     /// 从应用配置创建缓存管理器
     pub async fn from_config(cache_config: &CacheConfig) -> Result<Self> {
         if !matches!(cache_config.cache_type, CacheType::Redis) {
-            return Err(ProxyError::cache(
-                "CacheFacade 仅在 cache_type 为 redis 时可用",
+            return Err(crate::error!(
+                Internal,
+                "CacheFacade 仅在 cache_type 为 redis 时可用"
             ));
         }
 
         let redis_config = cache_config
             .redis
             .as_ref()
-            .ok_or_else(|| ProxyError::cache("Redis 缓存配置缺失"))?;
+            .ok_or_else(|| crate::error!(Internal, "Redis 缓存配置缺失"))?;
         // 转换配置格式
         let client_redis_config = super::client::RedisConfig {
             host: redis_config.host.clone(),
@@ -111,8 +112,8 @@ impl CacheFacade {
         T: Serialize + Sync,
     {
         let strategy = CacheStrategies::for_key(key);
-        let json_value = serde_json::to_string(value)
-            .map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))?;
+        let json_value =
+            serde_json::to_string(value).context("序列化缓存值失败")?;
 
         // 验证值是否符合策略要求
         if !strategy.validate_value(&json_value) {
@@ -315,7 +316,7 @@ impl CacheFacade {
             .filter(provider_types::Column::IsActive.eq(true))
             .all(db)
             .await
-            .map_err(|e| ProxyError::database(format!("查询提供商类型失败: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("查询提供商类型失败: {e}")))?;
 
         let mut cached_count = 0;
 
@@ -386,7 +387,7 @@ impl CacheFacade {
             // TODO: 可以考虑从proxy_tracing表查询最近使用的API ID列表
             .all(db)
             .await
-            .map_err(|e| ProxyError::database(format!("查询用户API配置失败: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("查询用户API配置失败: {e}")))?;
 
         let mut cached_count = 0;
 

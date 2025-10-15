@@ -2,7 +2,6 @@
 //!
 //! 数据库连接和迁移管理
 
-use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use entity::{model_pricing, model_pricing_tiers, provider_types};
@@ -243,7 +242,9 @@ struct FilteredModel {
 
 /// 确保模型定价数据的完整性（启动时初始化一次，远程优先，增量更新）
 /// 始终尝试拉取并增量更新，失败时使用本地文件回退；如果都失败且已有数据，则保留现状。
-pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), ProxyError> {
+pub async fn ensure_model_pricing_data(
+    db: &DatabaseConnection,
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -259,7 +260,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), Pr
             let pricing_count = model_pricing::Entity::find()
                 .count(db)
                 .await
-                .map_err(|err| ProxyError::database(format!("查询模型定价数据失败: {err}")))?;
+                .map_err(|err| crate::error!(Database, format!("查询模型定价数据失败: {err}")))?;
             if pricing_count > 0 {
                 lerror!(
                     "system",
@@ -280,7 +281,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> Result<(), Pr
 /// 强制重新初始化模型定价数据
 pub async fn force_initialize_model_pricing_data(
     db: &DatabaseConnection,
-) -> Result<(), ProxyError> {
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -293,12 +294,12 @@ pub async fn force_initialize_model_pricing_data(
     model_pricing_tiers::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("清理定价层级数据失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("清理定价层级数据失败: {e}")))?;
 
     model_pricing::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("清理模型定价数据失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("清理模型定价数据失败: {e}")))?;
 
     // 重新初始化
     initialize_model_pricing_from_json(db).await?;
@@ -308,7 +309,9 @@ pub async fn force_initialize_model_pricing_data(
 
 /// 从 JSON 文件初始化数据（完全数据驱动，旧逻辑，仅在空表或强制清理后使用）
 #[allow(clippy::cognitive_complexity)]
-async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(), ProxyError> {
+async fn initialize_model_pricing_from_json(
+    db: &DatabaseConnection,
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -391,7 +394,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> Result<(
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 async fn initialize_model_pricing_from_remote_or_local(
     db: &DatabaseConnection,
-) -> Result<(), ProxyError> {
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -437,7 +440,7 @@ async fn initialize_model_pricing_from_remote_or_local(
     let txn = db
         .begin()
         .await
-        .map_err(|e| ProxyError::database(format!("开启事务失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("开启事务失败: {e}")))?;
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut tiers_written = 0usize;
@@ -450,7 +453,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                 .filter(model_pricing::Column::ModelName.eq(&model.name))
                 .one(&txn)
                 .await
-                .map_err(|e| ProxyError::database(format!("查询现有定价记录失败: {e}")))?;
+                .map_err(|e| crate::error!(Database, format!("查询现有定价记录失败: {e}")))?;
 
             if let Some(existing_model) = existing {
                 // 更新基础字段
@@ -461,14 +464,14 @@ async fn initialize_model_pricing_from_remote_or_local(
                 model_pricing::Entity::update(am)
                     .exec(&txn)
                     .await
-                    .map_err(|e| ProxyError::database(format!("更新模型定价失败: {e}")))?;
+                    .map_err(|e| crate::error!(Database, format!("更新模型定价失败: {e}")))?;
 
                 // 替换 tiers
                 model_pricing_tiers::Entity::delete_many()
                     .filter(model_pricing_tiers::Column::ModelPricingId.eq(id))
                     .exec(&txn)
                     .await
-                    .map_err(|e| ProxyError::database(format!("清理旧定价层级失败: {e}")))?;
+                    .map_err(|e| crate::error!(Database, format!("清理旧定价层级失败: {e}")))?;
 
                 let pricing_tiers = parse_pricing_tiers(&model.price_info);
                 for tier in pricing_tiers {
@@ -483,7 +486,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                     model_pricing_tiers::Entity::insert(tier_model)
                         .exec(&txn)
                         .await
-                        .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
+                        .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
                     tiers_written += 1;
                 }
                 updated += 1;
@@ -509,7 +512,7 @@ async fn initialize_model_pricing_from_remote_or_local(
 
     txn.commit()
         .await
-        .map_err(|e| ProxyError::database(format!("提交模型定价事务失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("提交模型定价事务失败: {e}")))?;
 
     linfo!(
         "system",
@@ -526,7 +529,7 @@ async fn initialize_model_pricing_from_remote_or_local(
 }
 
 /// 远程优先：先拉取远程 JSON，失败则回退本地文件
-async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
+async fn load_json_data_remote_or_local() -> crate::error::Result<HashMap<String, ModelPriceInfo>> {
     match fetch_remote_json().await {
         Ok(map) => {
             linfo!(
@@ -547,20 +550,20 @@ async fn load_json_data_remote_or_local() -> Result<HashMap<String, ModelPriceIn
 }
 
 /// 拉取远程 JSON 模型定价
-async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
+async fn fetch_remote_json() -> crate::error::Result<HashMap<String, ModelPriceInfo>> {
     const REMOTE_URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
     let url = REMOTE_URL
         .parse::<reqwest::Url>()
-        .map_err(|e| ProxyError::config(format!("远程URL非法: {e}")))?;
+        .map_err(|e| crate::error!(Config, format!("远程URL非法: {e}")))?;
     if url.scheme() != "https" {
-        return Err(ProxyError::config("仅允许HTTPS的远程URL".to_string()));
+        return Err(crate::error!(Config, "仅允许HTTPS的远程URL"));
     }
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(5000))
         .build()
-        .map_err(|e| ProxyError::config(format!("创建HTTP客户端失败: {e}")))?;
+        .map_err(|e| crate::error!(Config, format!("创建HTTP客户端失败: {e}")))?;
 
     let resp = client
         .get(url)
@@ -570,43 +573,40 @@ async fn fetch_remote_json() -> Result<HashMap<String, ModelPriceInfo>, ProxyErr
         )
         .send()
         .await
-        .map_err(|e| ProxyError::config(format!("请求远程模型定价失败: {e}")))?;
+        .map_err(|e| crate::error!(Config, format!("请求远程模型定价失败: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(ProxyError::config(format!(
-            "远程定价响应非成功状态: {}",
-            resp.status()
-        )));
+        return Err(crate::error!(Config, "远程定价响应非成功状态: {}", resp.status()));
     }
 
     let text = resp
         .text()
         .await
-        .map_err(|e| ProxyError::config(format!("读取远程响应失败: {e}")))?;
+        .map_err(|e| crate::error!(Config, format!("读取远程响应失败: {e}")))?;
 
     serde_json::from_str::<HashMap<String, ModelPriceInfo>>(&text)
-        .map_err(|e| ProxyError::config(format!("解析远程JSON失败: {e}")))
+        .map_err(|e| crate::error!(Config, format!("解析远程JSON失败: {e}")))
 }
 /// 加载并解析JSON文件
-async fn load_json_data() -> Result<HashMap<String, ModelPriceInfo>, ProxyError> {
+async fn load_json_data() -> crate::error::Result<HashMap<String, ModelPriceInfo>> {
     let json_path = std::env::current_dir()
-        .map_err(|e| ProxyError::config(format!("获取当前目录失败: {e}")))?
+        .map_err(|e| crate::error!(Config, format!("获取当前目录失败: {e}")))?
         .join("config")
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
-        return Err(ProxyError::config(format!(
-            "JSON文件不存在: {}",
-            json_path.display()
-        )));
+        return Err(crate::error!(Config, "JSON文件不存在: {}", json_path.display()));
     }
 
     let json_content = tokio::fs::read_to_string(&json_path).await.map_err(|e| {
-        ProxyError::config(format!("读取JSON文件失败 {}: {e}", json_path.display()))
+        crate::error!(
+            Config,
+            format!("读取JSON文件失败 {}: {}", json_path.display(), e)
+        )
     })?;
 
     serde_json::from_str(&json_content)
-        .map_err(|e| ProxyError::config(format!("解析JSON失败: {e}")))
+        .map_err(|e| crate::error!(Config, format!("解析JSON失败: {e}")))
 }
 
 /// 完全数据驱动的模型过滤
@@ -721,7 +721,7 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
 async fn get_provider_mappings(
     db: &DatabaseConnection,
     models: &[FilteredModel],
-) -> Result<HashMap<String, i32>, ProxyError> {
+) -> crate::error::Result<HashMap<String, i32>> {
     // 提取所有需要的provider名称
     let required_providers: HashSet<String> =
         models.iter().map(|m| m.provider_name.clone()).collect();
@@ -739,7 +739,7 @@ async fn get_provider_mappings(
         .filter(provider_types::Column::IsActive.eq(true))
         .all(db)
         .await
-        .map_err(|e| ProxyError::database(format!("查询provider类型失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("查询provider类型失败: {e}")))?;
 
     // 构建映射关系
     let mut mappings = HashMap::new();
@@ -777,7 +777,7 @@ async fn insert_model_with_pricing(
     db: &DatabaseConnection,
     model: &FilteredModel,
     provider_id: i32,
-) -> Result<(), ProxyError> {
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -801,7 +801,7 @@ async fn insert_model_with_pricing(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(db)
         .await
-        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("插入模型定价记录失败: {e}")))?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -832,7 +832,7 @@ async fn insert_model_with_pricing(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(db)
             .await
-            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
     }
 
     Ok(())
@@ -843,7 +843,7 @@ async fn insert_model_with_pricing_txn(
     txn: &DatabaseTransaction,
     model: &FilteredModel,
     provider_id: i32,
-) -> Result<(), ProxyError> {
+) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -866,7 +866,7 @@ async fn insert_model_with_pricing_txn(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(txn)
         .await
-        .map_err(|e| ProxyError::database(format!("插入模型定价记录失败: {e}")))?;
+        .map_err(|e| crate::error!(Database, format!("插入模型定价记录失败: {e}")))?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -884,7 +884,7 @@ async fn insert_model_with_pricing_txn(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(txn)
             .await
-            .map_err(|e| ProxyError::database(format!("插入定价层级失败: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
     }
 
     Ok(())

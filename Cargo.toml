@@ -102,6 +102,7 @@ indexmap = "2.11"
 rand = "0.8"
 getrandom = "0.3"
 thiserror = "2.0"
+http = "1.0"
 heck = "0.5"
 strsim = "0.11"
 syn = "2.0"
@@ -180,6 +181,7 @@ indexmap = { workspace = true }
 rand = { workspace = true }
 getrandom = { workspace = true }
 thiserror = { workspace = true }
+http = { workspace = true }
 heck = { workspace = true }
 strsim = { workspace = true }
 syn = { workspace = true }

@@ -2,14 +2,13 @@
 //!
 //! 从 `src/proxy/statistics_service.rs` 迁移至此，作为统计模块对外服务。
 
-use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::ProxyContext;
 use crate::statistics::types::{RequestDetails, RequestStats, ResponseStats};
 use crate::types::ProviderTypeId;
 use crate::{ldebug, linfo, lwarn};
-use anyhow::Result;
+use crate::error::Result;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
 use std::collections::HashMap;
@@ -37,7 +36,7 @@ impl StatisticsService {
         provider_type_id: ProviderTypeId,
         usage: &crate::pricing::TokenUsage,
         request_id: &str,
-    ) -> Result<(Option<f64>, Option<String>), ProxyError> {
+    ) -> Result<(Option<f64>, Option<String>)> {
         match self
             .pricing_calculator
             .calculate_cost(model, provider_type_id, usage, request_id)

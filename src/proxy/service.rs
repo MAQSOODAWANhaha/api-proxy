@@ -3,6 +3,7 @@
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
 use crate::logging::{LogComponent, LogStage};
+use crate::error::ProxyError;
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -145,7 +146,7 @@ impl ProxyHttp for ProxyService {
         );
 
         if session.req_header().method == "OPTIONS" {
-            return Err(crate::pingora_http!(200, "CORS preflight"));
+            return Err(ProxyError::internal("CORS preflight request should not be proxied").into());
         }
 
         // 1. 执行完整的认证和授权流程
@@ -162,7 +163,7 @@ impl ProxyHttp for ProxyService {
                 "认证授权失败",
                 error = %e
             );
-            return Err(crate::pingora_error!(e));
+            return Err(e.into());
         }
 
         linfo!(
@@ -232,7 +233,7 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        let peer = crate::pingora_try!(self.upstream_service.select_peer(ctx).await);
+        let peer = self.upstream_service.select_peer(ctx).await?;
         Ok(peer)
     }
 
@@ -242,11 +243,9 @@ impl ProxyHttp for ProxyService {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        crate::pingora_try!(
-            self.req_transform_service
-                .filter_request(session, upstream_request, ctx)
-                .await
-        );
+        self.req_transform_service
+            .filter_request(session, upstream_request, ctx)
+            .await?;
         Ok(())
     }
 
@@ -388,11 +387,11 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        crate::pingora_try!(self.resp_transform_service.filter_response(
+        self.resp_transform_service.filter_response(
             session,
             upstream_response,
-            ctx
-        ));
+            ctx,
+        )?;
 
         let resp_stats = self
             .stats_service

@@ -3,15 +3,12 @@
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
 use crate::auth::oauth_client::JWTParser;
-use crate::error::{ErrorContext, Result};
-use crate::proxy::ProxyContext;
+use crate::error::{Context, Result};
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ResolvedCredential;
-use crate::proxy_err;
-use crate::{
-    linfo,
-    logging::{LogComponent, LogStage},
-    lwarn,
-};
+use crate::proxy::prelude::ProviderStrategy;
+use crate::proxy::ProxyContext;
+use crate::{linfo, lwarn};
 use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
@@ -19,8 +16,6 @@ use pingora_proxy::Session;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-use super::ProviderStrategy;
 
 /// `OpenAI` 429错误响应体结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,14 +99,14 @@ impl OpenAIStrategy {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(db.as_ref())
                 .await
-                .with_database_context(|| format!("查询API密钥失败，ID: {key_id}"))?
-                .ok_or_else(|| proxy_err!(database, "API密钥不存在: {}", key_id))?
+                .context(format!("查询API密钥失败，ID: {key_id}"))?
+                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
                 .into();
 
         key.health_status = Set("rate_limited".to_string());
         key.health_status_detail = Set(Some(
             serde_json::to_string(error_detail)
-                .with_database_context(|| "序列化OpenAI错误详情失败".to_string())?,
+                .context("序列化OpenAI错误详情失败")?,
         ));
         key.rate_limit_resets_at = Set(rate_limit_resets_at);
         key.last_error_time = Set(Some(now));
@@ -119,7 +114,7 @@ impl OpenAIStrategy {
 
         key.update(db.as_ref())
             .await
-            .with_database_context(|| format!("更新API密钥健康状态失败，ID: {key_id}"))?;
+            .context(format!("更新API密钥健康状态失败，ID: {key_id}"))?;
 
         linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "update_key_status", "OpenAI API密钥已更新为详细限流状态", key_id = key_id, error_type = %error_detail.r#type);
         Ok(())
@@ -147,9 +142,7 @@ impl ProviderStrategy for OpenAIStrategy {
         {
             upstream_request
                 .insert_header("host", "chatgpt.com")
-                .with_network_context(|| {
-                    format!("设置OpenAI host头失败, request_id: {}", ctx.request_id)
-                })?;
+                .context(format!("设置OpenAI host头失败, request_id: {}", ctx.request_id))?;
 
             if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
                 && let Some(account_id) = Self::extract_chatgpt_account_id(token)
@@ -157,12 +150,10 @@ impl ProviderStrategy for OpenAIStrategy {
                 ctx.account_id = Some(account_id.clone());
                 upstream_request
                     .insert_header("chatgpt-account-id", &account_id)
-                    .with_network_context(|| {
-                        format!(
+                    .context(format!(
                             "设置OpenAI chatgpt-account-id头失败, request_id: {}",
                             ctx.request_id
-                        )
-                    })?;
+                        ))?;
             }
         }
         Ok(())

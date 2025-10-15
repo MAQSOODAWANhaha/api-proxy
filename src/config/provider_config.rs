@@ -4,7 +4,7 @@
 
 use crate::auth::types::{AuthType, MultiAuthConfig};
 use crate::cache::CacheManager;
-use crate::error::{ProxyError, Result};
+use crate::error::Result;
 use crate::{
     ldebug, lerror,
     logging::{LogComponent, LogStage},
@@ -131,7 +131,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .all(self.db.as_ref())
             .await
-            .map_err(|e| ProxyError::database(format!("Failed to fetch active providers: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("Failed to fetch active providers: {e}")))?;
 
         let mut configs = Vec::with_capacity(providers.len());
         for provider in providers {
@@ -199,7 +199,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error::ProxyError::internal(format!("Database query error: {e}")))?
+            .map_err(|e| crate::error::ProxyError::internal_with_source("Database query error", e))?
         {
             return Ok(ProviderId::from_database_id(provider.id));
         }
@@ -210,7 +210,10 @@ impl ProviderConfigManager {
             .all(self.db.as_ref())
             .await
             .map_err(|e| {
-                crate::error::ProxyError::internal(format!("Database query error: {e}"))
+                crate::error::ProxyError::internal_with_source(
+                    "Database query error",
+                    e,
+                )
             })?;
 
         // 尝试多种匹配策略
@@ -227,16 +230,10 @@ impl ProviderConfigManager {
             }
         }
 
-        // 获取所有活跃提供商的名称用于错误消息
-        let available_providers = providers
-            .iter()
-            .map(|p| format!("{} ({})", p.display_name, p.name))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        Err(crate::error::ProxyError::config(format!(
-            "Unknown or inactive provider: '{normalized_name}'. Available providers: {available_providers}"
-        )))
+        Err(crate::error!(
+            Config,
+            format!("Unknown or inactive provider: '{normalized_name}'")
+        ))
     }
 
     /// 根据名称获取服务商配置
@@ -259,7 +256,7 @@ impl ProviderConfigManager {
             .filter(provider_types::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| ProxyError::database(format!("Failed to fetch provider {name}: {e}")))?;
+            .map_err(|e| crate::error!(Database, format!("Failed to fetch provider {name}: {e}")))?;
 
         if let Some(provider) = provider {
             match Self::parse_provider_config(provider) {
@@ -315,9 +312,7 @@ impl ProviderConfigManager {
         let provider = ProviderTypes::find_by_id(id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| {
-                ProxyError::database(format!("Failed to fetch provider by id {id}: {e}"))
-            })?;
+            .map_err(|e| crate::error!(Database, format!("Failed to fetch provider by id {id}: {e}")))?;
 
         if let Some(provider) = provider {
             if !provider.is_active {
@@ -477,9 +472,8 @@ impl ProviderConfigManager {
     /// 解析对象映射格式的认证配置
     fn parse_auth_configs_from_map(map_str: &str) -> Result<Vec<MultiAuthConfig>> {
         let config_map: std::collections::HashMap<String, serde_json::Value> =
-            serde_json::from_str(map_str).map_err(|e| {
-                ProxyError::config(format!("Failed to parse auth_configs_map: {e}"))
-            })?;
+            serde_json::from_str(map_str)
+                .map_err(|e| crate::error!(Config, format!("Failed to parse auth_configs_map: {e}")))?;
 
         let mut auth_configs = Vec::new();
 
@@ -513,9 +507,8 @@ impl ProviderConfigManager {
 
     /// 解析支持的认证类型字符串
     fn parse_supported_auth_types(json_str: &str) -> Result<Vec<AuthType>> {
-        let type_strings: Vec<String> = serde_json::from_str(json_str).map_err(|e| {
-            ProxyError::config(format!("Failed to parse supported_auth_types: {e}"))
-        })?;
+        let type_strings: Vec<String> = serde_json::from_str(json_str)
+            .map_err(|e| crate::error!(Config, format!("Failed to parse supported_auth_types: {e}")))?;
 
         let mut auth_types = Vec::new();
         for type_str in type_strings {

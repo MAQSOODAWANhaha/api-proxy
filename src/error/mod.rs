@@ -1,119 +1,85 @@
-//! # 错误处理模块
-//!
-//! 统一的错误类型定义和处理
+//! The unified error handling system for the application.
 
-mod macros;
-mod types;
+// 1. Core Types
+pub use types::ProxyError;
+
+/// A unified `Result` type for the entire application.
+///
+/// All functions that can fail should return this type.
+pub type Result<T> = std::result::Result<T, ProxyError>;
+
+// 2. Domain-specific Result aliases for better readability.
+pub type AuthResult<T> = Result<T>;
+pub type ConfigResult<T> = Result<T>;
+pub type DatabaseResult<T> = Result<T>;
+pub type NetworkResult<T> = Result<T>;
+pub type SchedulerResult<T> = Result<T>;
+
+/// Deprecated alias kept temporarily for incremental migration.
+#[allow(dead_code)]
+#[deprecated(since = "0.1.0", note = "Please migrate to `crate::error::Result`")]
+pub type OldAppResult<T> = Result<T>;
+
+// 3. Module declarations
+pub mod auth;
+pub mod config;
+pub mod conversion;
+pub mod database;
+pub mod macros;
+pub mod network;
+pub mod prelude;
+pub mod provider;
+pub mod scheduler;
+pub mod types;
+
+// 4. Context Trait for adding context to errors.
+pub trait Context<T, E> {
+    fn context<C>(self, context: C) -> Result<T>
+    where
+        C: std::fmt::Display;
+
+    fn with_context<C, F>(self, context: F) -> Result<T>
+    where
+        F: FnOnce() -> C,
+        C: std::fmt::Display;
+}
+
+impl<T, E> Context<T, E> for std::result::Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn context<C>(self, context: C) -> Result<T>
+    where
+        C: std::fmt::Display,
+    {
+        self.with_context(|| context)
+    }
+
+    fn with_context<C, F>(self, context: F) -> Result<T>
+    where
+        F: FnOnce() -> C,
+        C: std::fmt::Display,
+    {
+        self.map_err(|error| {
+            let message = format!("{}: {}", context(), error);
+            ProxyError::internal_with_source(
+                message,
+                error,
+            )
+        })
+    }
+}
+
+// 5. Error Category for monitoring and alerting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorCategory {
+    /// Errors caused by the client (e.g., bad input, invalid credentials).
+    /// Corresponds to 4xx HTTP status codes.
+    Client,
+    /// Errors caused by the server or its dependencies.
+    /// Corresponds to 5xx HTTP status codes.
+    Server,
+}
 
 #[cfg(test)]
 mod tests;
-
-pub use types::*;
-
-/// 应用结果类型
-pub type Result<T> = std::result::Result<T, ProxyError>;
-
-/// 错误上下文扩展trait
-pub trait ErrorContext<T> {
-    /// 添加配置错误上下文
-    fn with_config_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-
-    /// 添加数据库错误上下文
-    fn with_database_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-
-    /// 添加网络错误上下文
-    fn with_network_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-
-    /// 添加认证错误上下文
-    fn with_auth_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-
-    /// 添加缓存错误上下文
-    fn with_cache_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String;
-}
-
-impl<T, E> ErrorContext<T> for std::result::Result<T, E>
-where
-    E: Into<anyhow::Error>,
-{
-    fn with_config_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| ProxyError::config_with_source(f(), e.into()))
-    }
-
-    fn with_database_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| ProxyError::database_with_source(f(), e.into()))
-    }
-
-    fn with_network_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| ProxyError::network_with_source(f(), e.into()))
-    }
-
-    fn with_auth_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| ProxyError::authentication_with_source(f(), e.into()))
-    }
-
-    fn with_cache_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.map_err(|e| ProxyError::cache_with_source(f(), e.into()))
-    }
-}
-
-impl<T> ErrorContext<T> for Option<T> {
-    fn with_config_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| ProxyError::config(f()))
-    }
-
-    fn with_database_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| ProxyError::database(f()))
-    }
-
-    fn with_network_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| ProxyError::network(f()))
-    }
-
-    fn with_auth_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| ProxyError::authentication(f()))
-    }
-
-    fn with_cache_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> String,
-    {
-        self.ok_or_else(|| ProxyError::cache(f()))
-    }
-}

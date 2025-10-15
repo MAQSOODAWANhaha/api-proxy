@@ -27,14 +27,11 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
     let config_file = format!("config/config.{env}.toml");
 
     if !Path::new(&config_file).exists() {
-        return Err(crate::error::ProxyError::config(format!(
-            "配置文件不存在: {config_file}"
-        )));
+        return Err(crate::error!(Config, format!("配置文件不存在: {config_file}")));
     }
 
-    let config_content = std::fs::read_to_string(&config_file).map_err(|e| {
-        crate::error::ProxyError::config_with_source(format!("读取配置文件失败: {config_file}"), e)
-    })?;
+    let config_content = std::fs::read_to_string(&config_file)
+        .map_err(|e| crate::error!(Config, format!("读取配置文件失败: {config_file}: {e}")))?;
 
     let config: AppConfig = toml::from_str(&config_content)?;
 
@@ -48,7 +45,8 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
 fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     // 验证双端口配置 - 必须提供
     let dual_port = config.dual_port.as_ref().ok_or_else(|| {
-        crate::error::ProxyError::config(
+        crate::error!(
+            Config,
             "dual_port configuration must be provided (single-port mode is no longer supported)",
         )
     })?;
@@ -56,21 +54,23 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     // 验证双端口配置
     dual_port
         .validate()
-        .map_err(crate::error::ProxyError::config)?;
+        .map_err(|e| crate::error!(Config, e))?;
 
     // 验证数据库配置
     if config.database.url.is_empty() {
-        return Err(crate::error::ProxyError::config("数据库URL不能为空"));
+        return Err(crate::error!(Config, "数据库URL不能为空"));
     }
 
     if config.database.max_connections == 0 {
-        return Err(crate::error::ProxyError::config(
+        return Err(crate::error!(
+            Config,
             "数据库最大连接数必须大于0",
         ));
     }
 
     if matches!(config.cache.cache_type, CacheType::Memory) && config.cache.redis.is_some() {
-        return Err(crate::error::ProxyError::config(
+        return Err(crate::error!(
+            Config,
             "cache.redis 仅在 cache_type 为 redis 时允许",
         ));
     }
@@ -80,10 +80,10 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
             .cache
             .redis
             .as_ref()
-            .ok_or_else(|| crate::error::ProxyError::config("需要提供 Redis 缓存配置"))?;
+            .ok_or_else(|| crate::error!(Config, "需要提供 Redis 缓存配置"))?;
 
         if redis_config.url.is_empty() {
-            return Err(crate::error::ProxyError::config("Redis URL不能为空"));
+            return Err(crate::error!(Config, "Redis URL不能为空"));
         }
     }
 

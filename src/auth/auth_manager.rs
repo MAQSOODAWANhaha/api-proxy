@@ -105,7 +105,7 @@ impl AuthManager {
             return Ok(Self::create_anonymous_auth_result());
         }
 
-        Err(crate::proxy_err!(auth, "缺少认证凭据"))
+        Err(crate::error!(Auth, ApiKeyMissing))
     }
 
     /// 从Authorization头认证（重构版本）
@@ -252,10 +252,9 @@ impl AuthManager {
     ) -> Result<OAuthTokenResult> {
         // 这里需要根据实际需求委托给对应的认证策略
         // 暂时返回错误，表示需要进一步实现
-        Err(crate::proxy_err!(
-            auth,
-            "端口 unified 不支持认证方法: {:?}",
-            auth_type
+        Err(crate::error!(
+            Authentication,
+            format!("端口 unified 不支持认证方法: {auth_type:?}")
         ))
     }
 
@@ -296,7 +295,7 @@ impl AuthManager {
     ) -> Result<String> {
         // 委托给OAuth服务处理
         // 这里需要根据实际需求实现URL生成逻辑
-        Err(crate::proxy_err!(internal, "OAuth URL生成需要专门实现"))
+        Err(crate::error!(Internal, "OAuth URL生成需要专门实现"))
     }
 
     /// `处理OAuth回调`
@@ -308,7 +307,7 @@ impl AuthManager {
     ) -> Result<OAuthTokenResult> {
         // 委托给OAuth服务处理回调
         // 这里需要根据实际需求实现回调处理逻辑
-        Err(crate::proxy_err!(internal, "OAuth回调处理需要专门实现"))
+        Err(crate::error!(Internal, "OAuth回调处理需要专门实现"))
     }
 
     // 注意：以下OAuth方法已被弃用，请使用新的oauth_client模块

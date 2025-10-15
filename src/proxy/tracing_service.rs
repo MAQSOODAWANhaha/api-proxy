@@ -3,13 +3,14 @@
 //! 从RequestHandler中提取的追踪相关逻辑，专门负责处理代理端的请求追踪需求
 //! 包括请求追踪开始、完成、错误处理和扩展信息更新等功能
 
+use crate::error::network::NetworkError;
 use crate::error::ProxyError;
 use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
 use crate::types::{ProviderTypeId, TokenCount};
-use crate::{ldebug, linfo, lwarn, proxy_err};
+use crate::{ldebug, linfo, lwarn};
 use std::sync::Arc;
 
 /// 代理端追踪服务
@@ -65,7 +66,7 @@ impl TracingService {
                     "即时追踪启动失败",
                     error = format!("{:?}", e)
                 );
-                proxy_err!(tracing, "Failed to start trace: {}", e)
+                ProxyError::internal_with_source("Failed to start trace", e)
             })?;
 
             ldebug!(
@@ -111,7 +112,7 @@ impl TracingService {
                         "模型信息更新失败（第一层）",
                         error = format!("{:?}", e)
                     );
-                    proxy_err!(tracing, "Failed to update model info: {}", e)
+                    ProxyError::internal_with_source("Failed to update model info", e)
                 })?;
 
             linfo!(
@@ -171,7 +172,7 @@ impl TracingService {
                         "成功请求追踪完成失败（第二层）",
                         error = format!("{:?}", e)
                     );
-                    proxy_err!(tracing, "Failed to complete trace: {}", e)
+                    ProxyError::internal_with_source("Failed to complete trace", e)
                 })?;
 
             linfo!(
@@ -224,7 +225,7 @@ impl TracingService {
                     "失败请求追踪完成失败（第二层）",
                     error = format!("{:?}", e)
                 );
-                proxy_err!(tracing, "Failed to complete trace: {}", e)
+                ProxyError::internal_with_source("Failed to complete trace", e)
             })?;
 
             linfo!(
@@ -250,46 +251,29 @@ impl TracingService {
         request_id: &str,
         error: &ProxyError,
     ) -> Result<()> {
-        let (status_code, error_type, error_message) = match error {
-            ProxyError::Authentication { message, .. } => (
-                401,
-                Some("authentication_error".to_string()),
-                Some(message.clone()),
-            ),
-            ProxyError::RateLimit { message, .. } => (
-                429,
-                Some("rate_limit_exceeded".to_string()),
-                Some(message.clone()),
-            ),
-            ProxyError::UpstreamNotAvailable { message, .. }
-            | ProxyError::UpstreamNotFound { message, .. } => (
-                502,
-                Some("upstream_error".to_string()),
-                Some(message.clone()),
-            ),
-            ProxyError::Config { message, .. } => (
-                500,
-                Some("configuration_error".to_string()),
-                Some(message.clone()),
-            ),
-            ProxyError::Internal { message, .. } => (
-                500,
-                Some("internal_error".to_string()),
-                Some(message.clone()),
-            ),
-            ProxyError::ConnectionTimeout { message, .. }
-            | ProxyError::ReadTimeout { message, .. }
-            | ProxyError::WriteTimeout { message, .. } => (
-                504,
-                Some("timeout_error".to_string()),
-                Some(message.clone()),
-            ),
-            _ => (
-                500,
-                Some("unknown_error".to_string()),
-                Some(error.to_string()),
-            ),
+        let (status_code, error_type) = match error {
+            ProxyError::Authentication(_) => (401, Some("authentication_error".to_string())),
+            ProxyError::Network(NetworkError::RateLimitExceeded) => {
+                (429, Some("rate_limit_exceeded".to_string()))
+            }
+            ProxyError::Network(
+                NetworkError::UpstreamNotAvailable(_) | NetworkError::UpstreamNotFound(_)
+            ) => {
+                (502, Some("upstream_error".to_string()))
+            }
+            ProxyError::Config(_) => (500, Some("configuration_error".to_string())),
+            ProxyError::Internal { .. } => (500, Some("internal_error".to_string())),
+            ProxyError::Network(
+                NetworkError::ConnectionTimeout(_)
+                | NetworkError::ReadTimeout(_)
+                | NetworkError::WriteTimeout(_)
+            ) => {
+                (504, Some("timeout_error".to_string()))
+            }
+            _ => (500, Some("unknown_error".to_string())),
         };
+
+        let error_message = Some(error.to_string());
 
         self.complete_trace_failure(request_id, status_code, error_type, error_message)
             .await

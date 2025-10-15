@@ -10,7 +10,7 @@ use crate::{
 use redis::{AsyncCommands, Client, aio::ConnectionManager};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result};
 
 /// Redis 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,12 +77,12 @@ impl CacheClient {
             &format!("正在连接 Redis 服务器: {}:{}", config.host, config.port)
         );
 
-        let client = Client::open(config.build_url())
-            .map_err(|e| ProxyError::cache_with_source("创建 Redis 客户端失败", e))?;
+        let client =
+            Client::open(config.build_url()).context("创建 Redis 客户端失败")?;
 
         let connection_manager = ConnectionManager::new(client)
             .await
-            .map_err(|e| ProxyError::cache_with_source("建立 Redis 连接失败", e))?;
+            .context("建立 Redis 连接失败")?;
 
         linfo!(
             "system",
@@ -103,8 +103,7 @@ impl CacheClient {
     where
         T: Serialize + Sync,
     {
-        let json_value = serde_json::to_string(value)
-            .map_err(|e| ProxyError::cache_with_source("序列化缓存值失败", e))?;
+        let json_value = serde_json::to_string(value).context("序列化缓存值失败")?;
 
         self.set_with_ttl(key, &json_value, ttl_seconds).await
     }
@@ -123,7 +122,7 @@ impl CacheClient {
 
         conn.set_ex::<_, _, ()>(key, value, ttl_seconds)
             .await
-            .map_err(|e| ProxyError::cache_with_source(format!("设置缓存失败: {key}"), e))?;
+            .with_context(|| format!("设置缓存失败: {key}"))?;
 
         ldebug!(
             "system",
@@ -153,11 +152,11 @@ impl CacheClient {
         let result: Option<String> = conn
             .get(key)
             .await
-            .map_err(|e| ProxyError::cache_with_source(format!("获取缓存失败: {key}"), e))?;
+            .with_context(|| format!("获取缓存失败: {key}"))?;
 
         if let Some(json_str) = result {
-            let value = serde_json::from_str(&json_str)
-                .map_err(|e| ProxyError::cache_with_source("反序列化缓存值失败", e))?;
+            let value =
+                serde_json::from_str(&json_str).context("反序列化缓存值失败")?;
             ldebug!(
                 "system",
                 LogStage::Cache,
@@ -193,7 +192,7 @@ impl CacheClient {
         let deleted_count: i32 = conn
             .del(key)
             .await
-            .map_err(|e| ProxyError::cache_with_source(format!("删除缓存失败: {key}"), e))?;
+            .with_context(|| format!("删除缓存失败: {key}"))?;
 
         let was_deleted = deleted_count > 0;
         ldebug!(
@@ -221,7 +220,7 @@ impl CacheClient {
         let exists: bool = conn
             .exists(key)
             .await
-            .map_err(|e| ProxyError::cache_with_source(format!("检查缓存存在性失败: {key}"), e))?;
+            .with_context(|| format!("检查缓存存在性失败: {key}"))?;
 
         ldebug!(
             "system",
@@ -248,9 +247,7 @@ impl CacheClient {
         let success: bool = conn
             .expire(key, i64::try_from(ttl_seconds).unwrap_or(i64::MAX))
             .await
-            .map_err(|e| {
-                ProxyError::cache_with_source(format!("设置缓存过期时间失败: {key}"), e)
-            })?;
+            .with_context(|| format!("设置缓存过期时间失败: {key}"))?;
 
         ldebug!(
             "system",
@@ -277,7 +274,7 @@ impl CacheClient {
         let ttl: i64 = conn
             .ttl(key)
             .await
-            .map_err(|e| ProxyError::cache_with_source(format!("获取缓存TTL失败: {key}"), e))?;
+            .with_context(|| format!("获取缓存TTL失败: {key}"))?;
 
         ldebug!(
             "system",
@@ -302,9 +299,10 @@ impl CacheClient {
         let mut conn = self.connection_manager.clone();
 
         // 先获取匹配的键
-        let keys: Vec<String> = conn.keys(pattern).await.map_err(|e| {
-            ProxyError::cache_with_source(format!("查找匹配的缓存键失败: {pattern}"), e)
-        })?;
+        let keys: Vec<String> = conn
+            .keys(pattern)
+            .await
+            .with_context(|| format!("查找匹配的缓存键失败: {pattern}"))?;
 
         if keys.is_empty() {
             ldebug!(
@@ -318,9 +316,10 @@ impl CacheClient {
         }
 
         // 批量删除
-        let deleted_count: i32 = conn.del(&keys).await.map_err(|e| {
-            ProxyError::cache_with_source(format!("批量删除缓存失败: {pattern}"), e)
-        })?;
+        let deleted_count: i32 = conn
+            .del(&keys)
+            .await
+            .with_context(|| format!("批量删除缓存失败: {pattern}"))?;
 
         lwarn!(
             "system",
@@ -349,7 +348,7 @@ impl CacheClient {
             .arg("PING")
             .query_async(&mut conn)
             .await
-            .map_err(|e| ProxyError::cache_with_source("Redis ping 失败", e))?;
+            .context("Redis ping 失败")?;
 
         if response == "PONG" {
             linfo!(
@@ -368,7 +367,7 @@ impl CacheClient {
                 "ping_fail",
                 &format!("Redis ping 响应异常: {response}")
             );
-            Err(ProxyError::cache("Redis 连接测试失败"))
+            Err(crate::error!(Internal, "Redis 连接测试失败"))
         }
     }
 
@@ -392,9 +391,10 @@ impl CacheClient {
             cmd.arg(*arg);
         }
 
-        let result: T = cmd.query_async(&mut conn).await.map_err(|e| {
-            ProxyError::cache_with_source(format!("执行Redis命令失败: {args:?}"), e)
-        })?;
+        let result: T = cmd
+            .query_async(&mut conn)
+            .await
+            .with_context(|| format!("执行Redis命令失败: {args:?}"))?;
 
         ldebug!(
             "system",

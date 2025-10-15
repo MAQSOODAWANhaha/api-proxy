@@ -6,7 +6,7 @@
 use crate::logging::{LogComponent, LogStage};
 use crate::types::{CostValue, ProviderTypeId, TokenCount};
 use crate::{ldebug, lerror, linfo, lwarn};
-use anyhow::Result;
+use crate::error::Result;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::sync::Arc;

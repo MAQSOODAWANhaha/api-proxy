@@ -9,6 +9,7 @@
 //! 3. 授权请求时发送Code Challenge
 //! 4. 令牌交换时发送Code Verifier进行验证
 
+use crate::error::auth::PkceError;
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Serialize};
@@ -18,22 +19,6 @@ use sha2::{Digest, Sha256};
 const MIN_CODE_VERIFIER_LENGTH: usize = 43;
 const MAX_CODE_VERIFIER_LENGTH: usize = 128;
 const DEFAULT_CODE_VERIFIER_LENGTH: usize = 64;
-
-/// PKCE错误类型
-#[derive(Debug, thiserror::Error)]
-pub enum PkceError {
-    #[error("Invalid code verifier length: {0}. Must be between {1} and {2}")]
-    InvalidVerifierLength(usize, usize, usize),
-
-    #[error("Invalid code verifier format: contains non-ASCII characters")]
-    InvalidVerifierFormat,
-
-    #[error("Code challenge verification failed")]
-    VerificationFailed,
-
-    #[error("Encoding error: {0}")]
-    EncodingError(String),
-}
 
 /// PKCE Code Verifier
 #[derive(Debug, Clone, Serialize, Deserialize)]

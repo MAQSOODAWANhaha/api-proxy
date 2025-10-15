@@ -674,7 +674,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .check_api_key(key)
             .await
-            .map_err(|e| ProxyError::internal(format!("Health check failed: {e}")))
+            .map_err(|e| ProxyError::internal_with_source("Health check failed", e))
     }
 
     /// 批量检查多个API密钥的健康状态
@@ -685,7 +685,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .batch_check_keys(keys)
             .await
-            .map_err(|e| ProxyError::internal(format!("Batch health check failed: {e}")))
+            .map_err(|e| ProxyError::internal_with_source("Batch health check failed", e))
     }
 
     /// 手动标记API密钥为不健康
@@ -693,7 +693,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .mark_key_unhealthy(key_id, reason)
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to mark key unhealthy: {e}")))
+            .map_err(|e| ProxyError::internal_with_source("Failed to mark key unhealthy", e))
     }
 
     /// 获取API密钥的健康状态
@@ -714,7 +714,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .start()
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to start health checker: {e}")))
+            .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))
     }
 
     /// 停止健康检查服务
@@ -722,7 +722,7 @@ impl ApiKeyPoolManager {
         self.health_checker
             .stop()
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to stop health checker: {e}")))
+            .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))
     }
 
     /// 获取密钥池统计信息

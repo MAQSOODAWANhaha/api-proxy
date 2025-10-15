@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use crate::error::Result;
 
 use crate::cache::{CacheManager, keys::CacheKeyBuilder};
 

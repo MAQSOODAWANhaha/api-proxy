@@ -10,7 +10,8 @@
 //! 4. `返回最终的OAuth令牌或错误信息`
 
 use super::session_manager::SessionManager;
-use super::{OAuthError, OAuthResult, OAuthTokenResponse};
+use super::{OAuthError, OAuthTokenResponse};
+use crate::error::AuthResult;
 use crate::auth::types::AuthStatus;
 use entity::oauth_client_sessions;
 use serde::{Deserialize, Serialize};
@@ -178,7 +179,7 @@ impl OAuthPollingClient {
         &self,
         session_manager: &SessionManager,
         session_id: &str,
-    ) -> OAuthResult<OAuthPollingResponse> {
+    ) -> AuthResult<OAuthPollingResponse> {
         // 获取会话信息
         let session = session_manager.get_session(session_id).await?;
 
@@ -241,7 +242,7 @@ impl OAuthPollingClient {
         &self,
         session_manager: &SessionManager,
         session_id: &str,
-    ) -> OAuthResult<OAuthTokenResponse> {
+    ) -> AuthResult<OAuthTokenResponse> {
         let start_time = Instant::now();
         let timeout_duration = Duration::from_secs(u64::from(self.config.timeout));
         let mut current_interval = self.config.default_interval;
@@ -250,7 +251,7 @@ impl OAuthPollingClient {
         loop {
             // 检查超时
             if start_time.elapsed() > timeout_duration {
-                return Err(OAuthError::PollingTimeout);
+                return Err(OAuthError::PollingTimeout.into());
             }
 
             // 轮询状态
@@ -275,17 +276,20 @@ impl OAuthPollingClient {
                             // Token交换中，继续轮询
                         }
                         AuthStatus::Error => {
-                            return Err(OAuthError::TokenExchangeFailed(format!(
+                        return Err(
+                            OAuthError::TokenExchangeFailed(format!(
                                 "{}: {}",
                                 response.error.unwrap_or_default(),
                                 response.error_description.unwrap_or_default()
-                            )));
+                            ))
+                            .into(),
+                        );
                         }
                         AuthStatus::Expired => {
-                            return Err(OAuthError::SessionExpired(session_id.to_string()));
+                    return Err(OAuthError::SessionExpired(session_id.to_string()).into());
                         }
                         AuthStatus::Revoked => {
-                            return Err(OAuthError::InvalidSession("Session revoked".to_string()));
+                return Err(OAuthError::InvalidSession("Session revoked".to_string()).into());
                         }
                         AuthStatus::Pending => {
                             // 使用建议的轮询间隔
@@ -318,7 +322,7 @@ impl OAuthPollingClient {
         &self,
         session_manager: &SessionManager,
         session_ids: &[String],
-    ) -> Vec<(String, OAuthResult<OAuthPollingResponse>)> {
+    ) -> Vec<(String, AuthResult<OAuthPollingResponse>)> {
         let mut results = Vec::new();
 
         // 并发轮询所有会话

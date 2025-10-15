@@ -124,10 +124,10 @@ impl AuthStrategy for ApiKeyStrategy {
         let api_key = credentials
             .get("api_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| crate::proxy_err!(config, "缺少api_key参数"))?;
+            .ok_or_else(|| crate::error!(Config, "缺少api_key参数"))?;
 
         if api_key.is_empty() {
-            return Err(crate::proxy_err!(config, "API密钥不能为空"));
+            return Err(crate::error!(Config, "API密钥不能为空"));
         }
 
         // 如果有API密钥管理器，使用它进行实际验证
@@ -184,7 +184,7 @@ impl AuthStrategy for ApiKeyStrategy {
 
             // 基础格式检查
             if !api_key.starts_with("sk-") || api_key.len() < 20 {
-                return Err(crate::proxy_err!(auth, "API密钥格式错误"));
+                crate::bail!(Auth, ApiKeyMalformed);
             }
 
             // 返回基础结果（仅用于开发/测试）
@@ -204,20 +204,17 @@ impl AuthStrategy for ApiKeyStrategy {
         if let Some(header_name) = config.get("header_name")
             && !header_name.is_string()
         {
-            return Err(crate::proxy_err!(config, "header_name必须是字符串"));
+            return Err(crate::error!(Config, "header_name必须是字符串"));
         }
 
         if let Some(value_format) = config.get("value_format") {
             if !value_format.is_string() {
-                return Err(crate::proxy_err!(config, "value_format必须是字符串"));
+                return Err(crate::error!(Config, "value_format必须是字符串"));
             }
 
             let format_str = value_format.as_str().unwrap();
             if !format_str.contains("{key}") {
-                return Err(crate::proxy_err!(
-                    config,
-                    "value_format必须包含{{key}}占位符"
-                ));
+                return Err(crate::error!(Config, format!("value_format必须包含{{key}}占位符")));
             }
         }
 

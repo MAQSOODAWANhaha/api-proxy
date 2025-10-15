@@ -24,7 +24,7 @@ pub mod auth_manager; // 统一认证管理器实现（原RefactoredUnified重�
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
-pub use header_parser::{AuthHeader, AuthHeaderParser, AuthParseError};
+pub use header_parser::{AuthHeader, AuthHeaderParser};
 pub use jwt::JwtManager;
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};

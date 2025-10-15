@@ -65,16 +65,16 @@ impl ProxyServerBuilder {
         self.config
             .database
             .ensure_database_path()
-            .map_err(|e| ProxyError::server_init(format!("数据库路径设置失败: {e}")))?;
+            .map_err(|e| ProxyError::internal_with_source("数据库路径设置失败", e))?;
         let db_url = self
             .config
             .database
             .get_connection_url()
-            .map_err(|e| ProxyError::server_init(format!("数据库URL准备失败: {e}")))?;
+            .map_err(|e| ProxyError::internal_with_source("数据库URL准备失败", e))?;
         let db = Arc::new(
             sea_orm::Database::connect(&db_url)
                 .await
-                .map_err(|e| ProxyError::database(format!("数据库连接失败: {e}")))?,
+                .map_err(|e| crate::error!(Database, format!("数据库连接失败: {e}")))?,
         );
         self.db = Some(db.clone());
         Ok(db)
@@ -85,10 +85,7 @@ impl ProxyServerBuilder {
         if let Some(cache) = &self.cache {
             return Ok(cache.clone());
         }
-        let cache = Arc::new(
-            CacheManager::new(&self.config.cache)
-                .map_err(|e| ProxyError::cache(format!("缓存管理器创建失败: {e}")))?,
-        );
+        let cache = Arc::new(CacheManager::new(&self.config.cache)?);
         self.cache = Some(cache.clone());
         Ok(cache)
     }
@@ -116,7 +113,7 @@ impl ProxyServerBuilder {
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
         let jwt_manager = Arc::new(
             crate::auth::JwtManager::new(auth_config.clone())
-                .map_err(|e| ProxyError::server_init(format!("JWT管理器创建失败: {e}")))?,
+                .map_err(|e| ProxyError::internal_with_source("JWT管理器创建失败", e))?,
         );
         let api_key_manager = Arc::new(crate::auth::ApiKeyManager::new(
             db.clone(),
@@ -201,7 +198,7 @@ impl ProxyServerBuilder {
 
         let proxy_service = self
             .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
-            .map_err(|e| ProxyError::server_init(format!("代理服务创建失败: {e}")))?;
+            .map_err(|e| ProxyError::internal_with_source("代理服务创建失败", e))?;
 
         Ok(ProxyServerComponents {
             config: self.config.clone(),

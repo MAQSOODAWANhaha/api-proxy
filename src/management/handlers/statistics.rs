@@ -8,6 +8,7 @@
     clippy::significant_drop_tightening,
     clippy::needless_collect
 )]
+use crate::error::ProxyError;
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -185,11 +186,9 @@ pub async fn get_today_dashboard_cards(
                 "fetch_today_traces_fail",
                 &format!("Failed to fetch today's traces: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch today's data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch today's data: {}", err)),
+            );
         }
     };
 
@@ -210,11 +209,9 @@ pub async fn get_today_dashboard_cards(
                 "fetch_yesterday_traces_fail",
                 &format!("Failed to fetch yesterday's traces: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch yesterday's data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch yesterday's data: {}", err)),
+            );
         }
     };
 
@@ -311,11 +308,9 @@ pub async fn get_models_usage_rate(
                 "fetch_models_rate_fail",
                 &format!("Failed to fetch traces for models rate: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch data: {}", err)),
+            );
         }
     };
 
@@ -457,11 +452,9 @@ pub async fn get_models_statistics(
                 "fetch_models_stats_fail",
                 &format!("Failed to fetch traces for models statistics: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch data: {}", err)),
+            );
         }
     };
 
@@ -537,11 +530,9 @@ pub async fn get_tokens_trend(
                 "fetch_tokens_trend_fail",
                 &format!("Failed to fetch traces for tokens trend: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch data: {}", err)),
+            );
         }
     };
 
@@ -652,11 +643,9 @@ pub async fn get_user_api_keys_request_trend(
                 "fetch_user_keys_request_trend_fail",
                 &format!("Failed to fetch traces for user API keys request trend: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch data: {}", err)),
+            );
         }
     };
 
@@ -742,11 +731,9 @@ pub async fn get_user_api_keys_token_trend(
                 "fetch_user_keys_token_trend_fail",
                 &format!("Failed to fetch traces for user API keys token trend: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch data: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch data: {}", err)),
+            );
         }
     };
 
@@ -841,17 +828,15 @@ fn parse_time_range(
                         DateTime::from_naive_utc_and_offset(start_datetime, Utc)
                     }
                     Err(_) => {
-                        return Err(crate::manage_error!(crate::proxy_err!(
-                            business,
-                            "Invalid start date format. Use YYYY-MM-DD"
-                        )));
+                        return Err(crate::management::response::app_error(
+                            ProxyError::internal("Invalid start date format. Use YYYY-MM-DD"),
+                        ));
                     }
                 }
             } else {
-                return Err(crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "Custom range requires both start and end dates"
-                )));
+                return Err(crate::management::response::app_error(
+                    ProxyError::internal("Custom range requires both start and end dates"),
+                ));
             }
         }
         _ => end_time - Duration::days(7), // 默认7天

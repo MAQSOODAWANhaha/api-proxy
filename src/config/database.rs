@@ -1,6 +1,6 @@
 //! # 数据库配置
 
-use crate::error::{ProxyError, Result};
+use crate::error::Result;
 use crate::{
     linfo,
     logging::{LogComponent, LogStage},
@@ -45,9 +45,9 @@ impl DatabaseConfig {
                 && !parent.exists()
             {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    ProxyError::config_with_source(
-                        format!("无法创建数据库目录: {}", parent.display()),
-                        e,
+                    crate::error!(
+                        Config,
+                        format!("无法创建数据库目录: {}: {}", parent.display(), e)
                     )
                 })?;
 

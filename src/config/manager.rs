@@ -212,7 +212,7 @@ impl ConfigManager {
                 "手动重载配置成功"
             );
         } else {
-            return Err(crate::error::ProxyError::config("配置热重载功能未启用"));
+            return Err(crate::error!(Config, "配置热重载功能未启用"));
         }
         Ok(())
     }
@@ -227,46 +227,41 @@ impl ConfigManager {
     pub fn encrypt_value(&self, value: &str) -> crate::error::Result<String> {
         if let Some(crypto) = &self.crypto {
             let encrypted = crypto.encrypt(value)?;
-            Ok(serde_json::to_string(&encrypted).map_err(|e| {
-                crate::error::ProxyError::config_with_source("序列化加密数据失败", e)
-            })?)
+            Ok(serde_json::to_string(&encrypted)
+                .map_err(|e| crate::error!(Config, format!("序列化加密数据失败: {e}")))?)
         } else {
-            Err(crate::error::ProxyError::config("配置加密功能未启用"))
+            Err(crate::error!(Config, "配置加密功能未启用"))
         }
     }
 
     /// 解密敏感配置值
     pub fn decrypt_value(&self, encrypted_json: &str) -> crate::error::Result<String> {
         if let Some(crypto) = &self.crypto {
-            let encrypted = serde_json::from_str(encrypted_json).map_err(|e| {
-                crate::error::ProxyError::config_with_source("反序列化加密数据失败", e)
-            })?;
+            let encrypted = serde_json::from_str(encrypted_json)
+                .map_err(|e| crate::error!(Config, format!("反序列化加密数据失败: {e}")))?;
             crypto.decrypt(&encrypted)
         } else {
-            Err(crate::error::ProxyError::config("配置加密功能未启用"))
+            Err(crate::error!(Config, "配置加密功能未启用"))
         }
     }
 
     /// 加载配置文件
     fn load_config_file(path: &Path) -> crate::error::Result<AppConfig> {
         if !path.exists() {
-            return Err(crate::error::ProxyError::config(format!(
-                "配置文件不存在: {}",
-                path.display()
-            )));
+            return Err(crate::error!(Config, format!("配置文件不存在: {}", path.display())));
         }
 
         let config_content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error::ProxyError::config_with_source(
-                format!("读取配置文件失败: {}", path.display()),
-                e,
+            crate::error!(
+                Config,
+                format!("读取配置文件失败: {}: {}", path.display(), e)
             )
         })?;
 
         let config: AppConfig = toml::from_str(&config_content).map_err(|e| {
-            crate::error::ProxyError::config_with_source(
-                format!("TOML解析失败 - 配置文件: {}, 详细错误: {e}", path.display()),
-                e,
+            crate::error!(
+                Config,
+                format!("TOML解析失败 - 配置文件: {}, 详细错误: {}", path.display(), e)
             )
         })?;
 
@@ -339,12 +334,9 @@ impl ConfigManager {
         match parts.as_slice() {
             ["dual_port", "workers"] => {
                 if let Some(ref mut dual_port) = config.dual_port {
-                    dual_port.workers = value.parse().map_err(|e| {
-                        crate::error::ProxyError::config_with_source(
-                            format!("无效的工作线程数: {value}"),
-                            e,
-                        )
-                    })?;
+                    dual_port.workers = value
+                        .parse()
+                        .map_err(|e| crate::error!(Config, format!("无效的工作线程数: {value}: {e}")))?;
                 }
             }
             ["dual_port", "management", "http", "host"] => {
@@ -354,12 +346,9 @@ impl ConfigManager {
             }
             ["dual_port", "management", "http", "port"] => {
                 if let Some(ref mut dual_port) = config.dual_port {
-                    dual_port.management.http.port = value.parse().map_err(|e| {
-                        crate::error::ProxyError::config_with_source(
-                            format!("无效的管理端口: {value}"),
-                            e,
-                        )
-                    })?;
+                    dual_port.management.http.port = value
+                        .parse()
+                        .map_err(|e| crate::error!(Config, format!("无效的管理端口: {value}: {e}")))?;
                 }
             }
             ["dual_port", "proxy", "http", "host"] => {
@@ -369,22 +358,16 @@ impl ConfigManager {
             }
             ["dual_port", "proxy", "http", "port"] => {
                 if let Some(ref mut dual_port) = config.dual_port {
-                    dual_port.proxy.http.port = value.parse().map_err(|e| {
-                        crate::error::ProxyError::config_with_source(
-                            format!("无效的代理端口: {value}"),
-                            e,
-                        )
-                    })?;
+                    dual_port.proxy.http.port = value
+                        .parse()
+                        .map_err(|e| crate::error!(Config, format!("无效的代理端口: {value}: {e}")))?;
                 }
             }
             ["database", "url"] => config.database.url = value.to_string(),
             ["database", "max", "connections"] | ["database", "maxconnections"] => {
-                config.database.max_connections = value.parse().map_err(|e| {
-                    crate::error::ProxyError::config_with_source(
-                        format!("无效的最大连接数: {value}"),
-                        e,
-                    )
-                })?;
+                config.database.max_connections = value
+                    .parse()
+                    .map_err(|e| crate::error!(Config, format!("无效的最大连接数: {value}: {e}")))?;
             }
             ["cache", "redis", "url"] | ["redis", "url"] => {
                 let redis = config
@@ -401,12 +384,9 @@ impl ConfigManager {
                     .cache
                     .redis
                     .get_or_insert_with(super::RedisConfig::default);
-                redis.pool_size = value.parse().map_err(|e| {
-                    crate::error::ProxyError::config_with_source(
-                        format!("无效的Redis连接池大小: {value}"),
-                        e,
-                    )
-                })?;
+                redis.pool_size = value
+                    .parse()
+                    .map_err(|e| crate::error!(Config, format!("无效的Redis连接池大小: {value}: {e}")))?;
             }
 
             _ => {

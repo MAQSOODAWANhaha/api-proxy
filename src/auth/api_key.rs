@@ -18,7 +18,7 @@ use crate::auth::permissions::UserRole;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::cache::CacheManager;
-use crate::error::Result;
+use crate::error::{auth::AuthError, Result};
 use entity::user_provider_keys;
 
 /// API key validation result
@@ -83,7 +83,7 @@ impl ApiKeyManager {
     pub async fn validate_api_key(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
         // Check API key format
         if !self.is_valid_api_key_format(api_key) {
-            return Err(crate::proxy_err!(auth, "API 密钥格式无效"));
+            return Err(AuthError::ApiKeyMalformed.into());
         }
 
         // Check cache first
@@ -110,11 +110,11 @@ impl ApiKeyManager {
         let api_key_model = self
             .find_api_key_record(api_key)
             .await?
-            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
+            .ok_or_else(|| AuthError::ApiKeyInvalid(api_key.to_string()))?;
 
         // Check if key is active
         if !api_key_model.is_active {
-            return Err(crate::proxy_err!(auth, "API 密钥未激活"));
+            return Err(AuthError::ApiKeyInactive.into());
         }
 
         // Convert to ApiKeyInfo
@@ -188,9 +188,7 @@ impl ApiKeyManager {
             .filter(users::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| {
-                crate::error::ProxyError::database(format!("Failed to query user: {e}"))
-            })?;
+            .map_err(|e| crate::error!(Internal, format!("Failed to query user {user_id}"), e))?;
 
         let Some(user) = user else {
             // 用户不存在或未激活，返回普通用户权限
@@ -229,7 +227,7 @@ impl ApiKeyManager {
         let api_key_model = self
             .find_api_key_record(api_key)
             .await?
-            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
+            .ok_or_else(|| AuthError::ApiKeyInvalid(api_key.to_string()))?;
 
         // Check request rate limit
         let rpm_limit = i64::from(api_key_model.max_requests_per_minute.unwrap_or(i32::MAX));
@@ -237,7 +235,17 @@ impl ApiKeyManager {
             .limiter
             .check_per_minute(api_key_model.user_id, "proxy", rpm_limit)
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Rate limit check failed: {}", e))?;
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!(
+                        "Rate limit check failed for user {} via API key {}",
+                        api_key_model.user_id,
+                        Self::sanitize_api_key(api_key)
+                    ),
+                    e
+                )
+            })?;
 
         // Get current token usage
         let date = chrono::Utc::now().format("%Y%m%d").to_string();
@@ -247,7 +255,13 @@ impl ApiKeyManager {
             .provider()
             .get(&token_key)
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!("Cache error when fetching key {token_key}"),
+                    e
+                )
+            })?
             .unwrap_or(0);
 
         let remaining_tokens = api_key_model
@@ -275,7 +289,7 @@ impl ApiKeyManager {
         let api_key_model = self
             .find_api_key_record(api_key)
             .await?
-            .ok_or_else(|| crate::proxy_err!(auth, "API 密钥不存在"))?;
+            .ok_or_else(|| AuthError::ApiKeyInvalid(api_key.to_string()))?;
 
         // Update database record for `updated_at`
         let mut active_model: user_provider_keys::ActiveModel = api_key_model.clone().into();
@@ -283,7 +297,13 @@ impl ApiKeyManager {
         active_model
             .update(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    "Database error while updating API key metadata",
+                    e
+                )
+            })?;
 
         // Update token usage in cache
         if tokens_used > 0 {
@@ -294,7 +314,13 @@ impl ApiKeyManager {
                 .provider()
                 .incr(&token_key, i64::from(tokens_used))
                 .await
-                .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?;
+                .map_err(|e| {
+                    crate::error!(
+                        Internal,
+                        format!("Cache error while incrementing {token_key}"),
+                        e
+                    )
+                })?;
 
             // Set TTL on first increment of the day
             if new_total == i64::from(tokens_used) {
@@ -307,7 +333,13 @@ impl ApiKeyManager {
                     .provider()
                     .expire(&token_key, Duration::from_secs(ttl))
                     .await
-                    .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?;
+                    .map_err(|e| {
+                        crate::error!(
+                            Internal,
+                            format!("Cache error while setting TTL on {token_key}"),
+                            e
+                        )
+                    })?;
             }
         }
 
@@ -340,7 +372,13 @@ impl ApiKeyManager {
             .provider()
             .get(&rpm_key)
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!("Cache error while reading {rpm_key}"),
+                    e
+                )
+            })?
             .unwrap_or(0);
         let remaining_requests = api_key_info
             .max_requests_per_minute
@@ -354,7 +392,13 @@ impl ApiKeyManager {
             .provider()
             .get(&token_key)
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Cache error: {}", e))?
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!("Cache error while reading {token_key}"),
+                    e
+                )
+            })?
             .unwrap_or(0);
         let remaining_tokens = api_key_info
             .max_requests_per_day
@@ -377,7 +421,13 @@ impl ApiKeyManager {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!("Database error when fetching API key {}", Self::sanitize_api_key(api_key)),
+                    e
+                )
+            })
     }
 
     /// 验证API密钥格式（共享方法）
@@ -451,7 +501,7 @@ impl ApiKeyManager {
     /// 只验证密钥存在性和激活状态，不包含权限检查
     pub async fn validate_for_proxy(&self, api_key: &str) -> Result<ApiKeyInfo> {
         if !self.is_valid_api_key_format(api_key) {
-            return Err(crate::proxy_err!(auth, "API 密钥格式无效"));
+            return Err(AuthError::ApiKeyMalformed.into());
         }
 
         match self.get_api_key_info(api_key).await? {
@@ -459,10 +509,10 @@ impl ApiKeyManager {
                 if info.is_active {
                     Ok(info)
                 } else {
-                    Err(crate::proxy_err!(auth, "API 密钥未激活"))
+                    Err(AuthError::ApiKeyInactive.into())
                 }
             }
-            None => Err(crate::proxy_err!(auth, "API 密钥不存在")),
+            None => Err(AuthError::ApiKeyInvalid(api_key.to_string()).into()),
         }
     }
 

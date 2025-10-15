@@ -6,7 +6,8 @@
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::doc_markdown)]
 
-use super::{OAuthError, OAuthProviderConfig, OAuthResult};
+use super::{OAuthError, OAuthProviderConfig};
+use crate::error::{AuthResult, ProxyError};
 use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
 // use crate::auth::oauth_client::pkce::PkceChallenge; // 未使用
@@ -35,7 +36,7 @@ impl OAuthProviderManager {
 
     /// 获取提供商配置
     #[allow(clippy::cognitive_complexity)]
-    pub async fn get_config(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
+    pub async fn get_config(&self, provider_name: &str) -> AuthResult<OAuthProviderConfig> {
         ldebug!(
             "system",
             LogStage::Configuration,
@@ -91,7 +92,7 @@ impl OAuthProviderManager {
     }
 
     /// 获取所有活跃的提供商配置
-    pub async fn list_active_configs(&self) -> OAuthResult<Vec<OAuthProviderConfig>> {
+    pub async fn list_active_configs(&self) -> AuthResult<Vec<OAuthProviderConfig>> {
         let models = ProviderTypes::find()
             .filter(provider_types::Column::IsActive.eq(true))
             .all(self.db.as_ref())
@@ -119,7 +120,7 @@ impl OAuthProviderManager {
         &self,
         config: &OAuthProviderConfig,
         session: &entity::oauth_client_sessions::Model,
-    ) -> OAuthResult<String> {
+    ) -> AuthResult<String> {
         ldebug!(
             "system",
             LogStage::Authentication,
@@ -219,12 +220,17 @@ impl OAuthProviderManager {
 
     /// 刷新缓存
     #[allow(clippy::significant_drop_tightening)]
-    pub async fn refresh_cache(&self) -> OAuthResult<()> {
+    pub async fn refresh_cache(&self) -> AuthResult<()> {
         let configs = self.list_active_configs().await?;
         let mut cache = self
             .cache
             .write()
-            .map_err(|_| OAuthError::DatabaseError("Cache lock error".to_string()))?;
+            .map_err(|_| {
+                crate::error!(
+                    Authentication,
+                    OAuth(OAuthError::DatabaseError("Cache lock error".to_string()))
+                )
+            })?;
 
         cache.clear();
         for config in configs {
@@ -235,16 +241,20 @@ impl OAuthProviderManager {
     }
 
     /// `验证提供商是否支持OAuth`
-    pub async fn is_oauth_supported(&self, provider_name: &str) -> OAuthResult<bool> {
+    pub async fn is_oauth_supported(&self, provider_name: &str) -> AuthResult<bool> {
         match self.get_config(provider_name).await {
             Ok(_) => Ok(true),
-            Err(OAuthError::ProviderNotFound(_)) => Ok(false),
-            Err(e) => Err(e),
+            Err(err) => match err {
+                ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                    OAuthError::ProviderNotFound(_),
+                )) => Ok(false),
+                other => Err(other),
+            },
         }
     }
 
     /// 获取提供商的重定向URI
-    pub async fn get_redirect_uri(&self, provider_name: &str) -> OAuthResult<String> {
+    pub async fn get_redirect_uri(&self, provider_name: &str) -> AuthResult<String> {
         let config = self.get_config(provider_name).await?;
         Ok(config.redirect_uri)
     }
@@ -258,7 +268,7 @@ impl OAuthProviderManager {
     }
 
     /// 从数据库加载配置
-    async fn load_from_db(&self, provider_name: &str) -> OAuthResult<OAuthProviderConfig> {
+    async fn load_from_db(&self, provider_name: &str) -> AuthResult<OAuthProviderConfig> {
         // 解析provider_name，格式可能是 "gemini" 或 "gemini:oauth"
         let (base_provider, oauth_type) = if provider_name.contains(':') {
             let parts: Vec<&str> = provider_name.split(':').collect();
@@ -297,12 +307,17 @@ impl OAuthProviderManager {
                     }
                 }
 
-                Err(OAuthError::ProviderNotFound(format!(
-                    "No OAuth config found for provider: {}",
-                    provider_name
-                )))
+                Err(
+                    OAuthError::ProviderNotFound(format!(
+                        "No OAuth config found for provider: {}",
+                        provider_name
+                    ))
+                    .into(),
+                )
             }
-            None => Err(OAuthError::ProviderNotFound(provider_name.to_string())),
+            None => Err(
+                OAuthError::ProviderNotFound(provider_name.to_string()).into()
+            ),
         }
     }
 

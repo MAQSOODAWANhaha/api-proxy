@@ -27,6 +27,8 @@ pub use session_manager::SessionManager;
 pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
 use crate::auth::types::AuthStatus;
+use crate::error::auth::OAuthError;
+use crate::error::AuthResult;
 use crate::types::ProviderTypeId;
 use crate::{
     ldebug, linfo,
@@ -37,60 +39,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// `OAuth错误类型`
-#[derive(Debug, thiserror::Error)]
-pub enum OAuthError {
-    #[error("Provider not found: {0}")]
-    ProviderNotFound(String),
-
-    #[error("Invalid session: {0}")]
-    InvalidSession(String),
-
-    #[error("Session expired: {0}")]
-    SessionExpired(String),
-
-    #[error("Token exchange failed: {0}")]
-    TokenExchangeFailed(String),
-
-    #[error("PKCE verification failed")]
-    PkceVerificationFailed,
-
-    #[error("Polling timeout")]
-    PollingTimeout,
-
-    #[error("Network error: {0}")]
-    NetworkError(String),
-
-    #[error("Database error: {0}")]
-    DatabaseError(String),
-
-    #[error("Serde error: {0}")]
-    SerdeError(String),
-
-    #[error("Invalid token: {0}")]
-    InvalidToken(String),
-}
-
-impl From<reqwest::Error> for OAuthError {
-    fn from(err: reqwest::Error) -> Self {
-        Self::NetworkError(err.to_string())
-    }
-}
-
-impl From<sea_orm::DbErr> for OAuthError {
-    fn from(err: sea_orm::DbErr) -> Self {
-        Self::DatabaseError(err.to_string())
-    }
-}
-
-impl From<serde_json::Error> for OAuthError {
-    fn from(err: serde_json::Error) -> Self {
-        Self::SerdeError(err.to_string())
-    }
-}
-
-/// `OAuth结果类型`
-pub type OAuthResult<T> = Result<T, OAuthError>;
+// The local OAuthError enum has been moved to src/error/auth.rs
+// The From implementations are also moved or will be handled by the top-level ProxyError.
 
 /// `OAuth授权URL响应`
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,7 +165,7 @@ impl OAuthClient {
         provider_name: &str,
         name: &str,
         description: Option<&str>,
-    ) -> OAuthResult<AuthorizeUrlResponse> {
+    ) -> AuthResult<AuthorizeUrlResponse> {
         Self::log_authorization_start(user_id, provider_name, name);
 
         let config = self.provider_manager.get_config(provider_name).await?;
@@ -341,7 +291,7 @@ impl OAuthClient {
         provider_type_id: Option<ProviderTypeId>,
         name: &str,
         description: Option<&str>,
-    ) -> OAuthResult<AuthorizeUrlResponse> {
+    ) -> AuthResult<AuthorizeUrlResponse> {
         // 获取提供商配置
         let config = self.provider_manager.get_config(provider_name).await?;
 
@@ -380,7 +330,7 @@ impl OAuthClient {
         name: &str,
         description: Option<&str>,
         extra_params: Option<std::collections::HashMap<String, String>>,
-    ) -> OAuthResult<AuthorizeUrlResponse> {
+    ) -> AuthResult<AuthorizeUrlResponse> {
         // 获取提供商配置
         let mut config = self.provider_manager.get_config(provider_name).await?;
 
@@ -415,7 +365,7 @@ impl OAuthClient {
     }
 
     /// 轮询会话状态
-    pub async fn poll_session(&self, session_id: &str) -> OAuthResult<OAuthPollingResponse> {
+    pub async fn poll_session(&self, session_id: &str) -> AuthResult<OAuthPollingResponse> {
         self.polling_client
             .poll_session(&self.session_manager, session_id)
             .await
@@ -426,7 +376,7 @@ impl OAuthClient {
         &self,
         session_id: &str,
         authorization_code: &str,
-    ) -> OAuthResult<OAuthTokenResponse> {
+    ) -> AuthResult<OAuthTokenResponse> {
         self.token_exchange_client
             .exchange_token(
                 &self.provider_manager,
@@ -438,19 +388,19 @@ impl OAuthClient {
     }
 
     /// 获取用户的`OAuth`会话列表
-    pub async fn list_user_sessions(&self, user_id: i32) -> OAuthResult<Vec<OAuthSessionInfo>> {
+    pub async fn list_user_sessions(&self, user_id: i32) -> AuthResult<Vec<OAuthSessionInfo>> {
         self.session_manager.list_user_sessions(user_id).await
     }
 
     /// 删除会话
-    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> OAuthResult<()> {
+    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> AuthResult<()> {
         self.session_manager
             .delete_session(session_id, user_id)
             .await
     }
 
     /// 刷新访问令牌
-    pub async fn refresh_token(&self, session_id: &str) -> OAuthResult<OAuthTokenResponse> {
+    pub async fn refresh_token(&self, session_id: &str) -> AuthResult<OAuthTokenResponse> {
         self.token_exchange_client
             .refresh_token(&self.provider_manager, &self.session_manager, session_id)
             .await
@@ -460,12 +410,12 @@ impl OAuthClient {
     pub async fn get_session_statistics(
         &self,
         user_id: Option<i32>,
-    ) -> OAuthResult<session_manager::SessionStatistics> {
+    ) -> AuthResult<session_manager::SessionStatistics> {
         self.session_manager.get_session_statistics(user_id).await
     }
 
     /// 清理过期会话
-    pub async fn cleanup_expired_sessions(&self) -> OAuthResult<u64> {
+    pub async fn cleanup_expired_sessions(&self) -> AuthResult<u64> {
         self.session_manager.cleanup_expired_sessions().await
     }
 
@@ -474,14 +424,14 @@ impl OAuthClient {
         &self,
         session_id: &str,
         user_id: i32,
-    ) -> OAuthResult<bool> {
+    ) -> AuthResult<bool> {
         self.session_manager
             .validate_session_access(session_id, user_id)
             .await
     }
 
     /// 列出支持的`OAuth`提供商
-    pub async fn list_providers(&self) -> OAuthResult<Vec<OAuthProviderConfig>> {
+    pub async fn list_providers(&self) -> AuthResult<Vec<OAuthProviderConfig>> {
         self.provider_manager.list_active_configs().await
     }
 
@@ -491,7 +441,7 @@ impl OAuthClient {
     ///
     /// 如果token即将过期，会自动刷新后返回新token
     /// 推荐使用此方法替代直接访问`session.access_token`
-    pub async fn get_valid_access_token(&self, session_id: &str) -> OAuthResult<Option<String>> {
+    pub async fn get_valid_access_token(&self, session_id: &str) -> AuthResult<Option<String>> {
         self.auto_refresh_manager
             .get_valid_access_token(session_id, None)
             .await
@@ -502,7 +452,7 @@ impl OAuthClient {
         &self,
         session_id: &str,
         policy: RefreshPolicy,
-    ) -> OAuthResult<Option<String>> {
+    ) -> AuthResult<Option<String>> {
         self.auto_refresh_manager
             .get_valid_access_token(session_id, Some(policy))
             .await
@@ -515,7 +465,7 @@ impl OAuthClient {
         &self,
         user_id: i32,
         policy: Option<RefreshPolicy>,
-    ) -> OAuthResult<Vec<(String, OAuthResult<OAuthTokenResponse>)>> {
+    ) -> AuthResult<Vec<(String, AuthResult<OAuthTokenResponse>)>> {
         self.auto_refresh_manager
             .refresh_expiring_sessions_for_user(user_id, policy)
             .await
@@ -528,7 +478,7 @@ impl OAuthClient {
         &self,
         session_ids: Vec<String>,
         policy: Option<RefreshPolicy>,
-    ) -> Vec<(String, OAuthResult<Option<String>>)> {
+    ) -> Vec<(String, AuthResult<Option<String>>)> {
         self.auto_refresh_manager
             .batch_refresh_tokens(session_ids, policy)
             .await
@@ -541,7 +491,7 @@ impl OAuthClient {
         &self,
         session_id: &str,
         threshold_seconds: Option<i64>,
-    ) -> OAuthResult<bool> {
+    ) -> AuthResult<bool> {
         let session = self.session_manager.get_session(session_id).await?;
 
         if session.status != AuthStatus::Authorized.to_string() || session.refresh_token.is_none() {

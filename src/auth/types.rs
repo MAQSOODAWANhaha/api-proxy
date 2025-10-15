@@ -118,7 +118,7 @@ impl JwtClaims {
     /// 获取用户ID
     pub fn user_id(&self) -> crate::error::Result<i32> {
         self.sub.parse().map_err(|err| {
-            crate::error::ProxyError::authentication_with_source("JWT sub 字段解析失败", err)
+            crate::error!(Authentication, format!("JWT sub 字段解析失败: {}", err))
         })
     }
 }

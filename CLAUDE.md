@@ -20,12 +20,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **认证**: JWT + API Key + RBAC (17种权限类型)
 - **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 
-## 规范标准
-- **代码风格**: 使用 `cargo fmt` 进行代码格式化，遵循 Rust 官方编码规范
-- **Linting**: 使用 `cargo clippy` 进行静态代码分析，启用严格的 lint 规则
-- **返回值**: 统一使用use crate::error::Result<T>作为函数返回类型
-- **错误处理**: 使用自定义的 ProxyError 枚举进行错误分类和处理
-- **日志记录**: 使用 `tracing` 进行结构化日志记录
+## 开发规范标准
+
+### 沟通语言
+**使用中文进行所有对话和代码注释**
+
+### 代码质量要求
+每次代码修改后，必须按以下顺序完成所有检查：
+
+1. **编译检查**：确保代码能够成功编译通过
+   ```bash
+   cargo build
+   ```
+
+2. **代码格式化**：使用 `cargo fmt` 自动格式化代码
+   ```bash
+   cargo fmt
+   ```
+
+3. **静态分析**：运行 `cargo clippy` 检查代码质量和潜在问题
+   ```bash
+   cargo clippy --all-targets -- -D warnings -A clippy::multiple_crate-versions
+   ```
+
+4. **单元测试**：执行 `cargo test` 确保所有测试通过
+   ```bash
+   cargo test
+   ```
+
+**注意**：以上所有步骤都必须通过，不允许提交未通过检查的代码。
+
+### 代码风格规范
+- **返回值类型**：统一使用 `crate::error::Result<T>` 作为函数返回类型
+- **错误处理**：使用自定义的 ProxyError 枚举进行错误分类和处理
+- **日志记录**：使用 `tracing` 进行结构化日志记录
+
+### 错误处理最佳实践（参见 `src/error/`）
+
+- **统一返回类型**：所有可能失败的接口都应返回 `crate::error::Result<T>`，避免混用 `anyhow::Result` 等其他别名。
+- **领域枚举优先**：在模块内构造错误，请使用 `error!(Authentication, ...)`、`error!(Database, ...)` 等宏，保持错误类型与领域一致，必要时再使用 `ProxyError` 提供的辅助构造函数。
+- **上下文增强**：链式调用中使用 `Context`/`with_context` trait（`src/error/mod.rs`）补充必要的定位信息，确保 `ProxyError` 内含完整原因。
+- **快速返回**：条件判断失败时使用 `ensure!`，需要立即返回时使用 `bail!`，既减少样板代码，也保证错误栈统一。
+- **稳定错误码**：新增错误变体时记得在 `ProxyError::error_code`/`status_code` 中维护对应的对外编号与状态码，保持 API 行为稳定。
+
+### 日志记录最佳实践（参见 `src/logging.rs`）
+
+- **统一宏**：业务日志统一使用 `linfo!`、`ldebug!`、`lwarn!`、`lerror!`，避免直接调用 `tracing::*`，确保字段一致。
+- **基础字段**：日志必须包含 `request_id`、`stage`、`component`、`operation`、`message` 五个核心字段，可额外附加结构化键值对（如 `error = %err`）。
+- **阶段 & 组件选择**：根据上下文选用合适的 `LogStage`、`LogComponent`，缺省时优先选择更精确的枚举值，方便后续检索与分析。
+- **错误日志**：捕获 `ProxyError` 时调用 `error.log()` 输出结构化错误信息，同时再追加必要的业务字段，避免重复字符串拼接。
+- **初始化配置**：如需调整日志级别或输出格式，应修改 `init_logging` 入口，保持统一的订阅器与过滤器配置。
 
 ## 常用开发命令
 
@@ -60,30 +104,37 @@ cargo test --test integration_test
 cargo bench
 ```
 
-### 代码质量和维护
+### 代码质量检查（必须按顺序执行）
 ```bash
-# 代码格式化
+# 1. 编译检查
+cargo build
+
+# 2. 代码格式化
 cargo fmt
 
-# 严格代码检查（必须符合）
-cargo clippy --all-targets -- -D warnings -A clippy::multiple-crate-versions
+# 3. 静态分析检查
+cargo clippy --all-targets -- -D warnings -A clippy::multiple_crate-versions
 
+# 4. 运行测试
+cargo test
+```
+
+### 其他维护命令
+```bash
 # 安全审计
 cargo audit
 
-# 依赖更新
-cargo update
+# 依赖管理
+cargo update                    # 更新依赖
+cargo machete                   # 检查未使用的依赖
 
-# 检查未使用的依赖
-cargo machete
-
-# 部署相关命令
-./deploy.sh install              # 完整安装部署
-./deploy.sh start                # 启动所有服务
-./deploy.sh stop                 # 停止所有服务
-./deploy.sh status               # 查看服务运行状态
-./deploy.sh logs [proxy|caddy]   # 查看服务日志
-./deploy.sh restart              # 重启服务
+# 部署管理
+./deploy.sh install             # 完整安装部署
+./deploy.sh start               # 启动所有服务
+./deploy.sh stop                # 停止所有服务
+./deploy.sh status              # 查看服务运行状态
+./deploy.sh logs [proxy|caddy]  # 查看服务日志
+./deploy.sh restart             # 重启服务
 ```
 
 ## 核心架构模式

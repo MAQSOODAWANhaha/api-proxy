@@ -1,8 +1,7 @@
 use crate::{
-    ProxyError,
     auth::{AuthManager, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
-    error::Result,
+    error::{Context, Result},
     management::server::{ManagementConfig, ManagementServer},
     proxy::PingoraProxyServer,
 };
@@ -104,7 +103,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         Some(shared_services.smart_api_key_provider.clone()),
         Some(shared_services.oauth_token_refresh_task.clone()),
     )
-    .map_err(|e| ProxyError::server_init(format!("Failed to create management server: {e}")))?;
+    .context("Failed to create management server")?;
 
     // 创建代理服务器，传递数据库连接和追踪系统
     let proxy_server =
@@ -126,9 +125,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
             "start_oauth_refresh_task_failed",
             &format!("Failed to start OAuth token refresh task: {e:?}")
         );
-        return Err(ProxyError::server_init(format!(
-            "OAuth token refresh task startup failed: {e}"
-        )));
+        return Err(crate::error!(Internal, "OAuth token refresh task startup failed", e));
     }
     linfo!(
         "system",
@@ -151,7 +148,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         // 启动 Axum 管理服务器
         result = management_server.serve() => {
             lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "management_server_exit", &format!("Management server exited unexpectedly: {result:?}"));
-            Err(ProxyError::server_start("Management server failed"))
+            Err(crate::error!(Internal, "Management server failed"))
         }
         // 启动 Pingora 代理服务器
         result = tokio::task::spawn(async move {
@@ -164,12 +161,12 @@ pub async fn run_dual_port_servers() -> Result<()> {
                         Err(e)
                     } else {
                         lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_exit", "Proxy server exited unexpectedly");
-                        Err(ProxyError::server_start("Proxy server failed"))
+                        Err(crate::error!(Internal, "Proxy server failed"))
                     }
                 }
                 Err(e) => {
                     lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_spawn_fail", &format!("Failed to spawn proxy server task: {e:?}"));
-                    Err(ProxyError::server_start("Failed to spawn proxy server"))
+                    Err::<(), _>(e).context("Failed to spawn proxy server task")
                 }
             }
         }
@@ -275,13 +272,13 @@ pub async fn initialize_shared_services() -> Result<(
     let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
     let jwt_manager = Arc::new(
         crate::auth::jwt::JwtManager::new(auth_config.clone())
-            .map_err(|e| ProxyError::server_init(format!("JWT manager init failed: {e}")))?,
+            .context("JWT manager init failed")?,
     );
 
     // 初始化统一缓存管理器
     let unified_cache_manager = Arc::new(
         crate::cache::abstract_cache::CacheManager::new(&config_arc.cache)
-            .map_err(|e| ProxyError::server_init(format!("Cache manager init failed: {e}")))?,
+            .context("Cache manager init failed")?,
     );
 
     let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(

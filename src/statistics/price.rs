@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::error::ProxyError;
+use crate::error::Result;
 use crate::pricing::PricingCalculatorService;
 use crate::statistics::types::TokenUsageMetrics;
 use crate::types::ProviderTypeId;
@@ -18,7 +18,7 @@ pub async fn calculate(
     provider_type_id: ProviderTypeId,
     usage: &TokenUsageMetrics,
     request_id: &str,
-) -> Result<(Option<f64>, Option<String>), ProxyError> {
+) -> Result<(Option<f64>, Option<String>)> {
     match pricing
         .calculate_cost(
             model,

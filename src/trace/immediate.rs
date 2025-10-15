@@ -5,7 +5,7 @@
 use crate::logging::{LogComponent, LogStage};
 use crate::types::{ProviderTypeId, TokenCount, ratio_as_f64};
 use crate::{ldebug, lerror, linfo, lwarn};
-use anyhow::Result;
+use crate::error::Result;
 use chrono::Utc;
 use entity::proxy_tracing;
 use sea_orm::{

@@ -18,7 +18,7 @@ use crate::auth::{
 };
 use crate::cache::abstract_cache::CacheManager;
 use crate::cache::keys::CacheKeyBuilder;
-use crate::error::Result;
+use crate::error::{ProxyError, Result};
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -87,7 +87,7 @@ impl AuthService {
     ) -> Result<AuthResult> {
         // Parse authentication token
         let token_type = TokenType::from_auth_header(auth_header)
-            .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+            .ok_or_else(invalid_credentials_error)?;
 
         let auth_result = match token_type {
             TokenType::Bearer(token) => self.authenticate_jwt(&token, context),
@@ -175,14 +175,14 @@ impl AuthService {
             .filter(entity::user_service_apis::Column::IsActive.eq(true))
             .one(&*self.db)
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
-            .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .ok_or_else(invalid_credentials_error)?;
 
         // 检查API密钥是否过期
         if let Some(expires_at) = user_api.expires_at
             && expires_at < chrono::Utc::now().naive_utc()
         {
-            return Err(crate::proxy_err!(auth, "无效的认证凭据"));
+            return Err(invalid_credentials_error());
         }
 
         Ok(user_api)
@@ -201,16 +201,16 @@ impl AuthService {
             .filter(users::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
 
-        let user = user.ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+        let user = user.ok_or_else(invalid_credentials_error)?;
 
         // Verify password
         let password_valid = verify(password, &user.password_hash)
-            .map_err(|e| crate::proxy_err!(internal, "Password verification error: {}", e))?;
+            .map_err(|e| crate::error!(Internal, "Password verification error", e))?;
 
         if !password_valid {
-            return Err(crate::proxy_err!(auth, "无效的认证凭据"));
+            return Err(invalid_credentials_error());
         }
 
         // 确定用户角色
@@ -244,16 +244,16 @@ impl AuthService {
             .filter(users::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
 
-        let user = user.ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+        let user = user.ok_or_else(invalid_credentials_error)?;
 
         // Verify password
         let password_valid = verify(password, &user.password_hash)
-            .map_err(|e| crate::proxy_err!(internal, "Password verification error: {}", e))?;
+            .map_err(|e| crate::error!(Internal, "Password verification error", e))?;
 
         if !password_valid {
-            return Err(crate::proxy_err!(auth, "无效的认证凭据"));
+            return Err(invalid_credentials_error());
         }
 
         // 确定用户角色
@@ -286,11 +286,11 @@ impl AuthService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
-            .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .ok_or_else(invalid_credentials_error)?;
 
         if !user.is_active {
-            return Err(crate::proxy_err!(auth, "无效的认证凭据"));
+            return Err(invalid_credentials_error());
         }
 
         // 确定用户角色
@@ -391,7 +391,7 @@ impl AuthService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
 
         if let Some(user) = user {
             let role = if user.is_admin {
@@ -510,8 +510,8 @@ impl AuthService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?
-            .ok_or_else(|| crate::proxy_err!(auth, "无效的认证凭据"))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .ok_or_else(invalid_credentials_error)?;
 
         // Update last login time
         let mut user: users::ActiveModel = user.into();
@@ -519,7 +519,7 @@ impl AuthService {
 
         user.update(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database error: {}", e))?;
+            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
 
         Ok(())
     }
@@ -531,10 +531,14 @@ impl AuthService {
             .limit(1)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::proxy_err!(internal, "Database connection test failed: {}", e))?;
+            .map_err(|e| crate::error!(Database, format!("Database connection test failed: {}", e)))?;
 
         Ok(())
     }
+}
+
+fn invalid_credentials_error() -> ProxyError {
+    crate::error!(Authentication, "无效的认证凭据")
 }
 
 #[cfg(test)]

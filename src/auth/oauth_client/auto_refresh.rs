@@ -6,7 +6,8 @@
 use super::providers::OAuthProviderManager;
 use super::session_manager::SessionManager;
 use super::token_exchange::TokenExchangeClient;
-use super::{OAuthError, OAuthResult, OAuthTokenResponse};
+use super::{OAuthError, OAuthTokenResponse};
+use crate::error::{AuthResult, ProxyError};
 use crate::auth::types::AuthStatus;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -74,7 +75,7 @@ impl AutoRefreshManager {
         &self,
         session_id: &str,
         policy: Option<RefreshPolicy>,
-    ) -> OAuthResult<Option<String>> {
+    ) -> AuthResult<Option<String>> {
         let policy = policy.unwrap_or_default();
 
         // 获取会话信息
@@ -170,7 +171,7 @@ impl AutoRefreshManager {
         &self,
         session_ids: Vec<String>,
         policy: Option<RefreshPolicy>,
-    ) -> Vec<(String, OAuthResult<Option<String>>)> {
+    ) -> Vec<(String, AuthResult<Option<String>>)> {
         let policy = policy.unwrap_or_default();
         let mut results = Vec::new();
 
@@ -197,7 +198,7 @@ impl AutoRefreshManager {
         &self,
         user_id: i32,
         policy: Option<RefreshPolicy>,
-    ) -> OAuthResult<Vec<(String, OAuthResult<OAuthTokenResponse>)>> {
+    ) -> AuthResult<Vec<(String, AuthResult<OAuthTokenResponse>)>> {
         let policy = policy.unwrap_or_default();
 
         // 获取用户的所有完成会话
@@ -255,7 +256,7 @@ impl AutoRefreshManager {
         &self,
         session_id: &str,
         policy: &RefreshPolicy,
-    ) -> OAuthResult<OAuthTokenResponse> {
+    ) -> AuthResult<OAuthTokenResponse> {
         // 获取会话专属锁，防止并发刷新同一token
         let lock = {
             let mut locks = self.refresh_locks.lock().await;
@@ -280,9 +281,9 @@ impl AutoRefreshManager {
                 &format!("Session {session_id} 没有对应的user_provider_keys关联，跳过刷新")
             );
             // 不在刷新路径进行删除，交由后台清理任务处理
-            return Err(OAuthError::InvalidSession(format!(
-                "Session {session_id} is orphaned"
-            )));
+            return Err(
+                OAuthError::InvalidSession(format!("Session {session_id} is orphaned")).into(),
+            );
         }
 
         if !Self::should_refresh_token(&current_session, policy) {
@@ -314,7 +315,8 @@ impl AutoRefreshManager {
         }
 
         // 执行刷新重试逻辑
-        let mut last_error = OAuthError::TokenExchangeFailed("No attempts made".to_string());
+        let mut last_error =
+            ProxyError::from(OAuthError::TokenExchangeFailed("No attempts made".to_string()));
 
         for attempt in 1..=policy.max_retry_attempts {
             ldebug!(
@@ -388,7 +390,7 @@ impl AutoRefreshManager {
     async fn validate_session_association(
         &self,
         session: &oauth_client_sessions::Model,
-    ) -> OAuthResult<bool> {
+    ) -> AuthResult<bool> {
         // 🔒 安全检查：只处理创建超过5分钟的会话，避免误删正在处理的新会话
         let now = Utc::now().naive_utc();
         let session_age = now.signed_duration_since(session.created_at);
@@ -483,7 +485,7 @@ impl SessionManager {
         session_id: &str,
         provider_manager: &OAuthProviderManager,
         token_exchange_client: &TokenExchangeClient,
-    ) -> OAuthResult<Option<String>> {
+    ) -> AuthResult<Option<String>> {
         let auto_refresh_manager = AutoRefreshManager::new(
             self.clone(),
             provider_manager.clone(),
@@ -503,7 +505,7 @@ impl SessionManager {
         provider_manager: &OAuthProviderManager,
         token_exchange_client: &TokenExchangeClient,
         policy: RefreshPolicy,
-    ) -> OAuthResult<Option<String>> {
+    ) -> AuthResult<Option<String>> {
         let auto_refresh_manager = AutoRefreshManager::new(
             self.clone(),
             provider_manager.clone(),

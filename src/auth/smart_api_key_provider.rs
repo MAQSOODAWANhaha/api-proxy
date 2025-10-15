@@ -5,7 +5,7 @@
 
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService;
-use crate::error::{ProxyError, Result};
+use crate::error::Result;
 use crate::{
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
@@ -176,9 +176,9 @@ impl SmartApiKeyProvider {
                     "unsupported_auth_type",
                     &format!("Unsupported auth_type: {auth_type}")
                 );
-                Err(crate::proxy_err!(
-                    auth,
-                    "Unsupported auth_type: {auth_type}"
+                Err(crate::error!(
+                    Authentication,
+                    format!("Unsupported auth_type: {auth_type}")
                 ))
             }
         }
@@ -367,8 +367,8 @@ impl SmartApiKeyProvider {
     /// 降级到使用存储的API密钥
     fn fallback_to_api_key(provider_key: &user_provider_keys::Model) -> Result<CredentialResult> {
         if provider_key.api_key.is_empty() {
-            Err(crate::proxy_err!(
-                auth,
+            Err(crate::error!(
+                Authentication,
                 "OAuth token refresh failed and no fallback API key available"
             ))
         } else {
@@ -442,14 +442,11 @@ impl SmartApiKeyProvider {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(format!("Failed to load provider key: {e:?}"), e)
-            })?
+            .map_err(|e| crate::error!(Database, format!("Failed to load provider key {provider_key_id}: {e}")))?
             .ok_or_else(|| {
-                crate::proxy_err!(
-                    auth,
-                    "Provider key not found or inactive: {}",
-                    provider_key_id
+                crate::error!(
+                    Authentication,
+                    format!("Provider key not found or inactive: {provider_key_id}")
                 )
             })
     }

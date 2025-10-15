@@ -42,16 +42,14 @@ impl ConfigCrypto {
         });
 
         if key_str.len() != 64 {
-            return Err(crate::error::ProxyError::config(
-                "配置加密密钥必须是64个字符的十六进制字符串（32字节）",
-            ));
+            return Err(crate::error!(Config, "配置加密密钥必须是64个字符的十六进制字符串（32字节）"));
         }
 
         let key_bytes = hex::decode(&key_str)
-            .map_err(|e| crate::error::ProxyError::config_with_source("配置加密密钥格式错误", e))?;
+            .map_err(|e| crate::error!(Config, format!("配置加密密钥格式错误: {e}")))?;
 
         if key_bytes.len() != 32 {
-            return Err(crate::error::ProxyError::config("配置加密密钥必须是32字节"));
+            return Err(crate::error!(Config, "配置加密密钥必须是32字节"));
         }
 
         let mut key = [0u8; 32];
@@ -66,12 +64,7 @@ impl ConfigCrypto {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, plaintext.as_bytes())
-            .map_err(|e| {
-                crate::error::ProxyError::config_with_source(
-                    "配置加密失败",
-                    anyhow::anyhow!("AES-GCM encryption failed: {e}"),
-                )
-            })?;
+            .map_err(|e| crate::error!(Config, format!("配置加密失败: AES-GCM encryption failed: {e:?}")))?;
 
         Ok(EncryptedValue {
             data: general_purpose::STANDARD.encode(&ciphertext),
@@ -83,14 +76,14 @@ impl ConfigCrypto {
     pub fn decrypt(&self, encrypted: &EncryptedValue) -> crate::error::Result<String> {
         let ciphertext = general_purpose::STANDARD
             .decode(&encrypted.data)
-            .map_err(|e| crate::error::ProxyError::config_with_source("加密数据格式错误", e))?;
+            .map_err(|e| crate::error!(Config, format!("加密数据格式错误: {e}")))?;
 
         let nonce_bytes = general_purpose::STANDARD
             .decode(&encrypted.nonce)
-            .map_err(|e| crate::error::ProxyError::config_with_source("加密随机数格式错误", e))?;
+            .map_err(|e| crate::error!(Config, format!("加密随机数格式错误: {e}")))?;
 
         if nonce_bytes.len() != 12 {
-            return Err(crate::error::ProxyError::config("加密随机数长度错误"));
+            return Err(crate::error!(Config, "加密随机数长度错误"));
         }
 
         let nonce_bytes: [u8; 12] = nonce_bytes.try_into().unwrap();
@@ -99,16 +92,10 @@ impl ConfigCrypto {
         let plaintext = self
             .cipher
             .decrypt(&nonce, ciphertext.as_ref())
-            .map_err(|e| {
-                crate::error::ProxyError::config_with_source(
-                    "配置解密失败",
-                    anyhow::anyhow!("AES-GCM decryption failed: {e}"),
-                )
-            })?;
+            .map_err(|e| crate::error!(Config, format!("配置解密失败: AES-GCM decryption failed: {e:?}")))?;
 
-        String::from_utf8(plaintext).map_err(|e| {
-            crate::error::ProxyError::config_with_source("解密后的数据不是有效的UTF-8字符串", e)
-        })
+        String::from_utf8(plaintext)
+            .map_err(|e| crate::error!(Config, format!("解密后的数据不是有效的UTF-8字符串: {e}")))
     }
 
     /// 生成新的加密密钥

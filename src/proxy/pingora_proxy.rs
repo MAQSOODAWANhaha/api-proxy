@@ -88,9 +88,8 @@ impl PingoraProxyServer {
             "创建Pingora服务器配置"
         );
         let opt = Self::create_pingora_options();
-        let mut server = Server::new(Some(opt)).map_err(|e| {
-            ProxyError::server_init(format!("Failed to create Pingora server: {e}"))
-        })?;
+        let mut server = Server::new(Some(opt))
+            .map_err(|e| ProxyError::internal_with_source("Failed to create Pingora server", e))?;
 
         linfo!(
             "system",
@@ -165,7 +164,7 @@ impl PingoraProxyServer {
         // 等待服务器任务完成（实际上不会完成，因为 run_forever 不会返回）
         handle
             .await
-            .map_err(|e| ProxyError::server_start(format!("Pingora server task failed: {e}")))?
+            .map_err(|e| ProxyError::internal_with_source("Pingora server task failed", e))?
     }
 
     // TODO: 实现健康检查服务

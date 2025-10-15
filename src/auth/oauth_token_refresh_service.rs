@@ -6,7 +6,7 @@
 
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::types::AuthStatus;
-use crate::error::{ProxyError, Result};
+use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{DateTime, Duration, Utc};
@@ -130,12 +130,7 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::AccessToken.is_not_null())
             .all(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(
-                    format!("Failed to list authorized OAuth sessions: {e:?}"),
-                    e,
-                )
-            })
+            .map_err(|e| crate::error!(Database, Query(e)))
     }
 
     /// 清理过期或孤立的 OAuth 会话记录
@@ -148,12 +143,7 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::CreatedAt.lt(pending_cutoff.naive_utc()))
             .exec(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(
-                    "Failed to delete expired pending OAuth sessions",
-                    e,
-                )
-            })?;
+            .map_err(|e| crate::error!(Database, Query(e)))?;
 
         if delete_pending.rows_affected > 0 {
             linfo!(
@@ -175,9 +165,7 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::UpdatedAt.lt(expired_cutoff.naive_utc()))
             .exec(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source("Failed to delete old expired OAuth sessions", e)
-            })?;
+            .map_err(|e| crate::error!(Database, Query(e)))?;
 
         if delete_expired.rows_affected > 0 {
             linfo!(
@@ -200,12 +188,7 @@ impl OAuthTokenRefreshService {
             .into_tuple::<String>()
             .all(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(
-                    "Failed to load OAuth provider keys for cleanup",
-                    e,
-                )
-            })?
+            .map_err(|e| crate::error!(Database, Query(e)))?
             .into_iter()
             .collect();
 
@@ -213,9 +196,7 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .all(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source("Failed to query authorized OAuth sessions", e)
-            })?;
+            .map_err(|e| crate::error!(Database, Query(e)))?;
 
         let orphan_cutoff = Utc::now() - chrono::Duration::hours(ORPHAN_RETENTION_HOURS);
         let linked_ids = linked_session_ids;
@@ -234,9 +215,7 @@ impl OAuthTokenRefreshService {
                 .filter(oauth_client_sessions::Column::SessionId.is_in(orphan_ids))
                 .exec(&*self.db)
                 .await
-                .map_err(|e| {
-                    ProxyError::database_with_source("Failed to delete orphan OAuth sessions", e)
-                })?;
+                .map_err(|e| crate::error!(Database, Query(e)))?;
             linfo!(
                 "system",
                 LogStage::BackgroundTask,
@@ -261,9 +240,7 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(format!("Failed to load OAuth session: {e:?}"), e)
-            })
+            .map_err(|e| crate::error!(Database, Query(e)))
     }
 
     fn should_refresh_session(session: &oauth_client_sessions::Model, now: DateTime<Utc>) -> bool {
@@ -403,20 +380,17 @@ impl OAuthTokenRefreshService {
         &self,
         session_id: &str,
     ) -> Result<ScheduledTokenRefresh> {
-        let mut session = self.load_session(session_id).await?.ok_or_else(|| {
-            ProxyError::authentication(format!("OAuth session not found: {session_id}"))
-        })?;
+        let mut session = self
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
 
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(ProxyError::authentication(format!(
-                "OAuth session {session_id} is not authorized"
-            )));
+            return Err(crate::error!(Authentication, format!("OAuth session {} is not authorized", session_id)));
         }
 
         if session.refresh_token.is_none() || session.access_token.is_none() {
-            return Err(ProxyError::authentication(format!(
-                "OAuth session {session_id} missing refresh credentials"
-            )));
+            return Err(crate::error!(Authentication, format!("OAuth session {} missing refresh credentials", session_id)));
         }
 
         let now = Utc::now();
@@ -470,9 +444,10 @@ impl OAuthTokenRefreshService {
                 expires_at: DateTime::<Utc>::from_naive_utc_and_offset(session.expires_at, Utc),
             })
         } else {
-            Err(ProxyError::business(format!(
-                "Unable to compute refresh schedule for session {session_id}"
-            )))
+            Err(crate::error!(
+                Internal,
+                format!("Unable to compute refresh schedule for session {session_id}")
+            ))
         }
     }
 
@@ -568,12 +543,8 @@ impl OAuthTokenRefreshService {
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .one(&*self.db)
             .await
-            .map_err(|e| {
-                ProxyError::database_with_source(format!("Failed to find OAuth session: {e:?}"), e)
-            })?
-            .ok_or_else(|| {
-                ProxyError::authentication(format!("OAuth session not found: {session_id}"))
-            })?;
+            .map_err(|e| crate::error!(Database, Query(e)))?
+            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
 
         // 检查是否有有效的访问token
         if session.access_token.is_none() {

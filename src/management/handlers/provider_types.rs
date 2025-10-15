@@ -32,11 +32,9 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
                 "fetch_provider_types_fail",
                 &format!("Failed to fetch provider types: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch provider types: {}",
-                err
-            ));
+            return crate::management::response::app_error(
+                crate::error!(Database, format!("Failed to fetch provider types: {}", err)),
+            );
         }
     };
 

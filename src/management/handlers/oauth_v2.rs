@@ -3,9 +3,10 @@
 //! 提供基于客户端轮询的新OAuth管理API，替代传统的服务器回调方式
 //! `支持公共OAuth凭据和PKCE安全机制`
 
+use crate::error::{auth::OAuthError, ProxyError};
 use crate::auth::oauth_client::session_manager::SessionStatistics;
 use crate::auth::oauth_client::{
-    AuthorizeUrlResponse, OAuthClient, OAuthError, OAuthPollingResponse, OAuthSessionInfo,
+    AuthorizeUrlResponse, OAuthClient, OAuthPollingResponse, OAuthSessionInfo,
     OAuthTokenResponse,
 };
 use crate::logging::{LogComponent, LogStage};
@@ -18,6 +19,10 @@ use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+
+fn business_error(message: impl Into<String>) -> ProxyError {
+    crate::error!(Authentication, message)
+}
 
 /// OAuth v2授权请求
 #[derive(Debug, Deserialize)]
@@ -88,20 +93,24 @@ pub async fn start_authorization(
         .await
     {
         Ok(authorize_response) => response::success(authorize_response),
-        Err(OAuthError::ProviderNotFound(provider)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Unsupported OAuth provider: {}",
-            provider
-        )),
-        Err(e) => {
+        Err(err) => {
+            if let ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::ProviderNotFound(provider),
+            )) = &err
+            {
+                return crate::management::response::app_error(business_error(format!(
+                    "Unsupported OAuth provider: {provider}"
+                )));
+            }
+
             lerror!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "start_auth_fail",
-                &format!("Failed to start OAuth authorization: {e:?}")
+                &format!("Failed to start OAuth authorization: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(internal, "Failed to start authorization"))
+            crate::management::response::app_error(ProxyError::internal("Failed to start authorization"))
         }
     }
 }
@@ -124,8 +133,8 @@ pub async fn poll_session(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(
-            auth,
+        return crate::management::response::app_error(crate::error!(
+            Authentication,
             "Session not found or access denied"
         ));
     }
@@ -133,20 +142,25 @@ pub async fn poll_session(
     // 轮询会话状态
     match oauth_client.poll_session(&query.session_id).await {
         Ok(polling_status) => response::success(polling_status),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Session not found: {}",
-            query.session_id
-        )),
-        Err(e) => {
+        Err(err) => {
+            if let ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::InvalidSession(_),
+            )) = &err
+            {
+                return crate::management::response::app_error(business_error(format!(
+                    "Session not found: {session_id}",
+                    session_id = query.session_id
+                )));
+            }
+
             lerror!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::OAuth,
                 "poll_session_fail",
-                &format!("Failed to poll session: {e:?}")
+                &format!("Failed to poll session: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(internal, "Failed to poll session"))
+            crate::management::response::app_error(ProxyError::internal("Failed to poll session"))
         }
     }
 }
@@ -169,8 +183,8 @@ pub async fn exchange_token(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(
-            auth,
+        return crate::management::response::app_error(crate::error!(
+            Authentication,
             "Session not found or access denied"
         ));
     }
@@ -182,11 +196,11 @@ pub async fn exchange_token(
         LogComponent::OAuth,
         "exchange_token_start",
         &format!(
-            "🔄 开始OAuth令牌交换: user_id={}, session_id={}, auth_code_length={}, auth_code_prefix={}",
-            user_id,
-            request.session_id,
-            request.authorization_code.len(),
-            request
+            "🔄 开始OAuth令牌交换: user_id={user_id}, session_id={session_id}, auth_code_length={auth_code_len}, auth_code_prefix={auth_code_prefix}",
+            user_id = user_id,
+            session_id = request.session_id,
+            auth_code_len = request.authorization_code.len(),
+            auth_code_prefix = request
                 .authorization_code
                 .chars()
                 .take(10)
@@ -200,29 +214,32 @@ pub async fn exchange_token(
         .await
     {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Session not found: {}",
-            request.session_id
-        )),
-        Err(OAuthError::SessionExpired(_)) => {
-            crate::manage_error!(crate::proxy_err!(business, "Session expired"))
-        }
-        Err(OAuthError::TokenExchangeFailed(msg)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Token exchange failed: {}",
-            msg
-        )),
-        Err(e) => {
-            lerror!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "exchange_token_fail",
-                &format!("Failed to exchange token: {e:?}")
-            );
-            crate::manage_error!(crate::proxy_err!(internal, "Failed to exchange token"))
-        }
+        Err(err) => match &err {
+            ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::InvalidSession(_),
+            )) => crate::management::response::app_error(business_error(format!(
+                "Session not found: {session_id}",
+                session_id = request.session_id
+            ))),
+            ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::SessionExpired(_),
+            )) => crate::management::response::app_error(business_error("Session expired")),
+            ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::TokenExchangeFailed(msg),
+            )) => crate::management::response::app_error(business_error(format!(
+                "Token exchange failed: {msg}"
+            ))),
+            _ => {
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "exchange_token_fail",
+                    &format!("Failed to exchange token: {err:?}")
+                );
+                crate::management::response::app_error(ProxyError::internal("Failed to exchange token"))
+            }
+        },
     }
 }
 
@@ -240,19 +257,15 @@ pub async fn list_sessions(
     // 获取用户会话列表
     match oauth_client.list_user_sessions(user_id).await {
         Ok(sessions) => response::success(sessions),
-        Err(e) => {
+        Err(err) => {
             lerror!(
                 "system",
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "list_sessions_fail",
-                &format!("Failed to list sessions: {e:?}")
+                &format!("Failed to list sessions: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to list sessions: {:?}",
-                e
-            ))
+            crate::management::response::app_error(err)
         }
     }
 }
@@ -272,24 +285,24 @@ pub async fn delete_session(
     // 删除会话
     match oauth_client.delete_session(&session_id, user_id).await {
         Ok(()) => response::success("Session deleted successfully"),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Session not found: {}",
-            session_id
-        )),
-        Err(e) => {
+        Err(err) => {
+            if let ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::InvalidSession(_),
+            )) = &err
+            {
+                return crate::management::response::app_error(business_error(format!(
+                    "Session not found: {session_id}"
+                )));
+            }
+
             lerror!(
                 "system",
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "delete_session_fail",
-                &format!("Failed to delete session: {e:?}")
+                &format!("Failed to delete session: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to delete session: {:?}",
-                e
-            ))
+            crate::management::response::app_error(err)
         }
     }
 }
@@ -312,8 +325,8 @@ pub async fn refresh_token(
         .await
         .unwrap_or(false)
     {
-        return crate::manage_error!(crate::proxy_err!(
-            auth,
+        return crate::management::response::app_error(crate::error!(
+            Authentication,
             "Session not found or access denied"
         ));
     }
@@ -321,24 +334,28 @@ pub async fn refresh_token(
     // 刷新令牌
     match oauth_client.refresh_token(&session_id).await {
         Ok(token_response) => response::success(token_response),
-        Err(OAuthError::InvalidSession(_)) => crate::manage_error!(crate::proxy_err!(
-            business,
-            "Session not found: {}",
-            session_id
-        )),
-        Err(OAuthError::TokenExchangeFailed(msg)) => {
-            crate::manage_error!(crate::proxy_err!(business, "Token refresh failed: {}", msg))
-        }
-        Err(e) => {
-            lerror!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "refresh_token_fail",
-                &format!("Failed to refresh token: {e:?}")
-            );
-            crate::manage_error!(crate::proxy_err!(internal, "Failed to refresh token"))
-        }
+        Err(err) => match &err {
+            ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::InvalidSession(_),
+            )) => crate::management::response::app_error(business_error(format!(
+                "Session not found: {session_id}"
+            ))),
+            ProxyError::Authentication(crate::error::auth::AuthError::OAuth(
+                OAuthError::TokenExchangeFailed(msg),
+            )) => crate::management::response::app_error(business_error(format!(
+                "Token refresh failed: {msg}"
+            ))),
+            _ => {
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::OAuth,
+                    "refresh_token_fail",
+                    &format!("Failed to refresh token: {err:?}")
+                );
+                crate::management::response::app_error(ProxyError::internal("Failed to refresh token"))
+            }
+        },
     }
 }
 
@@ -356,19 +373,15 @@ pub async fn get_statistics(
     // 获取统计信息
     match oauth_client.get_session_statistics(user_id).await {
         Ok(statistics) => response::success(statistics),
-        Err(e) => {
+        Err(err) => {
             lerror!(
                 "system",
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "get_stats_fail",
-                &format!("Failed to get statistics: {e:?}")
+                &format!("Failed to get statistics: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to get statistics: {:?}",
-                e
-            ))
+            crate::management::response::app_error(err)
         }
     }
 }
@@ -396,19 +409,15 @@ pub async fn cleanup_expired_sessions(
         Ok(deleted_count) => response::success(json!({
             "deleted_sessions": deleted_count
         })),
-        Err(e) => {
+        Err(err) => {
             lerror!(
                 "system",
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "cleanup_sessions_fail",
-                &format!("Failed to cleanup sessions: {e:?}")
+                &format!("Failed to cleanup sessions: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to cleanup sessions: {:?}",
-                e
-            ))
+            crate::management::response::app_error(err)
         }
     }
 }
@@ -436,19 +445,15 @@ pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse 
                 "providers": providers
             }))
         }
-        Err(e) => {
+        Err(err) => {
             lerror!(
                 "system",
                 LogStage::Internal,
                 LogComponent::OAuth,
                 "list_providers_fail",
-                &format!("Failed to list providers: {e:?}")
+                &format!("Failed to list providers: {err:?}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to list providers: {:?}",
-                e
-            ))
+            crate::management::response::app_error(err)
         }
     }
 }

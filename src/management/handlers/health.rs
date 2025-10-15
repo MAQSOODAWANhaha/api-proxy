@@ -1,8 +1,8 @@
 //! API密钥健康检查相关处理器
 
-use crate::manage_error;
 use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
+use crate::error::ProxyError;
 use crate::{
     lerror,
     logging::{LogComponent, LogStage},
@@ -10,7 +10,6 @@ use crate::{
 };
 use axum::extract::{Path, State};
 use entity::{provider_types, user_provider_keys};
-// use pingora_http::StatusCode; // no longer needed with manage_error!
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
@@ -88,7 +87,7 @@ pub async fn health_check(State(state): State<AppState>) -> axum::response::Resp
                 "db_ping_fail",
                 &format!("Database ping failed: {e}")
             );
-            manage_error!(crate::proxy_err!(database, "数据库连接失败: {}", e))
+            response::app_error(crate::error!(Database, format!("数据库连接失败: {}", e)))
         }
     }
 }
@@ -198,10 +197,9 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
                 "get_api_keys_health_fail",
                 &format!("Failed to get API keys health status: {err}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to retrieve API keys health status: {}",
-                err
+            response::app_error(ProxyError::internal_with_source(
+                "Failed to retrieve API keys health status",
+                err,
             ))
         }
     }
@@ -220,10 +218,9 @@ pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::
                 "get_health_stats_fail",
                 &format!("Failed to get health statistics: {err}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to retrieve health statistics: {}",
-                err
+            response::app_error(ProxyError::internal_with_source(
+                "Failed to retrieve health statistics",
+                err,
             ))
         }
     }
@@ -244,11 +241,9 @@ pub async fn trigger_key_health_check(
                 "trigger_health_check_fail",
                 &format!("Failed to trigger health check for key {key_id}: {err}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to trigger health check for key {}: {}",
-                key_id,
-                err
+            response::app_error(ProxyError::internal_with_source(
+                format!("Failed to trigger health check for key {key_id}"),
+                err,
             ))
         }
     }
@@ -270,11 +265,9 @@ pub async fn mark_key_unhealthy(
                 "mark_key_unhealthy_fail",
                 &format!("Failed to mark key {key_id} as unhealthy: {err}")
             );
-            crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to mark key {} as unhealthy: {}",
-                key_id,
-                err
+            response::app_error(ProxyError::internal_with_source(
+                format!("Failed to mark key {key_id} as unhealthy"),
+                err,
             ))
         }
     }
@@ -282,7 +275,7 @@ pub async fn mark_key_unhealthy(
 
 // 内部实现函数
 
-async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<ApiKeyHealthInfo>> {
+async fn get_api_keys_health_internal(state: &AppState) -> crate::error::Result<Vec<ApiKeyHealthInfo>> {
     // 从数据库获取所有活跃的API密钥
     let active_keys = user_provider_keys::Entity::find()
         .filter(user_provider_keys::Column::IsActive.eq(true))
@@ -357,7 +350,7 @@ async fn get_api_keys_health_internal(state: &AppState) -> anyhow::Result<Vec<Ap
     Ok(health_infos)
 }
 
-async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthCheckStats> {
+async fn get_health_stats_internal(state: &AppState) -> crate::error::Result<HealthCheckStats> {
     let health_infos = get_api_keys_health_internal(state).await?;
 
     let total_keys = health_infos.len();
@@ -418,12 +411,12 @@ async fn get_health_stats_internal(state: &AppState) -> anyhow::Result<HealthChe
 async fn trigger_key_health_check_internal(
     state: &AppState,
     key_id: i32,
-) -> anyhow::Result<crate::scheduler::api_key_health::ApiKeyCheckResult> {
+) -> crate::error::Result<crate::scheduler::api_key_health::ApiKeyCheckResult> {
     // 获取指定的API密钥
     let key = user_provider_keys::Entity::find_by_id(key_id)
         .one(&*state.database)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("API key not found: {key_id}"))?;
+        .ok_or_else(|| crate::error!(Database, "API key not found: {key_id}"))?;
 
     // 使用共享的健康检查器，如果不存在则创建临时的
     let health_checker = state.api_key_health_checker.as_ref().map_or_else(
@@ -437,7 +430,7 @@ async fn mark_key_unhealthy_internal(
     state: &AppState,
     key_id: i32,
     reason: String,
-) -> anyhow::Result<()> {
+) -> crate::error::Result<()> {
     // 使用共享的健康检查器，如果不存在则创建临时的
     let health_checker = state.api_key_health_checker.as_ref().map_or_else(
         || Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),

@@ -1,6 +1,7 @@
 //! # 认证管理处理器
 
 use crate::auth::types::UserInfo as AuthUserInfo;
+use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::{response, server::AppState};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -14,6 +15,10 @@ use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 // remove unused Value
+
+fn business_error(message: impl Into<String>) -> ProxyError {
+    crate::error!(Authentication, message)
+}
 
 /// 登录请求
 #[derive(Debug, Deserialize)]
@@ -71,9 +76,8 @@ pub async fn login(
 ) -> axum::response::Response {
     // 基本输入验证
     if request.username.is_empty() || request.password.is_empty() {
-        return crate::manage_error!(crate::proxy_err!(
-            business,
-            "Username and password cannot be empty"
+        return crate::management::response::app_error(business_error(
+            "Username and password cannot be empty",
         ));
     }
 
@@ -91,7 +95,7 @@ pub async fn login(
                 "login_fail",
                 &format!("Login failed for user {}: {}", request.username, err)
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -112,7 +116,7 @@ pub async fn login(
                     request.username, err
                 )
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -126,7 +130,7 @@ pub async fn login(
                 "parse_user_id_fail",
                 &format!("Failed to parse user id from access token: {err}")
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -140,7 +144,7 @@ pub async fn login(
                 "user_not_found_after_login",
                 &format!("User {user_id} not found after successful login")
             );
-            return crate::manage_error!(crate::proxy_err!(auth, "Invalid username or password"));
+            return crate::management::response::app_error(business_error("Invalid username or password"));
         }
         Err(err) => {
             lerror!(
@@ -150,7 +154,7 @@ pub async fn login(
                 "load_user_info_fail",
                 &format!("Failed to load user info for {user_id}: {err}")
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -222,9 +226,8 @@ pub async fn logout(
                     "invalid_auth_header",
                     &format!("Invalid Authorization header format: {err}")
                 );
-                return crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "Invalid Authorization header format"
+                return crate::management::response::app_error(business_error(
+                    "Invalid Authorization header format",
                 ));
             }
         }
@@ -236,15 +239,12 @@ pub async fn logout(
             "no_auth_header_logout",
             "No Authorization header found in logout request"
         );
-        return crate::manage_error!(crate::proxy_err!(business, "No Authorization header found"));
+        return crate::management::response::app_error(business_error("No Authorization header found"));
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return crate::manage_error!(crate::proxy_err!(
-            business,
-            "Invalid Authorization header format"
-        ));
+        return crate::management::response::app_error(business_error("Invalid Authorization header format"));
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀
@@ -483,7 +483,7 @@ pub async fn refresh_token(
                 "refresh_token_invalid",
                 &format!("Invalid refresh token: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(auth, "刷新令牌无效或已过期"));
+            return crate::management::response::app_error(business_error("刷新令牌无效或已过期"));
         }
     };
 
@@ -498,7 +498,7 @@ pub async fn refresh_token(
                 "refresh_token_user_id_parse_fail",
                 &format!("Failed to parse user id from refresh token: {err}")
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -513,7 +513,7 @@ pub async fn refresh_token(
                 "refresh_token_user_not_found",
                 &format!("User {user_id} not found during token refresh")
             );
-            return crate::manage_error!(crate::proxy_err!(auth, "用户不存在"));
+            return crate::management::response::app_error(business_error("用户不存在"));
         }
         Err(err) => {
             lerror!(
@@ -523,7 +523,7 @@ pub async fn refresh_token(
                 "refresh_token_user_info_fail",
                 &format!("Failed to load user info for {user_id}: {err}")
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 
@@ -549,7 +549,7 @@ pub async fn refresh_token(
                 "refresh_token_generation_fail",
                 &format!("Failed to generate new access token: {err}")
             );
-            return crate::manage_error!(err);
+            return crate::management::response::app_error(err);
         }
     };
 

@@ -8,12 +8,12 @@ use crate::auth::{
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
-use crate::error::Result;
+use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::types::ProviderTypeId;
-use crate::{ldebug, linfo, proxy_err};
+use crate::{ldebug, linfo};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
@@ -156,14 +156,7 @@ impl AuthenticationService {
                         "key" | "access_token" | "api_key" | "apikey" => {
                             return Ok(Authorization {
                                 auth_value: urlencoding::decode(value)
-                                    .map_err(|e| {
-                                        proxy_err!(
-                                            auth,
-                                            "Failed to decode query parameter '{}': {}",
-                                            key,
-                                            e
-                                        )
-                                    })?
+                                    .map_err(|e| crate::error!(Authentication, "Failed to decode query parameter '{}': {}", key, e))?
                                     .to_string(),
                                 source: AuthSource::Query,
                                 location: key.to_string(),
@@ -204,7 +197,7 @@ impl AuthenticationService {
             }
         }
 
-        Err(proxy_err!(auth, "No authentication information found"))
+        Err(crate::error!(Authentication, "No authentication information found"))
     }
 
     /// 2. 检查所有限制
@@ -216,7 +209,7 @@ impl AuthenticationService {
         if let Some(expires_at) = &user_api.expires_at
             && chrono::Utc::now().naive_utc() > *expires_at
         {
-            return Err(proxy_err!(rate_limit, "API has expired"));
+            return Err(crate::error!(Authentication, "API has expired"));
         }
 
         let rl = DistributedRateLimiter::new(self.cache.clone());
@@ -228,13 +221,13 @@ impl AuthenticationService {
             let outcome = rl
                 .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
                 .await
-                .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+                .map_err(|e| {
+                    ProxyError::internal_with_source("Rate limiter error", e)
+                })?;
             if !outcome.allowed {
-                return Err(proxy_err!(
-                    rate_limit,
-                    "Rate limit exceeded: {} requests per minute",
-                    rate_limit
-                ));
+                return Err(ProxyError::internal(format!(
+                    "Rate limit exceeded: {rate_limit} requests per minute"
+                )));
             }
         }
 
@@ -244,13 +237,13 @@ impl AuthenticationService {
             let outcome = rl
                 .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
                 .await
-                .map_err(|e| proxy_err!(internal, "Rate limiter error: {}", e))?;
+                .map_err(|e| {
+                    ProxyError::internal_with_source("Rate limiter error", e)
+                })?;
             if !outcome.allowed {
-                return Err(proxy_err!(
-                    rate_limit,
-                    "Daily request limit exceeded: {} requests per day",
-                    daily_limit
-                ));
+                return Err(ProxyError::internal(format!(
+                    "Daily request limit exceeded: {daily_limit} requests per day"
+                )));
             }
         }
 
@@ -274,7 +267,7 @@ impl AuthenticationService {
         let provider_type = ProviderTypes::find_by_id(provider_type_id)
             .one(&*self.db)
             .await?
-            .ok_or_else(|| proxy_err!(internal, "Provider type not found"))?;
+            .ok_or_else(|| ProxyError::internal("Provider type not found"))?;
         let _ = self
             .cache
             .provider()
@@ -329,11 +322,10 @@ impl AuthenticationService {
                     .await?;
                 Ok(ResolvedCredential::OAuthAccessToken(token))
             }
-            _ => Err(proxy_err!(
-                internal,
+            _ => Err(ProxyError::internal(format!(
                 "Unsupported auth type: {}",
                 selected_backend.auth_type
-            )),
+            ))),
         }
     }
 
@@ -347,20 +339,16 @@ impl AuthenticationService {
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
             .await?
-            .ok_or_else(|| proxy_err!(auth, "OAuth session not found: {}", session_id))?;
+            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(proxy_err!(
-                auth,
-                "OAuth session {} is not authorized",
-                session_id
-            ));
+            return Err(crate::error!(Authentication, format!("OAuth session {} is not authorized", session_id)));
         }
         let token = session
             .access_token
             .clone()
-            .ok_or_else(|| proxy_err!(auth, "OAuth session has no access_token"))?;
+            .ok_or_else(|| crate::error!(Authentication, "OAuth session has no access_token"))?;
         if session.expires_at <= chrono::Utc::now().naive_utc() {
-            return Err(proxy_err!(auth, "OAuth access token expired"));
+            return Err(crate::error!(Authentication, "OAuth access token expired"));
         }
         Ok(token)
     }

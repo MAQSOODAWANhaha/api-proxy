@@ -8,6 +8,7 @@
     clippy::too_many_lines
 )]
 
+use crate::error::{ProxyError, auth::AuthError};
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
@@ -25,6 +26,10 @@ use serde_json::json;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use uuid::Uuid;
+
+fn business_error(message: impl Into<String>) -> ProxyError {
+    ProxyError::Authentication(AuthError::Message(message.into()))
+}
 
 /// 用户服务API查询参数
 #[derive(Debug, Deserialize)]
@@ -241,10 +246,9 @@ pub async fn get_user_service_cards(
                 "count_service_apis_fail",
                 &format!("Failed to count user service APIs: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to count user service APIs: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count user service APIs: {}", err)
             ));
         }
     };
@@ -265,10 +269,9 @@ pub async fn get_user_service_cards(
                 "count_active_service_apis_fail",
                 &format!("Failed to count active user service APIs: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to count active user service APIs: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count active user service APIs: {}", err)
             ));
         }
     };
@@ -288,10 +291,9 @@ pub async fn get_user_service_cards(
                 "count_user_requests_fail",
                 &format!("Failed to count user requests: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to count user requests: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count user requests: {}", err)
             ));
         }
     };
@@ -354,10 +356,9 @@ pub async fn list_user_service_keys(
                 "count_service_apis_fail",
                 &format!("Failed to count user service APIs: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to count user service APIs: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count user service APIs: {}", err)
             ));
         }
     };
@@ -392,10 +393,9 @@ pub async fn list_user_service_keys(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service APIs: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch user service APIs: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch user service APIs: {}", err)
             ));
         }
     };
@@ -523,7 +523,9 @@ pub async fn create_user_service_key(
 
     // 验证输入
     if request.user_provider_keys_ids.is_empty() {
-        return crate::manage_error!(crate::proxy_err!(business, "至少需要选择一个提供商API密钥"));
+        return crate::management::response::app_error(business_error(
+            "至少需要选择一个提供商API密钥",
+        ));
     }
 
     let db = state.database.as_ref();
@@ -537,7 +539,7 @@ pub async fn create_user_service_key(
     {
         Ok(Some(pt)) => pt,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(business, "无效的服务商类型"));
+            return crate::management::response::app_error(business_error("无效的服务商类型"));
         }
         Err(err) => {
             lerror!(
@@ -547,10 +549,9 @@ pub async fn create_user_service_key(
                 "query_provider_type_fail",
                 &format!("Failed to query provider type: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to query provider type: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to query provider type: {}", err)
             ));
         }
     };
@@ -572,20 +573,18 @@ pub async fn create_user_service_key(
                 "query_provider_keys_fail",
                 &format!("Failed to query provider keys: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to query provider keys: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to query provider keys: {}", err)
             ));
         }
     };
 
     if valid_provider_keys.len() != request.user_provider_keys_ids.len() {
-        return crate::manage_error!(crate::proxy_err!(
-            business,
+        return crate::management::response::app_error(business_error(format!(
             "部分提供商API密钥不存在、不属于该用户或不属于{}类型",
             provider_type.display_name
-        ));
+        )));
     }
 
     // 生成唯一的API密钥
@@ -596,9 +595,8 @@ pub async fn create_user_service_key(
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
             Err(_) => {
-                return crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "过期时间格式错误，请使用ISO 8601格式"
+                return crate::management::response::app_error(business_error(
+                    "过期时间格式错误，请使用ISO 8601格式",
                 ));
             }
         }
@@ -650,10 +648,9 @@ pub async fn create_user_service_key(
                 "insert_service_api_fail",
                 &format!("Failed to insert user service API: {e}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to create API Key: {}",
-                e
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to create API Key: {}", e)
             ));
         }
     };
@@ -683,7 +680,7 @@ pub async fn get_user_service_key(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -698,11 +695,9 @@ pub async fn get_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -712,10 +707,9 @@ pub async fn get_user_service_key(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch user service API: {}", err)
             ));
         }
     };
@@ -724,11 +718,10 @@ pub async fn get_user_service_key(
     let provider_type = match ProviderType::find_by_id(api.provider_type_id).one(db).await {
         Ok(Some(pt)) => pt,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
+            return crate::management::response::app_error(business_error(format!(
                 "Provider type not found: {}",
                 api.provider_type_id
-            ));
+            )));
         }
         Err(err) => {
             lerror!(
@@ -738,10 +731,9 @@ pub async fn get_user_service_key(
                 "query_provider_type_fail",
                 &format!("Failed to fetch provider type: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch provider type: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider type: {}", err)
             ));
         }
     };
@@ -797,7 +789,7 @@ pub async fn update_user_service_key(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -812,11 +804,9 @@ pub async fn update_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -826,10 +816,9 @@ pub async fn update_user_service_key(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch API Key: {}", err)
             ));
         }
     };
@@ -839,9 +828,8 @@ pub async fn update_user_service_key(
         match chrono::DateTime::parse_from_rfc3339(expires_str) {
             Ok(dt) => Some(dt.naive_utc()),
             Err(_) => {
-                return crate::manage_error!(crate::proxy_err!(
-                    business,
-                    "过期时间格式错误，请使用ISO 8601格式"
+                return crate::management::response::app_error(business_error(
+                    "过期时间格式错误，请使用ISO 8601格式",
                 ));
             }
         }
@@ -911,10 +899,9 @@ pub async fn update_user_service_key(
                 "update_service_api_fail",
                 &format!("Failed to update user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to update API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to update API Key: {}", err)
             ));
         }
     };
@@ -939,7 +926,7 @@ pub async fn delete_user_service_key(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -953,11 +940,9 @@ pub async fn delete_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -967,10 +952,9 @@ pub async fn delete_user_service_key(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch API Key: {}", err)
             ));
         }
     };
@@ -986,16 +970,17 @@ pub async fn delete_user_service_key(
                 "delete_service_api_fail",
                 &format!("Failed to delete user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to delete API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to delete API Key: {}", err)
             ));
         }
     };
 
     if delete_result.rows_affected == 0 {
-        return crate::manage_error!(crate::proxy_err!(internal, "Failed to delete API Key"));
+        return crate::management::response::app_error(ProxyError::internal(
+            "Failed to delete API Key".to_string(),
+        ));
     }
 
     response::success_with_message(serde_json::Value::Null, "API Key删除成功")
@@ -1013,7 +998,7 @@ pub async fn get_user_service_key_usage(
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -1027,11 +1012,9 @@ pub async fn get_user_service_key_usage(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -1041,10 +1024,9 @@ pub async fn get_user_service_key_usage(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch API Key: {}", err)
             ));
         }
     };
@@ -1112,10 +1094,9 @@ pub async fn get_user_service_key_usage(
                 "fetch_tracings_fail",
                 &format!("Failed to fetch proxy tracings: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch usage statistics: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch usage statistics: {}", err)
             ));
         }
     };
@@ -1194,7 +1175,7 @@ pub async fn regenerate_user_service_key(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -1208,11 +1189,9 @@ pub async fn regenerate_user_service_key(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -1222,10 +1201,9 @@ pub async fn regenerate_user_service_key(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch API Key: {}", err)
             ));
         }
     };
@@ -1251,10 +1229,9 @@ pub async fn regenerate_user_service_key(
                 "regenerate_key_fail",
                 &format!("Failed to regenerate API key: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to regenerate API key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to regenerate API key: {}", err)
             ));
         }
     };
@@ -1279,7 +1256,7 @@ pub async fn update_user_service_key_status(
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     if api_id <= 0 {
-        return crate::manage_error!(crate::proxy_err!(business, "Invalid API ID"));
+        return crate::management::response::app_error(business_error("Invalid API ID"));
     }
 
     let db = state.database.as_ref();
@@ -1293,11 +1270,9 @@ pub async fn update_user_service_key_status(
     {
         Ok(Some(api)) => api,
         Ok(None) => {
-            return crate::manage_error!(crate::proxy_err!(
-                business,
-                "API Key not found: {}",
-                api_id
-            ));
+            return crate::management::response::app_error(business_error(format!(
+                "API Key not found: {api_id}"
+            )));
         }
         Err(err) => {
             lerror!(
@@ -1307,10 +1282,9 @@ pub async fn update_user_service_key_status(
                 "fetch_service_apis_fail",
                 &format!("Failed to fetch user service API: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to fetch API Key: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch API Key: {}", err)
             ));
         }
     };
@@ -1333,10 +1307,9 @@ pub async fn update_user_service_key_status(
                 "update_key_status_fail",
                 &format!("Failed to update API key status: {err}")
             );
-            return crate::manage_error!(crate::proxy_err!(
-                database,
-                "Failed to update API key status: {}",
-                err
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to update API key status: {}", err)
             ));
         }
     };

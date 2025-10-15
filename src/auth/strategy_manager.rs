@@ -85,7 +85,10 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            ))?;
 
         strategy.validate_config(config)
     }
@@ -99,7 +102,10 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            ))?;
 
         strategy.authenticate(credentials).await
     }
@@ -113,7 +119,10 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            ))?;
 
         strategy.refresh(refresh_token).await
     }
@@ -123,7 +132,10 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            ))?;
 
         strategy.revoke(token).await
     }
@@ -138,7 +150,7 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(Authentication, ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))))?;
 
         strategy.get_auth_url(state, redirect_uri).await
     }
@@ -153,7 +165,7 @@ impl AuthStrategyManager {
         let strategy = self
             .strategies
             .get(auth_type)
-            .ok_or_else(|| crate::proxy_err!(auth, "不支持的认证类型: {:?}", auth_type))?;
+            .ok_or_else(|| crate::error!(Authentication, ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))))?;
 
         strategy.handle_callback(code, state).await
     }

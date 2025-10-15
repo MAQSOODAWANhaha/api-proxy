@@ -69,16 +69,16 @@ impl ConfigWatcher {
                     );
                 }
             })
-            .map_err(|e| crate::error::ProxyError::config_with_source("创建文件监控器失败", e))?;
+            .map_err(|e| crate::error!(Config, format!("创建文件监控器失败: {e}")))?;
 
         // 监控配置文件目录
         let config_dir = config_path
             .parent()
-            .ok_or_else(|| crate::error::ProxyError::config("无法获取配置文件目录"))?;
+            .ok_or_else(|| crate::error!(Config, "无法获取配置文件目录"))?;
 
         watcher
             .watch(config_dir, RecursiveMode::NonRecursive)
-            .map_err(|e| crate::error::ProxyError::config_with_source("启动文件监控失败", e))?;
+            .map_err(|e| crate::error!(Config, format!("启动文件监控失败: {e}")))?;
 
         linfo!(
             "system",
@@ -129,7 +129,7 @@ impl ConfigWatcher {
                 let _ = self
                     .event_sender
                     .send(ConfigEvent::ReloadFailed(error_msg.clone()));
-                Err(crate::error::ProxyError::config(error_msg))
+                Err(crate::error!(Config, error_msg))
             }
         }
     }
@@ -218,18 +218,11 @@ impl ConfigWatcher {
 /// 加载配置文件
 fn load_config_from_file(path: &Path) -> crate::error::Result<AppConfig> {
     if !path.exists() {
-        return Err(crate::error::ProxyError::config(format!(
-            "配置文件不存在: {}",
-            path.display()
-        )));
+        return Err(crate::error!(Config, format!("配置文件不存在: {}", path.display())));
     }
 
-    let config_content = std::fs::read_to_string(path).map_err(|e| {
-        crate::error::ProxyError::config_with_source(
-            format!("读取配置文件失败: {}", path.display()),
-            e,
-        )
-    })?;
+    let config_content = std::fs::read_to_string(path)
+        .map_err(|e| crate::error!(Config, format!("读取配置文件失败: {}: {}", path.display(), e)))?;
 
     let config: AppConfig = toml::from_str(&config_content)?;
 

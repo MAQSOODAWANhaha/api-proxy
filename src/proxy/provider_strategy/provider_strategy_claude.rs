@@ -3,9 +3,8 @@
 //! 处理 Claude API 特有的逻辑，包括 client ID 替换以保护隐私
 
 use super::ProviderStrategy;
-use crate::error::Result;
+use crate::error::{ProxyError, Result};
 use crate::proxy::ProxyContext;
-use crate::proxy_err;
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -84,17 +83,15 @@ impl ProviderStrategy for ClaudeStrategy {
         let host = if let Some(provider) = &ctx.provider_type {
             provider.base_url.clone()
         } else {
-            return Err(proxy_err!(
-                internal,
-                "No provider configuration found for Claude"
+            return Err(ProxyError::internal(
+                "No provider configuration found for Claude",
             ));
         };
 
         if let Err(e) = upstream_request.insert_header("host", &host) {
-            return Err(proxy_err!(
-                internal,
-                "Failed to set host header for Claude: {}",
-                e
+            return Err(ProxyError::internal_with_source(
+                "Failed to set host header for Claude",
+                e,
             ));
         }
 

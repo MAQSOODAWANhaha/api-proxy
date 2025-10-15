@@ -2,6 +2,7 @@
 //!
 //! 基于 `proxy_tracing` 表的日志查询、统计和分析功能
 
+use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
@@ -209,11 +210,9 @@ pub async fn get_dashboard_stats(
                 "dashboard_stats_fail",
                 &format!("获取日志仪表板统计失败: {e}")
             );
-            crate::management::response::app_error(crate::proxy_err!(
-                database,
-                "获取统计数据失败: {}",
-                e
-            ))
+            crate::management::response::app_error(
+                crate::error!(Database, format!("获取统计数据失败: {}", e)),
+            )
         }
     }
 }
@@ -318,11 +317,9 @@ pub async fn get_traces_list(
                 "get_traces_fail",
                 &format!("获取日志列表失败: {e}")
             );
-            crate::management::response::app_error(crate::proxy_err!(
-                database,
-                "获取日志列表失败: {}",
-                e
-            ))
+            crate::management::response::app_error(
+                crate::error!(Database, format!("获取日志列表失败: {}", e)),
+            )
         }
     }
 }
@@ -578,11 +575,9 @@ pub async fn get_trace_detail(
 ) -> impl IntoResponse {
     match fetch_trace_detail(&state.database, id).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
-        Ok(None) => crate::management::response::app_error(crate::proxy_err!(
-            business,
-            "ProxyTrace not found: {}",
-            id
-        )),
+        Ok(None) => crate::management::response::app_error(ProxyError::internal(format!(
+            "ProxyTrace not found: {id}"
+        ))),
         Err(e) => {
             lerror!(
                 "system",
@@ -591,11 +586,9 @@ pub async fn get_trace_detail(
                 "get_trace_detail_fail",
                 &format!("获取日志详情失败: {e}")
             );
-            crate::management::response::app_error(crate::proxy_err!(
-                database,
-                "获取日志详情失败: {}",
-                e
-            ))
+            crate::management::response::app_error(
+                crate::error!(Database, format!("获取日志详情失败: {}", e)),
+            )
         }
     }
 }
@@ -692,11 +685,9 @@ pub async fn get_logs_analytics(
                 "analytics_fail",
                 &format!("获取日志统计分析失败: {e}")
             );
-            crate::management::response::app_error(crate::proxy_err!(
-                database,
-                "获取统计分析失败: {}",
-                e
-            ))
+            crate::management::response::app_error(
+                crate::error!(Database, format!("获取统计分析失败: {}", e)),
+            )
         }
     }
 }

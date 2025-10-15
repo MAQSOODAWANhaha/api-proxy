@@ -9,7 +9,7 @@
 use crate::auth::oauth_token_refresh_service::{
     OAuthTokenRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
 };
-use crate::error::{ProxyError, Result};
+use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{DateTime, Duration, Utc};
@@ -113,7 +113,7 @@ impl OAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::Running) {
-            return Err(ProxyError::business("Task is already running"));
+            crate::bail!(Internal, "Task is already running");
         }
 
         // 启动前执行一次全局扫描
@@ -156,7 +156,7 @@ impl OAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::NotStarted | TaskState::Stopped) {
-            return Err(ProxyError::business("Task is not running"));
+            crate::bail!(Internal, "Task is not running");
         }
 
         // 发送停止信号
@@ -187,7 +187,7 @@ impl OAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Running) {
-            return Err(ProxyError::business("Task is not running"));
+            crate::bail!(Internal, "Task is not running");
         }
 
         *state = TaskState::Paused;
@@ -209,7 +209,7 @@ impl OAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Paused) {
-            return Err(ProxyError::business("Task is not paused"));
+            crate::bail!(Internal, "Task is not paused");
         }
 
         *state = TaskState::Running;
@@ -253,13 +253,13 @@ impl OAuthTokenRefreshTask {
             guard
                 .as_ref()
                 .cloned()
-                .ok_or_else(|| ProxyError::business("Refresh task is not running"))?
+                .ok_or_else(|| crate::error!(Internal, "Refresh task is not running"))?
         };
 
         sender
             .send(RefreshCommand::Add(schedule))
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to enqueue refresh schedule: {e}")))
+            .map_err(|e| crate::error!(Internal, "Failed to enqueue refresh schedule", e))
     }
 
     /// 注册会话刷新（计算计划并入队）
@@ -275,13 +275,13 @@ impl OAuthTokenRefreshTask {
             guard
                 .as_ref()
                 .cloned()
-                .ok_or_else(|| ProxyError::business("Refresh task is not running"))?
+                .ok_or_else(|| crate::error!(Internal, "Refresh task is not running"))?
         };
 
         sender
             .send(RefreshCommand::Remove(session_id.to_string()))
             .await
-            .map_err(|e| ProxyError::internal(format!("Failed to remove refresh schedule: {e}")))
+            .map_err(|e| crate::error!(Internal, "Failed to remove refresh schedule", e))
     }
 
     /// 获取任务状态

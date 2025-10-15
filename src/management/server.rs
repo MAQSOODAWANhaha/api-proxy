@@ -14,7 +14,7 @@ use crate::config::{AppConfig, ProviderConfigManager};
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
-use anyhow::Result;
+use crate::error::Result;
 use axum::Router;
 use axum::routing::get;
 // use axum::http::StatusCode; // not needed with manage_error!
@@ -229,11 +229,11 @@ impl ManagementServer {
             if config.cors_origins.contains(&"*".to_string()) {
                 cors_layer = cors_layer.allow_origin(Any);
             } else {
-                let origins: Result<Vec<_>, _> = config
+                let origins = config
                     .cors_origins
                     .iter()
                     .map(|origin| origin.parse::<axum::http::HeaderValue>())
-                    .collect();
+                    .collect::<std::result::Result<Vec<_>, axum::http::header::InvalidHeaderValue>>();
 
                 match origins {
                     Ok(origins) => {
@@ -271,7 +271,14 @@ impl ManagementServer {
 
     /// 启动服务器
     pub async fn serve(self) -> Result<()> {
-        let addr = SocketAddr::new(self.config.bind_address.parse()?, self.config.port);
+        let bind_address = self.config.bind_address.clone();
+        let ip = bind_address
+            .parse::<std::net::IpAddr>()
+            .map_err(|e| crate::error!(
+                Config,
+                format!("Invalid management bind address '{bind_address}': {e}")
+            ))?;
+        let addr = SocketAddr::new(ip, self.config.port);
 
         linfo!(
             "system",
@@ -289,7 +296,7 @@ impl ManagementServer {
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("Management server error: {e}"))?;
+        .map_err(|e| crate::error!(Network, format!("Management server error: {e}")))?;
 
         Ok(())
     }

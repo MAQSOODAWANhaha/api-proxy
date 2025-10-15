@@ -3,7 +3,7 @@
 //! 企业级 AI 服务代理平台 - 基于 Pingora 的高性能代理服务
 
 use api_proxy::{
-    ProxyError, Result,
+    Result,
     config::ConfigManager,
     dual_port_setup, lerror, linfo,
     logging::{self, LogComponent, LogStage},
@@ -21,10 +21,7 @@ async fn main() -> Result<()> {
     // 执行数据初始化（数据库迁移等）
     run_data_initialization()
         .await
-        .map_err(|e| ProxyError::Database {
-            message: format!("数据初始化失败: {e}"),
-            source: Some(e),
-        })?;
+        .map_err(|e| api_proxy::error!(Database, "数据初始化失败: {}", e))?;
 
     // 启动服务
     linfo!(
@@ -57,7 +54,7 @@ async fn main() -> Result<()> {
 
 /// 数据初始化函数
 #[allow(clippy::cognitive_complexity)]
-async fn run_data_initialization() -> anyhow::Result<()> {
+async fn run_data_initialization() -> Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -69,12 +66,12 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     // 获取配置并初始化数据库连接
     let config_manager = ConfigManager::new()
         .await
-        .map_err(|e| anyhow::anyhow!("配置管理器初始化失败: {e}"))?;
+        .map_err(|e| api_proxy::error!(Config, format!("配置管理器初始化失败: {e}")))?;
     let config = config_manager.get_config().await;
 
     let db = api_proxy::database::init_database(&config.database.url)
         .await
-        .map_err(|e| anyhow::anyhow!("数据库连接失败: {e}"))?;
+        .map_err(|e| api_proxy::error!(Database, format!("数据库连接失败: {e}")))?;
 
     // 首先运行数据库迁移，确保表结构存在
     linfo!(
@@ -86,7 +83,7 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     );
     api_proxy::database::run_migrations(&db)
         .await
-        .map_err(|e| anyhow::anyhow!("数据库迁移失败: {e}"))?;
+        .map_err(|e| api_proxy::error!(Database, format!("数据库迁移失败: {e}")))?;
 
     // 检查数据完整性并按需初始化
     linfo!(
@@ -98,7 +95,7 @@ async fn run_data_initialization() -> anyhow::Result<()> {
     );
     api_proxy::database::ensure_model_pricing_data(&db)
         .await
-        .map_err(|e| anyhow::anyhow!("数据完整性检查失败: {e}"))?;
+        .map_err(|e| api_proxy::error!(Database, format!("数据完整性检查失败: {e}")))?;
 
     linfo!(
         "system",

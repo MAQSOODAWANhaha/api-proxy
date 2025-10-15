@@ -7,7 +7,7 @@ use crate::{
     logging::{LogComponent, LogStage},
     lwarn,
 };
-use anyhow::Result;
+use crate::error::Result;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use sea_orm::{DatabaseConnection, EntityTrait};
@@ -232,7 +232,7 @@ impl ApiKeyHealthChecker {
             .one(&*self.db)
             .await?
             .ok_or_else(|| {
-                anyhow::anyhow!("Provider type {} not found", key_model.provider_type_id)
+                crate::error!(Database, "Provider type {} not found", key_model.provider_type_id)
             })?;
 
         ldebug!(
@@ -430,7 +430,7 @@ impl ApiKeyHealthChecker {
     }
 
     /// 分类错误类型
-    fn categorize_error(error: &anyhow::Error) -> ApiKeyErrorCategory {
+    fn categorize_error(error: &crate::error::ProxyError) -> ApiKeyErrorCategory {
         let error_string = error.to_string().to_lowercase();
 
         if error_string.contains("unauthorized") || error_string.contains("invalid") {
@@ -619,7 +619,7 @@ impl ApiKeyHealthChecker {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(&*self.db)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {key_id}"))?
+                .ok_or_else(|| crate::error!(Database, "API密钥不存在: {key_id}"))?
                 .into();
 
         // 更新健康状态字段
@@ -769,7 +769,7 @@ impl ApiKeyHealthChecker {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(&*self.db)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("API密钥不存在: {key_id}"))?
+                .ok_or_else(|| crate::error!(Database, "API密钥不存在: {key_id}"))?
                 .into();
 
         // 更新健康状态字段
@@ -966,13 +966,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_categorization() {
-        let error = anyhow::anyhow!("unauthorized access");
+        let error = crate::error!(Network, "unauthorized access");
         assert_eq!(
             ApiKeyHealthChecker::categorize_error(&error),
             ApiKeyErrorCategory::InvalidKey
         );
 
-        let error = anyhow::anyhow!("rate limit exceeded");
+        let error = crate::error!(Network, "rate limit exceeded");
         assert_eq!(
             ApiKeyHealthChecker::categorize_error(&error),
             ApiKeyErrorCategory::QuotaExceeded
