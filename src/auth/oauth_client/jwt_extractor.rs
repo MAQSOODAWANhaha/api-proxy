@@ -15,14 +15,15 @@ use std::collections::HashMap;
 pub struct OpenAIAuthInfo {
     /// `ChatGPT` 账户 ID
     pub chatgpt_account_id: String,
-    /// `ChatGPT` 账户用户 ID
-    pub chatgpt_account_user_id: Option<String>,
     /// `ChatGPT` 计划类型
     pub chatgpt_plan_type: Option<String>,
     /// `ChatGPT` 用户 ID
     pub chatgpt_user_id: Option<String>,
     /// 用户 ID
     pub user_id: Option<String>,
+    /// 其他声明
+    #[serde(flatten)]
+    pub other: HashMap<String, serde_json::Value>,
 }
 
 /// `OpenAI` JWT Payload 结构
