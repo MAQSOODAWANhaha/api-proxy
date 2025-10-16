@@ -5,7 +5,7 @@
 
 use crate::auth::oauth_client::OAuthError;
 use crate::logging::{LogComponent, LogStage};
-use crate::{ldebug, lwarn};
+use crate::{linfo, lwarn};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ impl JWTParser {
 
         // 提取 OpenAI 认证信息
         if let Some(openai_auth) = token_data.claims.openai_auth {
-            ldebug!(
+            linfo!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::OAuth,
