@@ -77,8 +77,7 @@ impl CacheClient {
             &format!("正在连接 Redis 服务器: {}:{}", config.host, config.port)
         );
 
-        let client =
-            Client::open(config.build_url()).context("创建 Redis 客户端失败")?;
+        let client = Client::open(config.build_url()).context("创建 Redis 客户端失败")?;
 
         let connection_manager = ConnectionManager::new(client)
             .await
@@ -155,8 +154,7 @@ impl CacheClient {
             .with_context(|| format!("获取缓存失败: {key}"))?;
 
         if let Some(json_str) = result {
-            let value =
-                serde_json::from_str(&json_str).context("反序列化缓存值失败")?;
+            let value = serde_json::from_str(&json_str).context("反序列化缓存值失败")?;
             ldebug!(
                 "system",
                 LogStage::Cache,

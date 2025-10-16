@@ -9,10 +9,7 @@ pub enum SchedulerError {
     KeyNotFound { key_id: i32 },
 
     #[error("健康检查失败: {reason}")]
-    HealthCheckFailed {
-        key_id: i32,
-        reason: String,
-    },
+    HealthCheckFailed { key_id: i32, reason: String },
 
     #[error("无效的调度策略: {0}")]
     InvalidStrategy(String),

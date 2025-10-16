@@ -112,8 +112,7 @@ impl CacheFacade {
         T: Serialize + Sync,
     {
         let strategy = CacheStrategies::for_key(key);
-        let json_value =
-            serde_json::to_string(value).context("序列化缓存值失败")?;
+        let json_value = serde_json::to_string(value).context("序列化缓存值失败")?;
 
         // 验证值是否符合策略要求
         if !strategy.validate_value(&json_value) {

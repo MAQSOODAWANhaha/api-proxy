@@ -233,7 +233,8 @@ impl ManagementServer {
                     .cors_origins
                     .iter()
                     .map(|origin| origin.parse::<axum::http::HeaderValue>())
-                    .collect::<std::result::Result<Vec<_>, axum::http::header::InvalidHeaderValue>>();
+                    .collect::<std::result::Result<Vec<_>, axum::http::header::InvalidHeaderValue>>(
+                    );
 
                 match origins {
                     Ok(origins) => {
@@ -272,12 +273,12 @@ impl ManagementServer {
     /// 启动服务器
     pub async fn serve(self) -> Result<()> {
         let bind_address = self.config.bind_address.clone();
-        let ip = bind_address
-            .parse::<std::net::IpAddr>()
-            .map_err(|e| crate::error!(
+        let ip = bind_address.parse::<std::net::IpAddr>().map_err(|e| {
+            crate::error!(
                 Config,
                 format!("Invalid management bind address '{bind_address}': {e}")
-            ))?;
+            )
+        })?;
         let addr = SocketAddr::new(ip, self.config.port);
 
         linfo!(

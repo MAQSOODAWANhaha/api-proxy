@@ -3,11 +3,13 @@
 //! 使用 CacheManager（UnifiedCacheManager） 的 `incr` + `expire` 实现跨实例一致的 QPS/日配额计数。
 //! 先提供最小实现与接口；集成到 `ApiKeyManager` 可作为后续任务。
 
-use std::time::Duration;
-
-use crate::error::Result;
-
 use crate::cache::{CacheManager, keys::CacheKeyBuilder};
+use crate::error::Result;
+use entity::proxy_tracing;
+use sea_orm::prelude::Decimal;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// 分布式速率限制检查结果
 #[derive(Debug, Clone)]
@@ -20,12 +22,14 @@ pub struct DistRateLimitOutcome {
 
 /// 简单的分布式限流器
 pub struct DistributedRateLimiter {
-    cache: std::sync::Arc<CacheManager>,
+    cache: Arc<CacheManager>,
+    db: Arc<DatabaseConnection>,
 }
 
 impl DistributedRateLimiter {
-    pub const fn new(cache: std::sync::Arc<CacheManager>) -> Self {
-        Self { cache }
+    /// 创建新的限流器实例，要求提供缓存与数据库
+    pub const fn new(cache: Arc<CacheManager>, db: Arc<DatabaseConnection>) -> Self {
+        Self { cache, db }
     }
 
     /// 以“用户+端点”为维度的每分钟请求限制
@@ -88,6 +92,66 @@ impl DistributedRateLimiter {
             ttl_seconds: ttl as i64,
         })
     }
+
+    /// 基于数据库检查每日Token限制
+    pub async fn check_daily_token_limit_db(&self, user_api_id: i32, limit: i64) -> Result<()> {
+        let now = chrono::Utc::now();
+        let start_of_day = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+
+        let current_tokens: Option<i64> = proxy_tracing::Entity::find()
+            .select_only()
+            .column_as(proxy_tracing::Column::TokensTotal.sum(), "total_tokens")
+            .filter(proxy_tracing::Column::UserServiceApiId.eq(user_api_id))
+            .filter(proxy_tracing::Column::CreatedAt.gte(start_of_day))
+            .into_tuple::<Option<i64>>()
+            .one(self.db.as_ref())
+            .await?
+            .unwrap_or_default();
+
+        let current_tokens = current_tokens.unwrap_or(0);
+
+        if current_tokens >= limit {
+            return Err(crate::error!(
+                Authentication,
+                "Daily token limit reached (limit = {}, current = {})",
+                limit,
+                current_tokens
+            ));
+        }
+        Ok(())
+    }
+
+    /// 基于数据库检查每日成本限制
+    pub async fn check_daily_cost_limit_db(&self, user_api_id: i32, limit: Decimal) -> Result<()> {
+        let now = chrono::Utc::now();
+        let start_of_day = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+
+        let current_cost: Option<f64> = proxy_tracing::Entity::find()
+            .select_only()
+            .column_as(proxy_tracing::Column::Cost.sum(), "total_cost")
+            .filter(proxy_tracing::Column::UserServiceApiId.eq(user_api_id))
+            .filter(proxy_tracing::Column::CreatedAt.gte(start_of_day))
+            .into_tuple::<Option<f64>>()
+            .one(self.db.as_ref())
+            .await?
+            .unwrap_or_default();
+
+        let current_cost = current_cost.unwrap_or(0.0);
+        let limit_value = limit
+            .to_string()
+            .parse::<f64>()
+            .map_err(|_| crate::error!(Internal, "Invalid daily cost limit configuration"))?;
+
+        if current_cost >= limit_value {
+            return Err(crate::error!(
+                Authentication,
+                "Daily cost limit reached (limit = {}, current = {:.4})",
+                limit,
+                current_cost
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -97,8 +161,13 @@ mod tests {
     #[tokio::test]
     async fn smoke_test_memory_backend() {
         // 使用内存后端快速冒烟
-        let cache = std::sync::Arc::new(CacheManager::memory_only());
-        let rl = DistributedRateLimiter::new(cache);
+        let cache = Arc::new(CacheManager::memory_only());
+        let db = Arc::new(
+            sea_orm::Database::connect("sqlite::memory:")
+                .await
+                .expect("create in-memory db"),
+        );
+        let rl = DistributedRateLimiter::new(cache, db);
 
         for i in 1..=3 {
             let out = rl.check_per_minute(1, "/v1/test", 2).await.unwrap();

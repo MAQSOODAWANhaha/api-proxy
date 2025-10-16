@@ -442,7 +442,12 @@ impl SmartApiKeyProvider {
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(&*self.db)
             .await
-            .map_err(|e| crate::error!(Database, format!("Failed to load provider key {provider_key_id}: {e}")))?
+            .map_err(|e| {
+                crate::error!(
+                    Database,
+                    format!("Failed to load provider key {provider_key_id}: {e}")
+                )
+            })?
             .ok_or_else(|| {
                 crate::error!(
                     Authentication,

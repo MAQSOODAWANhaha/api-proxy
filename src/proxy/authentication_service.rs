@@ -21,6 +21,7 @@ use entity::{
     user_service_apis::{self},
 };
 use pingora_proxy::Session;
+use sea_orm::prelude::Decimal;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,7 +157,14 @@ impl AuthenticationService {
                         "key" | "access_token" | "api_key" | "apikey" => {
                             return Ok(Authorization {
                                 auth_value: urlencoding::decode(value)
-                                    .map_err(|e| crate::error!(Authentication, "Failed to decode query parameter '{}': {}", key, e))?
+                                    .map_err(|e| {
+                                        crate::error!(
+                                            Authentication,
+                                            "Failed to decode query parameter '{}': {}",
+                                            key,
+                                            e
+                                        )
+                                    })?
                                     .to_string(),
                                 source: AuthSource::Query,
                                 location: key.to_string(),
@@ -197,10 +205,13 @@ impl AuthenticationService {
             }
         }
 
-        Err(crate::error!(Authentication, "No authentication information found"))
+        Err(crate::error!(
+            Authentication,
+            "No authentication information found"
+        ))
     }
 
-    /// 2. 检查所有限制
+    /// 2. 检查所有限制 (Redis for freq, DB for usage)
     async fn check_limits(
         &self,
         user_api: &user_service_apis::Model,
@@ -212,18 +223,16 @@ impl AuthenticationService {
             return Err(crate::error!(Authentication, "API has expired"));
         }
 
-        let rl = DistributedRateLimiter::new(self.cache.clone());
+        let rl = DistributedRateLimiter::new(self.cache.clone(), self.db.clone());
         let endpoint_key = format!("service_api:{}", user_api.id);
 
+        // 1. MaxRequestPerMin (Redis)
         if let Some(rate_limit) = user_api.max_request_per_min
             && rate_limit > 0
         {
             let outcome = rl
                 .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
-                .await
-                .map_err(|e| {
-                    ProxyError::internal_with_source("Rate limiter error", e)
-                })?;
+                .await?;
             if !outcome.allowed {
                 return Err(ProxyError::internal(format!(
                     "Rate limit exceeded: {rate_limit} requests per minute"
@@ -231,20 +240,33 @@ impl AuthenticationService {
             }
         }
 
+        // 2. MaxRequestsPerDay (Redis)
         if let Some(daily_limit) = user_api.max_requests_per_day
             && daily_limit > 0
         {
             let outcome = rl
                 .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
-                .await
-                .map_err(|e| {
-                    ProxyError::internal_with_source("Rate limiter error", e)
-                })?;
+                .await?;
             if !outcome.allowed {
                 return Err(ProxyError::internal(format!(
                     "Daily request limit exceeded: {daily_limit} requests per day"
                 )));
             }
+        }
+
+        // 3. MaxTokensPerDay (DB)
+        if let Some(max_tokens) = user_api.max_tokens_per_day
+            && max_tokens > 0
+        {
+            rl.check_daily_token_limit_db(user_api.id, max_tokens)
+                .await?;
+        }
+
+        // 4. MaxCostPerDay (DB)
+        if let Some(max_cost) = user_api.max_cost_per_day
+            && max_cost > Decimal::from(0)
+        {
+            rl.check_daily_cost_limit_db(user_api.id, max_cost).await?;
         }
 
         Ok(())
@@ -339,9 +361,17 @@ impl AuthenticationService {
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
             .await?
-            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
+            .ok_or_else(|| {
+                crate::error!(
+                    Authentication,
+                    format!("OAuth session not found: {}", session_id)
+                )
+            })?;
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(crate::error!(Authentication, format!("OAuth session {} is not authorized", session_id)));
+            return Err(crate::error!(
+                Authentication,
+                format!("OAuth session {} is not authorized", session_id)
+            ));
         }
         let token = session
             .access_token

@@ -2,12 +2,12 @@
 //!
 //! 负责检测和管理API密钥的可用性状态，通过真实API调用验证密钥健康度
 
+use crate::error::Result;
 use crate::{
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
     lwarn,
 };
-use crate::error::Result;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use sea_orm::{DatabaseConnection, EntityTrait};
@@ -232,7 +232,11 @@ impl ApiKeyHealthChecker {
             .one(&*self.db)
             .await?
             .ok_or_else(|| {
-                crate::error!(Database, "Provider type {} not found", key_model.provider_type_id)
+                crate::error!(
+                    Database,
+                    "Provider type {} not found",
+                    key_model.provider_type_id
+                )
             })?;
 
         ldebug!(

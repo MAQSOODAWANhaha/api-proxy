@@ -5,8 +5,8 @@
 
 use super::pkce::PkceParams;
 use super::{OAuthError, OAuthProviderConfig, OAuthSessionInfo, OAuthTokenResponse};
-use crate::error::AuthResult;
 use crate::auth::types::AuthStatus;
+use crate::error::AuthResult;
 use crate::types::ProviderTypeId;
 use chrono::{Duration, Utc};
 use entity::{OAuthClientSessions, oauth_client_sessions};

@@ -5,9 +5,9 @@
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{Context, Result};
 use crate::logging::{LogComponent, LogStage};
+use crate::proxy::ProxyContext;
 use crate::proxy::context::ResolvedCredential;
 use crate::proxy::prelude::ProviderStrategy;
-use crate::proxy::ProxyContext;
 use crate::{linfo, lwarn};
 use chrono::Utc;
 use entity::user_provider_keys;
@@ -105,8 +105,7 @@ impl OpenAIStrategy {
 
         key.health_status = Set("rate_limited".to_string());
         key.health_status_detail = Set(Some(
-            serde_json::to_string(error_detail)
-                .context("序列化OpenAI错误详情失败")?,
+            serde_json::to_string(error_detail).context("序列化OpenAI错误详情失败")?,
         ));
         key.rate_limit_resets_at = Set(rate_limit_resets_at);
         key.last_error_time = Set(Some(now));
@@ -142,7 +141,10 @@ impl ProviderStrategy for OpenAIStrategy {
         {
             upstream_request
                 .insert_header("host", "chatgpt.com")
-                .context(format!("设置OpenAI host头失败, request_id: {}", ctx.request_id))?;
+                .context(format!(
+                    "设置OpenAI host头失败, request_id: {}",
+                    ctx.request_id
+                ))?;
 
             if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
                 && let Some(account_id) = Self::extract_chatgpt_account_id(token)
@@ -151,9 +153,9 @@ impl ProviderStrategy for OpenAIStrategy {
                 upstream_request
                     .insert_header("chatgpt-account-id", &account_id)
                     .context(format!(
-                            "设置OpenAI chatgpt-account-id头失败, request_id: {}",
-                            ctx.request_id
-                        ))?;
+                        "设置OpenAI chatgpt-account-id头失败, request_id: {}",
+                        ctx.request_id
+                    ))?;
             }
         }
         Ok(())

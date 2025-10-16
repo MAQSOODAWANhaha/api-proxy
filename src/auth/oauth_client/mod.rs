@@ -27,8 +27,8 @@ pub use session_manager::SessionManager;
 pub use token_exchange::{TokenExchangeClient, TokenResponse};
 
 use crate::auth::types::AuthStatus;
-use crate::error::auth::OAuthError;
 use crate::error::AuthResult;
+use crate::error::auth::OAuthError;
 use crate::types::ProviderTypeId;
 use crate::{
     ldebug, linfo,

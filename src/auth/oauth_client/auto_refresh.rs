@@ -7,8 +7,8 @@ use super::providers::OAuthProviderManager;
 use super::session_manager::SessionManager;
 use super::token_exchange::TokenExchangeClient;
 use super::{OAuthError, OAuthTokenResponse};
-use crate::error::{AuthResult, ProxyError};
 use crate::auth::types::AuthStatus;
+use crate::error::{AuthResult, ProxyError};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{Duration, Utc};
@@ -315,8 +315,9 @@ impl AutoRefreshManager {
         }
 
         // 执行刷新重试逻辑
-        let mut last_error =
-            ProxyError::from(OAuthError::TokenExchangeFailed("No attempts made".to_string()));
+        let mut last_error = ProxyError::from(OAuthError::TokenExchangeFailed(
+            "No attempts made".to_string(),
+        ));
 
         for attempt in 1..=policy.max_retry_attempts {
             ldebug!(

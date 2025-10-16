@@ -11,8 +11,8 @@
 
 use super::session_manager::SessionManager;
 use super::{OAuthError, OAuthTokenResponse};
-use crate::error::AuthResult;
 use crate::auth::types::AuthStatus;
+use crate::error::AuthResult;
 use entity::oauth_client_sessions;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -276,20 +276,20 @@ impl OAuthPollingClient {
                             // Token交换中，继续轮询
                         }
                         AuthStatus::Error => {
-                        return Err(
-                            OAuthError::TokenExchangeFailed(format!(
+                            return Err(OAuthError::TokenExchangeFailed(format!(
                                 "{}: {}",
                                 response.error.unwrap_or_default(),
                                 response.error_description.unwrap_or_default()
                             ))
-                            .into(),
-                        );
+                            .into());
                         }
                         AuthStatus::Expired => {
-                    return Err(OAuthError::SessionExpired(session_id.to_string()).into());
+                            return Err(OAuthError::SessionExpired(session_id.to_string()).into());
                         }
                         AuthStatus::Revoked => {
-                return Err(OAuthError::InvalidSession("Session revoked".to_string()).into());
+                            return Err(
+                                OAuthError::InvalidSession("Session revoked".to_string()).into()
+                            );
                         }
                         AuthStatus::Pending => {
                             // 使用建议的轮询间隔

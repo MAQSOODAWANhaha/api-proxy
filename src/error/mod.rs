@@ -62,10 +62,7 @@ where
     {
         self.map_err(|error| {
             let message = format!("{}: {}", context(), error);
-            ProxyError::internal_with_source(
-                message,
-                error,
-            )
+            ProxyError::internal_with_source(message, error)
         })
     }
 }

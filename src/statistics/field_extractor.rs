@@ -2,12 +2,12 @@
 //!
 //! 基于数据库配置的通用字段提取器，支持JSONPath查询、数学表达式和条件判断
 
+use crate::error::Result;
 use crate::{
     ldebug,
     logging::{LogComponent, LogStage},
     types::TokenCount,
 };
-use crate::error::Result;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -47,10 +47,12 @@ pub enum TokenMapping {
 impl TokenMapping {
     /// `从JSON配置解析Token映射`
     pub fn from_json(config: &Value) -> Result<Self> {
-        let mapping_type = config
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| crate::error!(Conversion, "Invalid token mappings configuration: missing or invalid 'type' field"))?;
+        let mapping_type = config.get("type").and_then(Value::as_str).ok_or_else(|| {
+            crate::error!(
+                Conversion,
+                "Invalid token mappings configuration: missing or invalid 'type' field"
+            )
+        })?;
 
         match mapping_type {
             "direct" => Self::parse_direct_mapping(config),
@@ -88,10 +90,9 @@ impl TokenMapping {
     }
 
     fn parse_default_mapping(config: &Value) -> Result<Self> {
-        let value = config
-            .get("value")
-            .cloned()
-            .ok_or_else(|| crate::error!(Conversion, "Missing 'value' field for default mapping"))?;
+        let value = config.get("value").cloned().ok_or_else(|| {
+            crate::error!(Conversion, "Missing 'value' field for default mapping")
+        })?;
 
         Ok(Self::Default {
             value,
@@ -110,10 +111,12 @@ impl TokenMapping {
             "true_value",
             "Missing 'true_value' field for conditional mapping",
         )?;
-        let false_value = config
-            .get("false_value")
-            .cloned()
-            .ok_or_else(|| crate::error!(Conversion, "Missing 'false_value' field for conditional mapping"))?;
+        let false_value = config.get("false_value").cloned().ok_or_else(|| {
+            crate::error!(
+                Conversion,
+                "Missing 'false_value' field for conditional mapping"
+            )
+        })?;
 
         Ok(Self::Conditional {
             condition: condition.to_string(),
@@ -127,7 +130,12 @@ impl TokenMapping {
         let paths = config
             .get("paths")
             .and_then(Value::as_array)
-            .ok_or_else(|| crate::error!(Conversion, "Missing or invalid 'paths' field for fallback mapping"))?;
+            .ok_or_else(|| {
+                crate::error!(
+                    Conversion,
+                    "Missing or invalid 'paths' field for fallback mapping"
+                )
+            })?;
 
         let mut collected_paths = Vec::new();
         for path in paths {

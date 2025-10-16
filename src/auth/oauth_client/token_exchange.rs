@@ -86,7 +86,10 @@ impl TokenExchangeClient {
         }
 
         if session.is_expired() {
-            crate::bail!(Authentication, OAuth(OAuthError::SessionExpired(session_id.to_string())));
+            crate::bail!(
+                Authentication,
+                OAuth(OAuthError::SessionExpired(session_id.to_string()))
+            );
         }
 
         // 获取提供商配置
@@ -395,11 +398,7 @@ impl TokenExchangeClient {
         let status = response.status();
 
         if !status.is_success() {
-            return Err(
-                self.handle_error_response(response, status)
-                    .await?
-                    .into(),
-            );
+            return Err(self.handle_error_response(response, status).await?.into());
         }
 
         let data = self.extract_response_text(response).await?;
@@ -440,7 +439,9 @@ impl TokenExchangeClient {
         response.text().await.map_err(|e| {
             crate::error!(
                 Authentication,
-                OAuth(OAuthError::SerdeError(format!("Failed to read response text: {e}")))
+                OAuth(OAuthError::SerdeError(format!(
+                    "Failed to read response text: {e}"
+                )))
             )
         })
     }
@@ -460,7 +461,9 @@ impl TokenExchangeClient {
         serde_json::from_str::<TokenResponse>(data).map_err(|e| {
             crate::error!(
                 Authentication,
-                OAuth(OAuthError::SerdeError(format!("Failed to parse token response: {e}")))
+                OAuth(OAuthError::SerdeError(format!(
+                    "Failed to parse token response: {e}"
+                )))
             )
         })
     }

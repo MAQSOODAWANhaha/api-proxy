@@ -210,9 +210,10 @@ pub async fn get_dashboard_stats(
                 "dashboard_stats_fail",
                 &format!("获取日志仪表板统计失败: {e}")
             );
-            crate::management::response::app_error(
-                crate::error!(Database, format!("获取统计数据失败: {}", e)),
-            )
+            crate::management::response::app_error(crate::error!(
+                Database,
+                format!("获取统计数据失败: {}", e)
+            ))
         }
     }
 }
@@ -317,9 +318,10 @@ pub async fn get_traces_list(
                 "get_traces_fail",
                 &format!("获取日志列表失败: {e}")
             );
-            crate::management::response::app_error(
-                crate::error!(Database, format!("获取日志列表失败: {}", e)),
-            )
+            crate::management::response::app_error(crate::error!(
+                Database,
+                format!("获取日志列表失败: {}", e)
+            ))
         }
     }
 }
@@ -586,9 +588,10 @@ pub async fn get_trace_detail(
                 "get_trace_detail_fail",
                 &format!("获取日志详情失败: {e}")
             );
-            crate::management::response::app_error(
-                crate::error!(Database, format!("获取日志详情失败: {}", e)),
-            )
+            crate::management::response::app_error(crate::error!(
+                Database,
+                format!("获取日志详情失败: {}", e)
+            ))
         }
     }
 }
@@ -685,9 +688,10 @@ pub async fn get_logs_analytics(
                 "analytics_fail",
                 &format!("获取日志统计分析失败: {e}")
             );
-            crate::management::response::app_error(
-                crate::error!(Database, format!("获取统计分析失败: {}", e)),
-            )
+            crate::management::response::app_error(crate::error!(
+                Database,
+                format!("获取统计分析失败: {}", e)
+            ))
         }
     }
 }

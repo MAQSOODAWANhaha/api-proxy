@@ -167,11 +167,7 @@ impl GeminiCodeAssistClient {
 
     /// 带重试机制的HTTP请求
     #[allow(clippy::cognitive_complexity)]
-    async fn execute_with_retry<F, Fut, R>(
-        &self,
-        operation: &str,
-        mut request_fn: F,
-    ) -> Result<R>
+    async fn execute_with_retry<F, Fut, R>(&self, operation: &str, mut request_fn: F) -> Result<R>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<R>>,
@@ -386,8 +382,8 @@ impl GeminiCodeAssistClient {
                 &format!("loadCodeAssist响应体: {response_body}")
             );
 
-            let response_data: LoadCodeAssistResponse =
-                serde_json::from_str(&response_body).map_err(|e| {
+            let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body)
+                .map_err(|e| {
                     crate::error!(
                         Provider,
                         message = format!("Failed to parse loadCodeAssist response: {e}"),
@@ -641,7 +637,8 @@ impl GeminiCodeAssistClient {
         // 所有重试都失败了，返回最后一个错误
         Err(crate::error!(
             Provider,
-            message = last_error.unwrap_or_else(|| "onboardUser重试失败，但没有具体的错误信息".to_string()),
+            message = last_error
+                .unwrap_or_else(|| "onboardUser重试失败，但没有具体的错误信息".to_string()),
             provider = "GeminiCodeAssist"
         ))
     }
@@ -749,10 +746,7 @@ impl GeminiCodeAssistClient {
     /// 3. 如果没有cloudaicompanionProject，调用onboardUser初始化新项目
     /// 4. `返回获取到的project_id`
     #[allow(clippy::cognitive_complexity)]
-    pub async fn auto_get_project_id(
-        &self,
-        access_token: &str,
-    ) -> Result<Option<String>> {
+    pub async fn auto_get_project_id(&self, access_token: &str) -> Result<Option<String>> {
         linfo!(
             "system",
             LogStage::ExternalApi,

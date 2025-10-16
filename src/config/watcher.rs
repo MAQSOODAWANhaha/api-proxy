@@ -218,11 +218,18 @@ impl ConfigWatcher {
 /// 加载配置文件
 fn load_config_from_file(path: &Path) -> crate::error::Result<AppConfig> {
     if !path.exists() {
-        return Err(crate::error!(Config, format!("配置文件不存在: {}", path.display())));
+        return Err(crate::error!(
+            Config,
+            format!("配置文件不存在: {}", path.display())
+        ));
     }
 
-    let config_content = std::fs::read_to_string(path)
-        .map_err(|e| crate::error!(Config, format!("读取配置文件失败: {}: {}", path.display(), e)))?;
+    let config_content = std::fs::read_to_string(path).map_err(|e| {
+        crate::error!(
+            Config,
+            format!("读取配置文件失败: {}: {}", path.display(), e)
+        )
+    })?;
 
     let config: AppConfig = toml::from_str(&config_content)?;
 

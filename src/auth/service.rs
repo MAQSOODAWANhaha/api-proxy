@@ -86,8 +86,8 @@ impl AuthService {
         context: &mut AuthContext,
     ) -> Result<AuthResult> {
         // Parse authentication token
-        let token_type = TokenType::from_auth_header(auth_header)
-            .ok_or_else(invalid_credentials_error)?;
+        let token_type =
+            TokenType::from_auth_header(auth_header).ok_or_else(invalid_credentials_error)?;
 
         let auth_result = match token_type {
             TokenType::Bearer(token) => self.authenticate_jwt(&token, context),
@@ -531,7 +531,9 @@ impl AuthService {
             .limit(1)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database connection test failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error!(Database, format!("Database connection test failed: {}", e))
+            })?;
 
         Ok(())
     }

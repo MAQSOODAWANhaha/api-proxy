@@ -82,13 +82,12 @@ impl AuthStrategyManager {
 
     /// 验证配置
     pub fn validate_config(&self, auth_type: &AuthType, config: &Value) -> Result<()> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
                 Authentication,
                 ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
-            ))?;
+            )
+        })?;
 
         strategy.validate_config(config)
     }
@@ -99,13 +98,12 @@ impl AuthStrategyManager {
         auth_type: &AuthType,
         credentials: &Value,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
                 Authentication,
                 ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
-            ))?;
+            )
+        })?;
 
         strategy.authenticate(credentials).await
     }
@@ -116,26 +114,24 @@ impl AuthStrategyManager {
         auth_type: &AuthType,
         refresh_token: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
                 Authentication,
                 ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
-            ))?;
+            )
+        })?;
 
         strategy.refresh(refresh_token).await
     }
 
     /// 撤销认证凭据
     pub async fn revoke_multi_auth(&self, auth_type: &AuthType, token: &str) -> Result<()> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
                 Authentication,
                 ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
-            ))?;
+            )
+        })?;
 
         strategy.revoke(token).await
     }
@@ -147,10 +143,12 @@ impl AuthStrategyManager {
         state: &str,
         redirect_uri: &str,
     ) -> Result<String> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(Authentication, ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            )
+        })?;
 
         strategy.get_auth_url(state, redirect_uri).await
     }
@@ -162,10 +160,12 @@ impl AuthStrategyManager {
         code: &str,
         state: &str,
     ) -> Result<OAuthTokenResult> {
-        let strategy = self
-            .strategies
-            .get(auth_type)
-            .ok_or_else(|| crate::error!(Authentication, ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))))?;
+        let strategy = self.strategies.get(auth_type).ok_or_else(|| {
+            crate::error!(
+                Authentication,
+                ApiKeyInvalid(format!("不支持的认证类型: {auth_type:?}"))
+            )
+        })?;
 
         strategy.handle_callback(code, state).await
     }

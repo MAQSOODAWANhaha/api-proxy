@@ -242,9 +242,7 @@ struct FilteredModel {
 
 /// 确保模型定价数据的完整性（启动时初始化一次，远程优先，增量更新）
 /// 始终尝试拉取并增量更新，失败时使用本地文件回退；如果都失败且已有数据，则保留现状。
-pub async fn ensure_model_pricing_data(
-    db: &DatabaseConnection,
-) -> crate::error::Result<()> {
+pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -309,9 +307,7 @@ pub async fn force_initialize_model_pricing_data(
 
 /// 从 JSON 文件初始化数据（完全数据驱动，旧逻辑，仅在空表或强制清理后使用）
 #[allow(clippy::cognitive_complexity)]
-async fn initialize_model_pricing_from_json(
-    db: &DatabaseConnection,
-) -> crate::error::Result<()> {
+async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -576,7 +572,11 @@ async fn fetch_remote_json() -> crate::error::Result<HashMap<String, ModelPriceI
         .map_err(|e| crate::error!(Config, format!("请求远程模型定价失败: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(crate::error!(Config, "远程定价响应非成功状态: {}", resp.status()));
+        return Err(crate::error!(
+            Config,
+            "远程定价响应非成功状态: {}",
+            resp.status()
+        ));
     }
 
     let text = resp
@@ -595,7 +595,11 @@ async fn load_json_data() -> crate::error::Result<HashMap<String, ModelPriceInfo
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
-        return Err(crate::error!(Config, "JSON文件不存在: {}", json_path.display()));
+        return Err(crate::error!(
+            Config,
+            "JSON文件不存在: {}",
+            json_path.display()
+        ));
     }
 
     let json_content = tokio::fs::read_to_string(&json_path).await.map_err(|e| {

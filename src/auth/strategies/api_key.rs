@@ -214,7 +214,10 @@ impl AuthStrategy for ApiKeyStrategy {
 
             let format_str = value_format.as_str().unwrap();
             if !format_str.contains("{key}") {
-                return Err(crate::error!(Config, format!("value_format必须包含{{key}}占位符")));
+                return Err(crate::error!(
+                    Config,
+                    format!("value_format必须包含{{key}}占位符")
+                ));
             }
         }
 

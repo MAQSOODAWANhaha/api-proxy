@@ -21,10 +21,7 @@ pub enum AuthError {
     NotAuthenticated,
 
     #[error("Permission denied: requires {required}, but user only has {actual}")]
-    PermissionDenied {
-        required: String,
-        actual: String,
-    },
+    PermissionDenied { required: String, actual: String },
 
     #[error("Failed to parse authentication header: {0}")]
     HeaderParse(#[from] AuthParseError),
@@ -42,7 +39,9 @@ pub enum AuthError {
 /// Errors that occur while parsing authentication headers.
 #[derive(Debug, Error)]
 pub enum AuthParseError {
-    #[error("Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'")]
+    #[error(
+        "Invalid authentication header format: '{0}'. Expected format: 'Header-Name: header-value'"
+    )]
     InvalidFormat(String),
 
     #[error("Empty header name in format: '{0}'")]

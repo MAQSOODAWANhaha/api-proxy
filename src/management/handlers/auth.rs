@@ -144,7 +144,9 @@ pub async fn login(
                 "user_not_found_after_login",
                 &format!("User {user_id} not found after successful login")
             );
-            return crate::management::response::app_error(business_error("Invalid username or password"));
+            return crate::management::response::app_error(business_error(
+                "Invalid username or password",
+            ));
         }
         Err(err) => {
             lerror!(
@@ -239,12 +241,16 @@ pub async fn logout(
             "no_auth_header_logout",
             "No Authorization header found in logout request"
         );
-        return crate::management::response::app_error(business_error("No Authorization header found"));
+        return crate::management::response::app_error(business_error(
+            "No Authorization header found",
+        ));
     };
 
     // 检查Bearer前缀
     if !auth_header.starts_with("Bearer ") {
-        return crate::management::response::app_error(business_error("Invalid Authorization header format"));
+        return crate::management::response::app_error(business_error(
+            "Invalid Authorization header format",
+        ));
     }
 
     let token = &auth_header[7..]; // 移除"Bearer "前缀

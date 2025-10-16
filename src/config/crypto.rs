@@ -42,7 +42,10 @@ impl ConfigCrypto {
         });
 
         if key_str.len() != 64 {
-            return Err(crate::error!(Config, "配置加密密钥必须是64个字符的十六进制字符串（32字节）"));
+            return Err(crate::error!(
+                Config,
+                "配置加密密钥必须是64个字符的十六进制字符串（32字节）"
+            ));
         }
 
         let key_bytes = hex::decode(&key_str)
@@ -64,7 +67,12 @@ impl ConfigCrypto {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, plaintext.as_bytes())
-            .map_err(|e| crate::error!(Config, format!("配置加密失败: AES-GCM encryption failed: {e:?}")))?;
+            .map_err(|e| {
+                crate::error!(
+                    Config,
+                    format!("配置加密失败: AES-GCM encryption failed: {e:?}")
+                )
+            })?;
 
         Ok(EncryptedValue {
             data: general_purpose::STANDARD.encode(&ciphertext),
@@ -92,7 +100,12 @@ impl ConfigCrypto {
         let plaintext = self
             .cipher
             .decrypt(&nonce, ciphertext.as_ref())
-            .map_err(|e| crate::error!(Config, format!("配置解密失败: AES-GCM decryption failed: {e:?}")))?;
+            .map_err(|e| {
+                crate::error!(
+                    Config,
+                    format!("配置解密失败: AES-GCM decryption failed: {e:?}")
+                )
+            })?;
 
         String::from_utf8(plaintext)
             .map_err(|e| crate::error!(Config, format!("解密后的数据不是有效的UTF-8字符串: {e}")))

@@ -380,17 +380,25 @@ impl OAuthTokenRefreshService {
         &self,
         session_id: &str,
     ) -> Result<ScheduledTokenRefresh> {
-        let mut session = self
-            .load_session(session_id)
-            .await?
-            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
+        let mut session = self.load_session(session_id).await?.ok_or_else(|| {
+            crate::error!(
+                Authentication,
+                format!("OAuth session not found: {}", session_id)
+            )
+        })?;
 
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(crate::error!(Authentication, format!("OAuth session {} is not authorized", session_id)));
+            return Err(crate::error!(
+                Authentication,
+                format!("OAuth session {} is not authorized", session_id)
+            ));
         }
 
         if session.refresh_token.is_none() || session.access_token.is_none() {
-            return Err(crate::error!(Authentication, format!("OAuth session {} missing refresh credentials", session_id)));
+            return Err(crate::error!(
+                Authentication,
+                format!("OAuth session {} missing refresh credentials", session_id)
+            ));
         }
 
         let now = Utc::now();
@@ -544,7 +552,12 @@ impl OAuthTokenRefreshService {
             .one(&*self.db)
             .await
             .map_err(|e| crate::error!(Database, Query(e)))?
-            .ok_or_else(|| crate::error!(Authentication, format!("OAuth session not found: {}", session_id)))?;
+            .ok_or_else(|| {
+                crate::error!(
+                    Authentication,
+                    format!("OAuth session not found: {}", session_id)
+                )
+            })?;
 
         // 检查是否有有效的访问token
         if session.access_token.is_none() {

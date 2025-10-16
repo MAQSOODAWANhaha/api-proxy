@@ -7,7 +7,7 @@ use crate::auth::{
     oauth_token_refresh_service::ScheduledTokenRefresh,
     oauth_token_refresh_task::OAuthTokenRefreshTask, types::AuthStatus,
 };
-use crate::error::{auth::AuthError, ProxyError};
+use crate::error::{ProxyError, auth::AuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
@@ -141,9 +141,10 @@ pub async fn get_provider_keys_list(
                 "count_fail",
                 &format!("Failed to count provider keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to count provider keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count provider keys: {}", err)
+            ));
         }
     };
 
@@ -165,9 +166,10 @@ pub async fn get_provider_keys_list(
                 "fetch_fail",
                 &format!("Failed to fetch provider keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch provider keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider keys: {}", err)
+            ));
         }
     };
 
@@ -327,9 +329,10 @@ async fn ensure_unique_provider_key(
         .await;
 
     match existing {
-        Ok(Some(_)) => Err(ProxyError::Authentication(AuthError::Message(
-            format!("ProviderKey conflict: {}", &payload.name),
-        ))),
+        Ok(Some(_)) => Err(ProxyError::Authentication(AuthError::Message(format!(
+            "ProviderKey conflict: {}",
+            &payload.name
+        )))),
         Err(err) => {
             lerror!(
                 "system",
@@ -338,7 +341,10 @@ async fn ensure_unique_provider_key(
                 "check_exist_fail",
                 &format!("Failed to check existing provider key: {err}")
             );
-            Err(crate::error!(Database, format!("Failed to check existing provider key: {}", err)))
+            Err(crate::error!(
+                Database,
+                format!("Failed to check existing provider key: {}", err)
+            ))
         }
         _ => Ok(()),
     }
@@ -375,9 +381,9 @@ async fn validate_oauth_session_for_creation(
                 .await;
 
             match existing_usage {
-        Ok(Some(_)) => Err(ProxyError::Authentication(AuthError::Message(
-            "指定的OAuth会话已被其他provider key使用".to_string(),
-        ))),
+                Ok(Some(_)) => Err(ProxyError::Authentication(AuthError::Message(
+                    "指定的OAuth会话已被其他provider key使用".to_string(),
+                ))),
                 Err(err) => {
                     lerror!(
                         "system",
@@ -386,7 +392,10 @@ async fn validate_oauth_session_for_creation(
                         "check_session_usage_fail",
                         &format!("Failed to check OAuth session usage: {err}")
                     );
-                    Err(crate::error!(Database, format!("Failed to check OAuth session usage: {}", err)))
+                    Err(crate::error!(
+                        Database,
+                        format!("Failed to check OAuth session usage: {}", err)
+                    ))
                 }
                 _ => Ok(()),
             }
@@ -402,7 +411,10 @@ async fn validate_oauth_session_for_creation(
                 "validate_session_fail",
                 &format!("Failed to validate OAuth session: {err}")
             );
-            Err(crate::error!(Database, format!("Failed to validate OAuth session: {}", err)))
+            Err(crate::error!(
+                Database,
+                format!("Failed to validate OAuth session: {}", err)
+            ))
         }
     }
 }
@@ -475,7 +487,10 @@ async fn is_gemini_oauth_flow(
                 "gemini_provider_query_fail",
                 &format!("Failed to query provider type for Gemini validation: {err}"),
             );
-            Err(crate::error!(Database, format!("Failed to query provider type: {}", err)))
+            Err(crate::error!(
+                Database,
+                format!("Failed to query provider type: {}", err)
+            ))
         }
     }
 }
@@ -504,7 +519,10 @@ async fn fetch_authorized_session(
                 ),
                 user_id = user_id,
             );
-            crate::error!(Database, format!("Failed to validate OAuth session: {}", err))
+            crate::error!(
+                Database,
+                format!("Failed to validate OAuth session: {}", err)
+            )
         })
 }
 
@@ -769,11 +787,9 @@ pub async fn get_provider_key_detail(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -783,9 +799,10 @@ pub async fn get_provider_key_detail(
                 "fetch_detail_fail",
                 &format!("Failed to fetch provider key detail: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch provider key detail: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider key detail: {}", err)
+            ));
         }
     };
 
@@ -933,11 +950,9 @@ pub async fn update_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -947,9 +962,10 @@ pub async fn update_provider_key(
                 "find_key_fail",
                 &format!("Failed to find provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to find provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to find provider key: {}", err)
+            ));
         }
     };
 
@@ -973,12 +989,9 @@ pub async fn update_provider_key(
 
         match duplicate {
             Ok(Some(_)) => {
-                return crate::management::response::app_error(
-                    ProxyError::Authentication(AuthError::Message(format!(
-                        "ProviderKey conflict: {}",
-                        payload.name
-                    ))),
-                );
+                return crate::management::response::app_error(ProxyError::Authentication(
+                    AuthError::Message(format!("ProviderKey conflict: {}", payload.name)),
+                ));
             }
             Err(err) => {
                 lerror!(
@@ -988,9 +1001,10 @@ pub async fn update_provider_key(
                     "check_duplicate_fail",
                     &format!("Failed to check duplicate name: {err}")
                 );
-                return crate::management::response::app_error(
-                    crate::error!(Database, format!("Failed to check duplicate name: {}", err)),
-                );
+                return crate::management::response::app_error(crate::error!(
+                    Database,
+                    format!("Failed to check duplicate name: {}", err)
+                ));
             }
             _ => {}
         }
@@ -998,20 +1012,18 @@ pub async fn update_provider_key(
 
     // 验证认证类型和相应参数
     if payload.auth_type == "api_key" && payload.api_key.is_none() {
-        return crate::management::response::app_error(
-            ProxyError::Authentication(AuthError::Message(
-                "API Key认证类型需要提供api_key字段 (field: api_key)".to_string(),
-            )),
-        );
+        return crate::management::response::app_error(ProxyError::Authentication(
+            AuthError::Message("API Key认证类型需要提供api_key字段 (field: api_key)".to_string()),
+        ));
     }
 
     // OAuth类型需要通过api_key字段提供session_id
     if payload.auth_type == "oauth" && payload.api_key.is_none() {
-        return crate::management::response::app_error(
-            ProxyError::Authentication(AuthError::Message(
+        return crate::management::response::app_error(ProxyError::Authentication(
+            AuthError::Message(
                 "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)".to_string(),
-            )),
-        );
+            ),
+        ));
     }
 
     // 验证OAuth会话存在性和所有权
@@ -1041,11 +1053,11 @@ pub async fn update_provider_key(
 
                 match existing_usage {
                     Ok(Some(_)) => {
-                        return crate::management::response::app_error(
-                            ProxyError::Authentication(AuthError::Message(
+                        return crate::management::response::app_error(ProxyError::Authentication(
+                            AuthError::Message(
                                 "指定的OAuth会话已被其他provider key使用".to_string(),
-                            )),
-                        );
+                            ),
+                        ));
                     }
                     Err(err) => {
                         lerror!(
@@ -1055,19 +1067,20 @@ pub async fn update_provider_key(
                             "check_session_usage_fail",
                             &format!("Failed to check OAuth session usage: {err}")
                         );
-                        return crate::management::response::app_error(
-                            crate::error!(Database, format!("Failed to check OAuth session usage: {}", err))
-                        );
+                        return crate::management::response::app_error(crate::error!(
+                            Database,
+                            format!("Failed to check OAuth session usage: {}", err)
+                        ));
                     }
                     _ => {} // 会话可用
                 }
             }
             Ok(None) => {
-                return crate::management::response::app_error(
-                    ProxyError::Authentication(AuthError::Message(
+                return crate::management::response::app_error(ProxyError::Authentication(
+                    AuthError::Message(
                         "指定的OAuth会话不存在或未完成授权 (field: api_key)".to_string(),
-                    )),
-                );
+                    ),
+                ));
             }
             Err(err) => {
                 lerror!(
@@ -1077,7 +1090,11 @@ pub async fn update_provider_key(
                     "validate_session_fail",
                     &format!("Failed to validate OAuth session: {err}")
                 );
-                return crate::management::response::app_error(crate::error!(Database, "Failed to validate OAuth session: {}", err));
+                return crate::management::response::app_error(crate::error!(
+                    Database,
+                    "Failed to validate OAuth session: {}",
+                    err
+                ));
             }
         }
     }
@@ -1123,9 +1140,10 @@ pub async fn update_provider_key(
                 "update_key_fail",
                 &format!("Failed to update provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to update provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to update provider key: {}", err)
+            ));
         }
     };
 
@@ -1229,11 +1247,9 @@ pub async fn delete_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -1243,9 +1259,10 @@ pub async fn delete_provider_key(
                 "find_key_fail",
                 &format!("Failed to find provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to find provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to find provider key: {}", err)
+            ));
         }
     };
 
@@ -1268,9 +1285,10 @@ pub async fn delete_provider_key(
                 "delete_key_fail",
                 &format!("Failed to delete provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to delete provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to delete provider key: {}", err)
+            ));
         }
     }
 
@@ -1321,11 +1339,9 @@ pub async fn get_provider_key_stats(
     {
         Ok(Some((key, provider_type_opt))) => (key, provider_type_opt),
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -1335,9 +1351,10 @@ pub async fn get_provider_key_stats(
                 "fetch_detail_fail",
                 &format!("Failed to fetch provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider key: {}", err)
+            ));
         }
     };
 
@@ -1359,9 +1376,10 @@ pub async fn get_provider_key_stats(
                 "fetch_trends_fail",
                 &format!("Failed to fetch provider key trends: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch trends data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch trends data: {}", err)
+            ));
         }
     };
 
@@ -1431,9 +1449,10 @@ pub async fn get_provider_keys_dashboard_stats(
                 "count_total_keys_fail",
                 &format!("Failed to count total keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to count total keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count total keys: {}", err)
+            ));
         }
     };
 
@@ -1453,9 +1472,10 @@ pub async fn get_provider_keys_dashboard_stats(
                 "count_active_keys_fail",
                 &format!("Failed to count active keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to count active keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to count active keys: {}", err)
+            ));
         }
     };
 
@@ -1475,9 +1495,10 @@ pub async fn get_provider_keys_dashboard_stats(
                 "fetch_user_keys_fail",
                 &format!("Failed to fetch user provider keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch user provider keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch user provider keys: {}", err)
+            ));
         }
     };
 
@@ -1506,9 +1527,10 @@ pub async fn get_provider_keys_dashboard_stats(
                     "fetch_tracing_fail",
                     &format!("Failed to fetch proxy tracing records: {err}")
                 );
-                return crate::management::response::app_error(
-                    crate::error!(Database, format!("Failed to fetch usage statistics: {}", err)),
-                );
+                return crate::management::response::app_error(crate::error!(
+                    Database,
+                    format!("Failed to fetch usage statistics: {}", err)
+                ));
             }
         }
     };
@@ -1565,9 +1587,10 @@ pub async fn get_simple_provider_keys_list(
                 "fetch_simple_keys_fail",
                 &format!("Failed to fetch simple provider keys: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch provider keys: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider keys: {}", err)
+            ));
         }
     };
 
@@ -1621,11 +1644,9 @@ pub async fn health_check_provider_key(
     {
         Ok(Some(key)) => key,
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -1635,9 +1656,10 @@ pub async fn health_check_provider_key(
                 "find_key_fail",
                 &format!("Failed to find provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to find provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to find provider key: {}", err)
+            ));
         }
     };
 
@@ -1888,11 +1910,9 @@ pub async fn get_provider_key_trends(
             // 密钥验证成功，继续查询趋势数据
         }
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "ProviderKey not found: {key_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("ProviderKey not found: {key_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -1902,9 +1922,10 @@ pub async fn get_provider_key_trends(
                 "fetch_detail_fail",
                 &format!("Failed to fetch provider key: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch provider key: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch provider key: {}", err)
+            ));
         }
     }
 
@@ -1924,9 +1945,10 @@ pub async fn get_provider_key_trends(
                 "fetch_trends_fail",
                 &format!("Failed to fetch provider key trends: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch trends data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch trends data: {}", err)
+            ));
         }
     };
 
@@ -1968,11 +1990,9 @@ pub async fn get_user_service_api_trends(
             // API验证成功，继续查询趋势数据
         }
         Ok(None) => {
-            return crate::management::response::app_error(
-                ProxyError::Authentication(AuthError::Message(format!(
-                    "UserServiceApi not found: {api_id}"
-                ))),
-            );
+            return crate::management::response::app_error(ProxyError::Authentication(
+                AuthError::Message(format!("UserServiceApi not found: {api_id}")),
+            ));
         }
         Err(err) => {
             lerror!(
@@ -1982,9 +2002,10 @@ pub async fn get_user_service_api_trends(
                 "fetch_service_api_fail",
                 &format!("Failed to fetch user service api: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch user service api: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch user service api: {}", err)
+            ));
         }
     }
 
@@ -2005,9 +2026,10 @@ pub async fn get_user_service_api_trends(
                     "fetch_service_api_trends_fail",
                     &format!("Failed to fetch user service api trends: {err}")
                 );
-                return crate::management::response::app_error(
-                    crate::error!(Database, format!("Failed to fetch trends data: {}", err)),
-                );
+                return crate::management::response::app_error(crate::error!(
+                    Database,
+                    format!("Failed to fetch trends data: {}", err)
+                ));
             }
         };
 
@@ -2383,9 +2405,7 @@ async fn get_access_token_for_key(
         || Err(crate::ProxyError::internal("OAuth会话中没有access_token")),
         |access_token| {
             if access_token.is_empty() {
-                Err(crate::ProxyError::internal(
-                    "OAuth会话中的access_token为空",
-                ))
+                Err(crate::ProxyError::internal("OAuth会话中的access_token为空"))
             } else {
                 ldebug!(
                     "system",

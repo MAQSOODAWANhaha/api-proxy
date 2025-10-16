@@ -125,7 +125,11 @@ pub async fn run_dual_port_servers() -> Result<()> {
             "start_oauth_refresh_task_failed",
             &format!("Failed to start OAuth token refresh task: {e:?}")
         );
-        return Err(crate::error!(Internal, "OAuth token refresh task startup failed", e));
+        return Err(crate::error!(
+            Internal,
+            "OAuth token refresh task startup failed",
+            e
+        ));
     }
     linfo!(
         "system",

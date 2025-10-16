@@ -56,7 +56,10 @@ fn auth_sub_variant_macro() {
     let ProxyError::Authentication(auth_err) = err else {
         panic!("expected authentication error");
     };
-    assert!(matches!(auth_err, crate::error::auth::AuthError::ApiKeyMissing));
+    assert!(matches!(
+        auth_err,
+        crate::error::auth::AuthError::ApiKeyMissing
+    ));
 }
 
 #[test]
@@ -75,8 +78,12 @@ fn provider_macro_records_provider_name() {
     assert!(source.is_none());
 
     let io_err = std::io::Error::other("throttled");
-    let err_with_source =
-        crate::error!(Provider, message = "Rate limited", provider = "openai", source = io_err);
+    let err_with_source = crate::error!(
+        Provider,
+        message = "Rate limited",
+        provider = "openai",
+        source = io_err
+    );
     let ProxyError::Provider {
         source: source_with_cause,
         ..
@@ -84,10 +91,7 @@ fn provider_macro_records_provider_name() {
     else {
         panic!("expected provider error with source");
     };
-    assert!(source_with_cause
-        .unwrap()
-        .to_string()
-        .contains("throttled"));
+    assert!(source_with_cause.unwrap().to_string().contains("throttled"));
 }
 
 #[test]
@@ -114,8 +118,10 @@ fn ensure_macro_validates_condition() {
 
 #[test]
 fn context_trait_wraps_error() {
-    let io_result: std::result::Result<(), std::io::Error> =
-        Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝访问"));
+    let io_result: std::result::Result<(), std::io::Error> = Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "拒绝访问",
+    ));
     let err = io_result
         .with_context(|| "读取用户列表失败".to_string())
         .unwrap_err();

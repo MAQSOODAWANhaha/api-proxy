@@ -2,8 +2,8 @@
 //!
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
-use crate::logging::{LogComponent, LogStage};
 use crate::error::ProxyError;
+use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -146,7 +146,9 @@ impl ProxyHttp for ProxyService {
         );
 
         if session.req_header().method == "OPTIONS" {
-            return Err(ProxyError::internal("CORS preflight request should not be proxied").into());
+            return Err(
+                ProxyError::internal("CORS preflight request should not be proxied").into(),
+            );
         }
 
         // 1. 执行完整的认证和授权流程
@@ -387,11 +389,8 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.resp_transform_service.filter_response(
-            session,
-            upstream_response,
-            ctx,
-        )?;
+        self.resp_transform_service
+            .filter_response(session, upstream_response, ctx)?;
 
         let resp_stats = self
             .stats_service

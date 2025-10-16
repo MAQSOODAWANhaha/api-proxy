@@ -186,9 +186,10 @@ pub async fn get_today_dashboard_cards(
                 "fetch_today_traces_fail",
                 &format!("Failed to fetch today's traces: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch today's data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch today's data: {}", err)
+            ));
         }
     };
 
@@ -209,9 +210,10 @@ pub async fn get_today_dashboard_cards(
                 "fetch_yesterday_traces_fail",
                 &format!("Failed to fetch yesterday's traces: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch yesterday's data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch yesterday's data: {}", err)
+            ));
         }
     };
 
@@ -308,9 +310,10 @@ pub async fn get_models_usage_rate(
                 "fetch_models_rate_fail",
                 &format!("Failed to fetch traces for models rate: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch data: {}", err)
+            ));
         }
     };
 
@@ -452,9 +455,10 @@ pub async fn get_models_statistics(
                 "fetch_models_stats_fail",
                 &format!("Failed to fetch traces for models statistics: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch data: {}", err)
+            ));
         }
     };
 
@@ -530,9 +534,10 @@ pub async fn get_tokens_trend(
                 "fetch_tokens_trend_fail",
                 &format!("Failed to fetch traces for tokens trend: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch data: {}", err)
+            ));
         }
     };
 
@@ -643,9 +648,10 @@ pub async fn get_user_api_keys_request_trend(
                 "fetch_user_keys_request_trend_fail",
                 &format!("Failed to fetch traces for user API keys request trend: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch data: {}", err)
+            ));
         }
     };
 
@@ -731,9 +737,10 @@ pub async fn get_user_api_keys_token_trend(
                 "fetch_user_keys_token_trend_fail",
                 &format!("Failed to fetch traces for user API keys token trend: {err}")
             );
-            return crate::management::response::app_error(
-                crate::error!(Database, format!("Failed to fetch data: {}", err)),
-            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch data: {}", err)
+            ));
         }
     };
 

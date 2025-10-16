@@ -3,12 +3,11 @@
 //! 提供基于客户端轮询的新OAuth管理API，替代传统的服务器回调方式
 //! `支持公共OAuth凭据和PKCE安全机制`
 
-use crate::error::{auth::OAuthError, ProxyError};
 use crate::auth::oauth_client::session_manager::SessionStatistics;
 use crate::auth::oauth_client::{
-    AuthorizeUrlResponse, OAuthClient, OAuthPollingResponse, OAuthSessionInfo,
-    OAuthTokenResponse,
+    AuthorizeUrlResponse, OAuthClient, OAuthPollingResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
+use crate::error::{ProxyError, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
@@ -110,7 +109,9 @@ pub async fn start_authorization(
                 "start_auth_fail",
                 &format!("Failed to start OAuth authorization: {err:?}")
             );
-            crate::management::response::app_error(ProxyError::internal("Failed to start authorization"))
+            crate::management::response::app_error(ProxyError::internal(
+                "Failed to start authorization",
+            ))
         }
     }
 }
@@ -237,7 +238,9 @@ pub async fn exchange_token(
                     "exchange_token_fail",
                     &format!("Failed to exchange token: {err:?}")
                 );
-                crate::management::response::app_error(ProxyError::internal("Failed to exchange token"))
+                crate::management::response::app_error(ProxyError::internal(
+                    "Failed to exchange token",
+                ))
             }
         },
     }
@@ -353,7 +356,9 @@ pub async fn refresh_token(
                     "refresh_token_fail",
                     &format!("Failed to refresh token: {err:?}")
                 );
-                crate::management::response::app_error(ProxyError::internal("Failed to refresh token"))
+                crate::management::response::app_error(ProxyError::internal(
+                    "Failed to refresh token",
+                ))
             }
         },
     }

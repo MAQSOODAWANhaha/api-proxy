@@ -83,11 +83,9 @@ impl RequestTransformService {
                 );
 
                 for (name, value) in auth_headers {
-                    upstream_request
-                        .insert_header(name, &value)
-                        .map_err(|e| {
-                            ProxyError::internal_with_source("Failed to set auth header", e)
-                        })?;
+                    upstream_request.insert_header(name, &value).map_err(|e| {
+                        ProxyError::internal_with_source("Failed to set auth header", e)
+                    })?;
                 }
             }
             ResolvedCredential::OAuthAccessToken(token) => {

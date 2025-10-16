@@ -3,9 +3,9 @@
 //! 从RequestHandler中提取的追踪相关逻辑，专门负责处理代理端的请求追踪需求
 //! 包括请求追踪开始、完成、错误处理和扩展信息更新等功能
 
-use crate::error::network::NetworkError;
 use crate::error::ProxyError;
 use crate::error::Result;
+use crate::error::network::NetworkError;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::ImmediateProxyTracer;
@@ -257,19 +257,15 @@ impl TracingService {
                 (429, Some("rate_limit_exceeded".to_string()))
             }
             ProxyError::Network(
-                NetworkError::UpstreamNotAvailable(_) | NetworkError::UpstreamNotFound(_)
-            ) => {
-                (502, Some("upstream_error".to_string()))
-            }
+                NetworkError::UpstreamNotAvailable(_) | NetworkError::UpstreamNotFound(_),
+            ) => (502, Some("upstream_error".to_string())),
             ProxyError::Config(_) => (500, Some("configuration_error".to_string())),
             ProxyError::Internal { .. } => (500, Some("internal_error".to_string())),
             ProxyError::Network(
                 NetworkError::ConnectionTimeout(_)
                 | NetworkError::ReadTimeout(_)
-                | NetworkError::WriteTimeout(_)
-            ) => {
-                (504, Some("timeout_error".to_string()))
-            }
+                | NetworkError::WriteTimeout(_),
+            ) => (504, Some("timeout_error".to_string())),
             _ => (500, Some("unknown_error".to_string())),
         };
 

@@ -1,8 +1,8 @@
 //! API密钥健康检查相关处理器
 
+use crate::error::ProxyError;
 use crate::management::{response, server::AppState};
 use crate::scheduler::api_key_health::ApiKeyHealthChecker;
-use crate::error::ProxyError;
 use crate::{
     lerror,
     logging::{LogComponent, LogStage},
@@ -275,7 +275,9 @@ pub async fn mark_key_unhealthy(
 
 // 内部实现函数
 
-async fn get_api_keys_health_internal(state: &AppState) -> crate::error::Result<Vec<ApiKeyHealthInfo>> {
+async fn get_api_keys_health_internal(
+    state: &AppState,
+) -> crate::error::Result<Vec<ApiKeyHealthInfo>> {
     // 从数据库获取所有活跃的API密钥
     let active_keys = user_provider_keys::Entity::find()
         .filter(user_provider_keys::Column::IsActive.eq(true))

@@ -27,7 +27,10 @@ pub fn load_config() -> crate::error::Result<AppConfig> {
     let config_file = format!("config/config.{env}.toml");
 
     if !Path::new(&config_file).exists() {
-        return Err(crate::error!(Config, format!("配置文件不存在: {config_file}")));
+        return Err(crate::error!(
+            Config,
+            format!("配置文件不存在: {config_file}")
+        ));
     }
 
     let config_content = std::fs::read_to_string(&config_file)
@@ -52,9 +55,7 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     })?;
 
     // 验证双端口配置
-    dual_port
-        .validate()
-        .map_err(|e| crate::error!(Config, e))?;
+    dual_port.validate().map_err(|e| crate::error!(Config, e))?;
 
     // 验证数据库配置
     if config.database.url.is_empty() {
@@ -62,10 +63,7 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
     }
 
     if config.database.max_connections == 0 {
-        return Err(crate::error!(
-            Config,
-            "数据库最大连接数必须大于0",
-        ));
+        return Err(crate::error!(Config, "数据库最大连接数必须大于0",));
     }
 
     if matches!(config.cache.cache_type, CacheType::Memory) && config.cache.redis.is_some() {

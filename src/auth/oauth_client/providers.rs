@@ -222,15 +222,12 @@ impl OAuthProviderManager {
     #[allow(clippy::significant_drop_tightening)]
     pub async fn refresh_cache(&self) -> AuthResult<()> {
         let configs = self.list_active_configs().await?;
-        let mut cache = self
-            .cache
-            .write()
-            .map_err(|_| {
-                crate::error!(
-                    Authentication,
-                    OAuth(OAuthError::DatabaseError("Cache lock error".to_string()))
-                )
-            })?;
+        let mut cache = self.cache.write().map_err(|_| {
+            crate::error!(
+                Authentication,
+                OAuth(OAuthError::DatabaseError("Cache lock error".to_string()))
+            )
+        })?;
 
         cache.clear();
         for config in configs {
@@ -307,17 +304,13 @@ impl OAuthProviderManager {
                     }
                 }
 
-                Err(
-                    OAuthError::ProviderNotFound(format!(
-                        "No OAuth config found for provider: {}",
-                        provider_name
-                    ))
-                    .into(),
-                )
+                Err(OAuthError::ProviderNotFound(format!(
+                    "No OAuth config found for provider: {}",
+                    provider_name
+                ))
+                .into())
             }
-            None => Err(
-                OAuthError::ProviderNotFound(provider_name.to_string()).into()
-            ),
+            None => Err(OAuthError::ProviderNotFound(provider_name.to_string()).into()),
         }
     }
 

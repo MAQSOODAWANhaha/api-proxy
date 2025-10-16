@@ -18,7 +18,7 @@ use crate::auth::permissions::UserRole;
 use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::cache::CacheManager;
-use crate::error::{auth::AuthError, Result};
+use crate::error::{Result, auth::AuthError};
 use entity::user_provider_keys;
 
 /// API key validation result
@@ -69,7 +69,10 @@ impl ApiKeyManager {
             auth_config.clone(),
             cache_config,
         ));
-        let rate_limiter = Arc::new(DistributedRateLimiter::new(cache_manager.clone()));
+        let rate_limiter = Arc::new(DistributedRateLimiter::new(
+            cache_manager.clone(),
+            db.clone(),
+        ));
         Self {
             db,
             config: auth_config,
@@ -294,16 +297,13 @@ impl ApiKeyManager {
         // Update database record for `updated_at`
         let mut active_model: user_provider_keys::ActiveModel = api_key_model.clone().into();
         active_model.updated_at = Set(Utc::now().naive_utc());
-        active_model
-            .update(self.db.as_ref())
-            .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    "Database error while updating API key metadata",
-                    e
-                )
-            })?;
+        active_model.update(self.db.as_ref()).await.map_err(|e| {
+            crate::error!(
+                Internal,
+                "Database error while updating API key metadata",
+                e
+            )
+        })?;
 
         // Update token usage in cache
         if tokens_used > 0 {
@@ -373,11 +373,7 @@ impl ApiKeyManager {
             .get(&rpm_key)
             .await
             .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!("Cache error while reading {rpm_key}"),
-                    e
-                )
+                crate::error!(Internal, format!("Cache error while reading {rpm_key}"), e)
             })?
             .unwrap_or(0);
         let remaining_requests = api_key_info
@@ -424,7 +420,10 @@ impl ApiKeyManager {
             .map_err(|e| {
                 crate::error!(
                     Internal,
-                    format!("Database error when fetching API key {}", Self::sanitize_api_key(api_key)),
+                    format!(
+                        "Database error when fetching API key {}",
+                        Self::sanitize_api_key(api_key)
+                    ),
                     e
                 )
             })

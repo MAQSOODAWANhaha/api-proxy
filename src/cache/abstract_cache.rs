@@ -277,8 +277,8 @@ pub struct RedisCache {
 
 impl RedisCache {
     pub fn new(redis_config: &RedisConfig) -> Result<Self> {
-        let client = redis::Client::open(redis_config.url.as_str())
-            .context("创建 Redis 客户端失败")?;
+        let client =
+            redis::Client::open(redis_config.url.as_str()).context("创建 Redis 客户端失败")?;
 
         Ok(Self {
             client,
@@ -327,10 +327,7 @@ impl CacheProvider for RedisCache {
 
         match ttl {
             Some(duration) if duration.is_zero() => {
-                let _: () = conn
-                    .set(key, serialized)
-                    .await
-                    .context("Redis SET 失败")?;
+                let _: () = conn.set(key, serialized).await.context("Redis SET 失败")?;
             }
             Some(duration) => {
                 let _: () = conn
@@ -339,10 +336,7 @@ impl CacheProvider for RedisCache {
                     .context("Redis SETEX 失败")?;
             }
             None => {
-                let _: () = conn
-                    .set(key, serialized)
-                    .await
-                    .context("Redis SET 失败")?;
+                let _: () = conn.set(key, serialized).await.context("Redis SET 失败")?;
             }
         }
 
@@ -393,9 +387,7 @@ impl CacheProvider for RedisCache {
 
     async fn incr(&self, key: &str, delta: i64) -> Result<i64> {
         let mut conn = self.connection().await?;
-        conn.incr(key, delta)
-            .await
-            .context("Redis INCRBY 失败")
+        conn.incr(key, delta).await.context("Redis INCRBY 失败")
     }
 
     async fn clear(&self) -> Result<()> {
