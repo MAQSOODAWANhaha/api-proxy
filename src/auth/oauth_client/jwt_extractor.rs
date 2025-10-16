@@ -48,12 +48,14 @@ pub struct JWTParser {
 impl JWTParser {
     /// 创建新的 JWT 解析器
     pub fn new() -> Result<Self, OAuthError> {
-        // OpenAI 使用 RS256 算法签名，我们需要使用公开的验证密钥
-        // 对于 OpenAI 的 JWT，我们可以使用空的解码密钥进行无验证解析
-        // 因为我们的目标只是提取 payload 中的信息
+        // OpenAI 的 JWT 使用 RS256 算法签名。然而，由于我们在此处仅解码 payload 而不验证签名
+        // (通过 insecure_disable_signature_validation)，我们面临一个技术选择。
+        // 为了避免 `jsonwebtoken` 库因算法与密钥类型不匹配而抛出 `InvalidKeyFormat` 错误，
+        // 我们在此处将验证算法“伪装”为 HS256，以匹配 `DecodingKey::from_secret` 的密钥格式。
+        // 因为签名验证已被禁用，所以此处的算法选择仅为满足格式要求，不影响解码 payload 的能力。
         let decoding_key = DecodingKey::from_secret(&[]);
 
-        let mut validation = Validation::new(Algorithm::RS256);
+        let mut validation = Validation::new(Algorithm::HS256);
         // 禁用签名验证，因为我们只是解析 payload
         validation.insecure_disable_signature_validation();
         // 禁用过期验证，因为我们需要解析可能过期的 token
