@@ -1,5 +1,5 @@
 use crate::{
-    auth::{AuthManager, rate_limit_dist::DistributedRateLimiter, service::AuthService},
+    auth::{rate_limit_dist::DistributedRateLimiter, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::{Context, Result},
     management::server::{ManagementConfig, ManagementServer},
@@ -17,13 +17,11 @@ use std::sync::Arc;
 /// 共享服务结构体
 pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
-    pub unified_auth_manager: Arc<AuthManager>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
     pub cache_manager: Arc<crate::cache::CacheManager>,
+    pub config_manager: Arc<ConfigManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
     pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
-    pub oauth_refresh_service:
-        Arc<crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService>,
     pub smart_api_key_provider: Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>,
     pub oauth_token_refresh_task: Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>,
 }
@@ -153,32 +151,74 @@ pub async fn run_dual_port_servers() -> Result<()> {
         "🎯 Starting both servers concurrently..."
     );
 
-    // 并发启动两个服务器
+    let mut manage = Box::pin(management_server.serve());
+    let mut proxy = tokio::spawn(async move { proxy_server.start().await });
+
     tokio::select! {
-        // 启动 Axum 管理服务器
-        result = management_server.serve() => {
-            lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "management_server_exit", &format!("Management server exited unexpectedly: {result:?}"));
+        result = &mut manage => {
+            lerror!(
+                "system",
+                LogStage::Shutdown,
+                LogComponent::ServerSetup,
+                "management_server_exit",
+                &format!("Management server exited unexpectedly: {result:?}")
+            );
             Err(crate::error!(Internal, "Management server failed"))
         }
-        // 启动 Pingora 代理服务器
-        result = tokio::task::spawn(async move {
-            proxy_server.start().await
-        }) => {
+        result = &mut proxy => {
             match result {
                 Ok(proxy_result) => {
                     if let Err(e) = proxy_result {
-                        lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_fail", &format!("Proxy server failed: {e:?}"));
+                        lerror!(
+                            "system",
+                            LogStage::Shutdown,
+                            LogComponent::ServerSetup,
+                            "proxy_server_fail",
+                            &format!("Proxy server failed: {e:?}")
+                        );
                         Err(e)
                     } else {
-                        lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_exit", "Proxy server exited unexpectedly");
+                        lerror!(
+                            "system",
+                            LogStage::Shutdown,
+                            LogComponent::ServerSetup,
+                            "proxy_server_exit",
+                            "Proxy server exited unexpectedly"
+                        );
                         Err(crate::error!(Internal, "Proxy server failed"))
                     }
                 }
                 Err(e) => {
-                    lerror!("system", LogStage::Shutdown, LogComponent::ServerSetup, "proxy_server_spawn_fail", &format!("Failed to spawn proxy server task: {e:?}"));
+                    lerror!(
+                        "system",
+                        LogStage::Shutdown,
+                        LogComponent::ServerSetup,
+                        "proxy_server_spawn_fail",
+                        &format!("Failed to spawn proxy server task: {e:?}")
+                    );
                     Err::<(), _>(e).context("Failed to spawn proxy server task")
                 }
             }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            linfo!(
+                "system",
+                LogStage::Shutdown,
+                LogComponent::ServerSetup,
+                "shutdown_signal",
+                "Received termination signal, shutting down..."
+            );
+            proxy.abort();
+            if let Err(e) = shared_services.oauth_token_refresh_task.stop().await {
+                lwarn!(
+                    "system",
+                    LogStage::Shutdown,
+                    LogComponent::ServerSetup,
+                    "oauth_task_stop_failed",
+                    &format!("Failed to stop OAuth refresh task: {e:?}")
+                );
+            }
+            Ok(())
         }
     }
 }
@@ -199,7 +239,7 @@ pub async fn initialize_shared_services() -> Result<(
         "load_config",
         "📋 Loading configuration..."
     );
-    let config_manager = ConfigManager::new().await?;
+    let config_manager = Arc::new(ConfigManager::new().await?);
     let config = config_manager.get_config().await;
 
     linfo!(
@@ -265,6 +305,31 @@ pub async fn initialize_shared_services() -> Result<(
         LogComponent::ServerSetup,
         "run_migrations_ok",
         "✅ Database migrations completed"
+    );
+
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "ensure_data",
+        "🔍 Ensuring default model pricing data..."
+    );
+    if let Err(e) = crate::database::ensure_model_pricing_data(&db).await {
+        lerror!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "ensure_data_fail",
+            &format!("❌ Failed to ensure model pricing data: {e:?}")
+        );
+        return Err(e);
+    }
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "ensure_data_ok",
+        "✅ Model pricing data is up to date"
     );
 
     let config_arc = Arc::new(config);
@@ -355,16 +420,6 @@ pub async fn initialize_shared_services() -> Result<(
     ));
 
     // 创建统一认证管理器
-    let unified_auth_manager = Arc::new(AuthManager::new(
-        auth_service.clone(),
-        auth_config,
-        db.clone(),
-        cache_manager.clone(),
-    )?);
-
-    // unified_auth_manager已经是Arc类型
-
-    // 统计数据直接查 proxy_tracing 表，无需单独统计服务
 
     // 初始化统一追踪系统 - 这是关键的缺失组件!
     linfo!(
@@ -457,7 +512,7 @@ pub async fn initialize_shared_services() -> Result<(
         crate::auth::smart_api_key_provider::SmartApiKeyProvider::new(
             db.clone(),
             oauth_client.clone(),
-            oauth_refresh_service.clone(),
+            Arc::clone(&oauth_refresh_service),
         ),
     );
     linfo!(
@@ -477,9 +532,7 @@ pub async fn initialize_shared_services() -> Result<(
         "⏰ Initializing OAuth token refresh task..."
     );
     let oauth_token_refresh_task = Arc::new(
-        crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(
-            oauth_refresh_service.clone(),
-        ),
+        crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(oauth_refresh_service),
     );
     linfo!(
         "system",
@@ -499,12 +552,11 @@ pub async fn initialize_shared_services() -> Result<(
 
     let shared_services = SharedServices {
         auth_service,
-        unified_auth_manager,
         provider_config_manager,
         cache_manager: cache_manager.clone(),
+        config_manager: config_manager.clone(),
         api_key_health_checker,
         oauth_client,
-        oauth_refresh_service,
         smart_api_key_provider,
         oauth_token_refresh_task,
     };
