@@ -16,7 +16,7 @@
 
 3. **静态分析**：运行 `cargo clippy` 检查代码质量和潜在问题
    ```bash
-   cargo clippy -- -D warnings
+   cargo clippy --all-targets -- -D warnings
    ```
 
 4. **单元测试**：执行 `cargo test` 确保所有测试通过

@@ -2,6 +2,7 @@
 //!
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
+use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -33,10 +34,12 @@ pub struct ProxyService {
     upstream_service: Arc<UpstreamService>,
     req_transform_service: Arc<RequestTransformService>,
     resp_transform_service: Arc<ResponseTransformService>,
+    rate_limiter: Arc<DistributedRateLimiter>,
 }
 
 impl ProxyService {
     /// 创建新的代理服务实例
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         db: Arc<DatabaseConnection>,
         auth_service: Arc<AuthenticationService>,
@@ -45,6 +48,7 @@ impl ProxyService {
         upstream_service: Arc<UpstreamService>,
         req_transform_service: Arc<RequestTransformService>,
         resp_transform_service: Arc<ResponseTransformService>,
+        rate_limiter: Arc<DistributedRateLimiter>,
     ) -> pingora_core::Result<Self> {
         Ok(Self {
             db,
@@ -54,6 +58,7 @@ impl ProxyService {
             upstream_service,
             req_transform_service,
             resp_transform_service,
+            rate_limiter,
         })
     }
 
@@ -510,6 +515,70 @@ impl ProxyHttp for ProxyService {
                     cost_currency,
                 )
                 .await;
+
+            if let Some(user_api) = ctx.user_service_api.as_ref() {
+                let endpoint = format!("service_api:{}", user_api.id);
+                if let Err(e) = self
+                    .rate_limiter
+                    .increment_daily_request_cache(user_api.user_id, &endpoint, 1)
+                    .await
+                {
+                    lwarn!(
+                        &ctx.request_id,
+                        LogStage::Internal,
+                        LogComponent::Cache,
+                        "request_cache_update_failed",
+                        &format!("Failed to update daily request cache: {e}")
+                    );
+                }
+
+                if let Some(usage) = ctx.usage_final.as_ref()
+                    && let Some(total_tokens) = usage.total_tokens
+                {
+                    match i64::try_from(total_tokens) {
+                        Ok(delta_tokens) if delta_tokens > 0 => {
+                            if let Err(e) = self
+                                .rate_limiter
+                                .increment_daily_token_cache(user_api.id, delta_tokens)
+                                .await
+                            {
+                                lwarn!(
+                                    &ctx.request_id,
+                                    LogStage::Internal,
+                                    LogComponent::Cache,
+                                    "token_cache_update_failed",
+                                    &format!("Failed to update daily token cache: {e}")
+                                );
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            lwarn!(
+                                &ctx.request_id,
+                                LogStage::Internal,
+                                LogComponent::Cache,
+                                "token_cache_overflow",
+                                "Token usage exceeded i64::MAX, skipping cache update"
+                            );
+                        }
+                    }
+                }
+
+                if let Some(cost) = cost_value
+                    && let Err(e) = self
+                        .rate_limiter
+                        .increment_daily_cost_cache(user_api.id, cost)
+                        .await
+                {
+                    lwarn!(
+                        &ctx.request_id,
+                        LogStage::Internal,
+                        LogComponent::Cache,
+                        "cost_cache_update_failed",
+                        &format!("Failed to update daily cost cache: {e}")
+                    );
+                }
+            }
         } else {
             // Log detailed error information
             crate::logging::log_proxy_failure_details(&ctx.request_id, status_code, e, ctx);

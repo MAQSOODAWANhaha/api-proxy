@@ -44,44 +44,8 @@ impl OpenAIStrategy {
 
     /// `从OpenAI` access_token中解析chatgpt-account-id
     fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
-        let jwt_parser = match JWTParser::new() {
-            Ok(parser) => parser,
-            Err(e) => {
-                lwarn!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "jwt_parser_init_failed",
-                    "JWTParser 初始化失败",
-                    error = %e
-                );
-                return None;
-            }
-        };
-        match jwt_parser.extract_chatgpt_account_id(access_token) {
-            Ok(Some(account_id)) => Some(account_id),
-            Ok(None) => {
-                linfo!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "jwt_missing_account_id",
-                    "JWT 已解析但未找到 account_id"
-                );
-                None
-            }
-            Err(e) => {
-                lwarn!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "jwt_parsing_failed",
-                    "JWT 解析过程中出现错误",
-                    error = %e
-                );
-                None
-            }
-        }
+        let jwt_parser = JWTParser;
+        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
 
     /// 异步处理429错误

@@ -3,6 +3,7 @@
 //! 基于 Pingora 0.5.0 实现的高性能 AI 代理服务器
 
 use super::builder::ProxyServerBuilder;
+use crate::cache::CacheManager;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
@@ -19,40 +20,25 @@ pub struct PingoraProxyServer {
     db: Option<Arc<sea_orm::DatabaseConnection>>,
     /// 追踪系统（TraceSystem）
     trace_system: Option<Arc<TraceSystem>>,
+    /// 共享缓存管理器
+    cache: Option<Arc<CacheManager>>,
 }
 
 impl PingoraProxyServer {
     /// 创建新的代理服务器
     #[must_use]
-    pub fn new(config: AppConfig) -> Self {
-        let config_arc = Arc::new(config);
-
-        Self {
-            config: config_arc,
-            db: None,
-            trace_system: None,
-        }
-    }
-
-    /// 创建新的代理服务器（带数据库连接）
-    #[must_use]
-    pub fn new_with_db(config: AppConfig, db: Arc<sea_orm::DatabaseConnection>) -> Self {
-        let mut server = Self::new(config);
-        server.db = Some(db);
-        server
-    }
-
-    /// 创建新的代理服务器（带数据库连接和追踪系统）
-    #[must_use]
-    pub fn new_with_db_and_trace(
-        config: AppConfig,
-        db: Arc<sea_orm::DatabaseConnection>,
-        trace_system: Arc<TraceSystem>,
+    pub const fn new(
+        config: Arc<AppConfig>,
+        db: Option<Arc<sea_orm::DatabaseConnection>>,
+        cache: Option<Arc<CacheManager>>,
+        trace_system: Option<Arc<TraceSystem>>,
     ) -> Self {
-        let mut server = Self::new(config);
-        server.db = Some(db);
-        server.trace_system = Some(trace_system);
-        server
+        Self {
+            config,
+            db,
+            trace_system,
+            cache,
+        }
     }
 
     /// 创建Pingora服务器选项（基本配置）
@@ -114,6 +100,10 @@ impl PingoraProxyServer {
         // 如果有共享数据库连接，使用它
         if let Some(shared_db) = &self.db {
             builder = builder.with_database(shared_db.clone());
+        }
+
+        if let Some(cache) = &self.cache {
+            builder = builder.with_cache(cache.clone());
         }
 
         // 关键修复：如果有trace_system，传递给builder

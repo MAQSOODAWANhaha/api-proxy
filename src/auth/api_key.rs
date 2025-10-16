@@ -10,6 +10,7 @@ use chrono::{DateTime, Timelike, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,7 +20,7 @@ use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::cache::CacheManager;
 use crate::error::{Result, auth::AuthError};
-use entity::user_provider_keys;
+use entity::{user_provider_keys, user_service_apis};
 
 /// API key validation result
 #[derive(Debug, Clone)]
@@ -39,6 +40,11 @@ pub struct ApiKeyValidationResult {
 struct ApiKeyCacheData {
     api_key_info: ApiKeyInfo,
     permissions: Vec<UserRole>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ServiceApiLookupCache {
+    service_api_id: Option<i32>,
 }
 
 /// API key manager
@@ -63,15 +69,12 @@ impl ApiKeyManager {
         auth_config: Arc<AuthConfig>,
         cache_manager: Arc<CacheManager>,
         cache_config: Arc<CacheConfig>,
+        rate_limiter: Arc<DistributedRateLimiter>,
     ) -> Self {
         let auth_cache_manager = Arc::new(UnifiedAuthCacheManager::new(
             cache_manager.clone(),
             auth_config.clone(),
             cache_config,
-        ));
-        let rate_limiter = Arc::new(DistributedRateLimiter::new(
-            cache_manager.clone(),
-            db.clone(),
         ));
         Self {
             db,
@@ -307,6 +310,28 @@ impl ApiKeyManager {
 
         // Update token usage in cache
         if tokens_used > 0 {
+            let service_api = self
+                .find_service_api_for_key(api_key_model.user_id, api_key_model.id)
+                .await?;
+            if let Some(service_api) = service_api {
+                let cache_update = self
+                    .limiter
+                    .increment_daily_token_cache(service_api.id, i64::from(tokens_used))
+                    .await;
+                if let Err(e) = cache_update {
+                    lwarn!(
+                        "system",
+                        LogStage::Internal,
+                        LogComponent::Cache,
+                        "daily_token_cache_update_failed",
+                        &format!(
+                            "Failed to update daily token cache for service_api {}: {e}",
+                            service_api.id
+                        )
+                    );
+                }
+            }
+
             let date = chrono::Utc::now().format("%Y%m%d").to_string();
             let token_key = format!("rate_limit:token:{}:{}", api_key_model.id, date);
             let new_total = self
@@ -364,43 +389,198 @@ impl ApiKeyManager {
         _api_key: &str,
         api_key_info: &ApiKeyInfo,
     ) -> Result<(Option<i32>, Option<i32>)> {
-        // Get RPM from distributed limiter
-        let rpm_key =
-            crate::cache::keys::CacheKeyBuilder::rate_limit(api_key_info.user_id, "proxy").build();
-        let current_requests: i64 = self
-            .raw_cache
-            .provider()
-            .get(&rpm_key)
-            .await
-            .map_err(|e| {
-                crate::error!(Internal, format!("Cache error while reading {rpm_key}"), e)
-            })?
-            .unwrap_or(0);
-        let remaining_requests = api_key_info
-            .max_requests_per_minute
-            .map(|max| (i64::from(max) - current_requests).max(0) as i32);
+        let service_api = self
+            .find_service_api_for_key(api_key_info.user_id, api_key_info.id)
+            .await?;
 
-        // Get TPD from cache
-        let date = chrono::Utc::now().format("%Y%m%d").to_string();
-        let token_key = format!("rate_limit:token:{}:{}", api_key_info.id, date);
-        let current_tokens: i64 = self
+        let service_endpoint = service_api
+            .as_ref()
+            .map(|api| format!("service_api:{}", api.id));
+
+        let per_minute_remaining = if let Some(service_api) = service_api.as_ref()
+            && let Some(limit) = service_api.max_request_per_min
+            && let Some(endpoint) = service_endpoint.as_ref()
+        {
+            let current = self
+                .limiter
+                .current_per_minute(service_api.user_id, endpoint)
+                .await?;
+            Some(Self::remaining_from_limits(i64::from(limit), current))
+        } else if let Some(limit) = api_key_info.max_requests_per_minute {
+            let current = self
+                .limiter
+                .current_per_minute(api_key_info.user_id, "proxy")
+                .await?;
+            Some(Self::remaining_from_limits(i64::from(limit), current))
+        } else {
+            None
+        };
+
+        let daily_request_remaining = if let Some(service_api) = service_api.as_ref()
+            && let Some(limit) = service_api.max_requests_per_day
+            && let Some(endpoint) = service_endpoint.as_ref()
+        {
+            let current = self
+                .limiter
+                .current_daily_requests(service_api.user_id, endpoint)
+                .await?;
+            Some(Self::remaining_from_limits(i64::from(limit), current))
+        } else if let Some(limit) = api_key_info.max_requests_per_day {
+            let date = chrono::Utc::now().format("%Y%m%d").to_string();
+            let request_key = format!("rate_limit:token:{}:{}", api_key_info.id, date);
+            let current = self
+                .raw_cache
+                .provider()
+                .get::<i64>(&request_key)
+                .await
+                .map_err(|e| {
+                    crate::error!(
+                        Internal,
+                        format!("Cache error while reading {request_key}"),
+                        e
+                    )
+                })?
+                .unwrap_or(0);
+            Some(Self::remaining_from_limits(i64::from(limit), current))
+        } else {
+            None
+        };
+
+        let remaining_requests = match (per_minute_remaining, daily_request_remaining) {
+            (Some(rpm), Some(daily)) => Some(rpm.min(daily)),
+            (Some(rpm), None) => Some(rpm),
+            (None, Some(daily)) => Some(daily),
+            (None, None) => None,
+        };
+
+        let remaining_tokens = if let Some(service_api) = service_api.as_ref()
+            && let Some(limit) = service_api.max_tokens_per_day
+        {
+            let current = self.limiter.current_daily_tokens(service_api.id).await?;
+            Some(Self::remaining_from_limits(limit, current))
+        } else if let Some(limit) = api_key_info.max_requests_per_day {
+            let date = chrono::Utc::now().format("%Y%m%d").to_string();
+            let token_key = format!("rate_limit:token:{}:{}", api_key_info.id, date);
+            let current = self
+                .raw_cache
+                .provider()
+                .get::<i64>(&token_key)
+                .await
+                .map_err(|e| {
+                    crate::error!(
+                        Internal,
+                        format!("Cache error while reading {token_key}"),
+                        e
+                    )
+                })?
+                .unwrap_or(0);
+            Some(Self::remaining_from_limits(i64::from(limit), current))
+        } else {
+            None
+        };
+
+        Ok((remaining_requests, remaining_tokens))
+    }
+
+    fn remaining_from_limits(limit: i64, current: i64) -> i32 {
+        if limit <= 0 {
+            return 0;
+        }
+        let used = current.max(0);
+        let remaining = limit.saturating_sub(used);
+        if remaining <= 0 {
+            0
+        } else {
+            remaining.try_into().unwrap_or(i32::MAX)
+        }
+    }
+
+    async fn find_service_api_for_key(
+        &self,
+        user_id: i32,
+        provider_key_id: i32,
+    ) -> Result<Option<user_service_apis::Model>> {
+        let cache_key = format!("service_api_lookup:{provider_key_id}");
+        if let Some(cached) = self
             .raw_cache
             .provider()
-            .get(&token_key)
+            .get::<ServiceApiLookupCache>(&cache_key)
             .await
             .map_err(|e| {
                 crate::error!(
                     Internal,
-                    format!("Cache error while reading {token_key}"),
+                    format!("Failed to load cached service api mapping for key {provider_key_id}"),
                     e
                 )
             })?
-            .unwrap_or(0);
-        let remaining_tokens = api_key_info
-            .max_requests_per_day
-            .map(|max| (i64::from(max) - current_tokens).max(0) as i32);
+        {
+            if let Some(service_api_id) = cached.service_api_id
+                && let Some(service_api) = user_service_apis::Entity::find_by_id(service_api_id)
+                    .filter(user_service_apis::Column::IsActive.eq(true))
+                    .one(self.db.as_ref())
+                    .await
+                    .map_err(|e| {
+                        crate::error!(
+                            Internal,
+                            format!("Failed to load service api {service_api_id}"),
+                            e
+                        )
+                    })?
+                && service_api.user_id == user_id
+            {
+                return Ok(Some(service_api));
+            }
+            if cached.service_api_id.is_none() {
+                return Ok(None);
+            }
+            // cached entry outdated, fall through to refresh
+        }
 
-        Ok((remaining_requests, remaining_tokens))
+        let apis = user_service_apis::Entity::find()
+            .filter(user_service_apis::Column::UserId.eq(user_id))
+            .filter(user_service_apis::Column::IsActive.eq(true))
+            .all(self.db.as_ref())
+            .await
+            .map_err(|e| {
+                crate::error!(
+                    Internal,
+                    format!("Failed to load service APIs for user {user_id}"),
+                    e
+                )
+            })?;
+
+        for api in apis {
+            if let Ok(ids) = serde_json::from_value::<Vec<i32>>(api.user_provider_keys_ids.clone())
+                && ids.contains(&provider_key_id)
+            {
+                let _ = self
+                    .raw_cache
+                    .provider()
+                    .set(
+                        &cache_key,
+                        &ServiceApiLookupCache {
+                            service_api_id: Some(api.id),
+                        },
+                        Some(Duration::from_secs(300)),
+                    )
+                    .await;
+                return Ok(Some(api));
+            }
+        }
+
+        let _ = self
+            .raw_cache
+            .provider()
+            .set(
+                &cache_key,
+                &ServiceApiLookupCache {
+                    service_api_id: None,
+                },
+                Some(Duration::from_secs(120)),
+            )
+            .await;
+
+        Ok(None)
     }
 
     // ==================== 共享数据库操作方法 ====================

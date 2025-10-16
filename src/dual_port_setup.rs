@@ -1,5 +1,5 @@
 use crate::{
-    auth::{AuthManager, service::AuthService},
+    auth::{AuthManager, rate_limit_dist::DistributedRateLimiter, service::AuthService},
     config::{AppConfig, ConfigManager, ProviderConfigManager},
     error::{Context, Result},
     management::server::{ManagementConfig, ManagementServer},
@@ -9,6 +9,7 @@ use crate::{
 use crate::{
     lerror, linfo,
     logging::{LogComponent, LogStage},
+    lwarn,
 };
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub struct SharedServices {
     pub auth_service: Arc<AuthService>,
     pub unified_auth_manager: Arc<AuthManager>,
     pub provider_config_manager: Arc<ProviderConfigManager>,
+    pub cache_manager: Arc<crate::cache::CacheManager>,
     pub api_key_health_checker: Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>,
     pub oauth_client: Arc<crate::auth::oauth_client::OAuthClient>,
     pub oauth_refresh_service:
@@ -106,8 +108,12 @@ pub async fn run_dual_port_servers() -> Result<()> {
     .context("Failed to create management server")?;
 
     // 创建代理服务器，传递数据库连接和追踪系统
-    let proxy_server =
-        PingoraProxyServer::new_with_db_and_trace((*config).clone(), db.clone(), trace_system);
+    let proxy_server = PingoraProxyServer::new(
+        config.clone(),
+        Some(db.clone()),
+        Some(shared_services.cache_manager.clone()),
+        Some(trace_system),
+    );
 
     // 启动OAuth token后台刷新任务
     linfo!(
@@ -280,16 +286,47 @@ pub async fn initialize_shared_services() -> Result<(
     );
 
     // 初始化统一缓存管理器
-    let unified_cache_manager = Arc::new(
+    let cache_manager = Arc::new(
         crate::cache::abstract_cache::CacheManager::new(&config_arc.cache)
             .context("Cache manager init failed")?,
     );
 
+    let rate_limiter = Arc::new(DistributedRateLimiter::new(
+        cache_manager.clone(),
+        db.clone(),
+    ));
+
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "warmup_rate_limit_cache",
+        "🔁 Warming up daily usage cache..."
+    );
+    if let Err(e) = rate_limiter.warmup_daily_usage_cache().await {
+        lwarn!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "warmup_rate_limit_cache_failed",
+            &format!("Failed to warm up daily usage cache: {e}")
+        );
+    } else {
+        linfo!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "warmup_rate_limit_cache_ok",
+            "✅ Daily usage cache warmup completed"
+        );
+    }
+
     let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
         db.clone(),
         auth_config.clone(),
-        unified_cache_manager.clone(),
+        cache_manager.clone(),
         Arc::new(config_arc.cache.clone()),
+        rate_limiter.clone(),
     ));
     // 注意：认证服务在后续会统一创建一次
 
@@ -303,7 +340,7 @@ pub async fn initialize_shared_services() -> Result<(
     );
     let provider_config_manager = Arc::new(ProviderConfigManager::new(
         db.clone(),
-        unified_cache_manager.clone(),
+        cache_manager.clone(),
     ));
 
     // Note: 旧的服务器健康检查已移除，现在使用API密钥健康检查系统
@@ -322,7 +359,7 @@ pub async fn initialize_shared_services() -> Result<(
         auth_service.clone(),
         auth_config,
         db.clone(),
-        unified_cache_manager,
+        cache_manager.clone(),
     )?);
 
     // unified_auth_manager已经是Arc类型
@@ -464,6 +501,7 @@ pub async fn initialize_shared_services() -> Result<(
         auth_service,
         unified_auth_manager,
         provider_config_manager,
+        cache_manager: cache_manager.clone(),
         api_key_health_checker,
         oauth_client,
         oauth_refresh_service,

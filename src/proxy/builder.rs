@@ -2,7 +2,7 @@
 //!
 //! 提供统一的服务器初始化逻辑，避免代码重复
 
-use crate::auth::{AuthManager, AuthService};
+use crate::auth::{AuthManager, AuthService, rate_limit_dist::DistributedRateLimiter};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
@@ -47,6 +47,13 @@ impl ProxyServerBuilder {
     #[must_use]
     pub fn with_database(mut self, db: Arc<DatabaseConnection>) -> Self {
         self.db = Some(db);
+        self
+    }
+
+    /// 设置共享缓存管理器
+    #[must_use]
+    pub fn with_cache(mut self, cache: Arc<CacheManager>) -> Self {
+        self.cache = Some(cache);
         self
     }
 
@@ -109,6 +116,7 @@ impl ProxyServerBuilder {
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
+        rate_limiter: &Arc<DistributedRateLimiter>,
     ) -> Result<Arc<AuthManager>> {
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
         let jwt_manager = Arc::new(
@@ -120,6 +128,7 @@ impl ProxyServerBuilder {
             auth_config.clone(),
             cache.clone(),
             Arc::new(self.config.cache.clone()),
+            rate_limiter.clone(),
         ));
         let auth_service = Arc::new(AuthService::new(
             jwt_manager,
@@ -153,8 +162,10 @@ impl ProxyServerBuilder {
             "创建AI代理服务"
         );
 
+        let rate_limiter = Arc::new(DistributedRateLimiter::new(cache.clone(), db.clone()));
+
         let auth_manager = self
-            .create_auth_manager(db.clone(), cache.clone())
+            .create_auth_manager(db.clone(), cache.clone(), &rate_limiter)
             .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
 
         // --- 服务依赖组装 ---
@@ -167,6 +178,7 @@ impl ProxyServerBuilder {
             db.clone(),
             cache,
             api_key_pool,
+            rate_limiter.clone(),
         ));
         let stats_service = Arc::new(StatisticsService::new(pricing_calculator));
         let trace_service = Arc::new(TracingService::new(
@@ -186,6 +198,7 @@ impl ProxyServerBuilder {
             upstream_service,
             req_transform_service,
             resp_transform_service,
+            rate_limiter,
         )
     }
 

@@ -61,6 +61,7 @@ pub struct AuthenticationService {
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
     api_key_pool: Arc<ApiKeyPoolManager>,
+    rate_limiter: Arc<DistributedRateLimiter>,
 }
 
 impl AuthenticationService {
@@ -70,12 +71,14 @@ impl AuthenticationService {
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         api_key_pool: Arc<ApiKeyPoolManager>,
+        rate_limiter: Arc<DistributedRateLimiter>,
     ) -> Self {
         Self {
             auth_manager,
             db,
             cache,
             api_key_pool,
+            rate_limiter,
         }
     }
 
@@ -223,14 +226,14 @@ impl AuthenticationService {
             return Err(crate::error!(Authentication, "API has expired"));
         }
 
-        let rl = DistributedRateLimiter::new(self.cache.clone(), self.db.clone());
         let endpoint_key = format!("service_api:{}", user_api.id);
 
-        // 1. MaxRequestPerMin (Redis)
+        // 1. MaxRequestPerMin
         if let Some(rate_limit) = user_api.max_request_per_min
             && rate_limit > 0
         {
-            let outcome = rl
+            let outcome = self
+                .rate_limiter
                 .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
                 .await?;
             if !outcome.allowed {
@@ -240,11 +243,12 @@ impl AuthenticationService {
             }
         }
 
-        // 2. MaxRequestsPerDay (Redis)
+        // 2. MaxRequestsPerDay
         if let Some(daily_limit) = user_api.max_requests_per_day
             && daily_limit > 0
         {
-            let outcome = rl
+            let outcome = self
+                .rate_limiter
                 .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
                 .await?;
             if !outcome.allowed {
@@ -254,19 +258,22 @@ impl AuthenticationService {
             }
         }
 
-        // 3. MaxTokensPerDay (DB)
+        // 3. MaxTokensPerDay
         if let Some(max_tokens) = user_api.max_tokens_per_day
             && max_tokens > 0
         {
-            rl.check_daily_token_limit_db(user_api.id, max_tokens)
+            self.rate_limiter
+                .check_daily_token_limit(user_api.id, max_tokens)
                 .await?;
         }
 
-        // 4. MaxCostPerDay (DB)
+        // 4. MaxCostPerDay
         if let Some(max_cost) = user_api.max_cost_per_day
             && max_cost > Decimal::from(0)
         {
-            rl.check_daily_cost_limit_db(user_api.id, max_cost).await?;
+            self.rate_limiter
+                .check_daily_cost_limit(user_api.id, max_cost)
+                .await?;
         }
 
         Ok(())

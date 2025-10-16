@@ -41,12 +41,6 @@ pub struct OpenAIJWTPayload {
 pub struct JWTParser;
 
 impl JWTParser {
-    /// 创建新的 JWT 解析器
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn new() -> Result<Self, OAuthError> {
-        Ok(Self)
-    }
-
     /// 从 `access_token` 中解析 `OpenAI` 用户信息
     pub fn extract_openai_info(
         &self,
@@ -137,12 +131,6 @@ impl JWTParser {
     }
 }
 
-impl Default for JWTParser {
-    fn default() -> Self {
-        Self::new().expect("JWTParser 创建失败")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,14 +140,14 @@ mod tests {
     /// 测试 JWT 解析器创建
     #[test]
     fn test_jwt_parser_creation() {
-        let parser = JWTParser::new();
-        assert!(parser.is_ok());
+        let parser = JWTParser;
+        assert!(!parser.is_openai_token("invalid_token"));
     }
 
     /// 测试无效 token 处理
     #[test]
     fn test_invalid_token_handling() {
-        let parser = JWTParser::new().unwrap();
+        let parser = JWTParser;
         let result = parser.extract_chatgpt_account_id("invalid_token");
         assert!(result.is_err());
     }
@@ -167,7 +155,7 @@ mod tests {
     /// 测试空 token 处理
     #[test]
     fn test_empty_token_handling() {
-        let parser = JWTParser::new().unwrap();
+        let parser = JWTParser;
         let result = parser.extract_chatgpt_account_id("");
         assert!(result.is_err());
     }
@@ -175,14 +163,14 @@ mod tests {
     /// 测试默认解析器
     #[test]
     fn test_default_parser() {
-        let parser = JWTParser::default();
+        let parser = JWTParser;
         let result = parser.extract_chatgpt_account_id("invalid_token");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_extract_chatgpt_account_id_success() {
-        let parser = JWTParser::new().unwrap();
+        let parser = JWTParser;
 
         let header = json!({
             "alg": "RS256",
