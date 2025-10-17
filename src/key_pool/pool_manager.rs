@@ -73,7 +73,7 @@ impl ApiKeyPoolManager {
         linfo!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "start_key_selection",
             "Starting API key selection for service API",
             service_api_id = service_api.id,
@@ -99,7 +99,7 @@ impl ApiKeyPoolManager {
         linfo!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "keys_for_selection_count",
             "Final number of keys passed to the selection algorithm",
             count = keys_to_use.len()
@@ -160,7 +160,7 @@ impl ApiKeyPoolManager {
                     linfo!(
                         "system",
                         LogStage::Scheduling,
-                        LogComponent::Scheduler,
+                        LogComponent::KeyPool,
                         "smart_credential_ok",
                         "Successfully obtained smart API credential",
                         key_id = selection_result.selected_key.id,
@@ -178,7 +178,7 @@ impl ApiKeyPoolManager {
                     lerror!(
                         "system",
                         LogStage::Scheduling,
-                        LogComponent::Scheduler,
+                        LogComponent::KeyPool,
                         "smart_credential_fail",
                         "Failed to get smart API credential, falling back to raw key",
                         key_id = selection_result.selected_key.id,
@@ -323,7 +323,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_pending",
                     "API key is pending authorization, skipping",
                     key_id = key.id,
@@ -335,7 +335,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_expired",
                     "API key authorization has expired, skipping",
                     key_id = key.id,
@@ -347,7 +347,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_auth_error",
                     "API key has authorization error, skipping",
                     key_id = key.id,
@@ -359,7 +359,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_revoked",
                     "API key has been revoked, skipping",
                     key_id = key.id,
@@ -377,7 +377,7 @@ impl ApiKeyPoolManager {
             ldebug!(
                 "system",
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "key_expired",
                 "API key has expired, skipping",
                 key_id = key.id,
@@ -397,7 +397,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_unhealthy",
                     "API key is unhealthy, skipping",
                     key_id = key.id,
@@ -410,7 +410,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_unknown_health",
                     "Unknown health status, treating as unhealthy",
                     key_id = key.id,
@@ -432,7 +432,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_rate_limited",
                     "API key is still rate limited, skipping",
                     key_id = key.id,
@@ -446,7 +446,7 @@ impl ApiKeyPoolManager {
                 ldebug!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "key_rate_limited_no_reset",
                     "API key is rate limited without reset time, skipping",
                     key_id = key.id,
@@ -474,7 +474,7 @@ impl ApiKeyPoolManager {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "candidate_keys_count",
             "Retrieved candidate keys from DB",
             count = keys.len()
@@ -508,7 +508,7 @@ impl ApiKeyPoolManager {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "configured_keys",
             "Found configured provider key IDs",
             key_ids = ?ids
@@ -526,7 +526,7 @@ impl ApiKeyPoolManager {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "valid_keys_count",
             "Keys remaining after initial validation filter",
             count = filtered.len()
@@ -552,7 +552,7 @@ impl ApiKeyPoolManager {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "healthy_keys_count",
             "Keys remaining after health filter",
             count = healthy_keys.len()
@@ -562,7 +562,7 @@ impl ApiKeyPoolManager {
             lwarn!(
                 "system",
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "no_healthy_keys",
                 "No healthy API keys available, using all keys in degraded mode",
                 service_api_id = service_api.id,
@@ -572,7 +572,7 @@ impl ApiKeyPoolManager {
             ldebug!(
                 "system",
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "unhealthy_keys_filtered",
                 &format!(
                     "Filtered out {} unhealthy API keys",
@@ -601,7 +601,7 @@ impl ApiKeyPoolManager {
             ldebug!(
                 "system",
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "key_info",
                 "API key limits and status information",
                 key_id = key.id,
@@ -648,7 +648,7 @@ impl ApiKeyPoolManager {
                     ldebug!(
                         "system",
                         LogStage::Scheduling,
-                        LogComponent::Scheduler,
+                        LogComponent::KeyPool,
                         "key_unhealthy_filtered",
                         "Key filtered out due to health status",
                         key_id = key.id,

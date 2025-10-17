@@ -77,7 +77,7 @@ graph TD
 │   ├── proxy/                # Pingora 代理实现 (认证, 调度, 追踪等)
 │   ├── management/           # Axum 管理接口 (用户, 密钥, 统计等)
 │   ├── auth/                 # 统一认证模块 (API Key, JWT, OAuth2)
-│   ├── scheduler/            # 负载均衡与健康检查
+│   ├── key_pool/             # 负载均衡与健康检查
 │   ├── trace/                # 即时追踪写入器
 │   ├── statistics/           # 统一统计服务与成本计算
 │   └── ...

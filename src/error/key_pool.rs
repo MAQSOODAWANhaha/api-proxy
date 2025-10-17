@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum SchedulerError {
+pub enum KeyPoolError {
     #[error("密钥池为空或所有密钥都不可用")]
     NoAvailableKeys,
 

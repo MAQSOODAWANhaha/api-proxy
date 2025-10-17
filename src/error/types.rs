@@ -1,6 +1,6 @@
 //! Defines the core `ProxyError` enum, which is the central error type for the application.
 
-use crate::error::{auth, config, conversion, database, network, scheduler};
+use crate::error::{auth, config, conversion, database, key_pool, network};
 use http::StatusCode;
 use pingora_core::{Error as PingoraError, ErrorType as PingoraErrorType};
 use std::error::Error;
@@ -21,8 +21,8 @@ pub enum ProxyError {
     #[error("认证/授权错误: {0}")]
     Authentication(#[from] auth::AuthError),
 
-    #[error("调度器错误: {0}")]
-    Scheduler(#[from] scheduler::SchedulerError),
+    #[error("密钥池错误: {0}")]
+    KeyPool(#[from] key_pool::KeyPoolError),
 
     #[error("数据转换错误: {0}")]
     Conversion(#[from] conversion::ConversionError),
@@ -121,12 +121,12 @@ impl ProxyError {
                 auth::AuthError::ApiKeyMissing => "API_KEY_MISSING",
                 _ => "AUTHENTICATION_FAILED",
             },
-            Self::Scheduler(sched_err) => match sched_err {
-                scheduler::SchedulerError::NoAvailableKeys => "SCHEDULER_NO_AVAILABLE_KEYS",
-                scheduler::SchedulerError::KeyNotFound { .. } => "KEY_NOT_FOUND",
-                scheduler::SchedulerError::HealthCheckFailed { .. } => "HEALTH_CHECK_FAILURE",
-                scheduler::SchedulerError::LoadBalancer(_) => "LOAD_BALANCER_ERROR",
-                scheduler::SchedulerError::InvalidStrategy(_) => "SCHEDULER_FAILURE",
+            Self::KeyPool(pool_err) => match pool_err {
+                key_pool::KeyPoolError::NoAvailableKeys => "SCHEDULER_NO_AVAILABLE_KEYS",
+                key_pool::KeyPoolError::KeyNotFound { .. } => "KEY_NOT_FOUND",
+                key_pool::KeyPoolError::HealthCheckFailed { .. } => "HEALTH_CHECK_FAILURE",
+                key_pool::KeyPoolError::LoadBalancer(_) => "LOAD_BALANCER_ERROR",
+                key_pool::KeyPoolError::InvalidStrategy(_) => "SCHEDULER_FAILURE",
             },
             Self::Conversion(_) => "CONVERSION_ERROR",
             Self::Provider { .. } => "AI_PROVIDER_ERROR",
@@ -192,7 +192,7 @@ impl ProxyError {
                 | network::NetworkError::WriteTimeout(_),
             ) => StatusCode::GATEWAY_TIMEOUT,
             Self::Network(_) | Self::Provider { .. } => StatusCode::BAD_GATEWAY,
-            Self::Scheduler(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::KeyPool(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Conversion(_) => StatusCode::BAD_REQUEST,
         }
     }

@@ -10,14 +10,14 @@
 
 - **PingoraProxyServer** (端口8080): 专注高性能AI请求代理，基于Pingora 0.6.0原生性能
 - **ManagementServer** (端口9090): 专注业务管理逻辑，用户管理、API密钥管理、统计查询
-- **共享数据层**: SQLite数据库 + CacheManager + AuthManager
+- **共享数据层**: SQLite数据库 + CacheManager + AuthService
 
 ### 技术栈组成
 
 - **核心框架**: Rust 2024 Edition + Pingora 0.6.0 + Axum 0.8.4
 - **数据库**: SQLite + Sea-ORM 1.x + Sea-ORM-Migration
 - **缓存**: Redis with CacheManager (支持内存/Redis后端)
-- **认证**: AuthManager + JWT + API Key + RBAC + OAuth 2.0
+- **认证**: AuthService + JWT + API Key + RBAC + OAuth 2.0
 - **追踪**: TraceSystem + ImmediateProxyTracer
 - **前端**: React 18 + TypeScript + shadcn/ui (已完成)
 
@@ -41,7 +41,7 @@ flowchart TD
             AuthConfig --> ApiKeyManager["ApiKeyManager::new()"]
             JWTManager --> AuthService["AuthService::new()"]
             ApiKeyManager --> AuthService
-            AuthService --> AuthManager["AuthManager::new()"]
+            AuthService --> AuthService["AuthService::new()"]
             InitComponents --> CacheManager["UnifiedCacheManager::new()"]
             InitComponents --> ProviderConfigMgr["ProviderConfigManager::new()"]
             InitComponents --> StatisticsService["StatisticsService::new()"]
@@ -68,7 +68,7 @@ flowchart TD
             BuildComponents --> EnsureDB["ensure_database()"]
             EnsureDB --> EnsureCache["ensure_cache()"]  
             EnsureCache --> EnsureProvider["ensure_provider_config_manager()"]
-            EnsureProvider --> CreateAuth["create_auth_manager()"]
+            EnsureProvider --> CreateAuth["create_auth_service()"]
             CreateAuth --> CreateProxy["create_proxy_service()"]
         end
         
@@ -101,14 +101,14 @@ flowchart TD
                 ParseKey --> CheckAuthType{"认证类型?"}
                 CheckAuthType -->|API Key| ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
                 CheckAuthType -->|OAuth 2.0| OAuthFlow["OAuth 2.0流程"]
-                ExtractHeaders --> Auth["AuthManager<br/>.authenticate_proxy_request()"]
+                ExtractHeaders --> Auth["AuthService<br/>.authenticate_proxy_request()"]
                 OAuthFlow --> SmartKeyProvider["SmartApiKeyProvider<br/>.get_valid_api_key()"]
                 SmartKeyProvider --> CheckToken{"检查Token有效性"}
                 CheckToken -->|有效| UseToken["使用现有Token"]
                 CheckToken -->|过期/无效| RefreshToken["OAuthTokenRefreshService<br/>.refresh_access_token()"]
                 RefreshToken --> UpdateToken["更新数据库Token"]
                 UpdateToken --> UseToken
-                UseToken --> Auth["AuthManager<br/>.authenticate_proxy_request()"]
+                UseToken --> Auth["AuthService<br/>.authenticate_proxy_request()"]
                 Auth --> VerifyMatch["验证provider类型匹配"]
                 VerifyMatch --> AuthResult["构造AuthenticationResult"]
             end
@@ -259,7 +259,7 @@ main.rs:30 → dual_port_setup::run_dual_port_servers()
 │   │   ├── JwtManager::new()
 │   │   ├── ApiKeyManager::new()
 │   │   ├── AuthService::new()
-│   │   └── AuthManager::new()
+│   │   └── AuthService::new()
 │   ├── 缓存和配置管理器
 │   │   ├── UnifiedCacheManager::new()
 │   │   └── ProviderConfigManager::new()
@@ -294,7 +294,7 @@ PingoraProxyServer::start()
 │       ├── ensure_database() → 复用共享连接
 │       ├── ensure_cache() → UnifiedCacheManager
 │       ├── ensure_provider_config_manager() → ProviderConfigManager
-│       ├── create_auth_manager() → AuthManager
+│       ├── create_auth_service() → AuthService
 │       └── create_proxy_service() → ProxyService实例
 ├── http_proxy_service(proxy_service) // Pingora HTTP服务
 ├── add_tcp(server_address) // 添加TCP监听
@@ -319,7 +319,7 @@ ProxyService (实现 ProxyHttp trait):
 │       ├── 步骤1: AuthenticationService::authenticate_with_provider()
 │       │   ├── parse_inbound_api_key_from_client() // 解析客户端认证头
 │       │   ├── 根据provider.auth_header_format提取密钥
-│       │   └── AuthManager::authenticate_proxy_request()
+│       │   └── AuthService::authenticate_proxy_request()
 │       ├── 步骤2: TracingService::start_trace() // 开始追踪
 │       ├── 步骤3: check_rate_limit() // 速率限制检查
 │       ├── 步骤4: 获取Provider配置 (从ctx.provider_type)
@@ -358,7 +358,7 @@ AuthenticationService::authenticate_with_provider()
 │   ├── AuthHeaderParser::parse_api_key_from_inbound_headers_smart() // 直接调用底层解析器
 │   │   └── 使用统一的错误转换机制 (From<AuthParseError> for ProxyError)
 │   └── Fallback到查询参数 (?api_key=...)
-├── AuthManager::authenticate_proxy_request()
+├── AuthService::authenticate_proxy_request()
 │   ├── 验证API密钥有效性
 │   ├── 检查用户权限和状态
 │   └── 验证provider类型匹配
@@ -374,10 +374,10 @@ AuthenticationService::authenticate_with_provider()
 - `src/proxy/authentication_service.rs:52`: `parse_inbound_api_key_from_client()`
 - `src/proxy/authentication_service.rs:162`: `authenticate_with_provider()`
 - `src/auth/header_parser.rs`: `AuthHeaderParser` 统一头部解析器
-- `src/auth/auth_manager.rs`: `AuthManager`
+- `src/auth/auth_manager.rs`: `AuthService`
 - `src/error/types.rs:1047`: `From<AuthParseError> for ProxyError` 自动转换
 
-### 5. 负载均衡算法 (`src/scheduler/pool_manager.rs`)
+### 5. 负载均衡算法 (`src/key_pool/pool_manager.rs`)
 
 ```rust
 ApiKeyPoolManager::select_api_key_from_service_api():64
@@ -398,9 +398,9 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 ```
 
 **关键代码路径：**
-- `src/scheduler/pool_manager.rs:64`: `select_api_key_from_service_api()`
-- `src/scheduler/algorithms.rs`: `ApiKeySelector` trait实现
-- `src/scheduler/api_key_health.rs`: `ApiKeyHealthChecker`
+- `src/key_pool/pool_manager.rs:64`: `select_api_key_from_service_api()`
+- `src/key_pool/algorithms.rs`: `ApiKeySelector` trait实现
+- `src/key_pool/api_key_health.rs`: `ApiKeyHealthChecker`
 - `src/proxy/request_handler.rs:866`: `select_api_key()`
 
 ### 6. 追踪和统计 (`src/proxy/tracing_service.rs` + `src/statistics/service.rs`)
@@ -472,7 +472,7 @@ OAuth 2.0 完整授权流程：
 - `src/auth/oauth_token_refresh_service.rs:92`: `refresh_access_token()`
 - `src/auth/oauth_token_refresh_task.rs:56`: `start_background_refresh()`
 
-### 9. 智能API密钥健康管理系统 (`src/scheduler/api_key_health.rs`)
+### 9. 智能API密钥健康管理系统 (`src/key_pool/api_key_health.rs`)
 
 ```rust
 API密钥健康监控和恢复：
@@ -495,10 +495,10 @@ API密钥健康监控和恢复：
 ```
 
 **关键代码路径：**
-- `src/scheduler/api_key_health.rs:87`: `ApiKeyHealthChecker::new()`
-- `src/scheduler/api_key_health.rs:134`: `check_key_health()`
-- `src/scheduler/api_key_health.rs:189`: `update_health_status()`
-- `src/scheduler/pool_manager.rs:156`: 健康检查集成逻辑
+- `src/key_pool/api_key_health.rs:87`: `ApiKeyHealthChecker::new()`
+- `src/key_pool/api_key_health.rs:134`: `check_key_health()`
+- `src/key_pool/api_key_health.rs:189`: `update_health_status()`
+- `src/key_pool/pool_manager.rs:156`: 健康检查集成逻辑
 
 ## 🎯 核心设计特点
 
@@ -578,7 +578,7 @@ API密钥健康监控和恢复：
    - 验证 `provider.auth_header_format` 配置是否正确
    - 确认 `AuthHeaderParser::parse_api_key_from_inbound_headers_smart()` 解析结果
    - 检查错误自动转换 `From<AuthParseError> for ProxyError` 是否正常
-   - 确认 `AuthManager` 认证流程
+   - 确认 `AuthService` 认证流程
 2. **负载均衡异常**: 
    - 查看 `ApiKeyPoolManager::select_api_key_from_service_api()` 输出
    - 检查 `user_provider_keys_ids` JSON数组解析

@@ -1,8 +1,8 @@
 //! API密钥健康检查相关处理器
 
 use crate::error::ProxyError;
+use crate::key_pool::api_key_health::ApiKeyHealthChecker;
 use crate::management::{response, server::AppState};
-use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use crate::{
     lerror,
     logging::{LogComponent, LogStage},
@@ -413,7 +413,7 @@ async fn get_health_stats_internal(state: &AppState) -> crate::error::Result<Hea
 async fn trigger_key_health_check_internal(
     state: &AppState,
     key_id: i32,
-) -> crate::error::Result<crate::scheduler::api_key_health::ApiKeyCheckResult> {
+) -> crate::error::Result<crate::key_pool::api_key_health::ApiKeyCheckResult> {
     // 获取指定的API密钥
     let key = user_provider_keys::Entity::find_by_id(key_id)
         .one(&*state.database)

@@ -3,15 +3,15 @@
 //! 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 
 use crate::auth::{
-    AuthManager,
+    AuthService,
     rate_limit_dist::DistributedRateLimiter,
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
 use crate::error::{ProxyError, Result};
+use crate::key_pool::{ApiKeyPoolManager, SelectionContext};
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
-use crate::scheduler::{ApiKeyPoolManager, SelectionContext};
 use crate::types::ProviderTypeId;
 use crate::{ldebug, linfo};
 use entity::{
@@ -57,7 +57,7 @@ pub struct Authorization {
 ///
 /// 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 pub struct AuthenticationService {
-    auth_manager: Arc<AuthManager>,
+    auth_service: Arc<AuthService>,
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
     api_key_pool: Arc<ApiKeyPoolManager>,
@@ -67,14 +67,14 @@ pub struct AuthenticationService {
 impl AuthenticationService {
     /// 创建新的认证服务
     pub const fn new(
-        auth_manager: Arc<AuthManager>,
+        auth_service: Arc<AuthService>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         api_key_pool: Arc<ApiKeyPoolManager>,
         rate_limiter: Arc<DistributedRateLimiter>,
     ) -> Self {
         Self {
-            auth_manager,
+            auth_service,
             db,
             cache,
             api_key_pool,
@@ -132,7 +132,7 @@ impl AuthenticationService {
     ) -> Result<user_service_apis::Model> {
         let user_auth = Self::detect_user_auth_from_request(session)?;
         let proxy_auth_result = self
-            .auth_manager
+            .auth_service
             .authenticate_proxy_request(&user_auth.auth_value)
             .await?;
 

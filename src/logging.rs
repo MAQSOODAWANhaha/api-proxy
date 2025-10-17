@@ -91,7 +91,7 @@ pub enum LogComponent {
     Tracing,
     TracingService,
     // --- Business Logic Components ---
-    Scheduler,
+    KeyPool,
     HealthChecker,
     SmartApiKeyProvider,
     // --- External Clients ---
@@ -123,7 +123,7 @@ impl LogComponent {
             Self::Statistics => "statistics",
             Self::Tracing => "tracing",
             Self::TracingService => "tracing_service",
-            Self::Scheduler => "scheduler",
+            Self::KeyPool => "key_pool",
             Self::HealthChecker => "health_checker",
             Self::SmartApiKeyProvider => "smart_api_key_provider",
             Self::GeminiClient => "gemini_client",

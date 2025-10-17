@@ -162,7 +162,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         linfo!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "round_robin_state",
             "Round-robin internal state for selection",
             group_key = ?group_key,
@@ -192,7 +192,7 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "select_key",
             "Selected API key using round robin strategy",
             selected_key_id = selected_key.id,
@@ -313,7 +313,7 @@ impl ApiKeySelector for HealthBestApiKeySelector {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "select_key",
             "Selected API key using health-based strategy",
             selected_key_id = selected_key.id,
@@ -391,7 +391,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
                 lwarn!(
                     &context.request_id,
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "weight_overflow",
                     "Weight value overflow, using default weight 1",
                     key_id = key.id,
@@ -409,7 +409,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
             lwarn!(
                 &context.request_id,
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "weighted_fallback",
                 "All key weights are zero, falling back to simple round-robin for this selection.",
                 route_group = context.route_group.as_str()
@@ -447,7 +447,7 @@ impl ApiKeySelector for WeightedApiKeySelector {
         ldebug!(
             &context.request_id,
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "select_key",
             "Selected API key using stateful weighted strategy",
             selected_key_id = selected_key.id,

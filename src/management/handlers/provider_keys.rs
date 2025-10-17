@@ -8,10 +8,10 @@ use crate::auth::{
     oauth_token_refresh_task::OAuthTokenRefreshTask, types::AuthStatus,
 };
 use crate::error::{ProxyError, auth::AuthError};
+use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::scheduler::types::ApiKeyHealthStatus;
 use crate::types::{ProviderTypeId, ratio_as_percentage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
@@ -835,7 +835,7 @@ pub async fn get_provider_key_detail(
         linfo!(
             "system",
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "calc_rate_limit_remaining",
             "Calculating rate limit remaining time - reset time found in DB",
             key_id = provider_key.0.id,
@@ -850,7 +850,7 @@ pub async fn get_provider_key_detail(
                 linfo!(
                     "system",
                     LogStage::Scheduling,
-                    LogComponent::Scheduler,
+                    LogComponent::KeyPool,
                     "rate_limit_not_lifted",
                     "Rate limit not lifted, calculating remaining seconds",
                     key_id = provider_key.0.id,
@@ -863,7 +863,7 @@ pub async fn get_provider_key_detail(
             linfo!(
                 "system",
                 LogStage::Scheduling,
-                LogComponent::Scheduler,
+                LogComponent::KeyPool,
                 "rate_limit_expired",
                 "Rate limit expired, returning None",
                 key_id = provider_key.0.id,
@@ -876,7 +876,7 @@ pub async fn get_provider_key_detail(
         linfo!(
             "system",
             LogStage::Scheduling,
-            LogComponent::Scheduler,
+            LogComponent::KeyPool,
             "no_rate_limit_reset_time",
             "No rate limit reset time in DB, returning None",
             key_id = provider_key.0.id,
@@ -2223,7 +2223,7 @@ struct DailyStats {
 /// 获取API密钥健康状态列表
 #[must_use]
 pub fn get_provider_key_health_statuses() -> axum::response::Response {
-    use crate::scheduler::types::ApiKeyHealthStatus;
+    use crate::key_pool::types::ApiKeyHealthStatus;
 
     let mut statuses = vec![json!({"value": "all", "label": "全部"})];
 

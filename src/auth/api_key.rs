@@ -5,47 +5,15 @@
 
 use crate::config::CacheConfig;
 use crate::logging::{LogComponent, LogStage};
-use crate::{ldebug, lwarn};
-use chrono::{DateTime, Timelike, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::convert::TryInto;
+use crate::lwarn;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
-use crate::auth::permissions::UserRole;
-use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::auth::types::{ApiKeyInfo, AuthConfig};
 use crate::cache::CacheManager;
 use crate::error::{Result, auth::AuthError};
-use entity::{user_provider_keys, user_service_apis};
-
-/// API key validation result
-#[derive(Debug, Clone)]
-pub struct ApiKeyValidationResult {
-    /// API key information
-    pub api_key_info: ApiKeyInfo,
-    /// User permissions (简化为角色)
-    pub permissions: Vec<UserRole>,
-    /// Remaining requests per minute
-    pub remaining_requests: Option<i32>,
-    /// Remaining tokens per day
-    pub remaining_tokens: Option<i32>,
-}
-
-/// Data structure for caching API key information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ApiKeyCacheData {
-    api_key_info: ApiKeyInfo,
-    permissions: Vec<UserRole>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ServiceApiLookupCache {
-    service_api_id: Option<i32>,
-}
+use entity::user_provider_keys;
 
 /// API key manager
 pub struct ApiKeyManager {
@@ -56,10 +24,6 @@ pub struct ApiKeyManager {
     config: Arc<AuthConfig>,
     /// Unified cache manager
     cache: Arc<UnifiedAuthCacheManager>,
-    /// Distributed rate limiter
-    limiter: Arc<DistributedRateLimiter>,
-    /// Raw cache manager for custom operations
-    raw_cache: Arc<CacheManager>,
 }
 
 impl ApiKeyManager {
@@ -69,10 +33,9 @@ impl ApiKeyManager {
         auth_config: Arc<AuthConfig>,
         cache_manager: Arc<CacheManager>,
         cache_config: Arc<CacheConfig>,
-        rate_limiter: Arc<DistributedRateLimiter>,
     ) -> Self {
         let auth_cache_manager = Arc::new(UnifiedAuthCacheManager::new(
-            cache_manager.clone(),
+            cache_manager,
             auth_config.clone(),
             cache_config,
         ));
@@ -80,13 +43,11 @@ impl ApiKeyManager {
             db,
             config: auth_config,
             cache: auth_cache_manager,
-            limiter: rate_limiter,
-            raw_cache: cache_manager,
         }
     }
 
     /// Validate API key
-    pub async fn validate_api_key(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
+    pub async fn validate_api_key(&self, api_key: &str) -> Result<ApiKeyInfo> {
         // Check API key format
         if !self.is_valid_api_key_format(api_key) {
             return Err(AuthError::ApiKeyMalformed.into());
@@ -96,20 +57,10 @@ impl ApiKeyManager {
         let cache_key = AuthCacheKey::ApiKeyAuth(hash_token(api_key));
         if let Some(cached) = self
             .cache
-            .get_cached_auth_result::<ApiKeyCacheData>(&cache_key)
+            .get_cached_auth_result::<ApiKeyInfo>(&cache_key)
             .await
         {
-            // Get current rate limit info
-            let (remaining_requests, remaining_tokens) = self
-                .get_rate_limit_info(api_key, &cached.api_key_info)
-                .await?;
-
-            return Ok(ApiKeyValidationResult {
-                api_key_info: cached.api_key_info.clone(),
-                permissions: cached.permissions.clone(),
-                remaining_requests,
-                remaining_tokens,
-            });
+            return Ok(cached);
         }
 
         // Query from database
@@ -140,20 +91,12 @@ impl ApiKeyManager {
             updated_at: api_key_model.updated_at.and_utc(),
         };
 
-        // Get user permissions
-        let permissions = self.get_user_permissions(api_key_model.user_id).await?;
-
-        // Check rate limits
-        let (remaining_requests, remaining_tokens) =
-            self.get_rate_limit_info(api_key, &api_key_info).await?;
-
         // Cache result
-        let cache_data = ApiKeyCacheData {
-            api_key_info: api_key_info.clone(),
-            permissions: permissions.clone(),
-        };
-        // Use a reasonable TTL for API key info, e.g., 5 minutes
-        if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
+        if let Err(e) = self
+            .cache
+            .cache_auth_result(&cache_key, &api_key_info)
+            .await
+        {
             lwarn!(
                 "system",
                 LogStage::Cache,
@@ -163,12 +106,7 @@ impl ApiKeyManager {
             );
         }
 
-        Ok(ApiKeyValidationResult {
-            api_key_info,
-            permissions: permissions.clone(),
-            remaining_requests,
-            remaining_tokens,
-        })
+        Ok(api_key_info)
     }
 
     /// Check if API key format is valid
@@ -181,406 +119,6 @@ impl ApiKeyManager {
     /// Sanitize API key for logging（委托统一工具，避免重复实现）
     fn sanitize_api_key(api_key: &str) -> String {
         crate::auth::AuthUtils::sanitize_api_key(api_key)
-    }
-
-    /// Get user permissions from database (简化版本)
-    async fn get_user_permissions(&self, user_id: i32) -> Result<Vec<UserRole>> {
-        use entity::{users, users::Entity as Users};
-        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-
-        // 从数据库查询用户信息
-        let user = Users::find()
-            .filter(users::Column::Id.eq(user_id))
-            .filter(users::Column::IsActive.eq(true))
-            .one(self.db.as_ref())
-            .await
-            .map_err(|e| crate::error!(Internal, format!("Failed to query user {user_id}"), e))?;
-
-        let Some(user) = user else {
-            // 用户不存在或未激活，返回普通用户权限
-            return Ok(vec![UserRole::RegularUser]);
-        };
-
-        // 简化的权限逻辑：只根据是否管理员来确定角色
-        if user.is_admin {
-            Ok(vec![UserRole::Admin])
-        } else {
-            Ok(vec![UserRole::RegularUser])
-        }
-    }
-
-    /// Force refresh cache for specific API key
-    pub async fn refresh_cache(&self, api_key: &str) -> Result<()> {
-        let cache_key = AuthCacheKey::ApiKeyAuth(hash_token(api_key));
-        self.cache.invalidate_cache(&cache_key).await
-    }
-
-    /// Batch validate API keys (for cache preloading)
-    pub async fn preload_api_keys(&self, api_keys: &[String]) -> HashMap<String, bool> {
-        let mut results = HashMap::new();
-
-        for api_key in api_keys {
-            let is_valid = self.validate_api_key(api_key).await.is_ok();
-            results.insert(api_key.clone(), is_valid);
-        }
-
-        results
-    }
-
-    /// Check API key rate limit (requests per minute only)
-    #[allow(clippy::cast_possible_truncation)]
-    pub async fn check_rate_limit(&self, api_key: &str) -> Result<RateLimitStatus> {
-        let api_key_model = self
-            .find_api_key_record(api_key)
-            .await?
-            .ok_or_else(|| AuthError::ApiKeyInvalid(api_key.to_string()))?;
-
-        // Check request rate limit
-        let rpm_limit = i64::from(api_key_model.max_requests_per_minute.unwrap_or(i32::MAX));
-        let rpm_outcome = self
-            .limiter
-            .check_per_minute(api_key_model.user_id, "proxy", rpm_limit)
-            .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!(
-                        "Rate limit check failed for user {} via API key {}",
-                        api_key_model.user_id,
-                        Self::sanitize_api_key(api_key)
-                    ),
-                    e
-                )
-            })?;
-
-        // Get current token usage
-        let date = chrono::Utc::now().format("%Y%m%d").to_string();
-        let token_key = format!("rate_limit:token:{}:{}", api_key_model.id, date);
-        let current_tokens: i64 = self
-            .raw_cache
-            .provider()
-            .get(&token_key)
-            .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!("Cache error when fetching key {token_key}"),
-                    e
-                )
-            })?
-            .unwrap_or(0);
-
-        let remaining_tokens = api_key_model
-            .max_requests_per_day
-            .map(|max| (i64::from(max) - current_tokens).max(0));
-
-        let reset_time = Utc::now()
-            .with_second(0)
-            .unwrap()
-            .with_nanosecond(0)
-            .unwrap()
-            + chrono::Duration::minutes(1);
-
-        Ok(RateLimitStatus {
-            allowed: rpm_outcome.allowed,
-            remaining_requests: Some((rpm_outcome.limit - rpm_outcome.current).max(0) as i32),
-            remaining_tokens: remaining_tokens.map(|t| t as i32),
-            reset_time,
-        })
-    }
-
-    /// Record API key usage (tokens)
-    #[allow(clippy::cast_sign_loss)]
-    pub async fn record_usage(&self, api_key: &str, tokens_used: i32) -> Result<()> {
-        let api_key_model = self
-            .find_api_key_record(api_key)
-            .await?
-            .ok_or_else(|| AuthError::ApiKeyInvalid(api_key.to_string()))?;
-
-        // Update database record for `updated_at`
-        let mut active_model: user_provider_keys::ActiveModel = api_key_model.clone().into();
-        active_model.updated_at = Set(Utc::now().naive_utc());
-        active_model.update(self.db.as_ref()).await.map_err(|e| {
-            crate::error!(
-                Internal,
-                "Database error while updating API key metadata",
-                e
-            )
-        })?;
-
-        // Update token usage in cache
-        if tokens_used > 0 {
-            let service_api = self
-                .find_service_api_for_key(api_key_model.user_id, api_key_model.id)
-                .await?;
-            if let Some(service_api) = service_api {
-                let cache_update = self
-                    .limiter
-                    .increment_daily_token_cache(service_api.id, i64::from(tokens_used))
-                    .await;
-                if let Err(e) = cache_update {
-                    lwarn!(
-                        "system",
-                        LogStage::Internal,
-                        LogComponent::Cache,
-                        "daily_token_cache_update_failed",
-                        &format!(
-                            "Failed to update daily token cache for service_api {}: {e}",
-                            service_api.id
-                        )
-                    );
-                }
-            }
-
-            let date = chrono::Utc::now().format("%Y%m%d").to_string();
-            let token_key = format!("rate_limit:token:{}:{}", api_key_model.id, date);
-            let new_total = self
-                .raw_cache
-                .provider()
-                .incr(&token_key, i64::from(tokens_used))
-                .await
-                .map_err(|e| {
-                    crate::error!(
-                        Internal,
-                        format!("Cache error while incrementing {token_key}"),
-                        e
-                    )
-                })?;
-
-            // Set TTL on first increment of the day
-            if new_total == i64::from(tokens_used) {
-                let now = Utc::now();
-                let tomorrow = (now.date_naive() + chrono::Duration::days(1))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                let ttl = (tomorrow.and_utc() - now).num_seconds().max(60) as u64;
-                self.raw_cache
-                    .provider()
-                    .expire(&token_key, Duration::from_secs(ttl))
-                    .await
-                    .map_err(|e| {
-                        crate::error!(
-                            Internal,
-                            format!("Cache error while setting TTL on {token_key}"),
-                            e
-                        )
-                    })?;
-            }
-        }
-
-        ldebug!(
-            "system",
-            LogStage::Internal,
-            LogComponent::ApiKey,
-            "usage_recorded",
-            &format!(
-                "Recorded usage for API key: {}, tokens: {tokens_used}",
-                Self::sanitize_api_key(api_key),
-            )
-        );
-
-        Ok(())
-    }
-
-    /// Get rate limit information for API key
-    #[allow(clippy::cast_possible_truncation)]
-    async fn get_rate_limit_info(
-        &self,
-        _api_key: &str,
-        api_key_info: &ApiKeyInfo,
-    ) -> Result<(Option<i32>, Option<i32>)> {
-        let service_api = self
-            .find_service_api_for_key(api_key_info.user_id, api_key_info.id)
-            .await?;
-
-        let service_endpoint = service_api
-            .as_ref()
-            .map(|api| format!("service_api:{}", api.id));
-
-        let per_minute_remaining = if let Some(service_api) = service_api.as_ref()
-            && let Some(limit) = service_api.max_request_per_min
-            && let Some(endpoint) = service_endpoint.as_ref()
-        {
-            let current = self
-                .limiter
-                .current_per_minute(service_api.user_id, endpoint)
-                .await?;
-            Some(Self::remaining_from_limits(i64::from(limit), current))
-        } else if let Some(limit) = api_key_info.max_requests_per_minute {
-            let current = self
-                .limiter
-                .current_per_minute(api_key_info.user_id, "proxy")
-                .await?;
-            Some(Self::remaining_from_limits(i64::from(limit), current))
-        } else {
-            None
-        };
-
-        let daily_request_remaining = if let Some(service_api) = service_api.as_ref()
-            && let Some(limit) = service_api.max_requests_per_day
-            && let Some(endpoint) = service_endpoint.as_ref()
-        {
-            let current = self
-                .limiter
-                .current_daily_requests(service_api.user_id, endpoint)
-                .await?;
-            Some(Self::remaining_from_limits(i64::from(limit), current))
-        } else if let Some(limit) = api_key_info.max_requests_per_day {
-            let date = chrono::Utc::now().format("%Y%m%d").to_string();
-            let request_key = format!("rate_limit:token:{}:{}", api_key_info.id, date);
-            let current = self
-                .raw_cache
-                .provider()
-                .get::<i64>(&request_key)
-                .await
-                .map_err(|e| {
-                    crate::error!(
-                        Internal,
-                        format!("Cache error while reading {request_key}"),
-                        e
-                    )
-                })?
-                .unwrap_or(0);
-            Some(Self::remaining_from_limits(i64::from(limit), current))
-        } else {
-            None
-        };
-
-        let remaining_requests = match (per_minute_remaining, daily_request_remaining) {
-            (Some(rpm), Some(daily)) => Some(rpm.min(daily)),
-            (Some(rpm), None) => Some(rpm),
-            (None, Some(daily)) => Some(daily),
-            (None, None) => None,
-        };
-
-        let remaining_tokens = if let Some(service_api) = service_api.as_ref()
-            && let Some(limit) = service_api.max_tokens_per_day
-        {
-            let current = self.limiter.current_daily_tokens(service_api.id).await?;
-            Some(Self::remaining_from_limits(limit, current))
-        } else if let Some(limit) = api_key_info.max_requests_per_day {
-            let date = chrono::Utc::now().format("%Y%m%d").to_string();
-            let token_key = format!("rate_limit:token:{}:{}", api_key_info.id, date);
-            let current = self
-                .raw_cache
-                .provider()
-                .get::<i64>(&token_key)
-                .await
-                .map_err(|e| {
-                    crate::error!(
-                        Internal,
-                        format!("Cache error while reading {token_key}"),
-                        e
-                    )
-                })?
-                .unwrap_or(0);
-            Some(Self::remaining_from_limits(i64::from(limit), current))
-        } else {
-            None
-        };
-
-        Ok((remaining_requests, remaining_tokens))
-    }
-
-    fn remaining_from_limits(limit: i64, current: i64) -> i32 {
-        if limit <= 0 {
-            return 0;
-        }
-        let used = current.max(0);
-        let remaining = limit.saturating_sub(used);
-        if remaining <= 0 {
-            0
-        } else {
-            remaining.try_into().unwrap_or(i32::MAX)
-        }
-    }
-
-    async fn find_service_api_for_key(
-        &self,
-        user_id: i32,
-        provider_key_id: i32,
-    ) -> Result<Option<user_service_apis::Model>> {
-        let cache_key = format!("service_api_lookup:{provider_key_id}");
-        if let Some(cached) = self
-            .raw_cache
-            .provider()
-            .get::<ServiceApiLookupCache>(&cache_key)
-            .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!("Failed to load cached service api mapping for key {provider_key_id}"),
-                    e
-                )
-            })?
-        {
-            if let Some(service_api_id) = cached.service_api_id
-                && let Some(service_api) = user_service_apis::Entity::find_by_id(service_api_id)
-                    .filter(user_service_apis::Column::IsActive.eq(true))
-                    .one(self.db.as_ref())
-                    .await
-                    .map_err(|e| {
-                        crate::error!(
-                            Internal,
-                            format!("Failed to load service api {service_api_id}"),
-                            e
-                        )
-                    })?
-                && service_api.user_id == user_id
-            {
-                return Ok(Some(service_api));
-            }
-            if cached.service_api_id.is_none() {
-                return Ok(None);
-            }
-            // cached entry outdated, fall through to refresh
-        }
-
-        let apis = user_service_apis::Entity::find()
-            .filter(user_service_apis::Column::UserId.eq(user_id))
-            .filter(user_service_apis::Column::IsActive.eq(true))
-            .all(self.db.as_ref())
-            .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!("Failed to load service APIs for user {user_id}"),
-                    e
-                )
-            })?;
-
-        for api in apis {
-            if let Ok(ids) = serde_json::from_value::<Vec<i32>>(api.user_provider_keys_ids.clone())
-                && ids.contains(&provider_key_id)
-            {
-                let _ = self
-                    .raw_cache
-                    .provider()
-                    .set(
-                        &cache_key,
-                        &ServiceApiLookupCache {
-                            service_api_id: Some(api.id),
-                        },
-                        Some(Duration::from_secs(300)),
-                    )
-                    .await;
-                return Ok(Some(api));
-            }
-        }
-
-        let _ = self
-            .raw_cache
-            .provider()
-            .set(
-                &cache_key,
-                &ServiceApiLookupCache {
-                    service_api_id: None,
-                },
-                Some(Duration::from_secs(120)),
-            )
-            .await;
-
-        Ok(None)
     }
 
     // ==================== 共享数据库操作方法 ====================
@@ -615,106 +153,13 @@ impl ApiKeyManager {
         self.is_valid_api_key_format(api_key)
     }
 
-    /// 清理指定API密钥的缓存（供外部调用）
-    pub async fn invalidate_api_key_cache(&self, api_key: &str) {
-        let cache_key = AuthCacheKey::ApiKeyAuth(hash_token(api_key));
-        let _ = self.cache.invalidate_cache(&cache_key).await;
-    }
-
-    /// 获取API密钥基本信息（不含权限和速率限制）
-    ///
-    /// 用于代理端轻量级认证
-    pub async fn get_api_key_info(&self, api_key: &str) -> Result<Option<ApiKeyInfo>> {
-        // 检查缓存
-        let cache_key = AuthCacheKey::ApiKeyAuth(hash_token(api_key));
-        if let Some(cached) = self
-            .cache
-            .get_cached_auth_result::<ApiKeyCacheData>(&cache_key)
-            .await
-        {
-            return Ok(Some(cached.api_key_info));
-        }
-
-        // 查询数据库
-        if let Some(record) = self.find_api_key_record(api_key).await? {
-            let api_key_info = ApiKeyInfo {
-                id: record.id,
-                user_id: record.user_id,
-                provider_type_id: record.provider_type_id,
-                auth_type: record.auth_type.clone(),
-                name: record.name,
-                api_key: Self::sanitize_api_key(&record.api_key),
-                weight: record.weight,
-                max_requests_per_minute: record.max_requests_per_minute,
-                max_tokens_prompt_per_minute: record.max_tokens_prompt_per_minute,
-                max_requests_per_day: record.max_requests_per_day,
-                is_active: record.is_active,
-                created_at: record.created_at.and_utc(),
-                updated_at: record.updated_at.and_utc(),
-            };
-
-            // 获取权限并缓存
-            let permissions = self.get_user_permissions(record.user_id).await?;
-            let cache_data = ApiKeyCacheData {
-                api_key_info: api_key_info.clone(),
-                permissions,
-            };
-            if let Err(e) = self.cache.cache_auth_result(&cache_key, &cache_data).await {
-                lwarn!(
-                    "system",
-                    LogStage::Cache,
-                    LogComponent::ApiKey,
-                    "cache_fail",
-                    &format!("Failed to cache API key info: {e}")
-                );
-            }
-
-            Ok(Some(api_key_info))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// 代理端轻量级API密钥验证
-    ///
-    /// 只验证密钥存在性和激活状态，不包含权限检查
-    pub async fn validate_for_proxy(&self, api_key: &str) -> Result<ApiKeyInfo> {
-        if !self.is_valid_api_key_format(api_key) {
-            return Err(AuthError::ApiKeyMalformed.into());
-        }
-
-        match self.get_api_key_info(api_key).await? {
-            Some(info) => {
-                if info.is_active {
-                    Ok(info)
-                } else {
-                    Err(AuthError::ApiKeyInactive.into())
-                }
-            }
-            None => Err(AuthError::ApiKeyInvalid(api_key.to_string()).into()),
-        }
-    }
-
     /// 管理端完整API密钥验证（保留原有逻辑）
     ///
     /// 包含权限检查、速率限制等完整功能
-    pub async fn validate_for_management(&self, api_key: &str) -> Result<ApiKeyValidationResult> {
+    pub async fn validate_for_management(&self, api_key: &str) -> Result<ApiKeyInfo> {
         // 使用原有的validate_api_key方法
         self.validate_api_key(api_key).await
     }
-}
-
-/// Rate limit status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimitStatus {
-    /// Whether request is allowed
-    pub allowed: bool,
-    /// Remaining requests
-    pub remaining_requests: Option<i32>,
-    /// Remaining tokens
-    pub remaining_tokens: Option<i32>,
-    /// Reset time
-    pub reset_time: DateTime<Utc>,
 }
 
 #[cfg(test)]

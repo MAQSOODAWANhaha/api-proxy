@@ -3,24 +3,19 @@
 //! 提供完整的身份验证和权限控制功能
 
 pub mod api_key;
-pub mod cache_strategy; // 统一缓存策略
+pub mod cache_strategy;
 
-pub mod gemini_code_assist_client; // Gemini Code Assist API客户端
+pub mod gemini_code_assist_client;
 pub mod header_parser;
 pub mod jwt;
-// pub mod oauth; // 已删除，使用oauth_client替代
-pub mod oauth_client; // 新的OAuth客户端模块
-pub mod oauth_token_refresh_service; // OAuth token智能刷新服务
-pub mod oauth_token_refresh_task; // OAuth token刷新后台任务
+pub mod oauth_client;
+pub mod oauth_token_refresh_service;
+pub mod oauth_token_refresh_task;
 pub mod permissions;
 pub mod rate_limit_dist;
 pub mod service;
-pub mod smart_api_key_provider; // 智能API密钥提供者
-pub mod strategies;
-pub mod strategy_manager;
-pub mod types; // 分布式限流器
-// pub mod unified; // 已删除，使用services架构替代
-pub mod auth_manager; // 统一认证管理器实现（原RefactoredUnified重命名）
+pub mod smart_api_key_provider;
+pub mod types;
 pub mod utils;
 
 pub use api_key::ApiKeyManager;
@@ -37,10 +32,7 @@ pub use service::AuthService;
 pub use smart_api_key_provider::{
     AuthCredentialType, CredentialResult, SmartApiKeyProvider, SmartApiKeyProviderConfig,
 };
-pub use strategies::{AuthStrategy, OAuthTokenResult};
 pub use types::*;
-// 统一导出：统一认证管理器（新命名）
-pub use auth_manager::{AuthManager, AuthRequest};
 pub use utils::AuthUtils;
 
 // 统一缓存策略
@@ -166,16 +158,4 @@ pub struct TokenInfo {
     pub expires_in: Option<i64>,
     /// 作用域
     pub scope: Option<String>,
-}
-
-impl From<OAuthTokenResult> for TokenInfo {
-    fn from(oauth_result: OAuthTokenResult) -> Self {
-        Self {
-            access_token: oauth_result.access_token,
-            refresh_token: oauth_result.refresh_token,
-            token_type: oauth_result.token_type,
-            expires_in: oauth_result.expires_in,
-            scope: oauth_result.scope,
-        }
-    }
 }

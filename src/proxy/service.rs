@@ -2,7 +2,6 @@
 //!
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
-use crate::auth::rate_limit_dist::DistributedRateLimiter;
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -20,8 +19,8 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::proxy::{
-    AuthenticationService, StatisticsService, TracingService, context::ProxyContext,
-    provider_strategy, request_transform_service::RequestTransformService,
+    AuthenticationService, FinalizationService, StatisticsService, TracingService,
+    context::ProxyContext, provider_strategy, request_transform_service::RequestTransformService,
     response_transform_service::ResponseTransformService, upstream_service::UpstreamService,
 };
 
@@ -34,7 +33,7 @@ pub struct ProxyService {
     upstream_service: Arc<UpstreamService>,
     req_transform_service: Arc<RequestTransformService>,
     resp_transform_service: Arc<ResponseTransformService>,
-    rate_limiter: Arc<DistributedRateLimiter>,
+    finalization_service: Arc<FinalizationService>,
 }
 
 impl ProxyService {
@@ -48,7 +47,7 @@ impl ProxyService {
         upstream_service: Arc<UpstreamService>,
         req_transform_service: Arc<RequestTransformService>,
         resp_transform_service: Arc<ResponseTransformService>,
-        rate_limiter: Arc<DistributedRateLimiter>,
+        finalization_service: Arc<FinalizationService>,
     ) -> pingora_core::Result<Self> {
         Ok(Self {
             db,
@@ -58,7 +57,7 @@ impl ProxyService {
             upstream_service,
             req_transform_service,
             resp_transform_service,
-            rate_limiter,
+            finalization_service,
         })
     }
 
@@ -429,10 +428,8 @@ impl ProxyHttp for ProxyService {
         Ok(None)
     }
 
-    #[allow(clippy::too_many_lines)]
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Self::CTX) {
         let status_code = Self::resolve_status_code(ctx, e);
-        let success = status_code < 400;
 
         if let Some(strategy) = &ctx.strategy
             && let Err(e) = strategy
@@ -448,155 +445,9 @@ impl ProxyHttp for ProxyService {
             );
         }
 
-        if success {
-            let stats = crate::statistics::usage_model::finalize_eos(ctx);
-            ctx.usage_final = Some(stats.usage.clone());
-            if let Some(model_name) = stats.model_name {
-                ctx.requested_model = Some(model_name);
-            }
-
-            if let Some(model_used) = ctx.requested_model.clone() {
-                let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
-                let user_provider_key_id = ctx.selected_backend.as_ref().map(|k| k.id);
-                if let Err(err) = self
-                    .trace_service
-                    .update_trace_model_info(
-                        &ctx.request_id,
-                        provider_type_id,
-                        Some(model_used.clone()),
-                        user_provider_key_id,
-                    )
-                    .await
-                {
-                    lwarn!(
-                        &ctx.request_id,
-                        LogStage::Error,
-                        LogComponent::Tracing,
-                        "update_trace_model_info_failed",
-                        &format!("Failed to update trace model info: {err}")
-                    );
-                }
-            }
-
-            let (cost_value, cost_currency) = if let (Some(model), Some(usage)) =
-                (ctx.requested_model.as_ref(), ctx.usage_final.as_ref())
-            {
-                if let Some(provider) = ctx.provider_type.as_ref() {
-                    let pricing_usage = crate::pricing::TokenUsage {
-                        prompt_tokens: usage.prompt_tokens,
-                        completion_tokens: usage.completion_tokens,
-                        cache_create_tokens: usage.cache_create_tokens,
-                        cache_read_tokens: usage.cache_read_tokens,
-                    };
-                    (self
-                        .stats_service
-                        .calculate_cost_direct(model, provider.id, &pricing_usage, &ctx.request_id)
-                        .await)
-                        .unwrap_or_default()
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
-            let _ = self
-                .trace_service
-                .complete_trace_success(
-                    &ctx.request_id,
-                    status_code,
-                    ctx.usage_final.as_ref().and_then(|u| u.prompt_tokens),
-                    ctx.usage_final.as_ref().and_then(|u| u.completion_tokens),
-                    ctx.usage_final.as_ref().and_then(|u| u.total_tokens),
-                    ctx.requested_model.clone(),
-                    ctx.usage_final.as_ref().and_then(|u| u.cache_create_tokens),
-                    ctx.usage_final.as_ref().and_then(|u| u.cache_read_tokens),
-                    cost_value,
-                    cost_currency,
-                )
-                .await;
-
-            if let Some(user_api) = ctx.user_service_api.as_ref() {
-                let endpoint = format!("service_api:{}", user_api.id);
-                if let Err(e) = self
-                    .rate_limiter
-                    .increment_daily_request_cache(user_api.user_id, &endpoint, 1)
-                    .await
-                {
-                    lwarn!(
-                        &ctx.request_id,
-                        LogStage::Internal,
-                        LogComponent::Cache,
-                        "request_cache_update_failed",
-                        &format!("Failed to update daily request cache: {e}")
-                    );
-                }
-
-                if let Some(usage) = ctx.usage_final.as_ref()
-                    && let Some(total_tokens) = usage.total_tokens
-                {
-                    match i64::try_from(total_tokens) {
-                        Ok(delta_tokens) if delta_tokens > 0 => {
-                            if let Err(e) = self
-                                .rate_limiter
-                                .increment_daily_token_cache(user_api.id, delta_tokens)
-                                .await
-                            {
-                                lwarn!(
-                                    &ctx.request_id,
-                                    LogStage::Internal,
-                                    LogComponent::Cache,
-                                    "token_cache_update_failed",
-                                    &format!("Failed to update daily token cache: {e}")
-                                );
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(_) => {
-                            lwarn!(
-                                &ctx.request_id,
-                                LogStage::Internal,
-                                LogComponent::Cache,
-                                "token_cache_overflow",
-                                "Token usage exceeded i64::MAX, skipping cache update"
-                            );
-                        }
-                    }
-                }
-
-                if let Some(cost) = cost_value
-                    && let Err(e) = self
-                        .rate_limiter
-                        .increment_daily_cost_cache(user_api.id, cost)
-                        .await
-                {
-                    lwarn!(
-                        &ctx.request_id,
-                        LogStage::Internal,
-                        LogComponent::Cache,
-                        "cost_cache_update_failed",
-                        &format!("Failed to update daily cost cache: {e}")
-                    );
-                }
-            }
-        } else {
-            // Log detailed error information
-            crate::logging::log_proxy_failure_details(&ctx.request_id, status_code, e, ctx);
-
-            let (error_type, error_message) = if let Some(err) = e {
-                (Some(format!("{:?}", err.etype)), Some(err.to_string()))
-            } else {
-                (
-                    Some(format!("HTTP {status_code}")),
-                    Some(String::from_utf8_lossy(&ctx.response_body).to_string()),
-                )
-            };
-
-            let _ = self
-                .trace_service
-                .complete_trace_failure(&ctx.request_id, status_code, error_type, error_message)
-                .await;
-        }
+        self.finalization_service
+            .finalize(ctx, status_code, e)
+            .await;
 
         linfo!(
             &ctx.request_id,

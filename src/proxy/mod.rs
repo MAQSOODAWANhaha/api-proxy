@@ -56,6 +56,7 @@ pub mod types;
 // 专有服务
 pub mod authentication_service;
 pub mod builder;
+pub mod finalization_service;
 pub mod pingora_proxy;
 pub mod provider_strategy;
 pub mod request_transform_service;
@@ -68,6 +69,7 @@ pub use crate::statistics::service::StatisticsService;
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use context::ProxyContext;
+pub use finalization_service::FinalizationService;
 pub use pingora_proxy::PingoraProxyServer;
 pub use request_transform_service::RequestTransformService;
 pub use response_transform_service::ResponseTransformService;

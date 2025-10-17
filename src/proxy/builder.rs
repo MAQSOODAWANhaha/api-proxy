@@ -2,19 +2,19 @@
 //!
 //! 提供统一的服务器初始化逻辑，避免代码重复
 
-use crate::auth::{AuthManager, AuthService, rate_limit_dist::DistributedRateLimiter};
+use crate::auth::{AuthService, rate_limit_dist::DistributedRateLimiter};
 use crate::cache::CacheManager;
 use crate::config::{AppConfig, ProviderConfigManager};
 use crate::error::{ProxyError, Result};
+use crate::key_pool::ApiKeyPoolManager;
+use crate::key_pool::api_key_health::ApiKeyHealthChecker;
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::{
-    AuthenticationService, RequestTransformService, ResponseTransformService, StatisticsService,
-    TracingService, UpstreamService, service::ProxyService,
+    AuthenticationService, FinalizationService, RequestTransformService, ResponseTransformService,
+    StatisticsService, TracingService, UpstreamService, service::ProxyService,
 };
-use crate::scheduler::ApiKeyPoolManager;
-use crate::scheduler::api_key_health::ApiKeyHealthChecker;
 use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -111,13 +111,12 @@ impl ProxyServerBuilder {
         manager
     }
 
-    /// 创建统一认证管理器
-    fn create_auth_manager(
+    /// 创建统一认证服务
+    fn create_auth_service(
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        rate_limiter: &Arc<DistributedRateLimiter>,
-    ) -> Result<Arc<AuthManager>> {
+    ) -> Result<Arc<AuthService>> {
         let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
         let jwt_manager = Arc::new(
             crate::auth::JwtManager::new(auth_config.clone())
@@ -128,23 +127,22 @@ impl ProxyServerBuilder {
             auth_config.clone(),
             cache.clone(),
             Arc::new(self.config.cache.clone()),
-            rate_limiter.clone(),
         ));
-        let auth_service = Arc::new(AuthService::new(
+        let auth_service = Arc::new(AuthService::with_cache(
             jwt_manager,
             api_key_manager,
-            db.clone(),
-            auth_config.clone(),
+            db,
+            auth_config,
+            cache,
         ));
-        let auth_manager = AuthManager::new(auth_service, auth_config, db, cache)?;
         linfo!(
             "system",
             LogStage::Startup,
             LogComponent::Builder,
-            "auth_manager_created",
-            "统一认证管理器创建完成"
+            "auth_service_created",
+            "统一认证服务创建完成"
         );
-        Ok(Arc::new(auth_manager))
+        Ok(auth_service)
     }
 
     /// 创建代理服务实例
@@ -164,9 +162,9 @@ impl ProxyServerBuilder {
 
         let rate_limiter = Arc::new(DistributedRateLimiter::new(cache.clone(), db.clone()));
 
-        let auth_manager = self
-            .create_auth_manager(db.clone(), cache.clone(), &rate_limiter)
-            .map_err(|_| pingora_core::Error::new_str("认证管理器创建失败"))?;
+        let auth_service_core = self
+            .create_auth_service(db.clone(), cache.clone())
+            .map_err(|_| pingora_core::Error::new_str("认证服务创建失败"))?;
 
         // --- 服务依赖组装 ---
         let health_checker = Arc::new(ApiKeyHealthChecker::new(db.clone(), None));
@@ -174,7 +172,7 @@ impl ProxyServerBuilder {
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
 
         let auth_service = Arc::new(AuthenticationService::new(
-            auth_manager,
+            auth_service_core,
             db.clone(),
             cache,
             api_key_pool,
@@ -185,6 +183,11 @@ impl ProxyServerBuilder {
             self.trace_system
                 .as_ref()
                 .and_then(|ts| ts.immediate_tracer()),
+        ));
+        let finalization_service = Arc::new(FinalizationService::new(
+            Arc::clone(&stats_service),
+            Arc::clone(&trace_service),
+            rate_limiter,
         ));
         let upstream_service = Arc::new(UpstreamService::new(db.clone()));
         let req_transform_service = Arc::new(RequestTransformService::new(db.clone()));
@@ -198,7 +201,7 @@ impl ProxyServerBuilder {
             upstream_service,
             req_transform_service,
             resp_transform_service,
-            rate_limiter,
+            finalization_service,
         )
     }
 

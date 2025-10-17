@@ -196,7 +196,7 @@ AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamS
 - **智能缓存策略**: 不同数据类型使用不同的TTL和缓存策略
 - **故障降级**: Redis不可用时自动降级到内存缓存
 
-### 健康监控系统 (`src/scheduler/api_key_health.rs`)
+### 健康监控系统 (`src/key_pool/api_key_health.rs`)
 - **实时健康检查**: ApiKeyHealthChecker定期检查API密钥状态
 - **性能统计**: 收集响应时间、成功率等关键指标
 - **自动恢复**: 故障自动检测和恢复机制
@@ -227,7 +227,7 @@ api-proxy/
 │   │   └── server.rs      # 服务器配置
 │   ├── proxy/             # Pingora代理服务
 │   │   └── provider_strategy/ # AI服务适配器
-│   ├── scheduler/         # 后台任务调度
+│   ├── key_pool/         # 后台任务调度
 │   ├── statistics/        # 统计分析模块
 │   ├── trace/             # 请求追踪系统
 │   └── utils/             # 工具函数

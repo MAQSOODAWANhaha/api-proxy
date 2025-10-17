@@ -13,7 +13,7 @@ pub type AuthResult<T> = Result<T>;
 pub type ConfigResult<T> = Result<T>;
 pub type DatabaseResult<T> = Result<T>;
 pub type NetworkResult<T> = Result<T>;
-pub type SchedulerResult<T> = Result<T>;
+pub type KeyPoolResult<T> = Result<T>;
 
 /// Deprecated alias kept temporarily for incremental migration.
 #[allow(dead_code)]
@@ -25,11 +25,11 @@ pub mod auth;
 pub mod config;
 pub mod conversion;
 pub mod database;
+pub mod key_pool;
 pub mod macros;
 pub mod network;
 pub mod prelude;
 pub mod provider;
-pub mod scheduler;
 pub mod types;
 
 // 4. Context Trait for adding context to errors.

@@ -592,7 +592,7 @@ ai-proxy-system/
 │   ├── auth/                     # 认证授权 (API Key, JWT, OAuth2)
 │   ├── proxy/                    # Pingora代理服务 (service.rs, builder.rs)
 │   ├── management/               # Axum管理API
-│   ├── scheduler/                # 负载均衡调度 (pool_manager.rs, algorithms.rs)
+│   ├── key_pool/                # 负载均衡调度 (pool_manager.rs, algorithms.rs)
 │   ├── health/                   # 健康检查 (api_key_health.rs)
 │   ├── statistics/               # 统计监控 (service.rs)
 │   ├── trace/                    # 请求追踪 (immediate.rs)
@@ -635,7 +635,7 @@ async fn run_dual_port_servers() -> Result<()> {
 // src/dual_port_setup.rs
 async fn initialize_shared_services() -> Result<SharedServices> {
     // ...
-    let auth_manager = AuthManager::new(...);
+    let auth_manager = AuthService::new(...);
     let health_checker = ApiKeyHealthChecker::new(...);
     let pool_manager = ApiKeyPoolManager::new(..., health_checker.clone());
     // ...
@@ -686,7 +686,7 @@ impl ProxyHttp for ProxyService {
 ### 4.4 负载均衡调度器
 
 ```rust
-// src/scheduler/pool_manager.rs
+// src/key_pool/pool_manager.rs
 pub struct ApiKeyPoolManager {
     db: DatabaseConnection,
     cache: UnifiedCacheManager,
@@ -715,7 +715,7 @@ impl ApiKeyPoolManager {
     }
 }
 
-// src/scheduler/algorithms.rs
+// src/key_pool/algorithms.rs
 enum SchedulingStrategy { RoundRobin, Weighted, HealthBest }
 
 trait ApiKeySelector {
@@ -726,7 +726,7 @@ trait ApiKeySelector {
 ### 4.5 健康检查模块
 
 ```rust
-// src/scheduler/api_key_health.rs
+// src/key_pool/api_key_health.rs
 pub struct ApiKeyHealthChecker {
     db: DatabaseConnection,
     cache: UnifiedCacheManager,
@@ -2699,14 +2699,14 @@ testcontainers = "0.14"
 
 **核心功能单元测试**
 ```rust
-// tests/unit/scheduler_test.rs
+// tests/unit/key_pool_test.rs
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockall::predicate::*;
 
     #[tokio::test]
-    async fn test_round_robin_scheduler() {
+    async fn test_round_robin_key_pool() {
         let mock_db = MockDatabase::new();
         let mock_redis = MockRedis::new();
         
@@ -2721,10 +2721,10 @@ mod tests {
             .with(eq("round_robin:1:1"))
             .returning(|_| Ok(Some("0".to_string())));
 
-        let scheduler = RoundRobinScheduler::new(Arc::new(mock_db), Arc::new(mock_redis));
+        let key_pool = RoundRobinScheduler::new(Arc::new(mock_db), Arc::new(mock_redis));
         let user_api = create_test_user_api();
         
-        let result = scheduler.select_backend(&user_api).await;
+        let result = key_pool.select_backend(&user_api).await;
         
         assert!(result.is_ok());
         let selected = result.unwrap();
@@ -2732,16 +2732,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_weighted_scheduler() {
+    async fn test_weighted_key_pool() {
         // 测试权重调度逻辑
-        let scheduler = WeightedScheduler::new(mock_db(), mock_redis());
+        let key_pool = WeightedScheduler::new(mock_db(), mock_redis());
         // ... 测试实现
     }
 
     #[tokio::test] 
-    async fn test_health_best_scheduler() {
+    async fn test_health_best_key_pool() {
         // 测试健康度最佳调度逻辑
-        let scheduler = HealthBestScheduler::new(mock_db(), mock_redis(), mock_health_checker());
+        let key_pool = HealthBestScheduler::new(mock_db(), mock_redis(), mock_health_checker());
         // ... 测试实现
     }
 

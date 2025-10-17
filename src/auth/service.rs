@@ -6,15 +6,17 @@ use bcrypt::verify;
 use chrono::Utc;
 use entity::{users, users::Entity as Users};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::auth::{
     AuthContext, AuthMethod, AuthResult,
     api_key::ApiKeyManager,
     jwt::{JwtManager, TokenPair},
     permissions::UserRole,
-    types::{AuditEventType, AuditLogEntry, AuditResult, AuthConfig, TokenType, UserInfo},
+    types::{
+        AuditEventType, AuditLogEntry, AuditResult, AuthConfig, ProxyAuthResult, TokenType,
+        UserInfo,
+    },
 };
 use crate::cache::abstract_cache::CacheManager;
 use crate::cache::keys::CacheKeyBuilder;
@@ -146,19 +148,19 @@ impl AuthService {
         api_key: &str,
         _context: &AuthContext,
     ) -> Result<AuthResult> {
-        let validation_result = self.api_key_manager.validate_api_key(api_key).await?;
+        let api_key_info = self.api_key_manager.validate_api_key(api_key).await?;
 
         Ok(AuthResult {
-            user_id: validation_result.api_key_info.user_id,
-            username: format!("api_key_{}", validation_result.api_key_info.id),
+            user_id: api_key_info.user_id,
+            username: format!("api_key_{}", api_key_info.id),
             is_admin: false, // API keys are typically not admin accounts
             role: UserRole::RegularUser,
             auth_method: AuthMethod::ApiKey,
-            token_preview: validation_result.api_key_info.api_key,
+            token_preview: api_key_info.api_key,
             token_info: None, // API key认证不需要OAuth token信息
             expires_at: None, // API密钥通常无过期时间
             session_info: Some(serde_json::json!({
-                "api_key_id": validation_result.api_key_info.id,
+                "api_key_id": api_key_info.id,
                 "provider_type": "unknown"
             })),
         })
@@ -186,6 +188,17 @@ impl AuthService {
         }
 
         Ok(user_api)
+    }
+
+    /// 代理端 API Key 认证入口（向后兼容）
+    pub async fn authenticate_proxy_request(&self, api_key: &str) -> Result<ProxyAuthResult> {
+        let user_api = self.authenticate_user_service_api(api_key).await?;
+
+        Ok(ProxyAuthResult {
+            user_id: user_api.user_id,
+            provider_type_id: user_api.provider_type_id,
+            user_api,
+        })
     }
 
     /// Authenticate using basic authentication

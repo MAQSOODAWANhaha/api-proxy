@@ -9,8 +9,7 @@
 )]
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware};
-use crate::auth::service::AuthService;
-use crate::config::{AppConfig, ProviderConfigManager};
+use crate::app::context::AppContext;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 // Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
@@ -18,9 +17,9 @@ use crate::error::Result;
 use axum::Router;
 use axum::routing::get;
 // use axum::http::StatusCode; // not needed with manage_error!
-use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
@@ -70,25 +69,27 @@ impl Default for ManagementConfig {
 /// 管理服务器应用状态
 #[derive(Clone)]
 pub struct AppState {
-    /// 应用配置
-    pub config: Arc<AppConfig>,
-    /// 数据库连接
-    pub database: Arc<DatabaseConnection>,
-    /// 认证服务
-    pub auth_service: Arc<AuthService>,
-    ///（已移除）适配器管理器 - 动态适配器功能已下线
-    /// 提供商配置管理器
-    pub provider_config_manager: Arc<ProviderConfigManager>,
-    /// API密钥健康检查器
-    pub api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
-    /// `OAuth客户端`
-    pub oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
-    /// 智能API密钥提供者
-    pub smart_api_key_provider:
-        Option<Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>>,
-    /// OAuth token 刷新任务
-    pub oauth_token_refresh_task:
-        Option<Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>>,
+    context: Arc<AppContext>,
+}
+
+impl AppState {
+    #[must_use]
+    pub const fn new(context: Arc<AppContext>) -> Self {
+        Self { context }
+    }
+
+    #[must_use]
+    pub const fn context_arc(&self) -> &Arc<AppContext> {
+        &self.context
+    }
+}
+
+impl Deref for AppState {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.context
+    }
 }
 
 /// 管理服务器
@@ -104,31 +105,8 @@ pub struct ManagementServer {
 
 impl ManagementServer {
     /// 创建新的管理服务器
-    pub fn new(
-        config: ManagementConfig,
-        app_config: Arc<AppConfig>,
-        database: Arc<DatabaseConnection>,
-        auth_service: Arc<AuthService>,
-        provider_config_manager: Arc<ProviderConfigManager>,
-        api_key_health_checker: Option<Arc<crate::scheduler::api_key_health::ApiKeyHealthChecker>>,
-        oauth_client: Option<Arc<crate::auth::oauth_client::OAuthClient>>,
-        smart_api_key_provider: Option<
-            Arc<crate::auth::smart_api_key_provider::SmartApiKeyProvider>,
-        >,
-        oauth_token_refresh_task: Option<
-            Arc<crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask>,
-        >,
-    ) -> Result<Self> {
-        let state = AppState {
-            config: app_config,
-            database,
-            auth_service,
-            provider_config_manager,
-            api_key_health_checker,
-            oauth_client,
-            smart_api_key_provider,
-            oauth_token_refresh_task,
-        };
+    pub fn new(config: ManagementConfig, context: Arc<AppContext>) -> Result<Self> {
+        let state = AppState::new(context);
 
         let router = Self::create_router(state.clone(), &config)?;
 

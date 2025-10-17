@@ -1,8 +1,8 @@
+use crate::key_pool::types::SchedulingStrategy;
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::scheduler::types::SchedulingStrategy;
 use axum::extract::{Extension, State};
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{
