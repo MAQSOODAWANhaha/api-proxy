@@ -1,21 +1,44 @@
 //! Errors related to authentication, authorization, and API key handling.
 
+use std::time::Duration;
 use thiserror::Error;
+
+/// 种类化的限制类型，便于格式化提示
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitKind {
+    PerMinute,
+    DailyRequests,
+    DailyTokens,
+    DailyCost,
+}
+
+/// 限制被触发时的完整上下文
+#[derive(Debug, Clone)]
+pub struct RateLimitInfo {
+    pub kind: RateLimitKind,
+    pub limit: Option<f64>,
+    pub current: Option<f64>,
+    pub resets_in: Option<Duration>,
+    pub plan_type: String,
+}
 
 /// The primary error type for all authentication and authorization operations.
 #[derive(Debug, Error)]
 pub enum AuthError {
-    #[error("API key was not provided")]
+    #[error("Missing credential")]
     ApiKeyMissing,
 
-    #[error("The provided API key is invalid: {0}")]
+    #[error("Invalid credential: {0}")]
     ApiKeyInvalid(String),
 
-    #[error("API key format is incorrect")]
+    #[error("Credential format is incorrect")]
     ApiKeyMalformed,
 
-    #[error("The provided API key is inactive")]
+    #[error("Credential has been disabled")]
     ApiKeyInactive,
+
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded(RateLimitInfo),
 
     #[error("The user is not authenticated")]
     NotAuthenticated,

@@ -7,8 +7,8 @@ use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use pingora_core::ErrorType;
 use pingora_core::prelude::*;
+use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use sea_orm::DatabaseConnection;
@@ -19,6 +19,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::collect::service::CollectService;
+use crate::proxy::response::{JsonError, build_auth_error_response, write_json_error};
 use crate::proxy::{
     AuthenticationService, context::ProxyContext, provider_strategy,
     request_transform_service::RequestTransformService,
@@ -119,6 +120,43 @@ impl ProxyService {
             200 // 没有错误且没有状态码时默认成功
         }
     }
+
+    async fn send_auth_error_response(
+        &self,
+        session: &mut Session,
+        request_id: &str,
+        error: &ProxyError,
+    ) -> pingora_core::Result<Option<u16>> {
+        if let ProxyError::Authentication(auth_err) = error {
+            let JsonError {
+                status,
+                payload,
+                message,
+            } = build_auth_error_response(auth_err);
+            if status == 401 {
+                lwarn!(
+                    request_id,
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "authentication_failed",
+                    "认证失败",
+                    error = message
+                );
+            } else {
+                lwarn!(
+                    request_id,
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "usage_limit_reached",
+                    "速率限制触发，返回结构化错误",
+                    error = message
+                );
+            }
+            write_json_error(session, status, payload).await?;
+            return Ok(Some(status));
+        }
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -168,6 +206,16 @@ impl ProxyHttp for ProxyService {
                 "认证授权失败",
                 error = %e
             );
+            if let Some(status) = self
+                .send_auth_error_response(session, &ctx.request_id, &e)
+                .await?
+            {
+                let context = format!("{}:{}", e.error_code(), e);
+                return Err(PingoraError::explain(
+                    ErrorType::HTTPStatus(status),
+                    context,
+                ));
+            }
             return Err(e.into());
         }
 

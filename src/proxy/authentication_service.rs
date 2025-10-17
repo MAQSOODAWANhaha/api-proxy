@@ -8,12 +8,16 @@ use crate::auth::{
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
-use crate::error::{ProxyError, Result};
+use crate::error::{
+    ProxyError, Result,
+    auth::{AuthError, RateLimitInfo, RateLimitKind},
+};
 use crate::key_pool::{ApiKeyPoolManager, SelectionContext};
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
+use crate::proxy::response::format_rate_limit_message;
 use crate::types::ProviderTypeId;
-use crate::{ldebug, linfo};
+use crate::{ldebug, linfo, lwarn};
 use entity::{
     oauth_client_sessions::{self, Entity as OAuthClientSessions},
     provider_types::{self, Entity as ProviderTypes},
@@ -218,12 +222,12 @@ impl AuthenticationService {
     async fn check_limits(
         &self,
         user_api: &user_service_apis::Model,
-        _request_id: &str,
+        request_id: &str,
     ) -> Result<()> {
         if let Some(expires_at) = &user_api.expires_at
             && chrono::Utc::now().naive_utc() > *expires_at
         {
-            return Err(crate::error!(Authentication, "API has expired"));
+            return Err(crate::error!(Authentication, "该 API Key 已过期"));
         }
 
         let endpoint_key = format!("service_api:{}", user_api.id);
@@ -237,9 +241,22 @@ impl AuthenticationService {
                 .check_per_minute(user_api.user_id, &endpoint_key, i64::from(rate_limit))
                 .await?;
             if !outcome.allowed {
-                return Err(ProxyError::internal(format!(
-                    "Rate limit exceeded: {rate_limit} requests per minute"
-                )));
+                let resets = u64::try_from(outcome.ttl_seconds)
+                    .ok()
+                    .map(Duration::from_secs);
+                Self::log_rate_limit_hit(
+                    request_id,
+                    RateLimitKind::PerMinute,
+                    Some(Self::to_f64(outcome.limit)),
+                    Some(Self::to_f64(outcome.current)),
+                    resets,
+                );
+                return Err(DistributedRateLimiter::rate_limit_error(
+                    RateLimitKind::PerMinute,
+                    Some(Self::to_f64(outcome.limit)),
+                    Some(Self::to_f64(outcome.current)),
+                    resets,
+                ));
             }
         }
 
@@ -252,31 +269,106 @@ impl AuthenticationService {
                 .check_per_day(user_api.user_id, &endpoint_key, i64::from(daily_limit))
                 .await?;
             if !outcome.allowed {
-                return Err(ProxyError::internal(format!(
-                    "Daily request limit exceeded: {daily_limit} requests per day"
-                )));
+                let resets = u64::try_from(outcome.ttl_seconds)
+                    .ok()
+                    .map(Duration::from_secs);
+                Self::log_rate_limit_hit(
+                    request_id,
+                    RateLimitKind::DailyRequests,
+                    Some(Self::to_f64(outcome.limit)),
+                    Some(Self::to_f64(outcome.current)),
+                    resets,
+                );
+                return Err(DistributedRateLimiter::rate_limit_error(
+                    RateLimitKind::DailyRequests,
+                    Some(Self::to_f64(outcome.limit)),
+                    Some(Self::to_f64(outcome.current)),
+                    resets,
+                ));
             }
         }
 
         // 3. MaxTokensPerDay
         if let Some(max_tokens) = user_api.max_tokens_per_day
             && max_tokens > 0
-        {
-            self.rate_limiter
+            && let Err(err) = self
+                .rate_limiter
                 .check_daily_token_limit(user_api.id, max_tokens)
-                .await?;
+                .await
+        {
+            if let ProxyError::Authentication(AuthError::RateLimitExceeded(info)) = &err {
+                Self::log_rate_limit_hit(
+                    request_id,
+                    info.kind,
+                    info.limit,
+                    info.current,
+                    info.resets_in,
+                );
+            }
+            return Err(err);
         }
 
         // 4. MaxCostPerDay
         if let Some(max_cost) = user_api.max_cost_per_day
             && max_cost > Decimal::from(0)
-        {
-            self.rate_limiter
+            && let Err(err) = self
+                .rate_limiter
                 .check_daily_cost_limit(user_api.id, max_cost)
-                .await?;
+                .await
+        {
+            if let ProxyError::Authentication(AuthError::RateLimitExceeded(info)) = &err {
+                Self::log_rate_limit_hit(
+                    request_id,
+                    info.kind,
+                    info.limit,
+                    info.current,
+                    info.resets_in,
+                );
+            }
+            return Err(err);
         }
 
         Ok(())
+    }
+
+    fn log_rate_limit_hit(
+        request_id: &str,
+        kind: RateLimitKind,
+        limit: Option<f64>,
+        current: Option<f64>,
+        resets: Option<Duration>,
+    ) {
+        let kind_label = match kind {
+            RateLimitKind::PerMinute => "每分钟请求",
+            RateLimitKind::DailyRequests => "每日请求次数",
+            RateLimitKind::DailyTokens => "每日 Token 用量",
+            RateLimitKind::DailyCost => "每日成本",
+        };
+        let info = RateLimitInfo {
+            kind,
+            limit,
+            current,
+            resets_in: resets,
+            plan_type: DistributedRateLimiter::PLAN_TYPE.to_string(),
+        };
+        let message = format_rate_limit_message(&info);
+        let resets_secs = resets.map(|d| d.as_secs());
+        lwarn!(
+            request_id,
+            LogStage::Authentication,
+            LogComponent::Auth,
+            "usage_limit_reached",
+            message,
+            limit_kind = kind_label,
+            limit = limit,
+            current = current,
+            resets_in_seconds = resets_secs
+        );
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    const fn to_f64(value: i64) -> f64 {
+        value as f64
     }
 
     /// 3. 获取提供商类型配置

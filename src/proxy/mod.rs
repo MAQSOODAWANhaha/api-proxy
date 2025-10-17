@@ -48,6 +48,7 @@
 //!
 
 pub mod context;
+pub mod response;
 pub mod service;
 pub mod types;
 

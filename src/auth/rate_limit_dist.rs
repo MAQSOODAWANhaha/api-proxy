@@ -4,7 +4,10 @@
 //! 先提供最小实现与接口；集成到 `ApiKeyManager` 可作为后续任务。
 
 use crate::cache::{CacheManager, keys::CacheKeyBuilder};
-use crate::error::Result;
+use crate::error::{
+    ProxyError, Result,
+    auth::{AuthError, RateLimitInfo, RateLimitKind},
+};
 use entity::{proxy_tracing, user_service_apis};
 use sea_orm::prelude::Decimal;
 use sea_orm::{
@@ -45,11 +48,28 @@ struct ApiOwner {
 }
 
 impl DistributedRateLimiter {
+    pub(crate) const PLAN_TYPE: &'static str = "pro";
+
     const TOKEN_PREFIX: &'static str = "ratelimit:daily:tokens";
     const COST_PREFIX: &'static str = "ratelimit:daily:cost";
     /// 创建新的限流器实例，要求提供缓存与数据库
     pub const fn new(cache: Arc<CacheManager>, db: Arc<DatabaseConnection>) -> Self {
         Self { cache, db }
+    }
+
+    pub(crate) fn rate_limit_error(
+        kind: RateLimitKind,
+        limit: Option<f64>,
+        current: Option<f64>,
+        resets_in: Option<Duration>,
+    ) -> ProxyError {
+        ProxyError::Authentication(AuthError::RateLimitExceeded(RateLimitInfo {
+            kind,
+            limit,
+            current,
+            resets_in,
+            plan_type: Self::PLAN_TYPE.to_string(),
+        }))
     }
 
     /// 以“用户+端点”为维度的每分钟请求限制
@@ -127,11 +147,11 @@ impl DistributedRateLimiter {
 
         if let Some(cached_tokens) = self.cache.get::<i64>(&cache_key).await? {
             if cached_tokens >= limit {
-                return Err(crate::error!(
-                    Authentication,
-                    "Daily token limit reached (limit = {}, current = {})",
-                    limit,
-                    cached_tokens
+                return Err(Self::rate_limit_error(
+                    RateLimitKind::DailyTokens,
+                    Some(Self::to_f64(limit)),
+                    Some(Self::to_f64(cached_tokens)),
+                    Some(ttl),
                 ));
             }
             return Ok(());
@@ -155,11 +175,11 @@ impl DistributedRateLimiter {
         let _ = self.cache.set(&cache_key, &current_tokens, Some(ttl)).await;
 
         if current_tokens >= limit {
-            return Err(crate::error!(
-                Authentication,
-                "Daily token limit reached (limit = {}, current = {})",
-                limit,
-                current_tokens
+            return Err(Self::rate_limit_error(
+                RateLimitKind::DailyTokens,
+                Some(Self::to_f64(limit)),
+                Some(Self::to_f64(current_tokens)),
+                Some(ttl),
             ));
         }
         Ok(())
@@ -172,11 +192,11 @@ impl DistributedRateLimiter {
         if let Some(cached_cost) = self.cache.get::<f64>(&cache_key).await? {
             let limit_value = Self::decimal_to_f64(limit)?;
             if cached_cost >= limit_value {
-                return Err(crate::error!(
-                    Authentication,
-                    "Daily cost limit reached (limit = {}, current = {:.4})",
-                    limit,
-                    cached_cost
+                return Err(Self::rate_limit_error(
+                    RateLimitKind::DailyCost,
+                    Some(limit_value),
+                    Some(cached_cost),
+                    Some(ttl),
                 ));
             }
             return Ok(());
@@ -200,11 +220,11 @@ impl DistributedRateLimiter {
         let limit_value = Self::decimal_to_f64(limit)?;
 
         if current_cost >= limit_value {
-            return Err(crate::error!(
-                Authentication,
-                "Daily cost limit reached (limit = {}, current = {:.4})",
-                limit,
-                current_cost
+            return Err(Self::rate_limit_error(
+                RateLimitKind::DailyCost,
+                Some(limit_value),
+                Some(current_cost),
+                Some(ttl),
             ));
         }
         Ok(())
@@ -351,6 +371,11 @@ impl DistributedRateLimiter {
             .to_string()
             .parse::<f64>()
             .map_err(|_| crate::error!(Internal, "Invalid decimal value for cost limit"))
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    const fn to_f64(value: i64) -> f64 {
+        value as f64
     }
 
     fn service_api_endpoint(user_api_id: i32) -> String {
