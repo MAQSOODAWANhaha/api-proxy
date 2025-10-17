@@ -4,7 +4,8 @@
 
 use crate::auth::{AuthService, rate_limit_dist::DistributedRateLimiter};
 use crate::cache::CacheManager;
-use crate::config::{AppConfig, ProviderConfigManager};
+use crate::collect::service::CollectService;
+use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::key_pool::ApiKeyPoolManager;
 use crate::key_pool::api_key_health::ApiKeyHealthChecker;
@@ -12,21 +13,20 @@ use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::pricing::PricingCalculatorService;
 use crate::proxy::{
-    AuthenticationService, FinalizationService, RequestTransformService, ResponseTransformService,
-    StatisticsService, TracingService, UpstreamService, service::ProxyService,
+    AuthenticationService, RequestTransformService, ResponseTransformService, UpstreamService,
+    service::ProxyService,
 };
-use crate::trace::TraceSystem;
+use crate::trace::{TraceManager, TraceSystem};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// 代理服务器组件构建器
 ///
-/// 统一管理数据库连接、缓存管理器、服务商配置等组件的创建逻辑
+/// 统一管理数据库连接、缓存、追踪系统等组件的创建逻辑
 pub struct ProxyServerBuilder {
     config: Arc<AppConfig>,
     db: Option<Arc<DatabaseConnection>>,
     cache: Option<Arc<CacheManager>>,
-    provider_config_manager: Option<Arc<ProviderConfigManager>>,
     trace_system: Option<Arc<TraceSystem>>,
 }
 
@@ -38,7 +38,6 @@ impl ProxyServerBuilder {
             config,
             db: None,
             cache: None,
-            provider_config_manager: None,
             trace_system: None,
         }
     }
@@ -97,20 +96,6 @@ impl ProxyServerBuilder {
         Ok(cache)
     }
 
-    /// 创建或获取服务商配置管理器
-    pub fn ensure_provider_config_manager(
-        &mut self,
-        db: Arc<DatabaseConnection>,
-        cache: Arc<CacheManager>,
-    ) -> Arc<ProviderConfigManager> {
-        if let Some(manager) = &self.provider_config_manager {
-            return manager.clone();
-        }
-        let manager = Arc::new(ProviderConfigManager::new(db, cache));
-        self.provider_config_manager = Some(manager.clone());
-        manager
-    }
-
     /// 创建统一认证服务
     fn create_auth_service(
         &self,
@@ -150,7 +135,6 @@ impl ProxyServerBuilder {
         &self,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        _provider_config_manager: Arc<ProviderConfigManager>,
     ) -> pingora_core::Result<ProxyService> {
         linfo!(
             "system",
@@ -178,17 +162,12 @@ impl ProxyServerBuilder {
             api_key_pool,
             rate_limiter.clone(),
         ));
-        let stats_service = Arc::new(StatisticsService::new(pricing_calculator));
-        let trace_service = Arc::new(TracingService::new(
-            self.trace_system
-                .as_ref()
-                .and_then(|ts| ts.immediate_tracer()),
-        ));
-        let finalization_service = Arc::new(FinalizationService::new(
-            Arc::clone(&stats_service),
-            Arc::clone(&trace_service),
-            rate_limiter,
-        ));
+        let collect_service = Arc::new(CollectService::new(pricing_calculator));
+        let immediate_tracer = self
+            .trace_system
+            .as_ref()
+            .and_then(|ts| ts.immediate_tracer());
+        let trace_manager = Arc::new(TraceManager::new(immediate_tracer, rate_limiter));
         let upstream_service = Arc::new(UpstreamService::new(db.clone()));
         let req_transform_service = Arc::new(RequestTransformService::new(db.clone()));
         let resp_transform_service = Arc::new(ResponseTransformService::new());
@@ -196,12 +175,11 @@ impl ProxyServerBuilder {
         ProxyService::new(
             db, // 直接注入DB
             auth_service,
-            stats_service,
-            trace_service,
+            collect_service,
+            trace_manager,
             upstream_service,
             req_transform_service,
             resp_transform_service,
-            finalization_service,
         )
     }
 
@@ -209,18 +187,14 @@ impl ProxyServerBuilder {
     pub async fn build_components(&mut self) -> Result<ProxyServerComponents> {
         let db = self.ensure_database().await?;
         let cache = self.ensure_cache()?;
-        let provider_config_manager =
-            self.ensure_provider_config_manager(db.clone(), cache.clone());
-
         let proxy_service = self
-            .create_proxy_service(db.clone(), cache.clone(), provider_config_manager.clone())
+            .create_proxy_service(db.clone(), cache.clone())
             .map_err(|e| ProxyError::internal_with_source("代理服务创建失败", e))?;
 
         Ok(ProxyServerComponents {
             config: self.config.clone(),
             db,
             cache,
-            provider_config_manager,
             proxy_service,
             trace_system: self.trace_system.clone(),
         })
@@ -244,7 +218,6 @@ pub struct ProxyServerComponents {
     pub config: Arc<AppConfig>,
     pub db: Arc<DatabaseConnection>,
     pub cache: Arc<CacheManager>,
-    pub provider_config_manager: Arc<ProviderConfigManager>,
     pub proxy_service: ProxyService,
     pub trace_system: Option<Arc<TraceSystem>>,
 }

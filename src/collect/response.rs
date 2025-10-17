@@ -2,8 +2,8 @@
 
 use pingora_http::ResponseHeader;
 
+use crate::collect::types::ResponseStats;
 use crate::proxy::ProxyContext;
-use crate::statistics::types::ResponseStats;
 
 /// 收集响应详情并同步关键字段到上下文
 #[must_use]

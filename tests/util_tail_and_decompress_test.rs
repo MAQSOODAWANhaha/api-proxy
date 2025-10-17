@@ -1,10 +1,10 @@
 //! 测试模块：工具函数的尾窗处理与解压缩功能
 //!
-//! 此模块包含对 `crate::statistics::util` 中 `find_last_balanced_json` 等函数的集成测试，
+//! 此模块包含对 `crate::collect::util` 中 `find_last_balanced_json` 等函数的集成测试，
 //! 确保流式响应解析的正确性。
 
-use api_proxy::statistics::usage_model::extract_model_from_json;
-use api_proxy::statistics::util::{decompress_for_stats, find_last_balanced_json};
+use api_proxy::collect::usage_model::extract_model_from_json;
+use api_proxy::collect::util::{decompress_for_stats, find_last_balanced_json};
 use flate2::{Compression, write::GzEncoder};
 use std::io::Write;
 

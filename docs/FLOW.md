@@ -43,8 +43,7 @@ flowchart TD
             ApiKeyManager --> AuthService
             AuthService --> AuthService["AuthService::new()"]
             InitComponents --> CacheManager["UnifiedCacheManager::new()"]
-            InitComponents --> ProviderConfigMgr["ProviderConfigManager::new()"]
-            InitComponents --> StatisticsService["StatisticsService::new()"]
+            InitComponents --> CollectService["CollectService::new()"]
             InitComponents --> TraceSystem["TraceSystem::new_immediate()"]
             InitComponents --> HealthChecker["ApiKeyHealthChecker::new()"]
             InitComponents --> OAuthClient["OAuthClient::new()"]
@@ -67,8 +66,7 @@ flowchart TD
         subgraph BuilderSteps["构建器步骤"]
             BuildComponents --> EnsureDB["ensure_database()"]
             EnsureDB --> EnsureCache["ensure_cache()"]  
-            EnsureCache --> EnsureProvider["ensure_provider_config_manager()"]
-            EnsureProvider --> CreateAuth["create_auth_service()"]
+            EnsureCache --> CreateAuth["create_auth_service()"]
             CreateAuth --> CreateProxy["create_proxy_service()"]
         end
         
@@ -89,7 +87,7 @@ flowchart TD
             RequestFilter --> HandleCORS{"method == OPTIONS?"}
             HandleCORS -->|是| Return200["返回200 CORS响应"]
             HandleCORS -->|否| AuthPhase["身份验证<br/>AuthenticationStep"]
-            AuthPhase --> StartTrace["开始追踪<br/>TracingService::start_trace()"]
+            AuthPhase --> StartTrace["开始追踪<br/>TraceManager::start_trace()"]
             StartTrace --> PrepareProxy["Pipeline 执行 (限流→配置→选 key)"]
         end
         
@@ -113,11 +111,11 @@ flowchart TD
                 VerifyMatch --> AuthResult["构造AuthenticationResult"]
             end
             
-            Step2 --> Step3["步骤3: 获取Provider配置<br/>ProviderConfigStep"]
+            Step2 --> Step3["步骤3: 启动追踪<br/>TraceManager::start_trace()"]
             Step3 --> Step4["步骤4: API密钥选择<br/>ApiKeySelectionStep"]
             
             subgraph LoadBalance["⚖️ 智能密钥管理详细"]
-                Step5 --> CreateSelectionCtx["创建SelectionContext"]
+                Step4 --> CreateSelectionCtx["创建SelectionContext"]
                 CreateSelectionCtx --> ApiKeyPool["ApiKeyPoolManager<br/>.select_api_key_from_service_api()"]
                 ApiKeyPool --> ParseUserKeys["解析user_provider_keys_ids JSON"]
                 ParseUserKeys --> HealthCheck["ApiKeyHealthChecker过滤"]
@@ -172,7 +170,7 @@ flowchart TD
         UpstreamReqFilter --> ResponseFilter["response_filter()<br/>响应过滤"]
         
         subgraph ResponseProcessing["📥 响应处理"]
-            ResponseFilter --> CollectRespStats["StatisticsService<br/>.collect_response_details()"]
+            ResponseFilter --> CollectRespStats["CollectService<br/>.collect_response_details()"]
             CollectRespStats --> LogRespTime["记录响应时间和状态码"]
         end
         
@@ -187,13 +185,11 @@ flowchart TD
         
         subgraph FinalProcessing["✅ 最终处理"]
             Logging --> CheckError{"有错误?<br/>检查fail_to_proxy"}
-            CheckError -->|是| HandleError["处理错误<br/>TracingService::complete_trace_failure()"]
-            CheckError -->|否| ExtractStats["StatisticsService<br/>.finalize_and_extract_stats()"]
-            HandleError --> CompleteTraceError["完成错误追踪"]
-            ExtractStats["StatisticsService<br/>.finalize_and_extract_stats()"] --> UpdateTokens["更新token使用信息<br/>计算成本"]
-            UpdateTokens --> CompleteTraceSuccess["TracingService::complete_trace_success()"]
-            CompleteTraceError --> ClientResponse["返回客户端响应"]
-            CompleteTraceSuccess --> ClientResponse
+            CheckError -->|是| RecordFailure["TraceManager::record_failure()"]
+            CheckError -->|否| FinalizeMetrics["CollectService<br/>.finalize_metrics()"]
+            FinalizeMetrics --> RecordSuccess["TraceManager::record_success()"]
+            RecordFailure --> ClientResponse["返回客户端响应"]
+            RecordSuccess --> ClientResponse
         end
     end
     
@@ -260,11 +256,10 @@ main.rs:30 → dual_port_setup::run_dual_port_servers()
 │   │   ├── ApiKeyManager::new()
 │   │   ├── AuthService::new()
 │   │   └── AuthService::new()
-│   ├── 缓存和配置管理器
-│   │   ├── UnifiedCacheManager::new()
-│   │   └── ProviderConfigManager::new()
+│   ├── 缓存与辅助组件
+│   │   └── UnifiedCacheManager::new()
 │   ├── 其他服务组件
-│   │   ├── StatisticsService::new()
+│   │   ├── CollectService::new()
 │   │   ├── TraceSystem::new_immediate()
 │   │   ├── ApiKeyHealthChecker::new()
 │   │   ├── OAuthClient::new()
@@ -293,7 +288,6 @@ PingoraProxyServer::start()
 │   └── build_components() // 按依赖顺序构建
 │       ├── ensure_database() → 复用共享连接
 │       ├── ensure_cache() → UnifiedCacheManager
-│       ├── ensure_provider_config_manager() → ProviderConfigManager
 │       ├── create_auth_service() → AuthService
 │       └── create_proxy_service() → ProxyService实例
 ├── http_proxy_service(proxy_service) // Pingora HTTP服务
@@ -307,24 +301,22 @@ PingoraProxyServer::start()
 - `src/proxy/builder.rs:148`: `create_proxy_service()`
 - `src/proxy/service.rs:32`: `ProxyService::new()`
 
-### 3. 请求处理核心链路 (`src/proxy/service.rs` + `src/proxy/request_handler.rs`)
+### 3. 请求处理核心链路 (`src/proxy/service.rs`)
 
 ```rust
 ProxyService (实现 ProxyHttp trait):
 ├── new_ctx() → 创建ProxyContext + request_id
 ├── request_filter(session, ctx):97
 │   ├── OPTIONS方法的CORS预检处理
-│   └── ai_handler.prepare_proxy_request() // 协调器模式核心
-│       ├── 步骤0: ProviderResolver::resolve_from_request() // 从URL路径识别provider
-│       ├── 步骤1: AuthenticationService::authenticate_with_provider()
+│   └── ProxyService::early_request_filter() // 编排器核心逻辑
+│       ├── AuthenticationService::authenticate_and_authorize()
 │       │   ├── parse_inbound_api_key_from_client() // 解析客户端认证头
-│       │   ├── 根据provider.auth_header_format提取密钥
-│       │   └── AuthService::authenticate_proxy_request()
-│       ├── 步骤2: TracingService::start_trace() // 开始追踪
-│       ├── 步骤3: check_rate_limit() // 速率限制检查
-│       ├── 步骤4: 获取Provider配置 (从ctx.provider_type)
-│       └── 步骤5: select_api_key() // API密钥池负载均衡
-│           └── ApiKeyPoolManager::select_api_key_from_service_api()
+│       │   ├── AuthService::authenticate_proxy_request()
+│       │   └── 填充 ctx.user_service_api / ctx.provider_type / ctx.selected_backend
+│       ├── TraceManager::start_trace() // 开始追踪
+│       ├── rate_limiter.check_per_minute() // 速率限制检查
+│       ├── 设置 ctx.timeout_seconds 与 ProviderStrategy
+│       └── CollectService::collect_request_stats()/collect_request_details()
 ├── upstream_peer(session, ctx) // 选择上游节点
 │   ├── 重试延迟处理 (如果ctx.retry_count > 0)
 │   └── HttpPeer::new(provider.base_url, TLS)
@@ -332,20 +324,20 @@ ProxyService (实现 ProxyHttp trait):
 │   ├── 替换认证信息 (隐藏客户端密钥，使用后端密钥)
 │   └── 添加必要请求头
 ├── response_filter() // 响应处理
-│   └── StatisticsService::collect_response_details()
+│   └── CollectService::collect_response_details()
 ├── response_body_filter() // 响应体收集
 │   └── ctx.response_details.add_body_chunk() // 流式与非流式统一收集
 └── logging() // 最终处理
-    ├── StatisticsService::finalize_and_extract_stats() // 统一流/非流：必要时先 normalize_streaming_json
-    ├── 更新token使用信息和成本计算（使用 token_mappings_json + TokenFieldExtractor）
-    └── TracingService::complete_trace_success/failure()
+    ├── CollectService::finalize_metrics() // 统一流/非流：使用 usage_model::finalize_eos
+    ├── 更新token使用信息和成本计算（通过 TokenFieldExtractor + PricingCalculatorService）
+    └── TraceManager::record_success/record_failure()
 ```
 
 **关键代码路径：**
-- `src/proxy/service.rs:97`: `request_filter()`
-- `src/proxy/request_handler.rs:382`: `prepare_proxy_request()`
-- `src/proxy/service.rs:221`: `upstream_peer()`
-- `src/proxy/service.rs:270`: `upstream_request_filter()`
+- `src/proxy/service.rs`: `request_filter()`
+- `src/proxy/service.rs`: `upstream_peer()`
+- `src/proxy/service.rs`: `upstream_request_filter()`
+- `src/proxy/service.rs`: `logging()`
 
 ### 4. 认证流程 (`src/proxy/authentication_service.rs`)
 
@@ -398,40 +390,42 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 ```
 
 **关键代码路径：**
-- `src/key_pool/pool_manager.rs:64`: `select_api_key_from_service_api()`
-- `src/key_pool/algorithms.rs`: `ApiKeySelector` trait实现
+- `src/key_pool/pool_manager.rs`: `select_api_key_from_service_api()`
+- `src/key_pool/algorithms.rs`: `ApiKeySelector` trait 实现
 - `src/key_pool/api_key_health.rs`: `ApiKeyHealthChecker`
-- `src/proxy/request_handler.rs:866`: `select_api_key()`
+- `src/proxy/authentication_service.rs`: `select_api_key()` 协调密钥选择
 
-### 6. 追踪和统计 (`src/proxy/tracing_service.rs` + `src/statistics/service.rs`)
+### 6. 采集与追踪 (`src/collect/service.rs` + `src/trace/manager.rs`)
 
 ```rust
-请求追踪完整生命周期：
-├── TracingService::start_trace() // 认证成功后开始追踪
-│   ├── 记录request_id, user_service_api_id, 用户信息
-│   ├── 记录请求方法、路径、客户端IP、User-Agent
-│   └── ImmediateProxyTracer即时写入数据库
-├── TracingService::update_extended_trace_info() // API密钥选择后更新
-│   ├── provider_type_id: 服务商类型ID
-│   ├── model_used: 使用的模型
-│   └── user_provider_key_id: 后端API密钥ID
-├── 统计数据提取 (响应体收集完成后)：
-│   ├── StatisticsService::extract_usage_from_json() / normalize_usage_metadata()
-│   ├── 支持SSE格式和传统流式响应解析
-│   ├── 使用TokenFieldExtractor从JSON提取token信息
-│   ├── 使用ModelExtractor提取模型名称
-│   ├── PricingCalculatorService计算成本
-│   └── 支持缓存token (cache_create_tokens, cache_read_tokens)
-└── TracingService::complete_trace_success/failure() // 完成追踪
-    ├── 成功: 记录status_code, token使用量, 模型信息
-    └── 失败: 记录错误类型和消息
+Collect → Trace 生命周期：
+├── TraceManager::start_trace() // 认证成功后开始追踪
+│   ├── 记录 request_id, user_service_api_id, 用户信息
+│   ├── 记录请求方法、路径、客户端 IP、User-Agent
+│   └── ImmediateProxyTracer 即时写入数据库
+├── TraceManager::update_model() // API 密钥和模型解析后更新
+│   ├── provider_type_id: 服务商类型 ID
+│   ├── model_used: 实际使用的模型
+│   └── user_provider_key_id: 后端 API 密钥 ID
+├── CollectService::collect_response_details() // 响应头采集
+│   ├── 记录状态码、Content-Type、压缩编码
+│   └── 补充上下文中的响应字段
+├── CollectService::finalize_metrics() // 响应体收集完成后
+│   ├── usage_model::finalize_eos() 聚合流式/非流式事件
+│   ├── TokenFieldExtractor 提取 token 统计
+│   ├── extract_model_from_json() 推断模型名称
+│   └── PricingCalculatorService 计算成本
+└── TraceManager::record_success/record_failure()
+    ├── 成功: 记录状态码、token 使用量、成本
+    └── 失败: 记录错误类型、错误信息并写入限流缓存
 ```
 
 **关键代码路径：**
-- `src/proxy/tracing_service.rs:31`: `start_trace()`
-- `src/statistics/service.rs`: `extract_usage_from_json()`, `initialize_token_usage()`
+- `src/trace/manager.rs`: `start_trace()`, `update_model()`, `record_success()`, `record_failure()`
+- `src/collect/service.rs`: `collect_response_details()`, `finalize_metrics()`
+- `src/collect/usage_model.rs`: `finalize_eos()`、`extract_model_from_json()`
+- `src/collect/field_extractor.rs`: `TokenFieldExtractor`
 - `src/trace/immediate.rs`: `ImmediateProxyTracer`
-- `src/providers/field_extractor.rs`: `TokenFieldExtractor`, `ModelExtractor`
 
 ### 7. 统一日志与统计（关键约定）
 
@@ -442,7 +436,7 @@ ApiKeyPoolManager::select_api_key_from_service_api():64
 - 错误日志合并：
   - `event=request_failed`，统一记录：`method,url,error_type,error_source,error_message,duration_ms,request_headers_json,selected_backend_id,provider_type,timeout_seconds`
 - 统计统一入口：
-  - `StatisticsService::finalize_and_extract_stats(ctx)` 统一流/非流：必要时先 `normalize_streaming_json()`，再使用 `token_mappings_json + TokenFieldExtractor` 提取 `tokens_*` 与模型，随后计算费用
+  - `CollectService::finalize_metrics(ctx, status_code)` 统一流/非流：基于 `usage_model::finalize_eos()` 聚合事件，再使用 `token_mappings_json + TokenFieldExtractor` 提取 `tokens_*` 与模型，随后计算费用
 
 ### 8. OAuth 2.0 授权系统 (`src/auth/oauth_v2/` + `src/auth/oauth_client.rs`)
 
@@ -509,20 +503,20 @@ API密钥健康监控和恢复：
 - **代码位置**: `src/proxy/service.rs:63`
 
 ### 2. 数据驱动配置  
-- **Provider配置**: 从数据库动态获取认证头格式、超时时间、base_url等
-- **认证头格式**: 支持JSON数组配置多种认证方式 (`auth_header_format`)
+- **Provider配置**: 直接从 `provider_types` 表加载认证头格式、超时时间、base_url 等
+- **认证头格式**: 支持 JSON 数组配置多种认证方式 (`auth_header_format`)
 - **Token映射**: 使用 `token_mappings_json` 和 `model_extraction_json` 数据驱动提取
 - **超时配置**: 从 `user_service_apis.timeout_seconds` 动态获取
-- **代码位置**: `src/config/provider_config.rs`, `src/providers/field_extractor.rs`
+- **代码位置**: `entity::provider_types`, `src/providers/field_extractor.rs`
 
 ### 3. 协调器模式
-- **设计思想**: RequestHandler作为协调器，委托专门服务处理各种职责  
+- **设计思想**: `ProxyService` 作为协调器，委托专门服务处理各环节  
 - **服务分离**: 
   - AuthenticationService: 认证逻辑
-  - TracingService: 追踪管理
-  - StatisticsService: 统计分析
-  - ProviderResolver: 服务商解析
-- **代码位置**: `src/proxy/request_handler.rs:48`
+  - TraceManager: 追踪管理
+  - CollectService: 采集解析
+  - ProviderStrategy: 服务商特定行为
+- **代码位置**: `src/proxy/service.rs`
 
 ### 4. 智能重试机制
 - **重试条件**: 基于Pingora内置的 `fail_to_proxy` 事件触发
@@ -590,7 +584,7 @@ API密钥健康监控和恢复：
 4. **追踪数据丢失**: 
    - 确认 `TraceSystem::new_immediate()` 正确初始化
    - 检查 `ImmediateProxyTracer` 数据库写入权限
-   - 验证 `TracingService` 是否正确传递给RequestHandler
+   - 验证 `TraceManager` 是否正确传递给RequestHandler
 5. **统计数据异常**:
    - 检查响应体格式 (SSE vs 传统JSON)
    - 验证 `token_mappings_json` 配置

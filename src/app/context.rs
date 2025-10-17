@@ -9,7 +9,7 @@ use crate::auth::{
     rate_limit_dist::DistributedRateLimiter, smart_api_key_provider::SmartApiKeyProvider,
 };
 use crate::cache::CacheManager;
-use crate::config::{AppConfig, ProviderConfigManager};
+use crate::config::AppConfig;
 use crate::key_pool::api_key_health::ApiKeyHealthChecker;
 use crate::trace::TraceSystem;
 use sea_orm::DatabaseConnection;
@@ -19,7 +19,6 @@ pub struct AppContext {
     pub config: Arc<AppConfig>,
     pub database: Arc<DatabaseConnection>,
     pub cache: Arc<CacheManager>,
-    pub provider_config_manager: Arc<ProviderConfigManager>,
     pub auth_service: Arc<AuthService>,
     pub rate_limiter: Arc<DistributedRateLimiter>,
     pub trace_system: Option<Arc<TraceSystem>>,
@@ -36,7 +35,6 @@ impl AppContext {
         config: Arc<AppConfig>,
         database: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        provider_config_manager: Arc<ProviderConfigManager>,
         auth_service: Arc<AuthService>,
         rate_limiter: Arc<DistributedRateLimiter>,
         trace_system: Option<Arc<TraceSystem>>,
@@ -49,7 +47,6 @@ impl AppContext {
             config,
             database,
             cache,
-            provider_config_manager,
             auth_service,
             rate_limiter,
             trace_system,

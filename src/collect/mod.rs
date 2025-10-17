@@ -1,9 +1,8 @@
-//! 统计模块聚合
+//! Collect 模块聚合
 //!
-//! 归档代理端统计服务，供代理/管理等子系统复用。
+//! 负责请求/响应数据的采集与解析，供后续 Trace 模块使用。
 
 pub mod field_extractor;
-pub mod price;
 pub mod request;
 pub mod response;
 pub mod service;

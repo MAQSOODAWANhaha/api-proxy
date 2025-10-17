@@ -7,8 +7,8 @@ use bytes::BytesMut;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::statistics::types::TokenUsageMetrics;
-use crate::statistics::types::{RequestDetails, ResponseDetails};
+use crate::collect::types::TokenUsageMetrics;
+use crate::collect::types::{RequestDetails, ResponseDetails};
 use entity::{provider_types, user_provider_keys, user_service_apis};
 
 /// 解析后的最终上游凭证

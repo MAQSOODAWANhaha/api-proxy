@@ -142,7 +142,7 @@ cargo machete                   # 检查未使用的依赖
 ### 数据流架构
 ```
 管理API请求: Client → Pingora(8080) → Router → Axum(9090) → Business Logic → Database/Redis → Response
-AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamSelect → ProxyForward → AI Provider → Response → Stats
+AI代理请求: Client → Pingora(8080) → Auth → ProviderStrategy → Request/Response Transform → Upstream → AI Provider → Collect → Trace
 ```
 
 ### 认证体系架构
@@ -157,11 +157,12 @@ AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamS
 - **健康度最佳** (`health_best`): 选择响应时间最短的健康节点
 - **智能调度** (`smart`): SmartApiKeyProvider动态选择，考虑健康度、响应时间、负载等因素
 
-### 追踪系统架构
-- **UnifiedTraceSystem**: 统一追踪系统入口，管理所有请求追踪
-- **ImmediateProxyTracer**: 即时写入追踪器，确保所有请求都被记录到数据库
-- **数据驱动提取**: TokenFieldExtractor和ModelExtractor基于数据库配置提取token和模型信息
-- **健康监控**: ApiKeyHealthChecker实时监控API密钥状态，自动故障恢复
+### Collect & Trace 架构
+- **CollectService**: 负责请求/响应数据采集、用量聚合、成本计算
+- **TraceManager**: 统一追踪入口，协调限流缓存、成本与错误记录
+- **ImmediateProxyTracer**: 即时写入追踪器，确保所有请求被持久化
+- **数据驱动提取**: `TokenFieldExtractor` 基于数据库配置提取 token 与模型信息
+- **健康监控**: ApiKeyHealthChecker 实时监控 API 密钥状态，自动故障恢复
 
 ## 关键模块说明
 
@@ -170,11 +171,11 @@ AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamS
 2. 并发启动Pingora代理服务 (8080) 和Axum管理服务 (9090)
 3. 两个服务共享数据层但职责完全分离
 
-### AI代理处理器 (`src/proxy/request_handler.rs`)
-- **核心步骤**: 请求验证 → 密钥选择 → 请求转发 → 响应处理 → 统计记录
-- **请求上下文**: ProxyContext包含完整的请求生命周期数据
-- **错误处理**: 自动转换Pingora错误为用户友好的响应
-- **数据驱动**: 使用数据库配置的TokenFieldExtractor和ModelExtractor
+### AI代理编排器 (`src/proxy/service.rs`)
+- **核心步骤**: 请求验证 → 密钥选择 → 上游转发 → 响应转换 → Collect → Trace
+- **请求上下文**: `ProxyContext` 保存认证信息、上游配置、请求/响应体等生命周期数据
+- **错误处理**: 自动解析 Pingora 错误类型，映射为统一的状态码
+- **数据驱动**: `CollectService` + `TokenFieldExtractor` 解析模型与 token；`TraceManager` 记录成本与限流缓存
 
 ### OAuth 2.0系统 (`src/auth/oauth_client/`)
 - **OAuth客户端管理**: 完整的授权码流程和token交换
@@ -187,9 +188,10 @@ AI代理请求: Client → Pingora(8080) → Auth → LoadBalancer → UpstreamS
 - **故障恢复**: 自动故障检测和恢复机制
 
 ### 配置管理系统 (`src/config/`)
-- **动态配置**: ProviderConfigManager替代所有硬编码地址
+- **核心组件**: AppConfig + ConfigManager 处理多环境配置
+- **动态服务商配置**: 当前直接读取 `provider_types` 表，后续可扩展缓存层
 - **热重载**: 支持配置文件变更实时生效
-- **多环境**: dev/test/prod配置文件分离
+- **多环境**: dev/test/prod 配置文件分离
 
 ### 缓存抽象层 (`src/cache/`)
 - **统一缓存接口**: AbstractCache trait支持内存和Redis后端
@@ -227,8 +229,8 @@ api-proxy/
 │   │   └── server.rs      # 服务器配置
 │   ├── proxy/             # Pingora代理服务
 │   │   └── provider_strategy/ # AI服务适配器
-│   ├── key_pool/         # 后台任务调度
-│   ├── statistics/        # 统计分析模块
+│   ├── collect/           # 请求/响应采集与用量解析
+│   ├── key_pool/          # 密钥池与健康检查
 │   ├── trace/             # 请求追踪系统
 │   └── utils/             # 工具函数
 ├── entity/                # 数据库实体定义 (Sea-ORM)

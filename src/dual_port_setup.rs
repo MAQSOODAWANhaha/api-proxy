@@ -1,7 +1,7 @@
 use crate::{
     app::context::AppContext,
     auth::{rate_limit_dist::DistributedRateLimiter, service::AuthService},
-    config::{ConfigManager, ProviderConfigManager},
+    config::ConfigManager,
     error::{Context, Result},
     management::server::{ManagementConfig, ManagementServer},
     proxy::PingoraProxyServer,
@@ -381,19 +381,6 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
     ));
     // 注意：认证服务在后续会统一创建一次
 
-    // 初始化服务商配置管理器
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_provider_config_manager",
-        "🔧 Initializing provider configuration manager..."
-    );
-    let provider_config_manager = Arc::new(ProviderConfigManager::new(
-        db.clone(),
-        cache_manager.clone(),
-    ));
-
     // Note: 旧的服务器健康检查已移除，现在使用API密钥健康检查系统
     // 参见: src/key_pool/api_key_health.rs
 
@@ -540,7 +527,6 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
         config_arc,
         db,
         cache_manager,
-        provider_config_manager,
         auth_service,
         rate_limiter,
         Some(trace_system),

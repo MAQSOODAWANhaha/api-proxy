@@ -3,8 +3,8 @@
 use pingora_proxy::Session;
 
 use crate::auth::AuthUtils;
-use crate::statistics::types::RequestDetails;
-use crate::statistics::types::RequestStats;
+use crate::collect::types::RequestDetails;
+use crate::collect::types::RequestStats;
 
 /// 收集请求统计信息（方法、路径、客户端信息）
 #[must_use]

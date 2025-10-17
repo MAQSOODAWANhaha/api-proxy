@@ -1,6 +1,6 @@
-//! 统计工具测试：保持与精简后的实现一致
+//! 采集工具测试：保持与精简后的实现一致
 
-use api_proxy::statistics::util::{
+use api_proxy::collect::util::{
     content_type_is_json, decompress_for_stats, find_last_balanced_json,
 };
 use flate2::{Compression, write::GzEncoder};

@@ -7,6 +7,7 @@
 pub mod app;
 pub mod auth;
 pub mod cache;
+pub mod collect;
 pub mod config;
 pub mod database;
 /// 双端口服务器设置和配置模块
@@ -17,7 +18,6 @@ pub mod logging;
 pub mod management;
 pub mod pricing;
 pub mod proxy;
-pub mod statistics;
 pub mod trace;
 pub mod types;
 /// 通用工具和辅助函数模块

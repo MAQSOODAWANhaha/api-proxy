@@ -6,8 +6,8 @@ use std::sync::{Arc, RwLock};
 use serde_json::Value;
 use std::sync::LazyLock;
 
+use crate::collect::types::{ComputedStats, TokenUsageMetrics};
 use crate::proxy::ProxyContext;
-use crate::statistics::types::{ComputedStats, TokenUsageMetrics};
 use tokio_util::codec::Decoder as _; // for EventStreamData decode
 
 // 预编译模型路径（按优先级）
@@ -26,7 +26,7 @@ static MODEL_PATHS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 
 // 提取器缓存：provider_id -> TokenFieldExtractor
 static EXTRACTOR_CACHE: LazyLock<
-    RwLock<HashMap<i32, Arc<crate::statistics::field_extractor::TokenFieldExtractor>>>,
+    RwLock<HashMap<i32, Arc<crate::collect::field_extractor::TokenFieldExtractor>>>,
 > = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn extract_model_by_path(json: &Value, path: &str) -> Option<String> {
@@ -58,18 +58,20 @@ pub fn extract_model_from_json(json: &Value) -> Option<String> {
 
 fn get_or_build_extractor(
     provider: &entity::provider_types::Model,
-) -> Option<Arc<crate::statistics::field_extractor::TokenFieldExtractor>> {
+) -> Option<Arc<crate::collect::field_extractor::TokenFieldExtractor>> {
     let id = provider.id;
     let value = EXTRACTOR_CACHE.read().unwrap().get(&id).cloned();
     if let Some(extractor) = value {
         return Some(extractor);
     }
     let mapping_json = provider.token_mappings_json.as_ref()?;
-    let Ok(cfg) = crate::statistics::field_extractor::TokenMappingConfig::from_json(mapping_json)
+    let Ok(cfg) = crate::collect::field_extractor::TokenMappingConfig::from_json(mapping_json)
     else {
         return None;
     };
-    let extractor = Arc::new(crate::statistics::field_extractor::TokenFieldExtractor::new(cfg));
+    let extractor = Arc::new(crate::collect::field_extractor::TokenFieldExtractor::new(
+        cfg,
+    ));
     EXTRACTOR_CACHE
         .write()
         .unwrap()
@@ -122,7 +124,7 @@ pub fn normalize(usage: &mut TokenUsageMetrics) {
 /// - 用量字段采用“累加”策略；模型名称取最后一次出现或整体 JSON 中的字段。
 #[allow(clippy::too_many_lines)]
 pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
-    use crate::statistics::util::{decompress_for_stats, find_last_balanced_json};
+    use crate::collect::util::{decompress_for_stats, find_last_balanced_json};
     use bytes::BytesMut;
 
     let mut stats = ComputedStats::default();

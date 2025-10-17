@@ -18,22 +18,23 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
+use crate::collect::service::CollectService;
 use crate::proxy::{
-    AuthenticationService, FinalizationService, StatisticsService, TracingService,
-    context::ProxyContext, provider_strategy, request_transform_service::RequestTransformService,
+    AuthenticationService, context::ProxyContext, provider_strategy,
+    request_transform_service::RequestTransformService,
     response_transform_service::ResponseTransformService, upstream_service::UpstreamService,
 };
+use crate::trace::TraceManager;
 
 /// 核心AI代理服务 - 作为编排器
 pub struct ProxyService {
     db: Arc<DatabaseConnection>,
     auth_service: Arc<AuthenticationService>,
-    stats_service: Arc<StatisticsService>,
-    trace_service: Arc<TracingService>,
+    collect_service: Arc<CollectService>,
+    trace_manager: Arc<TraceManager>,
     upstream_service: Arc<UpstreamService>,
     req_transform_service: Arc<RequestTransformService>,
     resp_transform_service: Arc<ResponseTransformService>,
-    finalization_service: Arc<FinalizationService>,
 }
 
 impl ProxyService {
@@ -42,22 +43,20 @@ impl ProxyService {
     pub const fn new(
         db: Arc<DatabaseConnection>,
         auth_service: Arc<AuthenticationService>,
-        stats_service: Arc<StatisticsService>,
-        trace_service: Arc<TracingService>,
+        collect_service: Arc<CollectService>,
+        trace_manager: Arc<TraceManager>,
         upstream_service: Arc<UpstreamService>,
         req_transform_service: Arc<RequestTransformService>,
         resp_transform_service: Arc<ResponseTransformService>,
-        finalization_service: Arc<FinalizationService>,
     ) -> pingora_core::Result<Self> {
         Ok(Self {
             db,
             auth_service,
-            stats_service,
-            trace_service,
+            collect_service,
+            trace_manager,
             upstream_service,
             req_transform_service,
             resp_transform_service,
-            finalization_service,
         })
     }
 
@@ -207,16 +206,16 @@ impl ProxyHttp for ProxyService {
         }
 
         // 3. 收集请求统计信息并启动追踪
-        let req_stats = self.stats_service.collect_request_stats(session);
+        let req_stats = self.collect_service.collect_request_stats(session);
         ctx.request_details = self
-            .stats_service
+            .collect_service
             .collect_request_details(session, &req_stats);
 
         if let Some(user_api) = &ctx.user_service_api {
             let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
             let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
             let _ = self
-                .trace_service
+                .trace_manager
                 .start_trace(
                     &ctx.request_id,
                     user_api.id,
@@ -397,7 +396,7 @@ impl ProxyHttp for ProxyService {
             .filter_response(session, upstream_response, ctx)?;
 
         let resp_stats = self
-            .stats_service
+            .collect_service
             .collect_response_details(upstream_response, ctx);
         ctx.response_details.headers = resp_stats.headers;
 
@@ -445,9 +444,35 @@ impl ProxyHttp for ProxyService {
             );
         }
 
-        self.finalization_service
-            .finalize(ctx, status_code, e)
+        let metrics = self
+            .collect_service
+            .finalize_metrics(ctx, status_code)
             .await;
+
+        self.trace_manager
+            .update_model(
+                &ctx.request_id,
+                metrics.provider_type_id,
+                metrics.model.clone(),
+                ctx.selected_backend.as_ref().map(|k| k.id),
+            )
+            .await;
+
+        if status_code < 400 {
+            if let Err(err) = self.trace_manager.record_success(&metrics, ctx).await {
+                lwarn!(
+                    &ctx.request_id,
+                    LogStage::Error,
+                    LogComponent::Tracing,
+                    "trace_record_fail",
+                    &format!("Failed to record success trace: {err}")
+                );
+            }
+        } else {
+            self.trace_manager
+                .record_failure(Some(&metrics), status_code, e, ctx)
+                .await;
+        }
 
         linfo!(
             &ctx.request_id,

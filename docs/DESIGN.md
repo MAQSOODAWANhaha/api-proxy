@@ -112,7 +112,8 @@ graph TD
         AuthService["认证服务<br/>(API Key, JWT, OAuth2)"]
         Scheduler["调度器<br/>(轮询, 权重, 健康优先)"]
         HealthChecker["健康检查器"]
-        TracingService["追踪与统计服务"]
+        CollectService["CollectService<br/>请求统计采集"]
+        TraceManager["TraceManager<br/>追踪与副作用"]
     end
 
     subgraph "数据持久层 (Data Layer)"
@@ -129,7 +130,8 @@ graph TD
 
     ProxyServer -- "调用" --> AuthService
     ProxyServer -- "调用" --> Scheduler
-    ProxyServer -- "调用" --> TracingService
+    ProxyServer -- "调用" --> CollectService
+    ProxyServer -- "调用" --> TraceManager
     MgmtServer -- "调用" --> AuthService
     MgmtServer -- "读/写" --> Database
     MgmtServer -- "读/写" --> Cache
@@ -140,7 +142,7 @@ graph TD
 
     HealthChecker -- "更新" --> Database
     HealthChecker -- "更新" --> Cache
-    TracingService -- "写入" --> Database
+    TraceManager -- "写入" --> Database
 
     ProxyServer -- "转发请求至" --> Provider
 ```
@@ -184,11 +186,11 @@ Client → Pingora(8080) → RequestFilter Pipeline → Upstream → Response �
 ```
 **管线步骤 (Pipeline Steps)**:
 1.  **认证 (Authentication)**: `AuthenticationService` 验证入口密钥 (API Key/OAuth 2.0)。
-2.  **追踪启动 (Start Trace)**: `TracingService` 初始化追踪记录。
+2.  **追踪启动 (Start Trace)**: `TraceManager` 初始化追踪记录。
 3.  **速率限制 (Rate Limit)**: 检查并应用速率限制策略。
-4.  **配置加载 (Load Config)**: 从 `ProviderConfigManager` 加载服务商特定配置。
+4.  **配置加载 (Load Config)**: 读取数据库中的服务商配置，填充 `ctx.provider_type`。
 5.  **密钥选择 (Key Selection)**: `ApiKeyPoolManager` + `HealthChecker` + `Scheduler` 选择一个健康的后端密钥。
-6.  **追踪更新 (Update Trace)**: `TracingService` 更新追踪记录，关联后端密钥。
+6.  **追踪更新 (Update Trace)**: `TraceManager` 更新追踪记录，关联后端密钥。
 
 **管理API请求流程（端口9090）**
 ```
@@ -229,8 +231,8 @@ async fn request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) ->
     // 步骤 3: 速率限制
     self.rate_limit_service.check_rate_limit(ctx).await?;
 
-    // 步骤 4: 加载 Provider 配置
-    self.provider_config_service.load_provider_config(ctx).await?;
+    // 步骤 4: 读取 Provider 配置（认证阶段已填充 ctx.provider_type）
+    let provider = ctx.provider_type.as_ref().ok_or_else(|| crate::error!(Internal, "missing provider metadata"))?;
 
     // 步骤 5: 选择后端 API 密钥
     let selection_result = self.api_key_selection_service.select_api_key(ctx).await?;
@@ -258,14 +260,14 @@ async fn request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) ->
 ```rust
 // src/proxy/service.rs -> upstream_peer()
 async fn upstream_peer(&self, _session: &mut Session, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
-    // 从上下文中获取已加载的 Provider 配置
-    let provider_config = ctx.provider_config.as_ref().ok_or_else(|| ...)?;
-    
+    // 从上下文中获取 provider_type 配置
+    let provider = ctx.provider_type.as_ref().ok_or_else(|| ...)?;
+
     // 使用 Provider 的 base_url 构建上游地址
-    let upstream_addr = format!("{}:443", provider_config.base_url);
+    let upstream_addr = format!("{}:443", provider.base_url);
     
     // 创建一个启用 TLS 的上游对等点
-    let peer = HttpPeer::new(upstream_addr, true, provider_config.base_url.clone());
+    let peer = HttpPeer::new(upstream_addr, true, provider.base_url.clone());
     
     Ok(Box::new(peer))
 }
@@ -650,7 +652,8 @@ async fn initialize_shared_services() -> Result<SharedServices> {
 pub struct ProxyService {
     // 依赖注入所有需要的共享服务
     auth_service: Arc<AuthenticationService>,
-    tracing_service: Arc<TracingService>,
+    collect_service: Arc<CollectService>,
+    trace_manager: Arc<TraceManager>,
     // ...
 }
 
@@ -673,8 +676,10 @@ impl ProxyHttp for ProxyService {
     }
 
     async fn logging(&self, ..., ctx: &mut Self::CTX) {
-        // 最终完成追踪和统计
-        self.tracing_service.complete_trace(ctx).await;
+        // 采集指标并完成追踪
+        let status_code = ...; // 根据上下文解析最终状态码
+        let metrics = self.collect_service.finalize_metrics(ctx, status_code).await;
+        self.trace_manager.record_success(&metrics, ctx).await?;
     }
 }
 ```
@@ -3381,25 +3386,13 @@ test.describe('Complete User Flow', () => {
 - 数据库集成的API密钥管理
 - 缓存优化的认证性能
 
-#### 🟢 动态配置管理系统
-**优先级**: 高  
-**状态**: 已完成
+#### ⚪ 动态配置管理系统
+**优先级**: 中  
+**状态**: 待重构
 
-**核心描述**:
-- 从数据库动态加载服务商配置，替代硬编码地址
-- 实现ProviderConfigManager统一配置管理
-- 支持缓存优化和配置热重载
-
-**关键输出**:
-- 动态配置加载系统 (`src/config/provider_config.rs`)
-- 数据库驱动的服务商地址管理
-- 缓存优化的配置访问
-
-**技术实现**:
-- provider_types表驱动的配置管理
-- Redis缓存优化配置访问性能
-- 支持Google API Key和标准Bearer Token认证
-- 自动地址标准化和端口处理
+**说明**:
+- 旧的 `ProviderConfigManager` 已移除，后续将直接基于 `provider_types` 表按需查询
+- 如需高级缓存/热更新能力，将在未来迭代中重新规划
 
 #### ⚪ 负载均衡调度器
 **优先级**: 高  

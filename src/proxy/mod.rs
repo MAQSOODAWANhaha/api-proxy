@@ -26,10 +26,8 @@
 //! - **`response_transform_service.rs`**: **响应转换器**。负责修改从上游返回的响应头，
 //!   例如添加CORS头、移除敏感信息。
 //!
-//! - **`statistics_service.rs` (`src/statistics/`)**: **统计与计费中心**。负责从请求和响应中
-//!   提取`model`和`token`使用量，并调用 `PricingService` 计算费用。
-//!
-//! - **`tracing_service.rs`**: **分布式追踪中心**。管理请求从开始到结束的完整链路追踪记录。
+//! - **`collect/`**: **采集层**。负责从请求和响应中提取模型、用量等统计信息，并计算费用。
+//! - **`trace/`**: **记录层**。负责写入追踪记录、限流缓存与审计信息。
 //!
 //! ### 3. 上下文 (Context) - `context.rs`
 //!
@@ -46,7 +44,7 @@
 //! ## 数据流
 //!
 //! `Client` -> `Pingora` -> `ProxyService` -> `AuthenticationService` -> `UpstreamService` -> `RequestTransformService` -> `Upstream`
-//! `Client` <- `Pingora` <- `ProxyService` <- `ResponseTransformService` <- `StatisticsService` <- `TracingService` <- `Upstream`
+//! `Client` <- `Pingora` <- `ProxyService` <- `ResponseTransformService` <- `CollectService` <- `TraceManager` <- `Upstream`
 //!
 
 pub mod context;
@@ -56,25 +54,21 @@ pub mod types;
 // 专有服务
 pub mod authentication_service;
 pub mod builder;
-pub mod finalization_service;
 pub mod pingora_proxy;
 pub mod provider_strategy;
 pub mod request_transform_service;
 pub mod response_transform_service;
-pub mod tracing_service;
 pub mod upstream_service;
 
 // 统一导出
-pub use crate::statistics::service::StatisticsService;
+pub use crate::collect::service::CollectService;
 pub use authentication_service::AuthenticationService;
 pub use builder::{ProxyServerBuilder, ProxyServerComponents};
 pub use context::ProxyContext;
-pub use finalization_service::FinalizationService;
 pub use pingora_proxy::PingoraProxyServer;
 pub use request_transform_service::RequestTransformService;
 pub use response_transform_service::ResponseTransformService;
 pub use service::ProxyService;
-pub use tracing_service::{TracingContextHelper, TracingService};
 pub use types::{ForwardingContext, ForwardingResult, ProviderId};
 pub use upstream_service::UpstreamService;
 
@@ -83,11 +77,10 @@ pub mod prelude {
     pub use super::authentication_service::AuthenticationService;
     pub use super::context::ProxyContext;
     pub use super::provider_strategy::{ProviderRegistry, ProviderStrategy, make_strategy};
-    pub use super::tracing_service::{TracingContextHelper, TracingService};
     pub use super::types::{ForwardingContext, ForwardingResult, ProviderId};
     pub use super::{
         PingoraProxyServer, ProxyService, RequestTransformService, ResponseTransformService,
         UpstreamService,
     };
-    pub use crate::statistics::service::StatisticsService;
+    pub use crate::collect::service::CollectService;
 }

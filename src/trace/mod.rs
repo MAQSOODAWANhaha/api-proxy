@@ -3,10 +3,12 @@
 //! 负责收集代理请求的详细追踪数据，用于健康状态监控和性能分析
 
 pub mod immediate;
+pub mod manager;
 pub mod models;
 pub mod types;
 
 pub use immediate::{ImmediateProxyTracer, ImmediateTracerConfig};
+pub use manager::TraceManager;
 pub use models::*;
 pub use types::TraceStats;
 
