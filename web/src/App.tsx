@@ -5,6 +5,7 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'sonner'
+import { useTimezoneInit } from './store/timezone'
 
 /** 布局与路由守卫 */
 import DashboardLayout from './layouts/DashboardLayout'
@@ -25,6 +26,9 @@ import OAuthCallbackPage from './pages/OAuthCallbackPage'
  * 应用根组件
  */
 export default function App() {
+  // 初始化时区设置
+  useTimezoneInit()
+
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <HashRouter>

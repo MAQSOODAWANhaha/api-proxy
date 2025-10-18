@@ -775,9 +775,20 @@ class ApiClient {
     // 添加时区信息
     if (typeof window !== 'undefined') {
       const timezoneStore = useTimezoneStore.getState()
+      console.log('[API Debug] Timezone store state:', {
+        isInitialized: timezoneStore.isInitialized,
+        timezone: timezoneStore.timezone,
+        offset: timezoneStore.offset
+      })
+
       if (timezoneStore.isInitialized && timezoneStore.timezone) {
         headers['X-Timezone'] = timezoneStore.timezone
+        console.log('[API Debug] X-Timezone header set:', timezoneStore.timezone)
+      } else {
+        console.log('[API Debug] X-Timezone header not set - store not initialized or no timezone')
       }
+    } else {
+      console.log('[API Debug] Not in browser environment, skipping timezone header')
     }
 
     return headers
