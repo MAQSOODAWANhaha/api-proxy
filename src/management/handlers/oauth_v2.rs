@@ -11,9 +11,11 @@ use crate::error::{ProxyError, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
+use crate::types::TimezoneContext;
+use crate::types::timezone_utils;
 use crate::{lerror, linfo};
 use axum::Json;
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{Extension, Path, Query, Request, State};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -21,6 +23,85 @@ use std::sync::Arc;
 
 fn business_error(message: impl Into<String>) -> ProxyError {
     crate::error!(Authentication, message)
+}
+
+/// 获取请求中的时区上下文
+fn get_timezone_from_request(request: &Request) -> Option<TimezoneContext> {
+    use crate::management::middleware::timezone::get_timezone_from_request as get_tz;
+    get_tz(request).map(|tz_ctx| TimezoneContext {
+        timezone: tz_ctx.timezone,
+    })
+}
+
+/// `带时区信息的OAuth会话信息`
+#[derive(Debug, Serialize)]
+pub struct OAuthSessionInfoWithTimezone {
+    /// 会话ID
+    pub session_id: String,
+    /// 提供商名称
+    pub provider_name: String,
+    /// 会话名称
+    pub name: String,
+    /// 会话描述
+    pub description: Option<String>,
+    /// 会话状态
+    pub status: String,
+    /// 创建时间（用户时区）
+    pub created_at: String,
+    /// 过期时间（用户时区）
+    pub expires_at: String,
+    /// 完成时间（用户时区，可选）
+    pub completed_at: Option<String>,
+}
+
+/// 从 `OAuthSessionInfo` 转换为带时区的响应格式
+fn convert_oauth_session_to_timezone_response(
+    session: OAuthSessionInfo,
+    timezone_ctx: Option<&TimezoneContext>,
+) -> OAuthSessionInfoWithTimezone {
+    if let Some(tz_ctx) = timezone_ctx {
+        OAuthSessionInfoWithTimezone {
+            session_id: session.session_id,
+            provider_name: session.provider_name,
+            name: session.name,
+            description: session.description,
+            status: session.status,
+            created_at: timezone_utils::format_naive_utc_for_response(
+                &session.created_at,
+                &tz_ctx.timezone,
+            ),
+            expires_at: timezone_utils::format_naive_utc_for_response(
+                &session.expires_at,
+                &tz_ctx.timezone,
+            ),
+            completed_at: session
+                .completed_at
+                .map(|dt| timezone_utils::format_naive_utc_for_response(&dt, &tz_ctx.timezone)),
+        }
+    } else {
+        // 如果没有时区信息，使用默认的RFC3339格式
+        OAuthSessionInfoWithTimezone {
+            session_id: session.session_id,
+            provider_name: session.provider_name,
+            name: session.name,
+            description: session.description,
+            status: session.status,
+            created_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                session.created_at,
+                chrono::Utc,
+            )
+            .to_rfc3339(),
+            expires_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                session.expires_at,
+                chrono::Utc,
+            )
+            .to_rfc3339(),
+            completed_at: session.completed_at.map(|dt| {
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+                    .to_rfc3339()
+            }),
+        }
+    }
 }
 
 /// OAuth v2授权请求
@@ -63,7 +144,9 @@ pub enum OAuthV2Response {
     #[serde(rename = "token_response")]
     TokenResponse { data: OAuthTokenResponse },
     #[serde(rename = "session_list")]
-    SessionList { data: Vec<OAuthSessionInfo> },
+    SessionList {
+        data: Vec<OAuthSessionInfoWithTimezone>,
+    },
     #[serde(rename = "statistics")]
     Statistics { data: SessionStatistics },
 }
@@ -250,16 +333,28 @@ pub async fn exchange_token(
 pub async fn list_sessions(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    request: Request,
 ) -> impl IntoResponse {
     // 提取用户ID
     let user_id = auth_context.user_id;
+
+    // 获取时区上下文
+    let timezone_ctx = get_timezone_from_request(&request);
 
     // 创建OAuth客户端
     let oauth_client = OAuthClient::new(state.database.clone());
 
     // 获取用户会话列表
     match oauth_client.list_user_sessions(user_id).await {
-        Ok(sessions) => response::success(sessions),
+        Ok(sessions) => {
+            // 转换时间字段以支持时区
+            let timezone_sessions: Vec<OAuthSessionInfoWithTimezone> = sessions
+                .into_iter()
+                .map(|session| convert_oauth_session_to_timezone_response(session, timezone_ctx.as_ref()))
+                .collect();
+
+            response::success(timezone_sessions)
+        }
         Err(err) => {
             lerror!(
                 "system",

@@ -12,7 +12,8 @@ use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::types::{ProviderTypeId, ratio_as_percentage};
+use crate::types::{ProviderTypeId, TimezoneContext, ratio_as_percentage};
+use crate::types::timezone_utils;
 use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
@@ -78,10 +79,12 @@ async fn prepare_oauth_schedule(
 }
 
 /// 获取提供商密钥列表
+#[allow(clippy::too_many_lines)]
 pub async fn get_provider_keys_list(
     State(state): State<AppState>,
     Query(query): Query<ProviderKeysListQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
@@ -175,13 +178,18 @@ pub async fn get_provider_keys_list(
 
     // 获取所有密钥的使用统计数据
     let provider_key_ids: Vec<i32> = provider_keys.iter().map(|(pk, _)| pk.id).collect();
-    let usage_stats = fetch_provider_keys_usage_stats(db, &provider_key_ids).await;
+    let usage_stats = fetch_provider_keys_usage_stats(db, &provider_key_ids, &timezone_context).await;
 
     // 构建响应数据
     let provider_keys_list = provider_keys
         .into_iter()
         .map(|(provider_key, provider_type_opt)| {
-            build_provider_key_json(&provider_key, provider_type_opt, &usage_stats)
+            build_provider_key_json(
+                &provider_key,
+                provider_type_opt,
+                &usage_stats,
+                &timezone_context,
+            )
         })
         .collect::<Vec<_>>();
 
@@ -204,6 +212,7 @@ pub async fn get_provider_keys_list(
 pub async fn create_provider_key(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(payload): Json<CreateProviderKeyRequest>,
 ) -> axum::response::Response {
     let db = state.database.as_ref();
@@ -288,7 +297,10 @@ pub async fn create_provider_key(
         "background_tasks": {
             "auto_get_project_id_pending": needs_auto_get_project_id_async
         },
-        "created_at": result.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "created_at": timezone_utils::format_naive_utc_for_response(
+            &result.created_at,
+            &timezone_context.timezone
+        )
     });
 
     response::success_with_message(data, &message)
@@ -767,6 +779,7 @@ fn spawn_gemini_project_task(
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub async fn get_provider_key_detail(
     State(state): State<AppState>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
@@ -811,7 +824,7 @@ pub async fn get_provider_key_detail(
         .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取使用统计
-    let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id]).await;
+    let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id], &timezone_context).await;
     let key_stats = usage_stats
         .get(&provider_key.0.id)
         .cloned()
@@ -892,8 +905,12 @@ pub async fn get_provider_key_detail(
         "api_key": if provider_key.0.auth_type == "api_key" { masked_api_key } else { provider_key.0.api_key.clone() },
         "auth_type": provider_key.0.auth_type,
         "auth_status": provider_key.0.auth_status,
-        "expires_at": provider_key.0.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
-        "last_auth_check": provider_key.0.last_auth_check.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        "expires_at": provider_key.0.expires_at.map(|dt|
+            timezone_utils::format_naive_utc_for_response(&dt, &timezone_context.timezone)
+        ),
+        "last_auth_check": provider_key.0.last_auth_check.map(|dt|
+            timezone_utils::format_naive_utc_for_response(&dt, &timezone_context.timezone)
+        ),
         "weight": provider_key.0.weight,
         "max_requests_per_minute": provider_key.0.max_requests_per_minute,
         "max_tokens_prompt_per_minute": provider_key.0.max_tokens_prompt_per_minute,
@@ -919,8 +936,14 @@ pub async fn get_provider_key_detail(
             "health_status": provider_key.0.health_status,
             "rate_limit_remaining_seconds": rate_limit_remaining_seconds
         },
-        "created_at": provider_key.0.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        "updated_at": provider_key.0.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "created_at": timezone_utils::format_naive_utc_for_response(
+                &provider_key.0.created_at,
+                &timezone_context.timezone
+            ),
+        "updated_at": timezone_utils::format_naive_utc_for_response(
+                &provider_key.0.updated_at,
+                &timezone_context.timezone
+            )
     });
 
     response::success(data)
@@ -932,6 +955,7 @@ pub async fn update_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(payload): Json<UpdateProviderKeyRequest>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
@@ -1218,7 +1242,10 @@ pub async fn update_provider_key(
         "name": updated_key.name,
         "auth_type": updated_key.auth_type,
         "auth_status": updated_key.auth_status,
-        "updated_at": updated_key.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "updated_at": timezone_utils::format_naive_utc_for_response(
+                &updated_key.updated_at,
+                &timezone_context.timezone
+            )
     });
 
     response::success_with_message(data, "更新成功")
@@ -1230,6 +1257,7 @@ pub async fn delete_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
@@ -1310,7 +1338,10 @@ pub async fn delete_provider_key(
 
     let data = json!({
         "id": key_id,
-        "deleted_at": Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "deleted_at": timezone_utils::format_utc_for_response(
+                &chrono::Utc::now(),
+                &timezone_context.timezone
+            )
     });
 
     response::success_with_message(data, "删除成功")
@@ -1321,6 +1352,7 @@ pub async fn get_provider_key_stats(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
@@ -1366,7 +1398,16 @@ pub async fn get_provider_key_stats(
     let end_date = Utc::now().naive_utc();
     let start_date = end_date - chrono::Duration::days(7); // 默认查询7天数据
 
-    let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
+    let trends = match fetch_key_trends_data(
+        db,
+        key_id,
+        &start_date,
+        &end_date,
+        "provider",
+        &timezone_context,
+    )
+    .await
+    {
         Ok(trends) => trends,
         Err(err) => {
             lerror!(
@@ -1628,6 +1669,7 @@ pub async fn health_check_provider_key(
     State(state): State<AppState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
@@ -1690,7 +1732,10 @@ pub async fn health_check_provider_key(
     let data = json!({
         "id": key_id,
         "health_status": health_status,
-        "check_time": check_time.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "check_time": timezone_utils::format_utc_for_response(
+                &check_time,
+                &timezone_context.timezone
+            ),
         "response_time": response_time,
         "details": {
             "status_code": 200,
@@ -1802,6 +1847,7 @@ struct ProviderKeyStatsRow {
 async fn fetch_provider_keys_usage_stats(
     db: &DatabaseConnection,
     provider_key_ids: &[i32],
+    timezone_ctx: &TimezoneContext,
 ) -> HashMap<i32, ProviderKeyUsageStats> {
     use entity::proxy_tracing::{Column, Entity as ProxyTracing};
     use sea_orm::{query::QuerySelect, sea_query::Expr};
@@ -1866,7 +1912,10 @@ async fn fetch_provider_keys_usage_stats(
 
         let last_used_at = row
             .last_used_at
-            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339());
+            .map(|dt| {
+                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+                timezone_utils::format_utc_for_response(&utc_dt, &timezone_ctx.timezone)
+            });
 
         stats_map.insert(
             key_id,
@@ -1892,6 +1941,7 @@ pub async fn get_provider_key_trends(
     Path(key_id): Path<i32>,
     Query(query): Query<TrendQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::user_provider_keys::{self, Entity as UserProviderKey};
 
@@ -1935,7 +1985,16 @@ pub async fn get_provider_key_trends(
     let start_date = end_date - chrono::Duration::days(i64::from(days));
 
     // 查询趋势数据
-    let trends = match fetch_key_trends_data(db, key_id, &start_date, &end_date, "provider").await {
+    let trends = match fetch_key_trends_data(
+        db,
+        key_id,
+        &start_date,
+        &end_date,
+        "provider",
+        &timezone_context,
+    )
+    .await
+    {
         Ok(trends) => trends,
         Err(err) => {
             lerror!(
@@ -1972,6 +2031,7 @@ pub async fn get_user_service_api_trends(
     Path(api_id): Path<i32>,
     Query(query): Query<TrendQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::user_service_apis::{self, Entity as UserServiceApi};
 
@@ -2009,29 +2069,37 @@ pub async fn get_user_service_api_trends(
         }
     }
 
-    // 计算时间范围
+    // 计算时间范围（数据库查询使用UTC）
     let days = query.days.min(30); // 最多查询30天
     let end_date = Utc::now().naive_utc();
     let start_date = end_date - chrono::Duration::days(i64::from(days));
 
     // 查询趋势数据
-    let trends =
-        match fetch_key_trends_data(db, api_id, &start_date, &end_date, "user_service").await {
-            Ok(trends) => trends,
-            Err(err) => {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_service_api_trends_fail",
-                    &format!("Failed to fetch user service api trends: {err}")
-                );
-                return crate::management::response::app_error(crate::error!(
-                    Database,
-                    format!("Failed to fetch trends data: {}", err)
-                ));
-            }
-        };
+    let trends = match fetch_key_trends_data(
+        db,
+        api_id,
+        &start_date,
+        &end_date,
+        "user_service",
+        &timezone_context,
+    )
+    .await
+    {
+        Ok(trends) => trends,
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Db,
+                LogComponent::Database,
+                "fetch_service_api_trends_fail",
+                &format!("Failed to fetch user service api trends: {err}")
+            );
+            return crate::management::response::app_error(crate::error!(
+                Database,
+                format!("Failed to fetch trends data: {}", err)
+            ));
+        }
+    };
 
     let data = json!({
         "trend_data": trends.trend_data,
@@ -2078,12 +2146,14 @@ fn round_two_decimal(value: f64) -> f64 {
 }
 
 /// 获取趋势数据的通用函数
+#[allow(clippy::too_many_lines)]
 async fn fetch_key_trends_data(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
     start_date: &chrono::NaiveDateTime,
     end_date: &chrono::NaiveDateTime,
-    key_type: &str, // "provider" 或 "user_service"
+    key_type: &str,                           // "provider" 或 "user_service"
+    timezone: &crate::types::TimezoneContext, // 添加时区上下文
 ) -> Result<TrendData, sea_orm::DbErr> {
     use entity::proxy_tracing::{Column, Entity as ProxyTracing};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -2128,7 +2198,10 @@ async fn fetch_key_trends_data(
     let end_date_only = end_date.date();
 
     while current_date <= end_date_only {
-        let date_str = current_date.format("%Y-%m-%d").to_string();
+        let utc_date = current_date
+            .and_hms_opt(0, 0, 0)
+            .map_or_else(|| current_date.and_hms_opt(12, 0, 0).unwrap().and_utc(), |dt| dt.and_utc());
+        let date_str = utc_date.format("%Y-%m-%d").to_string();
 
         if let Some(stats) = daily_stats.get(&date_str) {
             let avg_response_time = if stats.successful_requests > 0 {
@@ -2145,8 +2218,14 @@ async fn fetch_key_trends_data(
                 _ => 0.0,
             };
 
+            // 将UTC日期转换为用户时区的格式化字符串
+            let user_date_str = timezone_utils::format_naive_utc_for_response(
+                &current_date.and_hms_opt(0, 0, 0).unwrap(),
+                &timezone.timezone,
+            );
+
             trend_data.trend_data.push(TrendDataPoint {
-                date: date_str.clone(),
+                date: user_date_str,
                 requests: stats.total_requests,
                 successful_requests: stats.successful_requests,
                 failed_requests: stats.total_requests - stats.successful_requests,
@@ -2427,6 +2506,7 @@ fn build_provider_key_json(
     provider_key: &entity::user_provider_keys::Model,
     provider_type_opt: Option<entity::provider_types::Model>,
     usage_stats: &HashMap<i32, ProviderKeyUsageStats>,
+    timezone_ctx: &TimezoneContext,
 ) -> serde_json::Value {
     let provider_name =
         provider_type_opt.map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
@@ -2464,7 +2544,9 @@ fn build_provider_key_json(
         "project_id": provider_key.project_id,
         "auth_type": provider_key.auth_type,
         "auth_status": provider_key.auth_status,
-        "expires_at": provider_key.expires_at.map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+        "expires_at": provider_key.expires_at.map(|dt|
+            timezone_utils::format_naive_utc_for_response(&dt, &timezone_ctx.timezone)
+        ),
         "weight": provider_key.weight,
         "max_requests_per_minute": provider_key.max_requests_per_minute,
         "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
@@ -2490,7 +2572,13 @@ fn build_provider_key_json(
             "health_status": provider_key.health_status,
             "rate_limit_remaining_seconds": rate_limit_remaining_seconds
         },
-        "created_at": provider_key.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        "updated_at": provider_key.updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+        "created_at": timezone_utils::format_naive_utc_for_response(
+                &provider_key.created_at,
+                &timezone_ctx.timezone
+            ),
+        "updated_at": timezone_utils::format_naive_utc_for_response(
+                &provider_key.updated_at,
+                &timezone_ctx.timezone
+            )
     })
 }

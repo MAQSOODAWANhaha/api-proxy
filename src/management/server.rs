@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps
 )]
 
-use super::middleware::{IpFilterConfig, ip_filter_middleware};
+use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::context::AppContext;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
@@ -237,6 +237,9 @@ impl ManagementServer {
         } else {
             app = app.layer(service_builder);
         }
+
+        // 添加时区中间件
+        app = app.layer(axum::middleware::from_fn(timezone_middleware));
 
         // 添加IP过滤中间件（如果配置了限制）
         if !config.allowed_ips.is_empty() || !config.denied_ips.is_empty() {

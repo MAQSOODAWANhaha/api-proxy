@@ -13,7 +13,8 @@ use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::types::{ProviderTypeId, ratio_as_percentage};
+use crate::types::{ConvertToUtc, ProviderTypeId, TimezoneContext, ratio_as_percentage};
+use crate::types::timezone_utils;
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -312,6 +313,7 @@ pub async fn list_user_service_keys(
     State(state): State<AppState>,
     Query(query): Query<UserServiceKeyQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -403,7 +405,7 @@ pub async fn list_user_service_keys(
     // 构建响应数据
     let mut service_api_keys = Vec::new();
     for (api, provider_type) in apis {
-        if let Some(response_api) = build_user_service_key_response(db, api, provider_type).await {
+        if let Some(response_api) = build_user_service_key_response(db, api, provider_type, &timezone_context).await {
             service_api_keys.push(response_api);
         }
     }
@@ -434,6 +436,7 @@ async fn build_user_service_key_response(
     db: &DatabaseConnection,
     api: user_service_apis::Model,
     provider_type: Option<entity::provider_types::Model>,
+    timezone_context: &TimezoneContext,
 ) -> Option<UserServiceKeyResponse> {
     use sea_orm::Order;
 
@@ -466,7 +469,10 @@ async fn build_user_service_key_response(
         .await
     {
         Ok(Some(tracing)) => {
-            Some(DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc).to_rfc3339())
+            Some({
+                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc);
+                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+            })
         }
         _ => None,
     };
@@ -496,10 +502,16 @@ async fn build_user_service_key_response(
         usage: Some(usage),
         is_active: api.is_active,
         last_used_at,
-        created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc).to_rfc3339(),
+        created_at: {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        },
         expires_at: api
             .expires_at
-            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+            .map(|dt| {
+                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+            }),
         scheduling_strategy: api.scheduling_strategy,
         retry_count: api.retry_count,
         timeout_seconds: api.timeout_seconds,
@@ -514,6 +526,7 @@ async fn build_user_service_key_response(
 pub async fn create_user_service_key(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserServiceKeyRequest>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
@@ -655,6 +668,12 @@ pub async fn create_user_service_key(
         }
     };
 
+    // 格式化时间字段
+    let created_at = {
+        let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(inserted_api.created_at, Utc);
+        timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+    };
+
     // 构建响应
     let data = json!({
         "id": inserted_api.id,
@@ -663,7 +682,7 @@ pub async fn create_user_service_key(
         "description": inserted_api.description,
         "provider_type_id": inserted_api.provider_type_id,
         "is_active": inserted_api.is_active,
-        "created_at": DateTime::<Utc>::from_naive_utc_and_offset(inserted_api.created_at, Utc).to_rfc3339()
+        "created_at": created_at
     });
 
     response::success_with_message(data, "API Key创建成功")
@@ -674,6 +693,7 @@ pub async fn get_user_service_key(
     State(state): State<AppState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::provider_types::Entity as ProviderType;
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -769,10 +789,19 @@ pub async fn get_user_service_key(
         max_cost_per_day: api.max_cost_per_day,
         expires_at: api
             .expires_at
-            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).to_rfc3339()),
+            .map(|dt| {
+                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+            }),
         is_active: api.is_active,
-        created_at: DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc).to_rfc3339(),
-        updated_at: DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc).to_rfc3339(),
+        created_at: {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        },
+        updated_at: {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(api.updated_at, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        },
     };
 
     response::success(response)
@@ -992,6 +1021,7 @@ pub async fn get_user_service_key_usage(
     Path(api_id): Path<i32>,
     Query(query): Query<UsageStatsQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     use entity::proxy_tracing::{self, Entity as ProxyTracing};
     use entity::user_service_apis::{self, Entity as UserServiceApi};
@@ -1031,38 +1061,55 @@ pub async fn get_user_service_key_usage(
         }
     };
 
-    // 确定时间范围
+    // 确定时间范围（考虑时区转换）
     let (start_time, end_time) = match &query.time_range {
         Some(range) => match range.as_str() {
             "today" => {
-                let today = Utc::now().date_naive();
-                (
-                    today.and_hms_opt(0, 0, 0).unwrap(),
-                    today.and_hms_opt(23, 59, 59).unwrap(),
-                )
+                let now = Utc::now();
+                let user_today = now.with_timezone(&timezone_context.timezone).date_naive();
+                let start_utc = user_today
+                    .and_hms_opt(0, 0, 0)
+                    .and_then(|dt| dt.to_utc(&timezone_context.timezone))
+                    .unwrap_or(now);
+                let end_utc = user_today
+                    .and_hms_opt(23, 59, 59)
+                    .and_then(|dt| dt.to_utc(&timezone_context.timezone))
+                    .unwrap_or(now);
+                (start_utc.naive_utc(), end_utc.naive_utc())
             }
             "7days" => {
-                let end = Utc::now().naive_utc();
+                let end = Utc::now();
                 let start = end - chrono::Duration::days(7);
-                (start, end)
+                (start.naive_utc(), end.naive_utc())
             }
             _ => {
-                let end = Utc::now().naive_utc();
+                let end = Utc::now();
                 let start = end - chrono::Duration::days(30);
-                (start, end)
+                (start.naive_utc(), end.naive_utc())
             }
         },
         None => {
-            // 使用自定义日期范围
+            // 使用自定义日期范围（支持时区转换）
             if let (Some(start_str), Some(end_str)) = (&query.start_date, &query.end_date) {
-                if let (Ok(start_time), Ok(end_time)) = (
+                if let (Ok(start_date), Ok(end_date)) = (
                     NaiveDate::parse_from_str(start_str, "%Y-%m-%d"),
                     NaiveDate::parse_from_str(end_str, "%Y-%m-%d"),
                 ) {
-                    (
-                        start_time.and_hms_opt(0, 0, 0).unwrap(),
-                        end_time.and_hms_opt(23, 59, 59).unwrap(),
-                    )
+                    let start_utc = start_date
+                        .and_hms_opt(0, 0, 0)
+                        .and_then(|dt| dt.to_utc(&timezone_context.timezone));
+                    let end_utc = end_date
+                        .and_hms_opt(23, 59, 59)
+                        .and_then(|dt| dt.to_utc(&timezone_context.timezone));
+
+                    if let (Some(start), Some(end)) = (start_utc, end_utc) {
+                        (start.naive_utc(), end.naive_utc())
+                    } else {
+                        // 时区转换失败，使用默认30天
+                        let end = Utc::now().naive_utc();
+                        let start = end - chrono::Duration::days(30);
+                        (start, end)
+                    }
                 } else {
                     // 自定义日期解析失败，使用默认30天
                     let end = Utc::now().naive_utc();

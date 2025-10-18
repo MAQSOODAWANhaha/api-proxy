@@ -7,7 +7,8 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response::ApiResponse;
 use crate::management::server::AppState;
-use crate::types::ProviderTypeId;
+use crate::types::timezone_utils;
+use crate::types::{ConvertToUtc, ProviderTypeId, TimezoneContext};
 use crate::{lerror, linfo};
 use ::entity::{
     ProviderTypes, ProxyTracing, UserProviderKeys, UserServiceApis, proxy_tracing,
@@ -17,7 +18,7 @@ use axum::{
     extract::{Extension, Path, Query, State},
     response::IntoResponse,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect,
@@ -63,11 +64,11 @@ pub struct ProxyTraceListEntry {
     pub error_message: Option<String>,
     pub retry_count: i32,
     pub provider_type_id: Option<ProviderTypeId>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
     pub duration_ms: Option<i64>,
     pub is_success: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: String,
     pub provider_name: Option<String>,
     pub user_service_api_name: Option<String>,
     pub user_provider_key_name: Option<String>,
@@ -99,11 +100,11 @@ pub struct ProxyTraceEntry {
     pub error_message: Option<String>,
     pub retry_count: i32,
     pub provider_type_id: Option<ProviderTypeId>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
     pub duration_ms: Option<i64>,
     pub is_success: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: String,
     pub provider_name: Option<String>,
     pub user_service_api_name: Option<String>,
     pub user_provider_key_name: Option<String>,
@@ -136,7 +137,7 @@ pub struct LogsAnalyticsResponse {
 
 #[derive(Debug, Serialize)]
 pub struct TimeSeriesData {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: String,
     pub total_requests: i64,
     pub successful_requests: i64,
     pub failed_requests: i64,
@@ -183,8 +184,8 @@ pub struct LogsListQuery {
     pub user_service_api_id: Option<i32>,
     pub user_service_api_name: Option<String>,
     pub user_provider_key_name: Option<String>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<chrono::NaiveDateTime>,
+    pub end_time: Option<chrono::NaiveDateTime>,
 }
 
 /// 日志分析查询参数
@@ -295,6 +296,7 @@ pub async fn get_traces_list(
     State(state): State<AppState>,
     Query(query): Query<LogsListQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> impl IntoResponse {
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(20).min(100); // 限制最大每页100条
@@ -306,6 +308,7 @@ pub async fn get_traces_list(
         limit,
         auth_context.user_id,
         auth_context.is_admin,
+        &timezone_context,
     )
     .await
     {
@@ -335,6 +338,7 @@ async fn fetch_traces_list(
     limit: u64,
     current_user_id: i32,
     is_admin: bool,
+    timezone_context: &TimezoneContext,
 ) -> Result<LogsListResponse, DbErr> {
     // 构建基础查询
     let mut select = ProxyTracing::find();
@@ -447,12 +451,16 @@ async fn fetch_traces_list(
         }
     }
 
-    // 应用时间范围过滤
-    if let Some(start_time) = query.start_time {
-        select = select.filter(proxy_tracing::Column::CreatedAt.gte(start_time));
+    // 应用时间范围过滤（使用时区转换）
+    if let Some(start_naive) = query.start_time {
+        if let Some(start_utc) = start_naive.to_utc(&timezone_context.timezone) {
+            select = select.filter(proxy_tracing::Column::CreatedAt.gte(start_utc));
+        }
     }
-    if let Some(end_time) = query.end_time {
-        select = select.filter(proxy_tracing::Column::CreatedAt.lte(end_time));
+    if let Some(end_naive) = query.end_time {
+        if let Some(end_utc) = end_naive.to_utc(&timezone_context.timezone) {
+            select = select.filter(proxy_tracing::Column::CreatedAt.lte(end_utc));
+        }
     }
 
     // 获取总数
@@ -544,11 +552,20 @@ async fn fetch_traces_list(
             error_message: trace_model.error_message,
             retry_count: trace_model.retry_count.unwrap_or(0),
             provider_type_id: trace_model.provider_type_id,
-            start_time: trace_model.start_time.map(|dt| dt.and_utc()),
-            end_time: trace_model.end_time.map(|dt| dt.and_utc()),
+            start_time: timezone_utils::format_option_naive_utc_for_response(
+                trace_model.start_time.as_ref(),
+                &timezone_context.timezone
+            ),
+            end_time: timezone_utils::format_option_naive_utc_for_response(
+                trace_model.end_time.as_ref(),
+                &timezone_context.timezone
+            ),
             duration_ms: trace_model.duration_ms,
             is_success: trace_model.is_success,
-            created_at: trace_model.created_at.and_utc(),
+            created_at: timezone_utils::format_naive_utc_for_response(
+                &trace_model.created_at,
+                &timezone_context.timezone
+            ),
             provider_name,
             user_service_api_name,
             user_provider_key_name,
@@ -574,8 +591,9 @@ pub async fn get_trace_detail(
     State(state): State<AppState>,
     Path(id): Path<i32>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> impl IntoResponse {
-    match fetch_trace_detail(&state.database, id).await {
+    match fetch_trace_detail(&state.database, id, &timezone_context).await {
         Ok(Some(trace)) => ApiResponse::Success(trace).into_response(),
         Ok(None) => crate::management::response::app_error(ProxyError::internal(format!(
             "ProxyTrace not found: {id}"
@@ -600,6 +618,7 @@ pub async fn get_trace_detail(
 async fn fetch_trace_detail(
     db: &DatabaseConnection,
     id: i32,
+    timezone_context: &TimezoneContext,
 ) -> Result<Option<ProxyTraceEntry>, DbErr> {
     // 查询日志记录及关联的服务商类型和用户提供商密钥信息
     let trace_with_relations = ProxyTracing::find_by_id(id)
@@ -653,11 +672,20 @@ async fn fetch_trace_detail(
             error_message: trace_model.error_message,
             retry_count: trace_model.retry_count.unwrap_or(0),
             provider_type_id: trace_model.provider_type_id,
-            start_time: trace_model.start_time.map(|dt| dt.and_utc()),
-            end_time: trace_model.end_time.map(|dt| dt.and_utc()),
+            start_time: timezone_utils::format_option_naive_utc_for_response(
+                trace_model.start_time.as_ref(),
+                &timezone_context.timezone
+            ),
+            end_time: timezone_utils::format_option_naive_utc_for_response(
+                trace_model.end_time.as_ref(),
+                &timezone_context.timezone
+            ),
             duration_ms: trace_model.duration_ms,
             is_success: trace_model.is_success,
-            created_at: trace_model.created_at.and_utc(),
+            created_at: timezone_utils::format_naive_utc_for_response(
+                &trace_model.created_at,
+                &timezone_context.timezone
+            ),
             provider_name,
             user_service_api_name,
             user_provider_key_name,
@@ -673,12 +701,13 @@ async fn fetch_trace_detail(
 pub async fn get_logs_analytics(
     State(state): State<AppState>,
     Query(query): Query<LogsAnalyticsQuery>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     let time_range = query.time_range.as_deref().unwrap_or("24h");
     let group_by = query.group_by.as_deref().unwrap_or("hour");
 
-    match fetch_logs_analytics(&state.database, time_range, group_by).await {
+    match fetch_logs_analytics(&state.database, time_range, group_by, &timezone_context).await {
         Ok(response) => ApiResponse::Success(response).into_response(),
         Err(e) => {
             lerror!(
@@ -702,6 +731,7 @@ async fn fetch_logs_analytics(
     db: &DatabaseConnection,
     time_range: &str,
     _group_by: &str,
+    timezone_context: &TimezoneContext,
 ) -> Result<LogsAnalyticsResponse, DbErr> {
     // 计算时间范围
     let now = Utc::now();
@@ -833,7 +863,7 @@ async fn fetch_logs_analytics(
     // 4. 时间序列数据（简化版本）
     // TODO: 根据 group_by 参数实现更精细的时间分组
     let time_series = vec![TimeSeriesData {
-        timestamp: now,
+        timestamp: timezone_utils::format_utc_for_response(&now, &timezone_context.timezone),
         total_requests,
         successful_requests: i64::try_from(
             base_query

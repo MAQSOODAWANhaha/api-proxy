@@ -3,6 +3,8 @@ use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
+use crate::types::TimezoneContext;
+use crate::types::timezone_utils;
 use axum::extract::{Extension, State};
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{
@@ -13,7 +15,10 @@ use serde_json::json;
 use std::sync::Arc;
 
 /// 获取服务提供商类型列表
-pub async fn list_provider_types(State(state): State<AppState>) -> axum::response::Response {
+pub async fn list_provider_types(
+    State(state): State<AppState>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
+) -> axum::response::Response {
     // changed
     // 获取所有活跃的服务提供商类型
     let provider_types_result = ProviderTypes::find()
@@ -65,7 +70,10 @@ pub async fn list_provider_types(State(state): State<AppState>) -> axum::respons
                 "supported_models": [], // 暂时为空数组，可以根据需要添加
                 "supported_auth_types": supported_auth_types,
                 "auth_configs": auth_configs,
-                "created_at": provider.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                "created_at": timezone_utils::format_naive_utc_for_response(
+                &provider.created_at,
+                &timezone_context.timezone
+            )
             })
         })
         .collect();

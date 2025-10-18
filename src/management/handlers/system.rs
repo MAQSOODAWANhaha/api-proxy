@@ -2,10 +2,12 @@
 
 use crate::management::response;
 use crate::management::server::AppState;
+use crate::types::TimezoneContext;
 use crate::types::ratio_as_percentage;
-use axum::extract::State;
+use crate::types::timezone_utils;
+use axum::extract::{Extension, State};
 use serde::Serialize;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use sysinfo::{Disks, System};
 
@@ -164,12 +166,17 @@ pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::respons
 }
 
 /// 根路径处理器（管理API信息）
-pub async fn root_handler() -> axum::response::Response {
+pub async fn root_handler(
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
+) -> axum::response::Response {
     response::success(serde_json::json!({
         "success": true,
         "message": "AI Proxy Management API",
         "version": env!("CARGO_PKG_VERSION"),
-        "timestamp": chrono::Utc::now().to_rfc3339()
+        "timestamp": timezone_utils::format_utc_for_response(
+                &chrono::Utc::now(),
+                &timezone_context.timezone
+            )
     }))
 }
 

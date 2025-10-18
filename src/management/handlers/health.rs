@@ -3,12 +3,14 @@
 use crate::error::ProxyError;
 use crate::key_pool::api_key_health::ApiKeyHealthChecker;
 use crate::management::{response, server::AppState};
+use crate::types::TimezoneContext;
+use crate::types::timezone_utils;
 use crate::{
     lerror,
     logging::{LogComponent, LogStage},
     lwarn,
 };
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use entity::{provider_types, user_provider_keys};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
@@ -71,14 +73,35 @@ pub struct ProviderHealthStats {
     pub avg_health_score: f64,
 }
 
+/// 获取请求中的时区上下文
+fn get_timezone_from_request(request: &Request) -> Option<TimezoneContext> {
+    use crate::management::middleware::timezone::get_timezone_from_request as get_tz;
+    get_tz(request).map(|tz_ctx| TimezoneContext {
+        timezone: tz_ctx.timezone,
+    })
+}
+
 /// 简单健康检查处理器（系统存活检查）
-pub async fn health_check(State(state): State<AppState>) -> axum::response::Response {
+pub async fn health_check(
+    State(state): State<AppState>,
+    request: Request,
+) -> axum::response::Response {
+    let timezone_ctx = get_timezone_from_request(&request);
+
     match state.database.ping().await {
-        Ok(()) => response::success(serde_json::json!({
-            "status": "healthy",
-            "database": "connected",
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        })),
+        Ok(()) => {
+            let now = chrono::Utc::now();
+            let timestamp = timezone_ctx.as_ref().map_or_else(
+                || now.to_rfc3339(),
+                |tz_ctx| timezone_utils::format_utc_for_response(&now, &tz_ctx.timezone),
+            );
+
+            response::success(serde_json::json!({
+                "status": "healthy",
+                "database": "connected",
+                "timestamp": timestamp
+            }))
+        }
         Err(e) => {
             lwarn!(
                 "system",
@@ -116,7 +139,12 @@ struct LastTraceRow {
     last_start: Option<chrono::NaiveDateTime>,
 }
 
-pub async fn detailed_health_check(State(state): State<AppState>) -> axum::response::Response {
+pub async fn detailed_health_check(
+    State(state): State<AppState>,
+    request: Request,
+) -> axum::response::Response {
+    let timezone_ctx = get_timezone_from_request(&request);
+
     // 数据库连接状态
     let database_status = match state.database.ping().await {
         Ok(()) => "connected".to_string(),
@@ -164,8 +192,19 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
     let last_trace_time = last_row
         .and_then(|r| r.last_end.or(r.last_start))
         .map(|dt| {
-            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).to_rfc3339()
+            let utc_dt =
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc);
+            timezone_ctx.as_ref().map_or_else(
+                || utc_dt.to_rfc3339(),
+                |tz_ctx| timezone_utils::format_utc_for_response(&utc_dt, &tz_ctx.timezone),
+            )
         });
+
+    let now = chrono::Utc::now();
+    let timestamp = timezone_ctx.as_ref().map_or_else(
+        || now.to_rfc3339(),
+        |tz_ctx| timezone_utils::format_utc_for_response(&now, &tz_ctx.timezone),
+    );
 
     let detailed_status = DetailedHealthStatus {
         database: database_status,
@@ -174,7 +213,7 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
         last_trace_time,
         system_info: SystemInfo {
             uptime: "unknown".to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp,
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
         api_key_health: "Available via /api/health/api-keys endpoint".to_string(),
@@ -184,10 +223,15 @@ pub async fn detailed_health_check(State(state): State<AppState>) -> axum::respo
 }
 
 /// 获取所有API密钥健康状态
-pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::response::Response {
+pub async fn get_api_keys_health(
+    State(state): State<AppState>,
+    request: Request,
+) -> axum::response::Response {
+    let timezone_ctx = get_timezone_from_request(&request);
+
     // 注意：这需要从AppState中获取ApiKeyHealthChecker
     // 当前我们需要通过数据库查询来获取健康状态
-    match get_api_keys_health_internal(&state).await {
+    match get_api_keys_health_internal(&state, timezone_ctx).await {
         Ok(health_infos) => response::success(health_infos),
         Err(err) => {
             lerror!(
@@ -207,8 +251,13 @@ pub async fn get_api_keys_health(State(state): State<AppState>) -> axum::respons
 
 /// 获取健康检查统计信息
 #[allow(clippy::similar_names)]
-pub async fn get_health_stats(State(state): State<AppState>) -> axum::response::Response {
-    match get_health_stats_internal(&state).await {
+pub async fn get_health_stats(
+    State(state): State<AppState>,
+    request: Request,
+) -> axum::response::Response {
+    let timezone_ctx = get_timezone_from_request(&request);
+
+    match get_health_stats_internal(&state, timezone_ctx).await {
         Ok(stats) => response::success(stats),
         Err(err) => {
             lerror!(
@@ -277,6 +326,7 @@ pub async fn mark_key_unhealthy(
 
 async fn get_api_keys_health_internal(
     state: &AppState,
+    timezone_ctx: Option<TimezoneContext>,
 ) -> crate::error::Result<Vec<ApiKeyHealthInfo>> {
     // 从数据库获取所有活跃的API密钥
     let active_keys = user_provider_keys::Entity::find()
@@ -316,6 +366,21 @@ async fn get_api_keys_health_internal(
         let health_status = health_checker.get_key_health_status(key.id).await;
 
         let health_info = if let Some(status) = health_status {
+            // 格式化时间字段以支持时区转换
+            let last_check_time = status.last_check.map(|t| {
+                timezone_ctx.as_ref().map_or_else(
+                    || t.to_rfc3339(),
+                    |tz_ctx| timezone_utils::format_utc_for_response(&t, &tz_ctx.timezone),
+                )
+            });
+
+            let last_healthy_time = status.last_healthy.map(|t| {
+                timezone_ctx.as_ref().map_or_else(
+                    || t.to_rfc3339(),
+                    |tz_ctx| timezone_utils::format_utc_for_response(&t, &tz_ctx.timezone),
+                )
+            });
+
             ApiKeyHealthInfo {
                 key_id: key.id,
                 provider_name,
@@ -323,8 +388,8 @@ async fn get_api_keys_health_internal(
                 is_healthy: status.is_healthy,
                 avg_response_time_ms: status.avg_response_time_ms,
                 health_score: status.health_score,
-                last_check_time: status.last_check.map(|t| t.to_rfc3339()),
-                last_healthy_time: status.last_healthy.map(|t| t.to_rfc3339()),
+                last_check_time,
+                last_healthy_time,
                 consecutive_failures: status.consecutive_failures,
                 consecutive_successes: status.consecutive_successes,
                 error_message: status.last_error,
@@ -352,8 +417,11 @@ async fn get_api_keys_health_internal(
     Ok(health_infos)
 }
 
-async fn get_health_stats_internal(state: &AppState) -> crate::error::Result<HealthCheckStats> {
-    let health_infos = get_api_keys_health_internal(state).await?;
+async fn get_health_stats_internal(
+    state: &AppState,
+    timezone_ctx: Option<TimezoneContext>,
+) -> crate::error::Result<HealthCheckStats> {
+    let health_infos = get_api_keys_health_internal(state, timezone_ctx).await?;
 
     let total_keys = health_infos.len();
     let healthy_keys = health_infos.iter().filter(|h| h.is_healthy).count();

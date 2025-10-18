@@ -153,6 +153,7 @@ sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 redis = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = "0.10"
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 futures = { workspace = true }

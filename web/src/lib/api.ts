@@ -10,6 +10,8 @@ const API_BASE_URL = process.env.NODE_ENV === 'production'
 
 // 导入认证状态管理，用于401处理
 import { useAuthStore } from '../store/auth'
+// 导入时区状态管理
+import { useTimezoneStore } from '../store/timezone'
 
 // 全局401处理函数
 const handle401Unauthorized = async () => {
@@ -765,8 +767,17 @@ class ApiClient {
       ...customHeaders,
     }
 
+    // 添加认证token
     if (this.token) {
       headers.Authorization = `Bearer ${this.token}`
+    }
+
+    // 添加时区信息
+    if (typeof window !== 'undefined') {
+      const timezoneStore = useTimezoneStore.getState()
+      if (timezoneStore.isInitialized && timezoneStore.timezone) {
+        headers['X-Timezone'] = timezoneStore.timezone
+      }
     }
 
     return headers

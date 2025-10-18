@@ -14,7 +14,7 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
-use crate::types::ratio_as_percentage;
+use crate::types::{ConvertToUtc, TimezoneContext, ratio_as_percentage};
 use axum::extract::{Extension, Query, State};
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
@@ -53,10 +53,10 @@ pub struct StatsQuery {
 pub struct TimeRangeQuery {
     /// 时间范围: today, 7days, 30days, custom
     pub range: Option<String>,
-    /// 自定义开始时间 (YYYY-MM-DD)
-    pub start: Option<String>,
-    /// 自定义结束时间 (YYYY-MM-DD)
-    pub end: Option<String>,
+    /// 自定义开始时间 (YYYY-MM-DD HH:MM:SS)
+    pub start: Option<chrono::NaiveDateTime>,
+    /// 自定义结束时间 (YYYY-MM-DD HH:MM:SS)
+    pub end: Option<chrono::NaiveDateTime>,
 }
 
 /// 今日仪表板卡片数据（包含增长率）
@@ -286,10 +286,11 @@ pub async fn get_models_usage_rate(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
-    let (start_time, _end_time) = match parse_time_range(&query) {
+    let (start_time, _end_time) = match parse_time_range(&query, &timezone_context) {
         Ok(times) => times,
         Err(error_response) => return error_response,
     };
@@ -431,10 +432,11 @@ pub async fn get_models_statistics(
     State(state): State<AppState>,
     Query(query): Query<TimeRangeQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
-    let (start_time, _end_time) = match parse_time_range(&query) {
+    let (start_time, _end_time) = match parse_time_range(&query, &timezone_context) {
         Ok(times) => times,
         Err(error_response) => return error_response,
     };
@@ -513,6 +515,7 @@ pub async fn get_models_statistics(
 pub async fn get_tokens_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
@@ -564,7 +567,11 @@ pub async fn get_tokens_trend(
         let date = (Utc::now() - Duration::days(29 - i))
             .format("%Y-%m-%d")
             .to_string();
-        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
+        let utc_time = Utc::now() - Duration::days(29 - i);
+        let timestamp = crate::types::timezone_utils::format_utc_for_response(
+            &utc_time,
+            &timezone_context.timezone,
+        );
 
         if let Some((cache_create, cache_read, prompt, completion, cost)) = daily_stats.get(&date) {
             let total_tokens = prompt + completion;
@@ -815,38 +822,55 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-/// 解析时间范围参数
+/// 解析时间范围参数（支持时区转换）
 fn parse_time_range(
     query: &TimeRangeQuery,
+    timezone_context: &TimezoneContext,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), axum::response::Response> {
     let end_time = Utc::now();
 
     let start_time = match query.range.as_deref() {
         Some("today") => {
-            let today = end_time.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            DateTime::from_naive_utc_and_offset(today, Utc)
+            // 获取用户时区的今天开始时间
+            let user_today = end_time
+                .with_timezone(&timezone_context.timezone)
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+
+            // 转换为UTC
+            user_today
+                .to_utc(&timezone_context.timezone)
+                .unwrap_or(end_time - Duration::days(1))
         }
-        Some("30days") => end_time - Duration::days(30),
+        Some("30days") => {
+            // 获取30天前的UTC时间
+            end_time - Duration::days(30)
+        }
         Some("custom") => {
-            if let (Some(start_str), Some(_end_str)) = (&query.start, &query.end) {
-                match chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d") {
-                    Ok(start_date) => {
-                        let start_datetime = start_date.and_hms_opt(0, 0, 0).unwrap();
-                        DateTime::from_naive_utc_and_offset(start_datetime, Utc)
-                    }
-                    Err(_) => {
+            if let (Some(start_naive), Some(end_naive)) = (&query.start, &query.end) {
+                // 使用ConvertToUtc trait转换时区
+                match (
+                    start_naive.to_utc(&timezone_context.timezone),
+                    end_naive.to_utc(&timezone_context.timezone),
+                ) {
+                    (Some(start_utc), Some(_end_utc)) => start_utc,
+                    _ => {
                         return Err(crate::management::response::app_error(
-                            ProxyError::internal("Invalid start date format. Use YYYY-MM-DD"),
+                            ProxyError::internal("Invalid datetime values"),
                         ));
                     }
                 }
             } else {
                 return Err(crate::management::response::app_error(
-                    ProxyError::internal("Custom range requires both start and end dates"),
+                    ProxyError::internal("Custom range requires both start and end datetime"),
                 ));
             }
         }
-        _ => end_time - Duration::days(7), // 默认7天
+        _ => {
+            // 默认7天前
+            end_time - Duration::days(7)
+        }
     };
 
     Ok((start_time, end_time))

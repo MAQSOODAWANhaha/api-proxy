@@ -4,6 +4,8 @@
 use crate::error::ProxyError;
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
+use crate::types::TimezoneContext;
+use crate::types::timezone_utils;
 use crate::{
     lerror, linfo,
     logging::{LogComponent, LogStage},
@@ -106,11 +108,11 @@ pub struct UserResponse {
     /// 是否管理员
     pub is_admin: bool,
     /// 创建时间
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: String,
     /// 更新时间
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: String,
     /// 最后登录时间
-    pub last_login: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_login: Option<String>,
     /// 总请求数
     pub total_requests: i64,
     /// 总花费
@@ -119,7 +121,35 @@ pub struct UserResponse {
     pub total_tokens: i64,
 }
 
-/// 将用户实体转换为响应DTO
+/// 将用户实体转换为响应DTO（带时区支持）
+impl UserResponse {
+    #[must_use]
+    pub fn from_user_with_timezone(user: users::Model, timezone_context: &TimezoneContext) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_active: user.is_active,
+            is_admin: user.is_admin,
+            created_at: timezone_utils::format_utc_for_response(
+                &user.created_at.and_utc(),
+                &timezone_context.timezone,
+            ),
+            updated_at: timezone_utils::format_utc_for_response(
+                &user.updated_at.and_utc(),
+                &timezone_context.timezone,
+            ),
+            last_login: user.last_login.map(|dt| {
+                timezone_utils::format_utc_for_response(&dt.and_utc(), &timezone_context.timezone)
+            }),
+            total_requests: 0,
+            total_cost: 0.0,
+            total_tokens: 0,
+        }
+    }
+}
+
+/// 将用户实体转换为响应DTO（UTC默认，保持向后兼容）
 impl From<users::Model> for UserResponse {
     fn from(user: users::Model) -> Self {
         Self {
@@ -128,9 +158,9 @@ impl From<users::Model> for UserResponse {
             email: user.email,
             is_active: user.is_active,
             is_admin: user.is_admin,
-            created_at: user.created_at.and_utc(),
-            updated_at: user.updated_at.and_utc(),
-            last_login: user.last_login.map(|dt| dt.and_utc()),
+            created_at: user.created_at.and_utc().to_rfc3339(),
+            updated_at: user.updated_at.and_utc().to_rfc3339(),
+            last_login: user.last_login.map(|dt| dt.and_utc().to_rfc3339()),
             total_requests: 0,
             total_cost: 0.0,
             total_tokens: 0,
@@ -147,7 +177,37 @@ pub struct UserStats {
 }
 
 impl UserResponse {
-    /// 从用户实体和统计数据创建响应DTO
+    /// 从用户实体和统计数据创建响应DTO（带时区支持）
+    #[must_use]
+    pub fn from_user_with_stats_and_timezone(
+        user: users::Model,
+        stats: &UserStats,
+        timezone_context: &TimezoneContext,
+    ) -> Self {
+        Self {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            is_active: user.is_active,
+            is_admin: user.is_admin,
+            created_at: timezone_utils::format_utc_for_response(
+                &user.created_at.and_utc(),
+                &timezone_context.timezone,
+            ),
+            updated_at: timezone_utils::format_utc_for_response(
+                &user.updated_at.and_utc(),
+                &timezone_context.timezone,
+            ),
+            last_login: user.last_login.map(|dt| {
+                timezone_utils::format_utc_for_response(&dt.and_utc(), &timezone_context.timezone)
+            }),
+            total_requests: stats.total_requests,
+            total_cost: stats.total_cost,
+            total_tokens: stats.total_tokens,
+        }
+    }
+
+    /// 从用户实体和统计数据创建响应DTO（UTC默认，保持向后兼容）
     #[must_use]
     pub fn from_user_with_stats(user: users::Model, stats: &UserStats) -> Self {
         Self {
@@ -156,9 +216,9 @@ impl UserResponse {
             email: user.email,
             is_active: user.is_active,
             is_admin: user.is_admin,
-            created_at: user.created_at.and_utc(),
-            updated_at: user.updated_at.and_utc(),
-            last_login: user.last_login.map(|dt| dt.and_utc()),
+            created_at: user.created_at.and_utc().to_rfc3339(),
+            updated_at: user.updated_at.and_utc().to_rfc3339(),
+            last_login: user.last_login.map(|dt| dt.and_utc().to_rfc3339()),
             total_requests: stats.total_requests,
             total_cost: stats.total_cost,
             total_tokens: stats.total_tokens,
@@ -230,6 +290,7 @@ pub async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
     let is_admin = auth_context.is_admin;
@@ -263,7 +324,11 @@ pub async fn list_users(
         };
 
         let user_stats = get_user_statistics(self_user.id, state.database.as_ref()).await;
-        let user_response = UserResponse::from_user_with_stats(self_user, &user_stats);
+        let user_response = UserResponse::from_user_with_stats_and_timezone(
+            self_user,
+            &user_stats,
+            &timezone_context,
+        );
 
         let pagination = response::Pagination {
             page: 1,
@@ -403,7 +468,11 @@ pub async fn list_users(
 
     for user in users {
         let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
-        user_responses.push(UserResponse::from_user_with_stats(user, &user_stats));
+        user_responses.push(UserResponse::from_user_with_stats_and_timezone(
+            user,
+            &user_stats,
+            &timezone_context,
+        ));
     }
 
     let limit_u64 = u64::from(limit);
@@ -427,6 +496,7 @@ pub async fn list_users(
 pub async fn create_user(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserRequest>,
 ) -> axum::response::Response {
     // 权限检查：只有管理员可以创建用户
@@ -587,7 +657,11 @@ pub async fn create_user(
     };
 
     let created_user_stats = get_user_statistics(created_user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(created_user, &created_user_stats);
+    let user_response = UserResponse::from_user_with_stats_and_timezone(
+        created_user,
+        &created_user_stats,
+        &timezone_context,
+    );
 
     response::success_with_message(user_response, "用户创建成功")
 }
@@ -597,6 +671,7 @@ pub async fn get_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     // 权限检查：非管理员只能获取自己的信息
     if !auth_context.is_admin && auth_context.user_id != user_id {
@@ -635,7 +710,8 @@ pub async fn get_user(
 
     // 获取用户统计数据
     let user_stats = get_user_statistics(user.id, state.database.as_ref()).await;
-    let user_response = UserResponse::from_user_with_stats(user, &user_stats);
+    let user_response =
+        UserResponse::from_user_with_stats_and_timezone(user, &user_stats, &timezone_context);
     response::success(user_response)
 }
 
@@ -669,6 +745,7 @@ pub struct ChangePasswordRequest {
 pub async fn get_user_profile(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
@@ -716,10 +793,13 @@ pub async fn get_user_profile(
         email: user.email,
         avatar: avatar_url,
         role,
-        created_at: user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        last_login: user
-            .last_login
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+        created_at: timezone_utils::format_utc_for_response(
+            &user.created_at.and_utc(),
+            &timezone_context.timezone,
+        ),
+        last_login: user.last_login.map(|dt| {
+            timezone_utils::format_utc_for_response(&dt.and_utc(), &timezone_context.timezone)
+        }),
         total_requests: user_stats.total_requests,
         monthly_requests,
     };
@@ -731,6 +811,7 @@ pub async fn get_user_profile(
 pub async fn update_user_profile(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<UpdateProfileRequest>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
@@ -797,13 +878,16 @@ pub async fn update_user_profile(
                 email: updated_user.email,
                 avatar: avatar_url,
                 role,
-                created_at: updated_user
-                    .created_at
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
-                last_login: updated_user
-                    .last_login
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+                created_at: timezone_utils::format_utc_for_response(
+                    &updated_user.created_at.and_utc(),
+                    &timezone_context.timezone,
+                ),
+                last_login: updated_user.last_login.map(|dt| {
+                    timezone_utils::format_utc_for_response(
+                        &dt.and_utc(),
+                        &timezone_context.timezone,
+                    )
+                }),
                 total_requests: user_stats.total_requests,
                 monthly_requests,
             };
@@ -936,6 +1020,7 @@ pub async fn update_user(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<UpdateUserRequest>,
 ) -> axum::response::Response {
     // 权限检查：只有管理员可以更新其他用户
@@ -1074,7 +1159,11 @@ pub async fn update_user(
     match active_model.update(state.database.as_ref()).await {
         Ok(updated_user) => {
             let updated_stats = get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response = UserResponse::from_user_with_stats(updated_user, &updated_stats);
+            let user_response = UserResponse::from_user_with_stats_and_timezone(
+                updated_user,
+                &updated_stats,
+                &timezone_context,
+            );
             response::success_with_message(user_response, "用户更新成功")
         }
         Err(err) => {
@@ -1212,6 +1301,7 @@ pub async fn toggle_user_status(
     State(state): State<AppState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     // 权限检查：只有管理员可以切换用户状态
     if !auth_context.is_admin {
@@ -1253,8 +1343,11 @@ pub async fn toggle_user_status(
         Ok(updated_user) => {
             let user_status_stats =
                 get_user_statistics(updated_user.id, state.database.as_ref()).await;
-            let user_response =
-                UserResponse::from_user_with_stats(updated_user, &user_status_stats);
+            let user_response = UserResponse::from_user_with_stats_and_timezone(
+                updated_user,
+                &user_status_stats,
+                &timezone_context,
+            );
             response::success_with_message(user_response, "用户状态更新成功")
         }
         Err(err) => {
