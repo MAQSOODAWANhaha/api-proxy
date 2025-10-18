@@ -919,16 +919,8 @@ pub fn log_proxy_failure_details(
     // 获取Pingora错误详情
     let pingora_error_details = error.map_or_else(|| "无Pingora错误".to_string(), Error::to_string);
 
-    // 安全获取请求体
-    let request_body = String::from_utf8_lossy(&ctx.request_body);
-    let request_body_preview = if request_body.len() > 4096 {
-        format!("{}...", &request_body[..4096])
-    } else {
-        request_body.to_string()
-    };
-
     // 处理响应体
-    let response_body_preview = if ctx
+    let response_body = if ctx
         .response_details
         .content_encoding
         .as_deref()
@@ -937,22 +929,12 @@ pub fn log_proxy_failure_details(
         let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
         let mut decompressed = Vec::new();
         if decoder.read_to_end(&mut decompressed).is_ok() {
-            let body_str = String::from_utf8_lossy(&decompressed);
-            if body_str.len() > 4096 {
-                format!("{}...", &body_str[..4096])
-            } else {
-                body_str.to_string()
-            }
+            String::from_utf8_lossy(&decompressed).to_string()
         } else {
             String::from_utf8_lossy(&ctx.response_body).to_string()
         }
     } else {
-        let body_str = String::from_utf8_lossy(&ctx.response_body);
-        if body_str.len() > 4096 {
-            format!("{}...", &body_str[..4096])
-        } else {
-            body_str.to_string()
-        }
+        String::from_utf8_lossy(&ctx.response_body).to_string()
     };
 
     // 检测状态码不一致问题
@@ -979,8 +961,7 @@ pub fn log_proxy_failure_details(
         user_agent = ?ctx.request_details.user_agent,
         request_body_size = ctx.request_body.len(),
         response_body_size = ctx.response_body.len(),
-        request_body_preview = %request_body_preview,
-        response_body_preview = %response_body_preview,
+        response_body = %response_body,
         has_selected_backend = ctx.selected_backend.is_some(),
         provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
         request_duration_ms = ctx.start_time.elapsed().as_millis()
