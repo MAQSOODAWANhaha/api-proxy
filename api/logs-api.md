@@ -67,6 +67,8 @@
 | model_used | string | 否 | 筛选使用的模型 | - |
 | provider_type_id | int | 否 | 筛选服务商类型ID | - |
 | user_service_api_id | int | 否 | 筛选用户服务API ID | - |
+| user_service_api_name | string | 否 | 筛选用户服务API名称（模糊） | - |
+| user_provider_key_name | string | 否 | 筛选提供商密钥名称（模糊） | - |
 | start_time | string | 否 | 开始时间（ISO 8601格式） | - |
 | end_time | string | 否 | 结束时间（ISO 8601格式） | - |
 
@@ -145,7 +147,8 @@
 | is_success | boolean | 是否成功 |
 | created_at | string | 记录创建时间（ISO 8601格式） |
 | provider_name | string | 服务商名称（关联查询） |
-| service_name | string | 服务名称（关联查询） |
+| user_service_api_name | string | 用户服务API名称（关联查询） |
+| user_provider_key_name | string | 提供商密钥名称（关联查询） |
 
 ---
 
@@ -195,8 +198,8 @@
         "is_success": true,
         "created_at": "2025-08-20T06:47:11.234567890Z",
         "provider_name": "OpenAI",
-        "service_name": "ChatGPT Service",
-        "provider_key_name": "Primary GPT Key"
+        "user_service_api_name": "ChatGPT Service",
+        "user_provider_key_name": "Primary GPT Key"
     },
     "message": "操作成功",
     "timestamp": "2025-08-20T06:47:12.364806516Z"

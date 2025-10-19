@@ -67,8 +67,14 @@
                 "provider_type_id": 1,
                 "api_key": "sk-123-****123123",
                 "usage": {
-                    "success": 1200,
-                    "failure": 50
+                    "successful_requests": 1200,
+                    "failed_requests": 50,
+                    "total_requests": 1250,
+                    "success_rate": 96.0,
+                    "avg_response_time": 850,
+                    "total_cost": 125.50,
+                    "total_tokens": 450000,
+                    "last_used_at": "2023-10-01T12:34:56Z"
                 },
                 "is_active": true,
                 "last_used_at": "2023-10-01T12:34:56Z",
@@ -109,10 +115,9 @@
 | timeout_seconds | int | 否 | 超时时间(秒) |
 | max_request_per_min | int | 否 | 每分钟最大请求数 |
 | max_requests_per_day | int | 否 | 每日最大请求数 |
-| max_tokens_per_day | int | 否 | 每日最大Token数 |
+| max_tokens_per_day | i64 | 否 | 每日最大Token数 |
 | max_cost_per_day | decimal | 否 | 每日最大费用 |
 | expires_at | string | 否 | 过期时间(ISO 8601格式) |
-| is_active | bool | 否 | 是否启用 |
 
 ### 请求体示例
 ```json

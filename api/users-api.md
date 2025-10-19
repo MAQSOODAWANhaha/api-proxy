@@ -191,8 +191,7 @@ interface UserQueryParams {
 更新指定用户的信息。
 
 #### 权限要求
-- 用户只能更新自己的信息（除is_admin字段）
-- 管理员可以更新任何用户的信息
+- **管理员权限**: 只有管理员可以更新用户信息。
 
 #### 路径参数
 - `id` (number): 用户ID
@@ -341,6 +340,104 @@ interface UserQueryParams {
   "timestamp": "2024-01-15T12:25:00Z"
 }
 ```
+
+---
+
+## 用户个人资料 API
+
+以下接口用于管理当前登录用户的个人资料。
+
+### 9. 获取当前用户个人资料
+
+**GET** `/api/users/profile`
+
+获取当前登录用户的详细个人资料，包括统计信息和头像。
+
+#### 权限要求
+- 当前登录用户
+
+#### 响应示例
+```json
+{
+  "success": true,
+  "data": {
+    "name": "currentuser",
+    "email": "currentuser@example.com",
+    "avatar": "https://www.gravatar.com/avatar/...",
+    "role": "普通用户",
+    "created_at": "2024-01-10T08:00:00Z",
+    "last_login": "2024-01-18T14:00:00Z",
+    "total_requests": 580,
+    "monthly_requests": 120
+  },
+  "message": "获取成功",
+  "timestamp": "2024-01-18T15:00:00Z"
+}
+```
+
+### 10. 更新当前用户个人资料
+
+**PUT** `/api/users/profile`
+
+更新当前登录用户的个人信息（例如邮箱）。
+
+#### 权限要求
+- 当前登录用户
+
+#### 请求体
+```json
+{
+  "email": "new-email@example.com"
+}
+```
+
+#### 响应示例
+```json
+{
+  "success": true,
+  "data": {
+    "name": "currentuser",
+    "email": "new-email@example.com",
+    "avatar": "https://www.gravatar.com/avatar/...",
+    "role": "普通用户",
+    "created_at": "2024-01-10T08:00:00Z",
+    "last_login": "2024-01-18T14:00:00Z",
+    "total_requests": 581,
+    "monthly_requests": 121
+  },
+  "message": "Profile updated successfully",
+  "timestamp": "2024-01-18T15:05:00Z"
+}
+```
+
+### 11. 修改当前用户密码
+
+**PATCH** `/api/users/profile/password`
+
+修改当前登录用户的密码。
+
+#### 权限要求
+- 当前登录用户
+
+#### 请求体
+```json
+{
+  "current_password": "oldpassword123",
+  "new_password": "newsecurepassword456"
+}
+```
+
+#### 响应示例
+```json
+{
+  "success": true,
+  "data": null,
+  "message": "Password changed successfully",
+  "timestamp": "2024-01-18T15:10:00Z"
+}
+```
+
+
 
 ## 错误响应
 

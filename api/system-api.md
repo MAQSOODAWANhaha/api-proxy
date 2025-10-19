@@ -10,7 +10,44 @@
 
 ---
 
-## 1. 获取系统实时监控指标
+## 1. 获取系统详细信息
+
+### 接口信息
+- **请求路由**: `GET /api/system/info`
+- **请求方法**: GET
+- **作用**: 获取服务的详细信息，包括版本、构建时间、Git 提交、运行时和配置等。
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "service": {
+            "name": "AI Proxy",
+            "version": "0.1.0",
+            "build_time": "2024-01-01T12:00:00Z",
+            "git_commit": "abcdef123"
+        },
+        "runtime": {
+            "uptime_seconds": 3600,
+            "rust_version": "1.75.0",
+            "target": "x86_64-unknown-linux-gnu"
+        },
+        "configuration": {
+            "management_port": 8081,
+            "proxy_port": 8080,
+            "workers": 8,
+            "database_url": "postgres://***:***@localhost/ai_proxy"
+        }
+    },
+    "message": "操作成功",
+    "timestamp": "2025-08-21T10:00:00.000Z"
+}
+```
+
+---
+
+## 2. 获取系统实时监控指标
 
 ### 接口信息
 - **请求路由**: `GET /api/system/metrics`

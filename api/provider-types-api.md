@@ -92,6 +92,9 @@
 | id | int | 服务商类型ID |
 | name | string | 服务商内部标识名称 |
 | display_name | string | 服务商显示名称（用于前端显示） |
+| base_url | string | 服务商基础URL |
+| api_format | string | API格式（例如：openai） |
+| default_model | string | 默认模型 |
 | description | string | 服务商描述信息 |
 | is_active | bool | 是否启用 |
 | supported_models | array[string] | 支持的模型列表 |
