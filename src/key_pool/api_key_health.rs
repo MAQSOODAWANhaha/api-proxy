@@ -2,7 +2,7 @@
 //!
 //! 负责检测和管理API密钥的可用性状态，通过真实API调用验证密钥健康度
 
-use crate::error::Result;
+use crate::error::{Context, Result};
 use crate::{
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
@@ -935,6 +935,58 @@ impl ApiKeyHealthChecker {
         );
         Ok(results)
     }
+
+    /// 将密钥标记为速率受限
+    pub async fn mark_key_as_rate_limited(
+        &self,
+        key_id: i32,
+        resets_at: Option<chrono::NaiveDateTime>,
+        details: &str,
+    ) -> Result<()> {
+        let now = Utc::now().naive_utc();
+
+        let key: Option<user_provider_keys::Model> = user_provider_keys::Entity::find_by_id(key_id)
+            .one(self.db.as_ref())
+            .await
+            .context(format!("查询API密钥失败，ID: {key_id}"))?;
+
+        let Some(key) = key else {
+            lwarn!(
+                "system",
+                LogStage::Internal,
+                LogComponent::HealthChecker,
+                "key_not_found_for_rate_limit",
+                "尝试更新一个不存在的密钥的速率限制状态",
+                key_id = key_id
+            );
+            return Ok(());
+        };
+
+        let mut active_model: user_provider_keys::ActiveModel = key.into();
+        active_model.health_status = Set(ApiKeyHealthStatus::RateLimited.to_string());
+        active_model.health_status_detail = Set(Some(details.to_string()));
+        active_model.rate_limit_resets_at = Set(resets_at);
+        active_model.last_error_time = Set(Some(now));
+        active_model.updated_at = Set(now);
+
+        active_model
+            .update(self.db.as_ref())
+            .await
+            .context(format!("更新API密钥健康状态失败，ID: {key_id}"))?;
+
+        linfo!(
+            "system",
+            LogStage::Internal,
+            LogComponent::HealthChecker,
+            "update_key_status_rate_limited",
+            "API密钥已更新为详细限流状态",
+            key_id = key_id,
+            details = details
+        );
+
+        Ok(())
+    }
+
 }
 
 impl ApiKeyHealth {

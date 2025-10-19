@@ -12,9 +12,9 @@ pub mod provider_strategy_claude;
 pub mod provider_strategy_gemini;
 pub mod provider_strategy_openai;
 
+use crate::key_pool::ApiKeyHealthChecker;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use sea_orm::DatabaseConnection;
 
 use crate::error::Result;
 use crate::proxy::ProxyContext;
@@ -80,9 +80,6 @@ pub trait ProviderStrategy: Send + Sync {
     /// 策略名称（provider 标识）
     fn name(&self) -> &'static str;
 
-    /// 设置数据库连接
-    fn set_db_connection(&mut self, _db: Option<Arc<DatabaseConnection>>) {}
-
     /// 可选：根据上下文选择上游主机（host:port）。返回 None 表示使用默认逻辑
     async fn select_upstream_host(&self, _ctx: &ProxyContext) -> Result<Option<String>> {
         Ok(None)
@@ -146,24 +143,21 @@ impl ProviderRegistry {
 #[must_use]
 pub fn make_strategy(
     name: &str,
-    db: Option<Arc<DatabaseConnection>>,
+    health_checker: Option<Arc<ApiKeyHealthChecker>>,
 ) -> Option<Arc<dyn ProviderStrategy>> {
     ProviderType::from_str(name).map_or_else(
         || None,
         |provider_type| match provider_type {
             ProviderType::Gemini => {
-                let mut strategy = GeminiStrategy::default();
-                strategy.set_db_connection(db);
+                let strategy = GeminiStrategy::new(health_checker);
                 Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
             ProviderType::OpenAI => {
-                let mut strategy = OpenAIStrategy::new();
-                strategy.set_db_connection(db);
+                let strategy = OpenAIStrategy::new(health_checker);
                 Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
             ProviderType::Anthropic => {
-                let mut strategy = ClaudeStrategy::default();
-                strategy.set_db_connection(db);
+                let strategy = ClaudeStrategy::new(health_checker);
                 Some(Arc::new(strategy) as Arc<dyn ProviderStrategy>)
             }
         },

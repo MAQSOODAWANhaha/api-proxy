@@ -152,7 +152,7 @@ impl ProxyServerBuilder {
 
         // --- 服务依赖组装 ---
         let health_checker = Arc::new(ApiKeyHealthChecker::new(db.clone(), None));
-        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker));
+        let api_key_pool = Arc::new(ApiKeyPoolManager::new(db.clone(), health_checker.clone()));
         let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
 
         let auth_service = Arc::new(AuthenticationService::new(
@@ -180,6 +180,7 @@ impl ProxyServerBuilder {
             upstream_service,
             req_transform_service,
             resp_transform_service,
+            health_checker,
         )
     }
 

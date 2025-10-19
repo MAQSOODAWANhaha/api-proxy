@@ -12,8 +12,7 @@ use crate::{
 };
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use sea_orm::DatabaseConnection;
-use std::sync::Arc;
+
 
 #[derive(Debug, Clone, PartialEq)]
 enum GeminiProxyMode {
@@ -31,19 +30,26 @@ impl GeminiProxyMode {
     }
 }
 
+use crate::key_pool::ApiKeyHealthChecker;
+use std::sync::Arc;
+
 #[derive(Default)]
 pub struct GeminiStrategy {
-    db: Option<Arc<DatabaseConnection>>,
+    #[allow(dead_code)]
+    health_checker: Option<Arc<ApiKeyHealthChecker>>,
+}
+
+impl GeminiStrategy {
+    #[must_use]
+    pub const fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
+        Self { health_checker }
+    }
 }
 
 #[async_trait::async_trait]
 impl ProviderStrategy for GeminiStrategy {
     fn name(&self) -> &'static str {
         "gemini"
-    }
-
-    fn set_db_connection(&mut self, db: Option<Arc<DatabaseConnection>>) {
-        self.db = db;
     }
 
     async fn select_upstream_host(
@@ -238,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_select_upstream_host_oauth_with_project() {
-        let strat = GeminiStrategy::default();
+        let strat = GeminiStrategy::new(None);
         let ctx = ProxyContext {
             selected_backend: Some(dummy_key("oauth", Some("proj-123"))),
             ..Default::default()
@@ -249,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_select_upstream_host_api_key() {
-        let strat = GeminiStrategy::default();
+        let strat = GeminiStrategy::new(None);
         let ctx = ProxyContext {
             selected_backend: Some(dummy_key("api_key", None)),
             ..Default::default()

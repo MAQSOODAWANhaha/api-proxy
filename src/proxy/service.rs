@@ -19,6 +19,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::collect::service::CollectService;
+use crate::key_pool::ApiKeyHealthChecker;
 use crate::proxy::response::{JsonError, build_auth_error_response, write_json_error};
 use crate::proxy::{
     AuthenticationService, context::ProxyContext, provider_strategy,
@@ -36,6 +37,7 @@ pub struct ProxyService {
     upstream_service: Arc<UpstreamService>,
     req_transform_service: Arc<RequestTransformService>,
     resp_transform_service: Arc<ResponseTransformService>,
+    health_checker: Arc<ApiKeyHealthChecker>,
 }
 
 impl ProxyService {
@@ -49,6 +51,7 @@ impl ProxyService {
         upstream_service: Arc<UpstreamService>,
         req_transform_service: Arc<RequestTransformService>,
         resp_transform_service: Arc<ResponseTransformService>,
+        health_checker: Arc<ApiKeyHealthChecker>,
     ) -> pingora_core::Result<Self> {
         Ok(Self {
             db,
@@ -58,6 +61,7 @@ impl ProxyService {
             upstream_service,
             req_transform_service,
             resp_transform_service,
+            health_checker,
         })
     }
 
@@ -249,7 +253,7 @@ impl ProxyHttp for ProxyService {
 
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
             {
-                ctx.strategy = provider_strategy::make_strategy(name, Some(self.db.clone()));
+                ctx.strategy = provider_strategy::make_strategy(name, Some(self.health_checker.clone()));
             }
         }
 

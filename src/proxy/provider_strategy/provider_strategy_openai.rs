@@ -13,7 +13,7 @@ use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use crate::key_pool::ApiKeyHealthChecker;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -33,31 +33,31 @@ pub struct OpenAIErrorDetail {
 
 #[derive(Default)]
 pub struct OpenAIStrategy {
-    db: Option<Arc<DatabaseConnection>>,
+    health_checker: Option<Arc<ApiKeyHealthChecker>>,
 }
 
 impl OpenAIStrategy {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
+        Self { health_checker }
     }
 
     /// `从OpenAI` access_token中解析chatgpt-account-id
     fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
         let jwt_parser = JWTParser;
-        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
+        jwt_parser.extract_chatgpt_account_id(access_token).ok()? 
     }
 
     /// 异步处理429错误
     async fn handle_429_error(&self, ctx: &ProxyContext, body: &[u8]) -> Result<()> {
-        let Some(db) = self.db.as_ref() else {
+        let Some(health_checker) = self.health_checker.as_ref() else {
             return Ok(());
         };
         let Some(key_id) = ctx.selected_backend.as_ref().map(|k| k.id) else {
             return Ok(());
         };
 
-        if let Some(error_info) = Self::parse_429_response(body) {
+        if let Ok(error_info) = serde_json::from_slice::<OpenAI429Error>(body) {
             linfo!(
                 &ctx.request_id,
                 LogStage::Internal,
@@ -66,7 +66,11 @@ impl OpenAIStrategy {
                 "成功解析OpenAI 429错误，准备更新密钥状态",
                 error_type = %error_info.error.r#type
             );
-            Self::update_key_health_status_async(db.clone(), key_id, &error_info.error).await?;
+            let resets_at = error_info.error.resets_in_seconds.map(|seconds| {
+                (Utc::now() + chrono::Duration::seconds(seconds)).naive_utc()
+            });
+            let details = serde_json::to_string(&error_info.error).unwrap_or_default();
+            health_checker.mark_key_as_rate_limited(key_id, resets_at, &details).await?;
         } else {
             lwarn!(
                 &ctx.request_id,
@@ -78,46 +82,6 @@ impl OpenAIStrategy {
         }
         Ok(())
     }
-
-    /// 解析429错误响应体
-    fn parse_429_response(body: &[u8]) -> Option<OpenAI429Error> {
-        serde_json::from_slice(body).ok()
-    }
-
-    /// 异步更新API密钥健康状态
-    async fn update_key_health_status_async(
-        db: Arc<DatabaseConnection>,
-        key_id: i32,
-        error_detail: &OpenAIErrorDetail,
-    ) -> Result<()> {
-        let now = Utc::now().naive_utc();
-        let rate_limit_resets_at = error_detail
-            .resets_in_seconds
-            .map(|seconds| now + chrono::Duration::seconds(seconds));
-
-        let mut key: user_provider_keys::ActiveModel =
-            user_provider_keys::Entity::find_by_id(key_id)
-                .one(db.as_ref())
-                .await
-                .context(format!("查询API密钥失败，ID: {key_id}"))?
-                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
-                .into();
-
-        key.health_status = Set("rate_limited".to_string());
-        key.health_status_detail = Set(Some(
-            serde_json::to_string(error_detail).context("序列化OpenAI错误详情失败")?,
-        ));
-        key.rate_limit_resets_at = Set(rate_limit_resets_at);
-        key.last_error_time = Set(Some(now));
-        key.updated_at = Set(now);
-
-        key.update(db.as_ref())
-            .await
-            .context(format!("更新API密钥健康状态失败，ID: {key_id}"))?;
-
-        linfo!("system", LogStage::Internal, LogComponent::OpenAIStrategy, "update_key_status", "OpenAI API密钥已更新为详细限流状态", key_id = key_id, error_type = %error_detail.r#type);
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -125,11 +89,6 @@ impl ProviderStrategy for OpenAIStrategy {
     fn name(&self) -> &'static str {
         "openai"
     }
-
-    fn set_db_connection(&mut self, db: Option<Arc<DatabaseConnection>>) {
-        self.db = db;
-    }
-
     async fn modify_request(
         &self,
         _session: &Session,

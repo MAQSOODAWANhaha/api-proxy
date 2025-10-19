@@ -12,8 +12,8 @@ use crate::{
 };
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
+use crate::key_pool::ApiKeyHealthChecker;
 use regex::Regex;
-use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// Claude 策略实现
@@ -23,14 +23,16 @@ use std::sync::Arc;
 /// 2. 替换 `metadata.user_id` 中的 client ID 以保护隐私
 /// 3. 设置 Claude 特定的请求头
 pub struct ClaudeStrategy {
-    db: Option<Arc<DatabaseConnection>>,
+    #[allow(dead_code)]
+    health_checker: Option<Arc<ApiKeyHealthChecker>>,
     unified_client_id: String,
 }
 
-impl Default for ClaudeStrategy {
-    fn default() -> Self {
+impl ClaudeStrategy {
+    #[must_use]
+    pub fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
         Self {
-            db: None,
+            health_checker,
             unified_client_id: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
                 .to_string(),
         }
@@ -41,10 +43,6 @@ impl Default for ClaudeStrategy {
 impl ProviderStrategy for ClaudeStrategy {
     fn name(&self) -> &'static str {
         "anthropic" // 统一使用 anthropic，与数据库中的名称一致
-    }
-
-    fn set_db_connection(&mut self, db: Option<Arc<DatabaseConnection>>) {
-        self.db = db;
     }
 
     async fn select_upstream_host(&self, ctx: &ProxyContext) -> Result<Option<String>> {
@@ -319,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_select_upstream_host_from_config() {
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         let mut ctx = ProxyContext {
             request_id: "test-request-123".to_string(),
             ..Default::default()
@@ -334,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_select_upstream_host_no_config() {
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         let ctx = ProxyContext {
             request_id: "test-request-456".to_string(),
             ..Default::default()
@@ -346,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_claude_strategy_default() {
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         assert_eq!(strategy.name(), "anthropic"); // 更新为 anthropic
         assert_eq!(
             strategy.unified_client_id,
@@ -356,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_build_auth_headers() {
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         let headers = strategy.build_auth_headers("sk-test-key-123");
 
         assert_eq!(headers.len(), 1);
@@ -369,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_strategy_full_integration() {
         // 创建 Claude 策略
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
 
         // 创建代理上下文
         let ctx = ProxyContext {
@@ -421,7 +419,7 @@ mod tests {
     async fn test_claude_strategy_no_provider_config() {
         // 测试没有提供商配置的情况
 
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         let ctx = ProxyContext {
             request_id: "test-no-provider-789".to_string(),
             ..Default::default()
@@ -436,7 +434,7 @@ mod tests {
     async fn test_claude_strategy_with_real_database_config() {
         // 测试使用真实数据库配置的情况
 
-        let strategy = ClaudeStrategy::default();
+        let strategy = ClaudeStrategy::new(None);
         let mut ctx = ProxyContext {
             request_id: "test-real-config-456".to_string(),
             ..Default::default()
