@@ -350,7 +350,9 @@ pub async fn list_sessions(
             // 转换时间字段以支持时区
             let timezone_sessions: Vec<OAuthSessionInfoWithTimezone> = sessions
                 .into_iter()
-                .map(|session| convert_oauth_session_to_timezone_response(session, timezone_ctx.as_ref()))
+                .map(|session| {
+                    convert_oauth_session_to_timezone_response(session, timezone_ctx.as_ref())
+                })
                 .collect();
 
             response::success(timezone_sessions)

@@ -40,6 +40,7 @@ impl ConvertToUtc for Option<NaiveDateTime> {
 pub mod timezone_utils {
     use super::{DateTime, NaiveDateTime, TimeZone, Tz, Utc};
     use chrono::Offset;
+    use chrono::{Duration, NaiveDate};
 
     /// 验证时区字符串是否有效
     #[must_use]
@@ -119,6 +120,107 @@ pub mod timezone_utils {
         ]
     }
 
+    /// 计算当前用户时区的今日 UTC 边界（闭区间起点、开区间终点）
+    #[must_use]
+    pub fn local_day_bounds(
+        now_utc: &DateTime<Utc>,
+        timezone: &Tz,
+    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let local_now = now_utc.with_timezone(timezone);
+        let local_date = local_now.date_naive();
+
+        let local_start = local_date.and_hms_opt(0, 0, 0)?;
+        let next_day_start = (local_date + Duration::days(1)).and_hms_opt(0, 0, 0)?;
+
+        let start_utc = timezone
+            .from_local_datetime(&local_start)
+            .single()
+            .or_else(|| timezone.from_local_datetime(&local_start).earliest())
+            .or_else(|| timezone.from_local_datetime(&local_start).latest())?
+            .with_timezone(&Utc);
+        let end_utc = timezone
+            .from_local_datetime(&next_day_start)
+            .single()
+            .or_else(|| timezone.from_local_datetime(&next_day_start).earliest())
+            .or_else(|| timezone.from_local_datetime(&next_day_start).latest())?
+            .with_timezone(&Utc);
+
+        Some((start_utc, end_utc))
+    }
+
+    /// 计算用户时区的昨日 UTC 边界
+    #[must_use]
+    pub fn local_previous_day_bounds(
+        now_utc: &DateTime<Utc>,
+        timezone: &Tz,
+    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let (today_start, _) = local_day_bounds(now_utc, timezone)?;
+        let yesterday_end = today_start;
+        let yesterday_start = yesterday_end - Duration::days(1);
+        Some((yesterday_start, yesterday_end))
+    }
+
+    /// 将 UTC 的 `NaiveDateTime` 转换为用户时区的日期标签
+    #[must_use]
+    pub fn local_date_label(naive_utc: &NaiveDateTime, timezone: &Tz) -> String {
+        let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(*naive_utc, Utc);
+        utc_dt
+            .with_timezone(timezone)
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    /// 判断两个时间是否同属用户时区的同一天
+    #[must_use]
+    pub fn is_same_local_day(
+        target_utc: &NaiveDateTime,
+        reference_utc: &DateTime<Utc>,
+        timezone: &Tz,
+    ) -> bool {
+        let target_label = local_date_label(target_utc, timezone);
+        let reference_label = reference_utc
+            .with_timezone(timezone)
+            .format("%Y-%m-%d")
+            .to_string();
+        target_label == reference_label
+    }
+
+    /// 将本地时间区间转换为 UTC
+    #[must_use]
+    pub fn convert_range_to_utc(
+        start_local: &NaiveDateTime,
+        end_local: &NaiveDateTime,
+        timezone: &Tz,
+    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let start = timezone
+            .from_local_datetime(start_local)
+            .single()
+            .or_else(|| timezone.from_local_datetime(start_local).earliest())
+            .or_else(|| timezone.from_local_datetime(start_local).latest())?
+            .with_timezone(&Utc);
+
+        let end = timezone
+            .from_local_datetime(end_local)
+            .single()
+            .or_else(|| timezone.from_local_datetime(end_local).earliest())
+            .or_else(|| timezone.from_local_datetime(end_local).latest())?
+            .with_timezone(&Utc);
+
+        Some((start, end))
+    }
+
+    /// 按用户时区计算自某日开始的 UTC 时间窗口
+    #[must_use]
+    pub fn local_date_window(
+        start_date: NaiveDate,
+        inclusive_days: i64,
+        timezone: &Tz,
+    ) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let start_local = start_date.and_hms_opt(0, 0, 0)?;
+        let end_local = (start_date + Duration::days(inclusive_days)).and_hms_opt(0, 0, 0)?;
+        convert_range_to_utc(&start_local, &end_local, timezone)
+    }
+
     // ===== 响应时间转换工具函数 =====
 
     /// 将UTC时间转换为用户时区的格式化字符串
@@ -175,7 +277,7 @@ pub mod timezone_utils {
     pub trait TimezoneResponseFormatter {
         /// 将时间字段转换为指定时区的字符串表示
         #[must_use]
-      fn format_times_for_timezone(&self, timezone: &Tz) -> Self;
+        fn format_times_for_timezone(&self, timezone: &Tz) -> Self;
     }
 }
 
@@ -183,8 +285,8 @@ pub mod timezone_utils {
 mod tests {
     use super::timezone_utils;
     use super::{ConvertToUtc, NaiveDateTime, Tz};
-    use chrono::NaiveDate;
     use chrono::Timelike;
+    use chrono::{DateTime, NaiveDate, Utc};
 
     #[test]
     fn test_convert_to_utc_trait() {
@@ -260,5 +362,57 @@ mod tests {
         // 测试RFC3339格式
         let rfc3339 = timezone_utils::format_utc_to_rfc3339(&utc_time);
         assert!(rfc3339.contains('Z') || rfc3339.contains("+00:00"));
+    }
+
+    #[test]
+    fn test_local_day_bounds() {
+        let tz = Tz::Asia__Shanghai;
+        let utc_now = DateTime::parse_from_rfc3339("2024-03-10T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let (start, end) =
+            timezone_utils::local_day_bounds(&utc_now, &tz).expect("bounds should exist");
+        assert_eq!(start.to_rfc3339(), "2024-03-09T16:00:00+00:00");
+        assert_eq!(end.to_rfc3339(), "2024-03-10T16:00:00+00:00");
+    }
+
+    #[test]
+    fn test_local_previous_day_bounds() {
+        let tz = Tz::Asia__Shanghai;
+        let utc_now = DateTime::parse_from_rfc3339("2024-03-10T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let (start, end) =
+            timezone_utils::local_previous_day_bounds(&utc_now, &tz).expect("bounds should exist");
+        assert_eq!(start.to_rfc3339(), "2024-03-08T16:00:00+00:00");
+        assert_eq!(end.to_rfc3339(), "2024-03-09T16:00:00+00:00");
+    }
+
+    #[test]
+    fn test_local_date_label_and_same_day() {
+        let tz = Tz::America__New_York;
+        let utc_now = DateTime::parse_from_rfc3339("2024-06-01T03:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let naive = NaiveDate::from_ymd_opt(2024, 5, 31)
+            .unwrap()
+            .and_hms_opt(23, 30, 0)
+            .unwrap();
+
+        assert_eq!(timezone_utils::local_date_label(&naive, &tz), "2024-05-31");
+        assert!(timezone_utils::is_same_local_day(&naive, &utc_now, &tz));
+    }
+
+    #[test]
+    fn test_local_date_window() {
+        let tz = Tz::Asia__Shanghai;
+        let start_date = NaiveDate::from_ymd_opt(2024, 4, 1).unwrap();
+        let (start_utc, end_utc) =
+            timezone_utils::local_date_window(start_date, 1, &tz).expect("window exists");
+
+        assert_eq!(start_utc.to_rfc3339(), "2024-03-31T16:00:00+00:00");
+        assert_eq!(end_utc.to_rfc3339(), "2024-04-01T16:00:00+00:00");
     }
 }

@@ -12,13 +12,13 @@ use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::types::{ProviderTypeId, TimezoneContext, ratio_as_percentage};
 use crate::types::timezone_utils;
+use crate::types::{ProviderTypeId, TimezoneContext, ratio_as_percentage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::IntoResponse;
 use axum::response::Json;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult,
     PaginatorTrait, QueryFilter, QueryOrder, Set,
@@ -178,7 +178,8 @@ pub async fn get_provider_keys_list(
 
     // 获取所有密钥的使用统计数据
     let provider_key_ids: Vec<i32> = provider_keys.iter().map(|(pk, _)| pk.id).collect();
-    let usage_stats = fetch_provider_keys_usage_stats(db, &provider_key_ids, &timezone_context).await;
+    let usage_stats =
+        fetch_provider_keys_usage_stats(db, &provider_key_ids, &timezone_context).await;
 
     // 构建响应数据
     let provider_keys_list = provider_keys
@@ -824,7 +825,8 @@ pub async fn get_provider_key_detail(
         .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
     // 获取使用统计
-    let usage_stats = fetch_provider_keys_usage_stats(db, &[provider_key.0.id], &timezone_context).await;
+    let usage_stats =
+        fetch_provider_keys_usage_stats(db, &[provider_key.0.id], &timezone_context).await;
     let key_stats = usage_stats
         .get(&provider_key.0.id)
         .cloned()
@@ -1394,15 +1396,17 @@ pub async fn get_provider_key_stats(
         .1
         .map_or_else(|| "Unknown".to_string(), |pt| pt.display_name);
 
-    // 获取真实的统计数据
-    let end_date = Utc::now().naive_utc();
-    let start_date = end_date - chrono::Duration::days(7); // 默认查询7天数据
+    // 获取真实的统计数据（按用户时区最近7天）
+    let now = Utc::now();
+    let (_, today_end_utc) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let start_utc = today_end_utc - Duration::days(7);
 
     let trends = match fetch_key_trends_data(
         db,
         key_id,
-        &start_date,
-        &end_date,
+        &start_utc,
+        &today_end_utc,
         "provider",
         &timezone_context,
     )
@@ -1910,12 +1914,10 @@ async fn fetch_provider_keys_usage_stats(
             0
         };
 
-        let last_used_at = row
-            .last_used_at
-            .map(|dt| {
-                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
-                timezone_utils::format_utc_for_response(&utc_dt, &timezone_ctx.timezone)
-            });
+        let last_used_at = row.last_used_at.map(|dt| {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_ctx.timezone)
+        });
 
         stats_map.insert(
             key_id,
@@ -1981,15 +1983,17 @@ pub async fn get_provider_key_trends(
 
     // 计算时间范围
     let days = query.days.min(30); // 最多查询30天
-    let end_date = Utc::now().naive_utc();
-    let start_date = end_date - chrono::Duration::days(i64::from(days));
+    let now = Utc::now();
+    let (_, today_end_utc) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let start_utc = today_end_utc - Duration::days(i64::from(days));
 
     // 查询趋势数据
     let trends = match fetch_key_trends_data(
         db,
         key_id,
-        &start_date,
-        &end_date,
+        &start_utc,
+        &today_end_utc,
         "provider",
         &timezone_context,
     )
@@ -2071,15 +2075,17 @@ pub async fn get_user_service_api_trends(
 
     // 计算时间范围（数据库查询使用UTC）
     let days = query.days.min(30); // 最多查询30天
-    let end_date = Utc::now().naive_utc();
-    let start_date = end_date - chrono::Duration::days(i64::from(days));
+    let now = Utc::now();
+    let (_, today_end_utc) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let start_utc = today_end_utc - Duration::days(i64::from(days));
 
     // 查询趋势数据
     let trends = match fetch_key_trends_data(
         db,
         api_id,
-        &start_date,
-        &end_date,
+        &start_utc,
+        &today_end_utc,
         "user_service",
         &timezone_context,
     )
@@ -2150,8 +2156,8 @@ fn round_two_decimal(value: f64) -> f64 {
 async fn fetch_key_trends_data(
     db: &sea_orm::DatabaseConnection,
     key_id: i32,
-    start_date: &chrono::NaiveDateTime,
-    end_date: &chrono::NaiveDateTime,
+    start_utc: &DateTime<Utc>,
+    end_utc: &DateTime<Utc>,
     key_type: &str,                           // "provider" 或 "user_service"
     timezone: &crate::types::TimezoneContext, // 添加时区上下文
 ) -> Result<TrendData, sea_orm::DbErr> {
@@ -2162,8 +2168,8 @@ async fn fetch_key_trends_data(
 
     // 构建查询条件
     let mut select = ProxyTracing::find()
-        .filter(Column::CreatedAt.gte(*start_date))
-        .filter(Column::CreatedAt.lte(*end_date));
+        .filter(Column::CreatedAt.gte(start_utc.naive_utc()))
+        .filter(Column::CreatedAt.lt(end_utc.naive_utc()));
 
     // 根据密钥类型选择过滤字段
     if key_type == "provider" {
@@ -2175,11 +2181,11 @@ async fn fetch_key_trends_data(
     // 获取所有追踪记录
     let traces = select.all(db).await?;
 
-    // 按日期分组统计
+    // 按日期分组统计（按用户时区）
     let mut daily_stats = std::collections::HashMap::new();
 
     for trace in &traces {
-        let date_str = trace.created_at.format("%Y-%m-%d").to_string();
+        let date_str = timezone_utils::local_date_label(&trace.created_at, &timezone.timezone);
         let entry = daily_stats
             .entry(date_str)
             .or_insert_with(DailyStats::default);
@@ -2194,65 +2200,66 @@ async fn fetch_key_trends_data(
     }
 
     // 生成日期序列和趋势数据
-    let mut current_date = start_date.date();
-    let end_date_only = end_date.date();
+    let local_start_date = start_utc.with_timezone(&timezone.timezone).date_naive();
+    let local_end_exclusive = end_utc.with_timezone(&timezone.timezone).date_naive();
 
-    while current_date <= end_date_only {
-        let utc_date = current_date
-            .and_hms_opt(0, 0, 0)
-            .map_or_else(|| current_date.and_hms_opt(12, 0, 0).unwrap().and_utc(), |dt| dt.and_utc());
-        let date_str = utc_date.format("%Y-%m-%d").to_string();
+    let mut current_local_date = local_start_date;
 
-        if let Some(stats) = daily_stats.get(&date_str) {
-            let avg_response_time = if stats.successful_requests > 0 {
-                stats.total_response_time / stats.successful_requests
-            } else {
-                0
-            };
+    while current_local_date < local_end_exclusive {
+        let label = current_local_date.format("%Y-%m-%d").to_string();
+        let stats = daily_stats.get(&label);
 
-            let success_rate = match (
-                u64::try_from(stats.successful_requests),
-                u64::try_from(stats.total_requests),
-            ) {
-                (Ok(success), Ok(total)) => ratio_as_percentage(success, total),
-                _ => 0.0,
-            };
-
-            // 将UTC日期转换为用户时区的格式化字符串
-            let user_date_str = timezone_utils::format_naive_utc_for_response(
-                &current_date.and_hms_opt(0, 0, 0).unwrap(),
-                &timezone.timezone,
-            );
-
-            trend_data.trend_data.push(TrendDataPoint {
-                date: user_date_str,
-                requests: stats.total_requests,
-                successful_requests: stats.successful_requests,
-                failed_requests: stats.total_requests - stats.successful_requests,
-                success_rate: round_two_decimal(success_rate),
-                avg_response_time,
-                tokens: stats.total_tokens,
-                cost: round_two_decimal(stats.total_cost),
+        let (requests, successful_requests, total_cost, total_response_time, total_tokens) = stats
+            .map_or((0, 0, 0.0, 0, 0), |stats| {
+                (
+                    stats.total_requests,
+                    stats.successful_requests,
+                    stats.total_cost,
+                    stats.total_response_time,
+                    stats.total_tokens,
+                )
             });
 
-            trend_data.total_requests += stats.total_requests;
-            trend_data.total_cost += stats.total_cost;
-            trend_data.total_tokens += stats.total_tokens;
-            trend_data.total_successful_requests += stats.successful_requests;
+        let avg_response_time = if successful_requests > 0 {
+            total_response_time / successful_requests
         } else {
-            trend_data.trend_data.push(TrendDataPoint {
-                date: date_str.clone(),
-                requests: 0,
-                successful_requests: 0,
-                failed_requests: 0,
-                success_rate: 0.0,
-                avg_response_time: 0,
-                tokens: 0,
-                cost: 0.0,
-            });
-        }
+            0
+        };
 
-        current_date += chrono::Duration::days(1);
+        let success_rate = match (u64::try_from(successful_requests), u64::try_from(requests)) {
+            (Ok(success), Ok(total)) if total > 0 => ratio_as_percentage(success, total),
+            _ => 0.0,
+        };
+
+        let date_display =
+            timezone_utils::local_date_window(current_local_date, 1, &timezone.timezone)
+                .map_or_else(
+                    || format!("{label} 00:00:00"),
+                    |(start, _)| {
+                        start
+                            .with_timezone(&timezone.timezone)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string()
+                    },
+                );
+
+        trend_data.trend_data.push(TrendDataPoint {
+            date: date_display,
+            requests,
+            successful_requests,
+            failed_requests: requests - successful_requests,
+            success_rate: round_two_decimal(success_rate),
+            avg_response_time,
+            tokens: total_tokens,
+            cost: round_two_decimal(total_cost),
+        });
+
+        trend_data.total_requests += requests;
+        trend_data.total_cost += total_cost;
+        trend_data.total_tokens += total_tokens;
+        trend_data.total_successful_requests += successful_requests;
+
+        current_local_date += chrono::Duration::days(1);
     }
 
     // 计算平均响应时间和成功率

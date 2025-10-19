@@ -452,15 +452,15 @@ async fn fetch_traces_list(
     }
 
     // 应用时间范围过滤（使用时区转换）
-    if let Some(start_naive) = query.start_time {
-        if let Some(start_utc) = start_naive.to_utc(&timezone_context.timezone) {
-            select = select.filter(proxy_tracing::Column::CreatedAt.gte(start_utc));
-        }
+    if let Some(start_naive) = query.start_time
+        && let Some(start_utc) = start_naive.to_utc(&timezone_context.timezone)
+    {
+        select = select.filter(proxy_tracing::Column::CreatedAt.gte(start_utc));
     }
-    if let Some(end_naive) = query.end_time {
-        if let Some(end_utc) = end_naive.to_utc(&timezone_context.timezone) {
-            select = select.filter(proxy_tracing::Column::CreatedAt.lte(end_utc));
-        }
+    if let Some(end_naive) = query.end_time
+        && let Some(end_utc) = end_naive.to_utc(&timezone_context.timezone)
+    {
+        select = select.filter(proxy_tracing::Column::CreatedAt.lte(end_utc));
     }
 
     // 获取总数
@@ -554,17 +554,17 @@ async fn fetch_traces_list(
             provider_type_id: trace_model.provider_type_id,
             start_time: timezone_utils::format_option_naive_utc_for_response(
                 trace_model.start_time.as_ref(),
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             end_time: timezone_utils::format_option_naive_utc_for_response(
                 trace_model.end_time.as_ref(),
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             duration_ms: trace_model.duration_ms,
             is_success: trace_model.is_success,
             created_at: timezone_utils::format_naive_utc_for_response(
                 &trace_model.created_at,
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             provider_name,
             user_service_api_name,
@@ -674,17 +674,17 @@ async fn fetch_trace_detail(
             provider_type_id: trace_model.provider_type_id,
             start_time: timezone_utils::format_option_naive_utc_for_response(
                 trace_model.start_time.as_ref(),
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             end_time: timezone_utils::format_option_naive_utc_for_response(
                 trace_model.end_time.as_ref(),
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             duration_ms: trace_model.duration_ms,
             is_success: trace_model.is_success,
             created_at: timezone_utils::format_naive_utc_for_response(
                 &trace_model.created_at,
-                &timezone_context.timezone
+                &timezone_context.timezone,
             ),
             provider_name,
             user_service_api_name,

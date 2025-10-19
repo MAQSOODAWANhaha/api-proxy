@@ -13,11 +13,11 @@ use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::{response, server::AppState};
-use crate::types::{ConvertToUtc, ProviderTypeId, TimezoneContext, ratio_as_percentage};
 use crate::types::timezone_utils;
+use crate::types::{ProviderTypeId, TimezoneContext, ratio_as_percentage};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use entity::proxy_tracing::{self, Entity as ProxyTracing};
 use entity::user_service_apis;
 use sea_orm::prelude::Decimal;
@@ -405,7 +405,9 @@ pub async fn list_user_service_keys(
     // 构建响应数据
     let mut service_api_keys = Vec::new();
     for (api, provider_type) in apis {
-        if let Some(response_api) = build_user_service_key_response(db, api, provider_type, &timezone_context).await {
+        if let Some(response_api) =
+            build_user_service_key_response(db, api, provider_type, &timezone_context).await
+        {
             service_api_keys.push(response_api);
         }
     }
@@ -468,12 +470,10 @@ async fn build_user_service_key_response(
         .one(db)
         .await
     {
-        Ok(Some(tracing)) => {
-            Some({
-                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc);
-                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
-            })
-        }
+        Ok(Some(tracing)) => Some({
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        }),
         _ => None,
     };
 
@@ -506,12 +506,10 @@ async fn build_user_service_key_response(
             let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc);
             timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
         },
-        expires_at: api
-            .expires_at
-            .map(|dt| {
-                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
-                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
-            }),
+        expires_at: api.expires_at.map(|dt| {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        }),
         scheduling_strategy: api.scheduling_strategy,
         retry_count: api.retry_count,
         timeout_seconds: api.timeout_seconds,
@@ -787,12 +785,10 @@ pub async fn get_user_service_key(
         max_requests_per_day: api.max_requests_per_day,
         max_tokens_per_day: api.max_tokens_per_day,
         max_cost_per_day: api.max_cost_per_day,
-        expires_at: api
-            .expires_at
-            .map(|dt| {
-                let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
-                timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
-            }),
+        expires_at: api.expires_at.map(|dt| {
+            let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc);
+            timezone_utils::format_utc_for_response(&utc_dt, &timezone_context.timezone)
+        }),
         is_active: api.is_active,
         created_at: {
             let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(api.created_at, Utc);
@@ -1062,73 +1058,47 @@ pub async fn get_user_service_key_usage(
     };
 
     // 确定时间范围（考虑时区转换）
-    let (start_time, end_time) = match &query.time_range {
-        Some(range) => match range.as_str() {
-            "today" => {
-                let now = Utc::now();
-                let user_today = now.with_timezone(&timezone_context.timezone).date_naive();
-                let start_utc = user_today
-                    .and_hms_opt(0, 0, 0)
-                    .and_then(|dt| dt.to_utc(&timezone_context.timezone))
-                    .unwrap_or(now);
-                let end_utc = user_today
-                    .and_hms_opt(23, 59, 59)
-                    .and_then(|dt| dt.to_utc(&timezone_context.timezone))
-                    .unwrap_or(now);
-                (start_utc.naive_utc(), end_utc.naive_utc())
-            }
-            "7days" => {
-                let end = Utc::now();
-                let start = end - chrono::Duration::days(7);
-                (start.naive_utc(), end.naive_utc())
-            }
-            _ => {
-                let end = Utc::now();
-                let start = end - chrono::Duration::days(30);
-                (start.naive_utc(), end.naive_utc())
-            }
-        },
+    let now = Utc::now();
+    let tz = &timezone_context.timezone;
+    let (today_start_utc, today_end_utc) =
+        timezone_utils::local_day_bounds(&now, tz).unwrap_or((now - Duration::days(1), now));
+
+    let (start_utc, end_utc) = match query.time_range.as_deref() {
+        Some("today") => (today_start_utc, today_end_utc),
+        Some("7days") => (today_end_utc - Duration::days(7), today_end_utc),
+        Some("30days" | _) => (today_end_utc - Duration::days(30), today_end_utc),
         None => {
-            // 使用自定义日期范围（支持时区转换）
             if let (Some(start_str), Some(end_str)) = (&query.start_date, &query.end_date) {
                 if let (Ok(start_date), Ok(end_date)) = (
                     NaiveDate::parse_from_str(start_str, "%Y-%m-%d"),
                     NaiveDate::parse_from_str(end_str, "%Y-%m-%d"),
                 ) {
-                    let start_utc = start_date
-                        .and_hms_opt(0, 0, 0)
-                        .and_then(|dt| dt.to_utc(&timezone_context.timezone));
-                    let end_utc = end_date
-                        .and_hms_opt(23, 59, 59)
-                        .and_then(|dt| dt.to_utc(&timezone_context.timezone));
-
-                    if let (Some(start), Some(end)) = (start_utc, end_utc) {
-                        (start.naive_utc(), end.naive_utc())
+                    if start_date > end_date {
+                        (today_end_utc - Duration::days(30), today_end_utc)
                     } else {
-                        // 时区转换失败，使用默认30天
-                        let end = Utc::now().naive_utc();
-                        let start = end - chrono::Duration::days(30);
-                        (start, end)
+                        let (start_window, _) =
+                            timezone_utils::local_date_window(start_date, 1, tz)
+                                .unwrap_or((today_end_utc - Duration::days(30), today_end_utc));
+                        let (_, end_window) = timezone_utils::local_date_window(end_date, 1, tz)
+                            .unwrap_or((today_end_utc - Duration::days(30), today_end_utc));
+                        (start_window, end_window)
                     }
                 } else {
-                    // 自定义日期解析失败，使用默认30天
-                    let end = Utc::now().naive_utc();
-                    let start = end - chrono::Duration::days(30);
-                    (start, end)
+                    (today_end_utc - Duration::days(30), today_end_utc)
                 }
             } else {
-                // 没有提供自定义日期，使用默认30天
-                let end = Utc::now().naive_utc();
-                let start = end - chrono::Duration::days(30);
-                (start, end)
+                (today_end_utc - Duration::days(30), today_end_utc)
             }
         }
     };
+    let start_time = start_utc.naive_utc();
+    let end_time = end_utc.naive_utc();
 
     // 查询统计数据
     let tracings = match ProxyTracing::find()
         .filter(proxy_tracing::Column::UserServiceApiId.eq(api_id))
-        .filter(proxy_tracing::Column::CreatedAt.between(start_time, end_time))
+        .filter(proxy_tracing::Column::CreatedAt.gte(start_time))
+        .filter(proxy_tracing::Column::CreatedAt.lt(end_time))
         .all(db)
         .await
     {

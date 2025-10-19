@@ -14,7 +14,7 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::response;
 use crate::management::server::AppState;
-use crate::types::{ConvertToUtc, TimezoneContext, ratio_as_percentage};
+use crate::types::{TimezoneContext, ratio_as_percentage, timezone_utils};
 use axum::extract::{Extension, Query, State};
 use chrono::{DateTime, Duration, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
@@ -160,19 +160,30 @@ pub struct UserApiKeysTokenTrendResponse {
 pub async fn get_today_dashboard_cards(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
     let now = Utc::now();
-    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-    let yesterday_start = (now - Duration::days(1))
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
+    let Some((today_start_utc, today_end_utc)) =
+        timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+    else {
+        return crate::management::response::app_error(ProxyError::internal(
+            "Failed to calculate today's time range",
+        ));
+    };
+    let Some((yesterday_start_utc, yesterday_end_utc)) =
+        timezone_utils::local_previous_day_bounds(&now, &timezone_context.timezone)
+    else {
+        return crate::management::response::app_error(ProxyError::internal(
+            "Failed to calculate yesterday's time range",
+        ));
+    };
 
     // 获取今天的数据
     let today_traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(today_start))
+        .filter(proxy_tracing::Column::CreatedAt.gte(today_start_utc.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.lt(today_end_utc.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .all(state.database.as_ref())
         .await
@@ -195,8 +206,8 @@ pub async fn get_today_dashboard_cards(
 
     // 获取昨天的数据
     let yesterday_traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(yesterday_start))
-        .filter(proxy_tracing::Column::CreatedAt.lt(today_start))
+        .filter(proxy_tracing::Column::CreatedAt.gte(yesterday_start_utc.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.lt(yesterday_end_utc.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .all(state.database.as_ref())
         .await
@@ -290,13 +301,14 @@ pub async fn get_models_usage_rate(
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
-    let (start_time, _end_time) = match parse_time_range(&query, &timezone_context) {
+    let (start_time, end_time) = match parse_time_range(&query, &timezone_context) {
         Ok(times) => times,
         Err(error_response) => return error_response,
     };
 
     let traces = match ProxyTracing::find()
         .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.lt(end_time.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
@@ -436,13 +448,14 @@ pub async fn get_models_statistics(
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
-    let (start_time, _end_time) = match parse_time_range(&query, &timezone_context) {
+    let (start_time, end_time) = match parse_time_range(&query, &timezone_context) {
         Ok(times) => times,
         Err(error_response) => return error_response,
     };
 
     let traces = match ProxyTracing::find()
         .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.lt(end_time.naive_utc()))
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .filter(proxy_tracing::Column::IsSuccess.eq(true))
         .all(state.database.as_ref())
@@ -519,11 +532,16 @@ pub async fn get_tokens_trend(
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
-    // 固定获取最近30天的数据
-    let start_time = Utc::now() - Duration::days(30);
+    let now = Utc::now();
+    let (today_start_utc, _) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let window_start = today_start_utc - Duration::days(29); // 共30天
 
     let traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.gte(window_start.naive_utc()))
+        .filter(
+            proxy_tracing::Column::CreatedAt.lt((today_start_utc + Duration::days(1)).naive_utc()),
+        )
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .all(state.database.as_ref())
         .await
@@ -547,9 +565,7 @@ pub async fn get_tokens_trend(
     // 按天分组统计Token使用情况
     let mut daily_stats: HashMap<String, (i64, i64, i64, i64, f64)> = HashMap::new();
     for trace in &traces {
-        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
-            .format("%Y-%m-%d")
-            .to_string();
+        let date = timezone_utils::local_date_label(&trace.created_at, &timezone_context.timezone);
 
         let entry = daily_stats.entry(date).or_insert((0, 0, 0, 0, 0.0));
         entry.0 += i64::from(trace.cache_create_tokens.unwrap_or(0));
@@ -563,53 +579,43 @@ pub async fn get_tokens_trend(
     let mut token_usage = Vec::new();
     let mut daily_totals = Vec::new();
 
-    for i in 0..30 {
-        let date = (Utc::now() - Duration::days(29 - i))
-            .format("%Y-%m-%d")
-            .to_string();
-        let utc_time = Utc::now() - Duration::days(29 - i);
-        let timestamp = crate::types::timezone_utils::format_utc_for_response(
-            &utc_time,
-            &timezone_context.timezone,
-        );
+    let local_today = now.with_timezone(&timezone_context.timezone).date_naive();
+    for offset in 0..30 {
+        let offset_from_start = i64::from(offset);
+        let offset_to_today = i64::from(29 - offset);
+        let local_date = local_today - Duration::days(offset_to_today);
+        let label = local_date.format("%Y-%m-%d").to_string();
+        let default_start = window_start + Duration::days(offset_from_start);
+        let (day_start_utc, _) =
+            timezone_utils::local_date_window(local_date, 1, &timezone_context.timezone)
+                .unwrap_or((default_start, default_start + Duration::days(1)));
+        let timestamp = day_start_utc
+            .with_timezone(&timezone_context.timezone)
+            .to_rfc3339();
 
-        if let Some((cache_create, cache_read, prompt, completion, cost)) = daily_stats.get(&date) {
-            let total_tokens = prompt + completion;
-            daily_totals.push(total_tokens);
+        let (cache_create, cache_read, prompt, completion, cost) = daily_stats
+            .get(&label)
+            .copied()
+            .unwrap_or((0, 0, 0, 0, 0.0));
+        let total_tokens = prompt + completion;
+        daily_totals.push(total_tokens);
 
-            token_usage.push(TokenTrendPoint {
-                timestamp,
-                cache_create_tokens: *cache_create,
-                cache_read_tokens: *cache_read,
-                tokens_prompt: *prompt,
-                tokens_completion: *completion,
-                cost: *cost,
-            });
-        } else {
-            daily_totals.push(0);
-            token_usage.push(TokenTrendPoint {
-                timestamp,
-                cache_create_tokens: 0,
-                cache_read_tokens: 0,
-                tokens_prompt: 0,
-                tokens_completion: 0,
-                cost: 0.0,
-            });
-        }
+        token_usage.push(TokenTrendPoint {
+            timestamp,
+            cache_create_tokens: cache_create,
+            cache_read_tokens: cache_read,
+            tokens_prompt: prompt,
+            tokens_completion: completion,
+            cost,
+        });
     }
 
     // 计算今天、平均值和最大值
-    let today_traces: Vec<&proxy_tracing::Model> = traces
+    let current_token_usage: i64 = traces
         .iter()
         .filter(|t| {
-            let trace_date =
-                DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
-            trace_date == Utc::now().date_naive()
+            timezone_utils::is_same_local_day(&t.created_at, &now, &timezone_context.timezone)
         })
-        .collect();
-
-    let current_token_usage: i64 = today_traces
-        .iter()
         .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
@@ -634,14 +640,21 @@ pub async fn get_tokens_trend(
 pub async fn get_user_api_keys_request_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
     // 固定获取最近30天的数据
-    let start_time = Utc::now() - Duration::days(30);
+    let now = Utc::now();
+    let (today_start_utc, _) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let window_start = today_start_utc - Duration::days(29);
 
     let traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.gte(window_start.naive_utc()))
+        .filter(
+            proxy_tracing::Column::CreatedAt.lt((today_start_utc + Duration::days(1)).naive_utc()),
+        )
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .all(state.database.as_ref())
         .await
@@ -665,9 +678,7 @@ pub async fn get_user_api_keys_request_trend(
     // 按天分组统计请求次数
     let mut daily_requests: HashMap<String, i64> = HashMap::new();
     for trace in &traces {
-        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
-            .format("%Y-%m-%d")
-            .to_string();
+        let date = timezone_utils::local_date_label(&trace.created_at, &timezone_context.timezone);
         *daily_requests.entry(date).or_insert(0) += 1;
     }
 
@@ -675,13 +686,21 @@ pub async fn get_user_api_keys_request_trend(
     let mut request_usage = Vec::new();
     let mut daily_totals = Vec::new();
 
-    for i in 0..30 {
-        let date = (Utc::now() - Duration::days(29 - i))
-            .format("%Y-%m-%d")
-            .to_string();
-        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
+    let local_today = now.with_timezone(&timezone_context.timezone).date_naive();
+    for offset in 0..30 {
+        let offset_from_start = i64::from(offset);
+        let offset_to_today = i64::from(29 - offset);
+        let local_date = local_today - Duration::days(offset_to_today);
+        let label = local_date.format("%Y-%m-%d").to_string();
+        let default_start = window_start + Duration::days(offset_from_start);
+        let (day_start_utc, _) =
+            timezone_utils::local_date_window(local_date, 1, &timezone_context.timezone)
+                .unwrap_or((default_start, default_start + Duration::days(1)));
+        let timestamp = day_start_utc
+            .with_timezone(&timezone_context.timezone)
+            .to_rfc3339();
 
-        let request_count = daily_requests.get(&date).copied().unwrap_or(0);
+        let request_count = daily_requests.get(&label).copied().unwrap_or(0);
         daily_totals.push(request_count);
 
         request_usage.push(UserApiKeysRequestTrendPoint {
@@ -695,9 +714,7 @@ pub async fn get_user_api_keys_request_trend(
         traces
             .iter()
             .filter(|t| {
-                let trace_date =
-                    DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
-                trace_date == Utc::now().date_naive()
+                timezone_utils::is_same_local_day(&t.created_at, &now, &timezone_context.timezone)
             })
             .count(),
     );
@@ -723,14 +740,21 @@ pub async fn get_user_api_keys_request_trend(
 pub async fn get_user_api_keys_token_trend(
     State(state): State<AppState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
+    Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     let user_id = auth_context.user_id;
 
     // 固定获取最近30天的数据
-    let start_time = Utc::now() - Duration::days(30);
+    let now = Utc::now();
+    let (today_start_utc, _) = timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+        .unwrap_or((now - Duration::days(1), now));
+    let window_start = today_start_utc - Duration::days(29);
 
     let traces = match ProxyTracing::find()
-        .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
+        .filter(proxy_tracing::Column::CreatedAt.gte(window_start.naive_utc()))
+        .filter(
+            proxy_tracing::Column::CreatedAt.lt((today_start_utc + Duration::days(1)).naive_utc()),
+        )
         .filter(proxy_tracing::Column::UserId.eq(user_id))
         .all(state.database.as_ref())
         .await
@@ -754,9 +778,7 @@ pub async fn get_user_api_keys_token_trend(
     // 按天分组统计Token使用量
     let mut daily_tokens: HashMap<String, i64> = HashMap::new();
     for trace in &traces {
-        let date = DateTime::<Utc>::from_naive_utc_and_offset(trace.created_at, Utc)
-            .format("%Y-%m-%d")
-            .to_string();
+        let date = timezone_utils::local_date_label(&trace.created_at, &timezone_context.timezone);
         let tokens = i64::from(trace.tokens_total.unwrap_or(0));
         *daily_tokens.entry(date).or_insert(0) += tokens;
     }
@@ -765,13 +787,21 @@ pub async fn get_user_api_keys_token_trend(
     let mut token_usage = Vec::new();
     let mut daily_totals = Vec::new();
 
-    for i in 0..30 {
-        let date = (Utc::now() - Duration::days(29 - i))
-            .format("%Y-%m-%d")
-            .to_string();
-        let timestamp = (Utc::now() - Duration::days(29 - i)).to_rfc3339();
+    let local_today = now.with_timezone(&timezone_context.timezone).date_naive();
+    for offset in 0..30 {
+        let offset_from_start = i64::from(offset);
+        let offset_to_today = i64::from(29 - offset);
+        let local_date = local_today - Duration::days(offset_to_today);
+        let label = local_date.format("%Y-%m-%d").to_string();
+        let default_start = window_start + Duration::days(offset_from_start);
+        let (day_start_utc, _) =
+            timezone_utils::local_date_window(local_date, 1, &timezone_context.timezone)
+                .unwrap_or((default_start, default_start + Duration::days(1)));
+        let timestamp = day_start_utc
+            .with_timezone(&timezone_context.timezone)
+            .to_rfc3339();
 
-        let total_token = daily_tokens.get(&date).copied().unwrap_or(0);
+        let total_token = daily_tokens.get(&label).copied().unwrap_or(0);
         daily_totals.push(total_token);
 
         token_usage.push(UserApiKeysTokenTrendPoint {
@@ -781,17 +811,11 @@ pub async fn get_user_api_keys_token_trend(
     }
 
     // 计算今天、平均值和最大值
-    let today_traces: Vec<&proxy_tracing::Model> = traces
+    let current_token_usage: i64 = traces
         .iter()
         .filter(|t| {
-            let trace_date =
-                DateTime::<Utc>::from_naive_utc_and_offset(t.created_at, Utc).date_naive();
-            trace_date == Utc::now().date_naive()
+            timezone_utils::is_same_local_day(&t.created_at, &now, &timezone_context.timezone)
         })
-        .collect();
-
-    let current_token_usage: i64 = today_traces
-        .iter()
         .map(|t| i64::from(t.tokens_total.unwrap_or(0)))
         .sum();
 
@@ -827,53 +851,40 @@ fn parse_time_range(
     query: &TimeRangeQuery,
     timezone_context: &TimezoneContext,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), axum::response::Response> {
-    let end_time = Utc::now();
-
-    let start_time = match query.range.as_deref() {
-        Some("today") => {
-            // 获取用户时区的今天开始时间
-            let user_today = end_time
-                .with_timezone(&timezone_context.timezone)
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
-
-            // 转换为UTC
-            user_today
-                .to_utc(&timezone_context.timezone)
-                .unwrap_or(end_time - Duration::days(1))
-        }
-        Some("30days") => {
-            // 获取30天前的UTC时间
-            end_time - Duration::days(30)
-        }
+    let now = Utc::now();
+    match query.range.as_deref() {
+        Some("today") => timezone_utils::local_day_bounds(&now, &timezone_context.timezone)
+            .ok_or_else(|| {
+                crate::management::response::app_error(ProxyError::internal(
+                    "Failed to calculate local day bounds",
+                ))
+            }),
+        Some("30days") => Ok((now - Duration::days(30), now)),
         Some("custom") => {
             if let (Some(start_naive), Some(end_naive)) = (&query.start, &query.end) {
-                // 使用ConvertToUtc trait转换时区
-                match (
-                    start_naive.to_utc(&timezone_context.timezone),
-                    end_naive.to_utc(&timezone_context.timezone),
-                ) {
-                    (Some(start_utc), Some(_end_utc)) => start_utc,
-                    _ => {
-                        return Err(crate::management::response::app_error(
-                            ProxyError::internal("Invalid datetime values"),
-                        ));
-                    }
+                if start_naive > end_naive {
+                    return Err(crate::management::response::app_error(
+                        ProxyError::internal("Start datetime must be before end datetime"),
+                    ));
                 }
+                timezone_utils::convert_range_to_utc(
+                    start_naive,
+                    end_naive,
+                    &timezone_context.timezone,
+                )
+                .ok_or_else(|| {
+                    crate::management::response::app_error(ProxyError::internal(
+                        "Invalid datetime values",
+                    ))
+                })
             } else {
-                return Err(crate::management::response::app_error(
+                Err(crate::management::response::app_error(
                     ProxyError::internal("Custom range requires both start and end datetime"),
-                ));
+                ))
             }
         }
-        _ => {
-            // 默认7天前
-            end_time - Duration::days(7)
-        }
-    };
-
-    Ok((start_time, end_time))
+        _ => Ok((now - Duration::days(7), now)),
+    }
 }
 
 /// 计算增长率（整数）
