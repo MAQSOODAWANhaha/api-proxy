@@ -521,14 +521,14 @@ fn previous_period(range: &Range<DateTime<Utc>>) -> Range<DateTime<Utc>> {
 const fn trend_bucket_expr(backend: DatabaseBackend, interval: TrendInterval) -> &'static str {
     match backend {
         DatabaseBackend::Sqlite => match interval {
-            TrendInterval::Hour => "DATETIME(created_at, 'start of hour')",
-            TrendInterval::Day => "DATETIME(created_at, 'start of day')",
+            TrendInterval::Hour => {
+                "DATETIME((CAST(strftime('%s', created_at) AS INTEGER) / 3600) * 3600, 'unixepoch')"
+            }
+            TrendInterval::Day => {
+                "DATETIME((CAST(strftime('%s', created_at) AS INTEGER) / 86400) * 86400, 'unixepoch')"
+            }
         },
-        DatabaseBackend::MySql => match interval {
-            TrendInterval::Hour => "CAST(DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS DATETIME)",
-            TrendInterval::Day => "CAST(DATE_FORMAT(created_at, '%Y-%m-%d 00:00:00') AS DATETIME)",
-        },
-        DatabaseBackend::Postgres => match interval {
+        _ => match interval {
             TrendInterval::Hour => "DATE_TRUNC('hour', created_at)",
             TrendInterval::Day => "DATE_TRUNC('day', created_at)",
         },
