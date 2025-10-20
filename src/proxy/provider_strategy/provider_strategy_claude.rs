@@ -4,6 +4,7 @@
 
 use super::ProviderStrategy;
 use crate::error::{ProxyError, Result};
+use crate::key_pool::ApiKeyHealthChecker;
 use crate::proxy::ProxyContext;
 use crate::{
     ldebug, linfo,
@@ -12,7 +13,6 @@ use crate::{
 };
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use crate::key_pool::ApiKeyHealthChecker;
 use regex::Regex;
 use std::sync::Arc;
 

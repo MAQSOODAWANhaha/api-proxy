@@ -13,7 +13,6 @@ use crate::{
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 
-
 #[derive(Debug, Clone, PartialEq)]
 enum GeminiProxyMode {
     OAuthWithoutProject,

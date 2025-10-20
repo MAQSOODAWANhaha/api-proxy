@@ -21,6 +21,7 @@ import SettingsPage from './pages/Settings'
 import ProfilePage from './pages/Profile'
 import LoginPage from './pages/Login'
 import OAuthCallbackPage from './pages/OAuthCallbackPage'
+import StatsStandalonePage from './pages/stats/StatsStandalonePage'
 
 /**
  * 应用根组件
@@ -33,14 +34,17 @@ export default function App() {
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <HashRouter>
         <Routes>
-          {/* 默认重定向到仪表板 */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          {/* 默认展示统计页面 */}
+          <Route path="/" element={<Navigate to="/stats" replace />} />
 
           {/* 登录页（公开） */}
           <Route path="/login" element={<LoginPage />} />
 
           {/* OAuth回调页（公开） */}
           <Route path="/auth/callback" element={<OAuthCallbackPage />} />
+
+          {/* 独立统计页面（公开） */}
+          <Route path="/stats" element={<StatsStandalonePage />} />
 
           {/* 受保护区域：登录后访问 */}
           <Route element={<ProtectedRoute />}>
@@ -58,7 +62,7 @@ export default function App() {
           </Route>
 
           {/* 兜底重定向 */}
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/stats" replace />} />
         </Routes>
       </HashRouter>
       <Toaster richColors />

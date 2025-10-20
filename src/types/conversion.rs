@@ -55,6 +55,11 @@ pub fn option_token_count_from_i64(
     value.map(|v| token_count_from_i64(v, field)).transpose()
 }
 
+#[must_use]
+pub fn option_u64_from_i64(value: Option<i64>) -> Option<u64> {
+    value.and_then(|v| u64::try_from(v).ok())
+}
+
 const F64_EXACT_INTEGER_MAX: u64 = 1u64 << f64::MANTISSA_DIGITS;
 
 /// 将无符号整数比值转换为浮点表示。

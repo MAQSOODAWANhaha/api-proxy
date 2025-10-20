@@ -7,6 +7,7 @@ pub mod middleware;
 pub mod response;
 pub mod routes;
 pub mod server;
+pub mod services;
 
 pub use handlers::*;
 pub use routes::create_routes;

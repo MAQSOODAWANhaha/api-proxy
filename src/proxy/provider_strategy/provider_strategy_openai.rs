@@ -4,6 +4,7 @@
 
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{Context, Result};
+use crate::key_pool::ApiKeyHealthChecker;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::proxy::context::ResolvedCredential;
@@ -13,7 +14,6 @@ use chrono::Utc;
 use entity::user_provider_keys;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
-use crate::key_pool::ApiKeyHealthChecker;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ impl OpenAIStrategy {
     /// `从OpenAI` access_token中解析chatgpt-account-id
     fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
         let jwt_parser = JWTParser;
-        jwt_parser.extract_chatgpt_account_id(access_token).ok()? 
+        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
 
     /// 异步处理429错误
@@ -66,11 +66,14 @@ impl OpenAIStrategy {
                 "成功解析OpenAI 429错误，准备更新密钥状态",
                 error_type = %error_info.error.r#type
             );
-            let resets_at = error_info.error.resets_in_seconds.map(|seconds| {
-                (Utc::now() + chrono::Duration::seconds(seconds)).naive_utc()
-            });
+            let resets_at = error_info
+                .error
+                .resets_in_seconds
+                .map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).naive_utc());
             let details = serde_json::to_string(&error_info.error).unwrap_or_default();
-            health_checker.mark_key_as_rate_limited(key_id, resets_at, &details).await?;
+            health_checker
+                .mark_key_as_rate_limited(key_id, resets_at, &details)
+                .await?;
         } else {
             lwarn!(
                 &ctx.request_id,

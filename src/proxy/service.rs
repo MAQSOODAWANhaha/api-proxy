@@ -253,7 +253,8 @@ impl ProxyHttp for ProxyService {
 
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
             {
-                ctx.strategy = provider_strategy::make_strategy(name, Some(self.health_checker.clone()));
+                ctx.strategy =
+                    provider_strategy::make_strategy(name, Some(self.health_checker.clone()));
             }
         }
 

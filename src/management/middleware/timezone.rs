@@ -2,8 +2,9 @@
 //!
 //! 用于解析 X-Timezone 头，并在请求上下文中提供时区信息。
 
-use crate::types::TimezoneContext;
+use crate::types::{self, TimezoneContext};
 use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use std::sync::Arc;
 
@@ -16,8 +17,7 @@ pub async fn timezone_middleware(mut request: Request, next: Next) -> Result<Res
         .and_then(|header| header.to_str().ok());
 
     // 解析时区，如果无效则默认使用 UTC
-    let timezone =
-        timezone_header.map_or(Tz::UTC, |tz_str| tz_str.parse::<Tz>().unwrap_or(Tz::UTC));
+    let timezone = parse_timezone_header(timezone_header);
 
     // 创建时区上下文
     let tz_context = TimezoneContext { timezone };
@@ -32,4 +32,18 @@ pub async fn timezone_middleware(mut request: Request, next: Next) -> Result<Res
 /// 获取请求中的时区上下文
 pub fn get_timezone_from_request(request: &Request) -> Option<Arc<TimezoneContext>> {
     request.extensions().get::<Arc<TimezoneContext>>().cloned()
+}
+
+/// 解析时区 header，为空或不合法时返回 UTC
+#[must_use]
+pub fn parse_timezone_header(header: Option<&str>) -> Tz {
+    header
+        .and_then(|raw| raw.trim().parse::<Tz>().ok())
+        .unwrap_or(Tz::UTC)
+}
+
+/// 根据时区将当前时间转换为当日的 UTC 范围
+#[must_use]
+pub fn current_day_range(timezone: &Tz) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    types::timezone_utils::local_day_bounds(&Utc::now(), timezone)
 }

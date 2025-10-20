@@ -986,7 +986,6 @@ impl ApiKeyHealthChecker {
 
         Ok(())
     }
-
 }
 
 impl ApiKeyHealth {

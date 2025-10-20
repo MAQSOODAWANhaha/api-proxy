@@ -16,6 +16,10 @@ pub fn create_routes(state: AppState) -> Router {
             get(crate::management::handlers::system::ping_handler),
         )
         .route(
+            "/stats",
+            get(crate::management::handlers::stats_public::get_stats),
+        )
+        .route(
             "/users/auth/login",
             post(crate::management::handlers::auth::login),
         )
