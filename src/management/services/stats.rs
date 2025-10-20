@@ -11,8 +11,8 @@ use entity::{
     user_service_apis::Entity as UserServiceApis,
 };
 use sea_orm::{
-    ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult, Order,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait,
+    FromQueryResult, Order, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -332,10 +332,7 @@ impl<'a> StatsService<'a> {
         range: &Range<DateTime<Utc>>,
     ) -> Result<Vec<TrendPoint>> {
         let interval = pick_trend_interval(range);
-        let bucket_expr = match interval {
-            TrendInterval::Hour => "DATE_TRUNC('hour', created_at)",
-            TrendInterval::Day => "DATE_TRUNC('day', created_at)",
-        };
+        let bucket_expr = trend_bucket_expr(self.db.get_database_backend(), interval);
 
         let select = ProxyTracing::find()
             .select_only()
@@ -518,6 +515,23 @@ fn previous_period(range: &Range<DateTime<Utc>>) -> Range<DateTime<Utc>> {
     Range {
         start: range.start - duration,
         end: range.start,
+    }
+}
+
+const fn trend_bucket_expr(backend: DatabaseBackend, interval: TrendInterval) -> &'static str {
+    match backend {
+        DatabaseBackend::Sqlite => match interval {
+            TrendInterval::Hour => "DATETIME(created_at, 'start of hour')",
+            TrendInterval::Day => "DATETIME(created_at, 'start of day')",
+        },
+        DatabaseBackend::MySql => match interval {
+            TrendInterval::Hour => "CAST(DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS DATETIME)",
+            TrendInterval::Day => "CAST(DATE_FORMAT(created_at, '%Y-%m-%d 00:00:00') AS DATETIME)",
+        },
+        DatabaseBackend::Postgres => match interval {
+            TrendInterval::Hour => "DATE_TRUNC('hour', created_at)",
+            TrendInterval::Day => "DATE_TRUNC('day', created_at)",
+        },
     }
 }
 
