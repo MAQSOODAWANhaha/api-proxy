@@ -4,7 +4,7 @@
 # ================================
 # 前端构建阶段
 # ================================
-FROM docker.m.daocloud.io/node:18-alpine as frontend-builder
+FROM docker.m.daocloud.io/node:22-alpine as frontend-builder
 
 LABEL maintainer="AI Proxy Team"
 LABEL description="AI代理平台 - 前后端统一部署版本"
@@ -16,7 +16,7 @@ WORKDIR /app/web
 COPY web/package*.json ./
 
 # 安装依赖
-RUN npm ci --only=production=false
+RUN npm ci
 
 # 复制前端源代码
 COPY web/ ./
