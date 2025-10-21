@@ -107,8 +107,10 @@ impl ProviderStrategy for GeminiStrategy {
             && !pid.is_empty()
         {
             let path = session.req_header().uri.path();
-            let need = path.contains("streamGenerateContent") || path.contains("generateContent");
-            ctx.will_modify_body = need;
+            let need_generate =
+                path.contains("streamGenerateContent") || path.contains("generateContent");
+            let need_load = path.contains("loadCodeAssist");
+            ctx.will_modify_body = need_generate || need_load;
         }
         Ok(())
     }
@@ -129,6 +131,27 @@ impl ProviderStrategy for GeminiStrategy {
         }
 
         let request_path = session.req_header().uri.path();
+
+        // loadCodeAssist 请求需要补充 Project 与默认的元数据字段
+        if request_path.contains("loadCodeAssist") {
+            let modified = backend.project_id.as_ref().is_some_and(|project_id| {
+                !project_id.is_empty() && inject_load_code_assist_fields(json_value, project_id)
+            });
+
+            if modified {
+                linfo!(
+                    &ctx.request_id,
+                    LogStage::RequestModify,
+                    LogComponent::GeminiStrategy,
+                    "inject_load_code_assist_body",
+                    "Gemini 策略为 loadCodeAssist 请求补充项目及元数据字段",
+                    backend_project_id = backend.project_id.as_deref().unwrap_or("<none>"),
+                    route_path = request_path
+                );
+            }
+
+            return Ok(modified);
+        }
 
         // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
         let modified = if ctx.will_modify_body {
@@ -183,28 +206,53 @@ impl ProviderStrategy for GeminiStrategy {
 
 // ---------------- 注入帮助函数（取自原 RequestHandler 逻辑，简化后无副作用） ----------------
 
-fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id: &str) -> bool {
-    if let Some(obj) = json_value.as_object_mut() {
-        // 根据Google Gemini CLI实现，正确的格式是：
-        // {
-        //   "model": "gemini-2.5-flash",
-        //   "project": "project-id", // 可以为空字符串
-        //   "user_prompt_id": "uuid",
-        //   "request": {
-        //     "contents": [...],
-        //     "generationConfig": {...}
-        //   }
-        // }
+fn overwrite_string_field(json_value: &mut serde_json::Value, key_path: &str, value: &str) -> bool {
+    use serde_json::{Map, Value};
 
-        // 设置 project 字段：insert 方法会自动处理插入新值或替换已存在值
-        obj.insert(
-            "project".to_string(),
-            serde_json::Value::String(project_id.to_string()),
-        );
+    let mut cursor = match json_value.as_object_mut() {
+        Some(obj) => Value::Object(std::mem::take(obj)),
+        None => return false,
+    };
 
+    let mut keys = key_path.split('.').peekable();
+    let mut current = &mut cursor;
+
+    while let Some(key) = keys.next() {
+        let is_last = keys.peek().is_none();
+
+        match current {
+            Value::Object(obj) if is_last => {
+                obj.insert(key.to_string(), Value::String(value.to_string()));
+            }
+            Value::Object(obj) => {
+                let entry = obj
+                    .entry(key.to_string())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if !entry.is_object() {
+                    *entry = Value::Object(Map::new());
+                }
+                current = entry;
+            }
+            _ => return false,
+        }
+    }
+
+    if let Value::Object(updated) = cursor {
+        *json_value = Value::Object(updated);
         return true;
     }
+
     false
+}
+
+fn inject_generatecontent_fields(json_value: &mut serde_json::Value, project_id: &str) -> bool {
+    overwrite_string_field(json_value, "project", project_id)
+}
+
+fn inject_load_code_assist_fields(json_value: &mut serde_json::Value, project_id: &str) -> bool {
+    let set_project = overwrite_string_field(json_value, "cloudaicompanionProject", project_id);
+    let set_duet = overwrite_string_field(json_value, "metadata.duetProject", project_id);
+    set_project || set_duet
 }
 
 #[cfg(test)]
@@ -451,6 +499,42 @@ mod tests {
 
         // 验证 project 字段被正确添加
         assert!(json_value.as_object().unwrap().contains_key("project"));
+    }
+
+    #[test]
+    fn test_inject_load_code_assist_fields_with_minimal_body() {
+        let mut json_value = serde_json::json!({});
+
+        let changed = inject_load_code_assist_fields(&mut json_value, "project-123");
+
+        assert!(changed);
+        let obj = json_value.as_object().unwrap();
+        assert_eq!(obj["cloudaicompanionProject"], "project-123");
+
+        let metadata = obj["metadata"].as_object().unwrap();
+        assert_eq!(metadata["duetProject"], "project-123");
+        assert_eq!(metadata.len(), 1);
+    }
+
+    #[test]
+    fn test_inject_load_code_assist_fields_overrides_different_values() {
+        let mut json_value = serde_json::json!({
+            "cloudaicompanionProject": "old-project",
+            "metadata": {
+                "duetProject": "legacy",
+                "otherField": "keep-me"
+            }
+        });
+
+        let changed = inject_load_code_assist_fields(&mut json_value, "project-456");
+
+        assert!(changed);
+        let obj = json_value.as_object().unwrap();
+        assert_eq!(obj["cloudaicompanionProject"], "project-456");
+
+        let metadata = obj["metadata"].as_object().unwrap();
+        assert_eq!(metadata["duetProject"], "project-456");
+        assert_eq!(metadata["otherField"], "keep-me");
     }
 
     #[test]
