@@ -47,7 +47,7 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
     <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex flex-col gap-1 border-b border-neutral-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-neutral-900">调用日志</h2>
+          <h2 className="text-base font-semibold text-neutral-900">请求记录</h2>
           <p className="text-xs text-neutral-500">最新调用记录，帮助定位问题与复盘请求表现</p>
         </div>
         <span className="text-xs text-neutral-400">时间显示时区：{timezone}</span>
@@ -115,10 +115,11 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
                     </td>
                     <td className="px-5 py-3 align-top text-xs text-neutral-600">
                       <div className="font-medium text-neutral-800">
-                        {item.tokens_total.toLocaleString()}
+                        总计：{item.tokens_total.toLocaleString()}
                       </div>
-                      <div className="text-neutral-400">
-                        提示 {item.tokens_prompt.toLocaleString()} / 完成 {item.tokens_completion.toLocaleString()}
+                      <div className="text-neutral-400 space-y-0.5">
+                        <div>输入：{item.tokens_prompt.toLocaleString()} | 输出：{item.tokens_completion.toLocaleString()}</div>
+                        <div>缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} | 缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}</div>
                       </div>
                     </td>
                     <td className="px-5 py-3 align-top text-xs text-neutral-600">

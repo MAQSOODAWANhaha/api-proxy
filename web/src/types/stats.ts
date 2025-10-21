@@ -46,6 +46,8 @@ export interface LogItem {
   tokens_prompt: number
   tokens_completion: number
   tokens_total: number
+  cache_create_tokens?: number | null
+  cache_read_tokens?: number | null
   cost?: number | null
   cost_currency?: string | null
   request_id: string
