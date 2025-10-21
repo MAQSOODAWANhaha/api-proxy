@@ -9,7 +9,10 @@ use crate::logging::{LogComponent, LogStage, log_proxy_failure_details};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::{CompleteTraceParams, ImmediateProxyTracer, StartTraceParams};
 use crate::{error::ProxyError, error::Result, linfo, lwarn};
+use flate2::read::GzDecoder;
 use pingora_core::Error as PingoraError;
+use serde_json::json;
+use std::io::Read;
 
 /// 统一的请求追踪管理器
 pub struct TraceManager {
@@ -138,8 +141,29 @@ impl TraceManager {
 
         if let Some(tracer) = &self.tracer {
             let (error_type, error_message) = error.map_or_else(
-                || (Some(format!("HTTP {status_code}")), Some(String::new())),
-                |err| (Some(format!("{:?}", err.etype)), Some(err.to_string())),
+                || {
+                    let err_type = format!("HTTP {status_code}");
+                    let body = decode_response_body(ctx).unwrap_or_default();
+                    let structured = json!({
+                        "source": "upstream",
+                        "kind": "upstream_error",
+                        "error_type": err_type,
+                        "message": body
+                    })
+                    .to_string();
+                    (Some(err_type), Some(structured))
+                },
+                |err| {
+                    let err_type = format!("{:?}", err.etype);
+                    let structured = json!({
+                        "source": "pingora",
+                        "kind": "pingora_error",
+                        "error_type": err_type,
+                        "message": err.to_string()
+                    })
+                    .to_string();
+                    (Some(err_type), Some(structured))
+                },
             );
 
             let params = CompleteTraceParams {
@@ -294,4 +318,27 @@ impl TraceManager {
             );
         }
     }
+}
+
+fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
+    if ctx.response_body.is_empty() {
+        return None;
+    }
+
+    let raw_bytes = ctx.response_body.as_ref();
+
+    if ctx
+        .response_details
+        .content_encoding
+        .as_deref()
+        .is_some_and(|encoding| encoding.to_ascii_lowercase().contains("gzip"))
+    {
+        let mut decoder = GzDecoder::new(raw_bytes);
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_ok() {
+            return Some(String::from_utf8_lossy(&decompressed).into_owned());
+        }
+    }
+
+    Some(String::from_utf8_lossy(raw_bytes).into_owned())
 }
