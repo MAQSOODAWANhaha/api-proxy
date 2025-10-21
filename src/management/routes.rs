@@ -15,10 +15,7 @@ pub fn create_routes(state: AppState) -> Router {
             "/ping",
             get(crate::management::handlers::system::ping_handler),
         )
-        .route(
-            "/stats",
-            get(crate::management::handlers::stats_public::get_stats),
-        )
+        .nest("/stats", public_stats_routes())
         .route(
             "/users/auth/login",
             post(crate::management::handlers::auth::login),
@@ -51,6 +48,27 @@ pub fn create_routes(state: AppState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state)
+}
+
+/// 公开统计路由
+fn public_stats_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/overview",
+            get(crate::management::handlers::stats_public::get_stats_overview),
+        )
+        .route(
+            "/trend",
+            get(crate::management::handlers::stats_public::get_stats_trend),
+        )
+        .route(
+            "/model-share",
+            get(crate::management::handlers::stats_public::get_stats_model_share),
+        )
+        .route(
+            "/logs",
+            get(crate::management::handlers::stats_public::get_stats_logs),
+        )
 }
 
 /// 健康检查路由

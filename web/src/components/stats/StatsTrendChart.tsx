@@ -11,21 +11,18 @@ import {
 } from '@/components/ui/chart'
 import type { TrendPoint } from '@/types/stats'
 import { useTimezoneStore } from '@/store/timezone'
-import { useStatsStore } from '@/store/stats'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import type { Timeframe } from '@/store/stats'
 
 interface StatsTrendChartProps {
   data: TrendPoint[]
   loading?: boolean
   hasFetched: boolean
+  timeframe: Timeframe
+  onTimeframeChange?: (value: Timeframe) => void
+  timeframeOptions?: Timeframe[]
 }
 
 const chartConfig: ChartConfig = {
@@ -43,19 +40,24 @@ const chartConfig: ChartConfig = {
   },
 }
 
-const timeframeDaysMap = {
-  '90d': 90,
-  '30d': 30,
+const timeframeDaysMap: Record<Timeframe, number> = {
   '7d': 7,
-} as const
+  '30d': 30,
+  '90d': 90,
+}
 
-export function StatsTrendChart({ data, loading, hasFetched }: StatsTrendChartProps) {
+export function StatsTrendChart({
+  data,
+  loading,
+  hasFetched,
+  timeframe,
+  onTimeframeChange,
+  timeframeOptions = ['7d', '30d'],
+}: StatsTrendChartProps) {
   const timezone = useTimezoneStore((state) => state.timezone)
-  const { filters, setTimeframe } = useStatsStore()
-  const timeframe = filters.timeframe
 
   const chartData = useMemo(() => {
-    const windowDays = timeframeDaysMap[timeframe]
+    const windowDays = timeframeDaysMap[timeframe] ?? 7
     const now = new Date()
 
     return data
@@ -80,16 +82,25 @@ export function StatsTrendChart({ data, loading, hasFetched }: StatsTrendChartPr
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <CardTitle className="text-lg font-semibold">请求趋势</CardTitle>
-            <Select value={timeframe} onValueChange={(value) => setTimeframe(value as typeof timeframe)}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="近 90 天" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="90d">近 90 天</SelectItem>
-                <SelectItem value="30d">近 30 天</SelectItem>
-                <SelectItem value="7d">近 7 天</SelectItem>
-              </SelectContent>
-            </Select>
+            <ToggleGroup
+              type="single"
+              value={timeframe}
+              onValueChange={(value) => {
+                if (!value) return
+                onTimeframeChange?.(value as Timeframe)
+              }}
+              className="rounded-md border border-neutral-200 bg-neutral-50 p-1 text-xs"
+            >
+              {timeframeOptions.map((option) => (
+                <ToggleGroupItem
+                  key={option}
+                  value={option}
+                  className="px-3 py-1 data-[state=on]:bg-white data-[state=on]:text-neutral-900"
+                >
+                  {option === '7d' ? '近 7 天' : option === '30d' ? '近 30 天' : '近 90 天'}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
           <CardDescription className="leading-relaxed">
             请求次数、Token 消耗、费用趋势（{timezone} 时区）

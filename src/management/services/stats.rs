@@ -2,10 +2,10 @@
 //!
 //! 基于 `proxy_tracing` 表聚合 `user_service_key` 对应的请求、Token、费用等统计数据。
 
-use std::collections::HashMap;
 use std::ops::Range;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono_tz::Tz;
 use entity::{
     proxy_tracing, proxy_tracing::Entity as ProxyTracing, user_service_apis,
     user_service_apis::Entity as UserServiceApis,
@@ -43,18 +43,6 @@ impl From<bool> for AggregateMode {
     }
 }
 
-/// 统计查询参数
-#[derive(Debug)]
-pub struct StatsParams {
-    pub user_service_key: String,
-    pub range: Range<DateTime<Utc>>,
-    pub aggregate: AggregateMode,
-    pub timezone: chrono_tz::Tz,
-    pub page: u32,
-    pub page_size: u32,
-    pub search: Option<String>,
-}
-
 /// 汇总卡片数据
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct SummaryMetric {
@@ -86,6 +74,13 @@ pub struct ModelShareItem {
     pub tokens: i64,
     pub cost: f64,
     pub percentage: f64,
+}
+
+/// 模型占比响应
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelSharePayload {
+    pub today: Vec<ModelShareItem>,
+    pub total: Vec<ModelShareItem>,
 }
 
 /// 日志条目
@@ -123,13 +118,42 @@ pub struct LogsPayload {
     pub total: u64,
 }
 
-/// 统计接口整体数据载荷
-#[derive(Debug, Clone, Serialize)]
-pub struct StatsPayload {
-    pub summary: Vec<SummaryMetric>,
-    pub trend: Vec<TrendPoint>,
-    pub model_share: HashMap<String, Vec<ModelShareItem>>,
-    pub logs: LogsPayload,
+/// 概览查询参数
+#[derive(Debug)]
+pub struct StatsOverviewParams {
+    pub user_service_key: String,
+    pub range: Range<DateTime<Utc>>,
+    pub aggregate: AggregateMode,
+    pub timezone: Tz,
+}
+
+/// 趋势查询参数
+#[derive(Debug)]
+pub struct StatsTrendParams {
+    pub user_service_key: String,
+    pub range: Range<DateTime<Utc>>,
+    pub aggregate: AggregateMode,
+}
+
+/// 模型占比查询参数
+#[derive(Debug)]
+pub struct StatsModelShareParams {
+    pub user_service_key: String,
+    pub range: Range<DateTime<Utc>>,
+    pub aggregate: AggregateMode,
+    pub timezone: Tz,
+    pub include_today: bool,
+}
+
+/// 调用日志查询参数
+#[derive(Debug)]
+pub struct StatsLogsParams {
+    pub user_service_key: String,
+    pub range: Range<DateTime<Utc>>,
+    pub aggregate: AggregateMode,
+    pub page: u32,
+    pub page_size: u32,
+    pub search: Option<String>,
 }
 
 /// 内部汇总查询结果
@@ -181,59 +205,119 @@ impl<'a> StatsService<'a> {
     }
 
     /// 执行统计聚合
-    pub async fn collect(&self, params: &StatsParams) -> Result<StatsPayload> {
+    pub async fn overview(&self, params: &StatsOverviewParams) -> Result<Vec<SummaryMetric>> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
             Authentication,
             "user_service_key_required"
         );
 
-        let range = &params.range;
         crate::ensure!(
-            range.start < range.end,
+            params.range.start < params.range.end,
             Authentication,
             "invalid_time_range"
         );
 
-        let service_ids = self.resolve_service_ids(params).await?;
+        let service_ids = self
+            .resolve_service_ids(&params.user_service_key, params.aggregate)
+            .await?;
 
-        let today_range = timezone_utils::local_day_bounds(&range.end, &params.timezone)
+        let today_range = timezone_utils::local_day_bounds(&params.range.end, &params.timezone)
             .map(|(start, end)| Range { start, end });
 
         let (today_summary, total_summary, previous_summary) = self
-            .fetch_summary(&service_ids, today_range.as_ref(), range)
+            .fetch_summary(&service_ids, today_range.as_ref(), &params.range)
             .await?;
 
-        let summary_metrics =
-            build_summary_metrics(&today_summary, &total_summary, &previous_summary);
+        Ok(build_summary_metrics(
+            &today_summary,
+            &total_summary,
+            &previous_summary,
+        ))
+    }
 
-        let trend = self.fetch_trend(&service_ids, range).await?;
+    pub async fn trend(&self, params: &StatsTrendParams) -> Result<Vec<TrendPoint>> {
+        crate::ensure!(
+            !params.user_service_key.trim().is_empty(),
+            Authentication,
+            "user_service_key_required"
+        );
 
-        let model_share = self
-            .fetch_model_share(&service_ids, today_range.as_ref(), range)
+        crate::ensure!(
+            params.range.start < params.range.end,
+            Authentication,
+            "invalid_time_range"
+        );
+
+        let service_ids = self
+            .resolve_service_ids(&params.user_service_key, params.aggregate)
             .await?;
 
-        let logs = self
-            .fetch_logs(
-                &service_ids,
-                range,
-                params.page,
-                params.page_size,
-                params.search.clone(),
-            )
+        self.fetch_trend(&service_ids, &params.range).await
+    }
+
+    pub async fn model_share(&self, params: &StatsModelShareParams) -> Result<ModelSharePayload> {
+        crate::ensure!(
+            !params.user_service_key.trim().is_empty(),
+            Authentication,
+            "user_service_key_required"
+        );
+
+        crate::ensure!(
+            params.range.start < params.range.end,
+            Authentication,
+            "invalid_time_range"
+        );
+
+        let service_ids = self
+            .resolve_service_ids(&params.user_service_key, params.aggregate)
             .await?;
 
-        Ok(StatsPayload {
-            summary: summary_metrics,
-            trend,
-            model_share,
-            logs,
-        })
+        let today_range = if params.include_today {
+            timezone_utils::local_day_bounds(&params.range.end, &params.timezone)
+                .map(|(start, end)| Range { start, end })
+        } else {
+            None
+        };
+
+        self.fetch_model_share(&service_ids, today_range.as_ref(), &params.range)
+            .await
+    }
+
+    pub async fn logs(&self, params: &StatsLogsParams) -> Result<LogsPayload> {
+        crate::ensure!(
+            !params.user_service_key.trim().is_empty(),
+            Authentication,
+            "user_service_key_required"
+        );
+
+        crate::ensure!(
+            params.range.start < params.range.end,
+            Authentication,
+            "invalid_time_range"
+        );
+
+        let service_ids = self
+            .resolve_service_ids(&params.user_service_key, params.aggregate)
+            .await?;
+
+        self.fetch_logs(
+            &service_ids,
+            &params.range,
+            params.page,
+            params.page_size,
+            params.search.clone(),
+        )
+        .await
     }
 
     /// 解析 `user_service_key` 对应的 service id 列表
-    pub async fn resolve_service_ids(&self, params: &StatsParams) -> Result<Vec<i32>> {
-        let key = params.user_service_key.trim();
+    pub async fn resolve_service_ids(
+        &self,
+        user_service_key: &str,
+        aggregate: AggregateMode,
+    ) -> Result<Vec<i32>> {
+        let key = user_service_key.trim();
         let service = UserServiceApis::find()
             .filter(user_service_apis::Column::ApiKey.eq(key))
             .one(self.db)
@@ -243,7 +327,7 @@ impl<'a> StatsService<'a> {
             })?
             .ok_or_else(|| crate::error!(Authentication, "user_service_key_invalid"))?;
 
-        if matches!(params.aggregate, AggregateMode::Aggregate) {
+        if matches!(aggregate, AggregateMode::Aggregate) {
             let ids: Vec<i32> = UserServiceApis::find()
                 .select_only()
                 .column(user_service_apis::Column::Id)
@@ -373,26 +457,21 @@ impl<'a> StatsService<'a> {
         service_ids: &[i32],
         today: Option<&Range<DateTime<Utc>>>,
         range: &Range<DateTime<Utc>>,
-    ) -> Result<HashMap<String, Vec<ModelShareItem>>> {
-        let mut result = HashMap::with_capacity(2);
-
-        if let Some(today_range) = today {
+    ) -> Result<ModelSharePayload> {
+        let today_items = if let Some(today_range) = today {
             let today_rows = self.model_share_by_scope(service_ids, today_range).await?;
-            result.insert(
-                "today".to_string(),
-                compute_model_percentage(today_rows, "today"),
-            );
+            compute_model_percentage(today_rows, "today")
         } else {
-            result.insert("today".to_string(), Vec::new());
-        }
+            Vec::new()
+        };
 
         let total_rows = self.model_share_by_scope(service_ids, range).await?;
-        result.insert(
-            "total".to_string(),
-            compute_model_percentage(total_rows, "total"),
-        );
+        let total_items = compute_model_percentage(total_rows, "total");
 
-        Ok(result)
+        Ok(ModelSharePayload {
+            today: today_items,
+            total: total_items,
+        })
     }
 
     async fn model_share_by_scope(

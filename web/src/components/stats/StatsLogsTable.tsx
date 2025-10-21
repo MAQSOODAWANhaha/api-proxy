@@ -1,17 +1,7 @@
 import { Loader2 } from 'lucide-react'
 
-import { TitledCard } from '@/components/common/UnifiedCard'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import type { LogsPage, LogItem } from '@/types/stats'
+import { Button } from '@/components/ui/button'
 import { useTimezoneStore } from '@/store/timezone'
 
 interface StatsLogsTableProps {
@@ -21,14 +11,23 @@ interface StatsLogsTableProps {
   hasFetched: boolean
 }
 
-const formatTimestamp = (timestamp: string, timezone: string) =>
-  new Date(timestamp).toLocaleString('zh-CN', { timeZone: timezone, hour12: false })
+const formatTimestamp = (timestamp: string, timezone: string) => {
+  const date = new Date(timestamp)
+  return {
+    date: date.toLocaleDateString('zh-CN', { timeZone: timezone }),
+    time: date.toLocaleTimeString('zh-CN', { timeZone: timezone, hour12: false }),
+  }
+}
 
-const renderStatusBadge = (item: LogItem) => (
-  <Badge variant={item.is_success ? 'outline' : 'destructive'} className="px-2">
-    {item.status_code ?? '--'}
-  </Badge>
-)
+const StatusPill = ({ item }: { item: LogItem }) => {
+  const success = item.is_success
+  const base =
+    'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1'
+  const classes = success
+    ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
+    : 'bg-rose-50 text-rose-600 ring-rose-200'
+  return <span className={`${base} ${classes}`}>{item.status_code ?? '--'}</span>
+}
 
 export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: StatsLogsTableProps) {
   const timezone = useTimezoneStore((state) => state.timezone)
@@ -39,126 +38,127 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const rows: LogItem[] = logs?.items ?? []
 
-  const handlePageChangeInternal = (nextPage: number) => {
+  const handlePageChange = (nextPage: number) => {
     if (nextPage < 1 || nextPage > totalPages || nextPage === page) return
     onPageChange(nextPage)
   }
 
   return (
-    <TitledCard
-      title="调用日志"
-      description="查看最近的 API 调用明细。"
-      className="shadow-sm"
-      contentClassName="space-y-4"
-    >
-      <div className="relative overflow-hidden rounded-xl border bg-card">
+    <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-1 border-b border-neutral-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-neutral-900">调用日志</h2>
+          <p className="text-xs text-neutral-500">最新调用记录，帮助定位问题与复盘请求表现</p>
+        </div>
+        <span className="text-xs text-neutral-400">时间显示时区：{timezone}</span>
+      </div>
+
+      <div className="relative overflow-x-auto">
         {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70">
+            <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
           </div>
         )}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[180px]">时间 ({timezone})</TableHead>
-              <TableHead className="min-w-[240px]">路径</TableHead>
-              <TableHead className="w-[90px]">状态</TableHead>
-              <TableHead className="w-[140px]">模型</TableHead>
-              <TableHead className="w-[160px] text-right">Token</TableHead>
-              <TableHead className="w-[120px] text-right">费用</TableHead>
-              <TableHead className="w-[120px] text-right">执行时长</TableHead>
-              <TableHead className="w-[140px]">客户端 IP</TableHead>
-              <TableHead className="min-w-[260px]">用户代理</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <table className="w-full text-sm">
+          <thead className="bg-neutral-50 text-neutral-600">
+            <tr>
+              <th className="px-5 py-3 text-left font-medium">时间</th>
+              <th className="px-5 py-3 text-left font-medium">请求信息</th>
+              <th className="px-5 py-3 text-left font-medium">状态</th>
+              <th className="px-5 py-3 text-left font-medium">模型</th>
+              <th className="px-5 py-3 text-left font-medium">Token</th>
+              <th className="px-5 py-3 text-left font-medium">费用</th>
+              <th className="px-5 py-3 text-left font-medium">耗时</th>
+              <th className="px-5 py-3 text-left font-medium">客户端</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
             {!hasFetched ? (
-              <TableRow>
-                <TableCell colSpan={9} className="py-12 text-center text-sm text-muted-foreground">
-                  请输入用户 API Key 并查询后显示日志数据。
-                </TableCell>
-              </TableRow>
+              <tr>
+                <td colSpan={8} className="px-5 py-10 text-center text-sm text-neutral-500">
+                  请输入用户 API Key 并点击查询，日志将显示在此处。
+                </td>
+              </tr>
             ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={9} className="py-12 text-center text-sm text-muted-foreground">
-                  当前条件下暂无日志数据。
-                </TableCell>
-              </TableRow>
+              <tr>
+                <td colSpan={8} className="px-5 py-10 text-center text-sm text-neutral-500">
+                  当前条件下暂无调用记录。
+                </td>
+              </tr>
             ) : (
               rows.map((item) => {
+                const { date, time } = formatTimestamp(item.timestamp, timezone)
                 const method = item.method ? item.method.toUpperCase() : '--'
                 const costCurrency = item.cost_currency ?? 'USD'
 
                 return (
-                  <TableRow key={item.id} className="text-sm">
-                    <TableCell className="whitespace-nowrap font-medium text-foreground">
-                      {formatTimestamp(item.timestamp, timezone)}
-                    </TableCell>
-                    <TableCell className="max-w-[260px]">
-                      <div className="flex flex-col gap-1">
-                        <span className="font-medium text-foreground">
+                  <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
+                    <td className="px-5 py-3 align-top">
+                      <div className="flex flex-col text-xs">
+                        <span className="font-medium text-neutral-700">{date}</span>
+                        <span className="font-mono text-neutral-500">{time}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 align-top">
+                      <div className="space-y-1 text-xs text-neutral-600">
+                        <div className="font-medium text-neutral-800">
                           {method} {item.path ?? '-'}
-                        </span>
-                        <span className="font-mono text-[11px] text-muted-foreground">
-                          {item.request_id}
-                        </span>
+                        </div>
+                        <div className="text-neutral-400">Request ID: {item.request_id}</div>
                       </div>
-                    </TableCell>
-                    <TableCell className="align-top">{renderStatusBadge(item)}</TableCell>
-                    <TableCell className="text-muted-foreground align-top">{item.model ?? '-'}</TableCell>
-                    <TableCell className="text-right text-muted-foreground align-top">
-                      <div className="flex flex-col leading-tight">
-                        <span className="font-medium text-foreground">
-                          {item.tokens_total.toLocaleString()}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          提示 {item.tokens_prompt.toLocaleString()} · 完成{' '}
-                          {item.tokens_completion.toLocaleString()}
-                        </span>
+                    </td>
+                    <td className="px-5 py-3 align-top">
+                      <StatusPill item={item} />
+                    </td>
+                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                      {item.model ?? '-'}
+                    </td>
+                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                      <div className="font-medium text-neutral-800">
+                        {item.tokens_total.toLocaleString()}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground align-top">
+                      <div className="text-neutral-400">
+                        提示 {item.tokens_prompt.toLocaleString()} / 完成 {item.tokens_completion.toLocaleString()}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
                       {item.cost != null ? `${costCurrency} ${item.cost.toFixed(4)}` : '--'}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground align-top">
-                      {item.duration_ms != null ? `${item.duration_ms.toLocaleString()} ms` : '--'}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground align-top">{item.client_ip ?? '--'}</TableCell>
-                    <TableCell className="max-w-[320px] break-words text-muted-foreground align-top">
-                      {item.user_agent ?? '--'}
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                      {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
+                    </td>
+                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                      <div className="space-y-1">
+                        <div>{item.client_ip ?? '--'}</div>
+                        <div className="text-neutral-400">{item.user_agent ?? '--'}</div>
+                      </div>
+                    </td>
+                  </tr>
                 )
               })
             )}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
-      <div className="flex flex-col items-center justify-between gap-3 text-sm text-muted-foreground sm:flex-row">
-        <p>共 {total.toLocaleString()} 条记录 · 每页 {pageSize}</p>
+      <div className="flex flex-col items-center justify-between gap-3 border-t border-neutral-200 px-5 py-4 text-sm text-neutral-500 sm:flex-row">
+        <span>
+          共 {total.toLocaleString()} 条记录 · 当前第 {page}/{totalPages} 页
+        </span>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handlePageChangeInternal(page - 1)}
-            disabled={page <= 1 || loading}
-          >
+          <Button variant="outline" size="sm" onClick={() => handlePageChange(page - 1)} disabled={page <= 1 || loading}>
             上一页
           </Button>
-          <span>
-            第 {page} / {totalPages} 页
-          </span>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => handlePageChangeInternal(page + 1)}
+            onClick={() => handlePageChange(page + 1)}
             disabled={page >= totalPages || loading}
           >
             下一页
           </Button>
         </div>
       </div>
-    </TitledCard>
+    </div>
   )
 }

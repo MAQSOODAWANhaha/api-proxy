@@ -1,15 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Pie, PieChart, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import type { ModelShareItem } from '@/types/stats'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 interface StatsModelShareProps {
   data: {
@@ -18,12 +12,18 @@ interface StatsModelShareProps {
   }
   loading?: boolean
   hasFetched: boolean
+  scope: 'today' | 'total'
+  onScopeChange?: (scope: 'today' | 'total') => void
 }
 
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))']
 
-export function StatsModelShare({ data, loading, hasFetched }: StatsModelShareProps) {
-  const [scope, setScope] = useState<'today' | 'total'>('today')
+const scopeLabel: Record<'today' | 'total', string> = {
+  today: '今日',
+  total: '累计',
+}
+
+export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChange }: StatsModelShareProps) {
   const current = useMemo(
     () =>
       (data[scope] ?? []).map((item, index) => ({
@@ -40,15 +40,26 @@ export function StatsModelShare({ data, loading, hasFetched }: StatsModelSharePr
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <CardTitle className="text-lg font-semibold">模型占比</CardTitle>
-            <Select value={scope} onValueChange={(value) => setScope(value as 'today' | 'total')}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="今日" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">今日</SelectItem>
-                <SelectItem value="total">总计</SelectItem>
-              </SelectContent>
-            </Select>
+            <ToggleGroup
+              type="single"
+              value={scope}
+              onValueChange={(value) => {
+                if (value === 'today' || value === 'total') {
+                  onScopeChange?.(value)
+                }
+              }}
+              className="rounded-md border border-neutral-200 bg-neutral-50 p-1 text-xs"
+            >
+              {(['today', 'total'] as const).map((option) => (
+                <ToggleGroupItem
+                  key={option}
+                  value={option}
+                  className="px-3 py-1 data-[state=on]:bg-white data-[state=on]:text-neutral-900"
+                >
+                  {scopeLabel[option]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
           <CardDescription className="leading-relaxed">
             模型请求占比

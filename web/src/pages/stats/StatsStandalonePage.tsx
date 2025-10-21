@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Search, RotateCcw } from 'lucide-react'
-import { useNavigate } from 'react-router'
+import { RefreshCw, RotateCcw, Search } from 'lucide-react'
 
-import PageHeader from '@/components/common/PageHeader'
 import { StatsOverview } from '@/components/stats/StatsOverview'
 import { StatsTrendChart } from '@/components/stats/StatsTrendChart'
 import { StatsModelShare } from '@/components/stats/StatsModelShare'
@@ -10,8 +8,11 @@ import { StatsLogsTable } from '@/components/stats/StatsLogsTable'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { useStatsStore } from '@/store/stats'
+import { Card, CardContent } from '@/components/ui/card'
+import { useStatsStore, type Timeframe } from '@/store/stats'
 import { useTimezoneStore } from '@/store/timezone'
+
+const TREND_OPTIONS: Timeframe[] = ['7d', '30d']
 
 export default function StatsStandalonePage() {
   const {
@@ -25,10 +26,13 @@ export default function StatsStandalonePage() {
     filters,
     setFilters,
     hasFetched,
+    clear,
   } = useStatsStore()
+
   const timezoneStore = useTimezoneStore()
   const [apiKeyInput, setApiKeyInput] = useState(filters.userServiceKey)
-  const navigate = useNavigate()
+  const [trendTimeframe, setTrendTimeframe] = useState<Timeframe>('7d')
+  const [modelScope, setModelScope] = useState<'today' | 'total'>('today')
 
   useEffect(() => {
     if (!timezoneStore.isInitialized) {
@@ -36,80 +40,165 @@ export default function StatsStandalonePage() {
     }
   }, [timezoneStore])
 
-  const handlePageChange = (page: number) => {
-    setFilters((draft) => {
-      draft.page = page
-    })
-    void fetch({ page })
-  }
+  useEffect(() => {
+    if (filters.userServiceKey && filters.userServiceKey !== apiKeyInput) {
+      setApiKeyInput(filters.userServiceKey)
+    }
+    if (filters.timeframe && TREND_OPTIONS.includes(filters.timeframe)) {
+      setTrendTimeframe(filters.timeframe)
+    }
+  }, [filters.userServiceKey, filters.timeframe, apiKeyInput])
+
+  const hasServiceKey = filters.userServiceKey.trim().length > 0
+  const canSubmit = apiKeyInput.trim().length > 0 && !loading
 
   const handleSubmit = () => {
-    setFilters((draft) => {
-      draft.userServiceKey = apiKeyInput
-      draft.page = 1
-    })
-    void fetch({ userServiceKey: apiKeyInput, page: 1 })
-  }
+    const key = apiKeyInput.trim()
+    if (!key) return
 
-  const handleReset = () => {
-    setApiKeyInput('')
-    setFilters({ userServiceKey: '', page: 1 })
+    const rangePreset = trendTimeframe === '30d' ? '30d' : '7d'
+    setModelScope('today')
+    setFilters({
+      userServiceKey: key,
+      page: 1,
+      rangePreset,
+      timeframe: trendTimeframe,
+      includeToday: true,
+      pageSize: filters.pageSize,
+      search: filters.search,
+    })
+    void fetch({
+      userServiceKey: key,
+      page: 1,
+      rangePreset,
+      timeframe: trendTimeframe,
+      includeToday: true,
+    })
   }
 
   return (
-    <div className="min-h-screen bg-muted">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-6 px-4 pt-8 pb-16 sm:px-6 lg:px-12">
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <PageHeader
-              title="用户 API Key 使用统计"
-              description="输入用户 API Key 查询今日与累计请求、Token 消耗与费用情况。"
-              className="flex-1"
-            />
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end md:gap-4">
-              <Button variant="outline" size="sm" onClick={() => navigate('/dashboard')}>
-                进入管理后台
-              </Button>
-              <div className="flex items-center gap-2">
-                <div className="relative flex w-full min-w-[260px] items-center">
-                  <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="请输入用户 API Key"
-                    value={apiKeyInput}
-                    onChange={(event) => setApiKeyInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') handleSubmit()
-                    }}
-                    className="pl-9"
-                  />
-                </div>
-                <Button variant="default" size="sm" onClick={handleSubmit} disabled={loading}>
-                  查询统计
-                </Button>
-                <Button variant="ghost" size="icon" onClick={handleReset} disabled={loading && hasFetched}>
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-              </div>
+    <div className="min-h-screen bg-neutral-50">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-10 px-6 pb-16 pt-12 sm:px-8 lg:px-10">
+        <header className="text-center space-y-3">
+          <h1 className="text-3xl font-semibold text-neutral-900">用户 API Key 使用统计</h1>
+          <p className="text-sm text-neutral-500">
+            在此查看指定用户服务密钥的请求趋势、模型占比以及最新调用日志。
+          </p>
+        </header>
+
+        <Card className="mx-auto w-full max-w-7xl border border-neutral-200 bg-white shadow-sm">
+          <CardContent className="space-y-5 p-8">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-neutral-600" htmlFor="user-service-key">
+                用户 API Key
+              </label>
+              <Input
+                id="user-service-key"
+                placeholder="请输入用户 API Key（例如：sk-usr-xxxxxxxx）"
+                value={apiKeyInput}
+                onChange={(event) => setApiKeyInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') handleSubmit()
+                }}
+                className="h-12 text-base"
+              />
             </div>
-          </div>
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-        </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Button className="min-w-[120px]" onClick={handleSubmit} disabled={!canSubmit}>
+                <Search className="mr-2 h-4 w-4" />
+                查询统计
+              </Button>
+              <Button
+                variant="outline"
+                className="min-w-[120px]"
+                onClick={() => {
+                  if (!hasServiceKey) return
+                  void fetch({ userServiceKey: filters.userServiceKey })
+                }}
+                disabled={!hasServiceKey || loading}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                刷新
+              </Button>
+              <Button
+                variant="ghost"
+                className="min-w-[120px]"
+                onClick={() => {
+                  setApiKeyInput('')
+                  setTrendTimeframe('7d')
+                  setModelScope('today')
+                  clear()
+                }}
+                disabled={loading}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                重置
+              </Button>
+            </div>
+
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </CardContent>
+        </Card>
 
         <section className="space-y-6">
           <StatsOverview metrics={summary} loading={loading} hasFetched={hasFetched} />
-          <div className="grid gap-6 lg:grid-cols-[1.6fr_1.4fr]">
-            <StatsTrendChart data={trend} loading={loading} hasFetched={hasFetched} />
-            <StatsModelShare data={modelShare} loading={loading} hasFetched={hasFetched} />
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <StatsTrendChart
+              data={trend}
+              loading={loading}
+              hasFetched={hasFetched}
+              timeframe={trendTimeframe}
+              timeframeOptions={TREND_OPTIONS}
+              onTimeframeChange={(value) => {
+                setTrendTimeframe(value)
+                const rangePreset = value === '30d' ? '30d' : '7d'
+                setFilters({ timeframe: value, rangePreset, page: 1 })
+                if (hasServiceKey) {
+                  void fetch({
+                    userServiceKey: filters.userServiceKey,
+                    timeframe: value,
+                    rangePreset,
+                    page: 1,
+                  })
+                }
+              }}
+            />
+
+            <StatsModelShare
+              data={modelShare}
+              loading={loading}
+              hasFetched={hasFetched}
+              scope={modelScope}
+              onScopeChange={(scope) => {
+                setModelScope(scope)
+                const includeToday = scope === 'today'
+                setFilters({ includeToday, page: 1 })
+                if (hasServiceKey) {
+                  void fetch({
+                    userServiceKey: filters.userServiceKey,
+                    includeToday,
+                    page: 1,
+                  })
+                }
+              }}
+            />
           </div>
-         <StatsLogsTable
+
+          <StatsLogsTable
             logs={logs}
             loading={loading}
-            onPageChange={handlePageChange}
             hasFetched={hasFetched}
+            onPageChange={(page) => {
+              if (!hasServiceKey) return
+              setFilters({ page })
+              void fetch({ userServiceKey: filters.userServiceKey, page })
+            }}
           />
         </section>
       </div>

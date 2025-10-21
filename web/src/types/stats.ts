@@ -58,17 +58,40 @@ export interface LogItem {
   user_agent?: string | null
 }
 
-export interface StatsResponse {
+export interface StatsOverviewResponse {
   summary: SummaryMetric[]
+}
+
+export interface StatsTrendResponse {
   trend: TrendPoint[]
-  model_share: Record<'today' | 'total', ModelShareItem[]>
+}
+
+export interface StatsModelShareResponse {
+  today: ModelShareItem[]
+  total: ModelShareItem[]
+}
+
+export interface StatsLogsResponse {
   logs: LogsPage
 }
 
-export interface StatsQuery {
+export interface StatsOverviewQuery {
   user_service_key: string
-  from: string
-  to: string
+  from?: string
+  to?: string
+  aggregate?: 'Single' | 'Aggregate'
+}
+
+export interface StatsTrendQuery extends StatsOverviewQuery {
+  timeframe?: '1d' | '7d' | '30d' | '90d'
+}
+
+export interface StatsModelShareQuery extends StatsOverviewQuery {
+  include_today?: boolean
+}
+
+export interface StatsLogsQuery extends StatsOverviewQuery {
   page?: number
   page_size?: number
+  search?: string
 }

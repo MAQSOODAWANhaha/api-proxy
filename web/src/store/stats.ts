@@ -1,7 +1,16 @@
 import { create } from 'zustand'
 import { formatISO, startOfDay, subDays } from 'date-fns'
 import { statsApi } from '@/lib/stats'
-import type { StatsResponse, SummaryMetric, TrendPoint, ModelShareItem, LogsPage } from '@/types/stats'
+import type {
+  LogsPage,
+  ModelShareItem,
+  StatsLogsResponse,
+  StatsModelShareResponse,
+  StatsOverviewResponse,
+  StatsTrendResponse,
+  SummaryMetric,
+  TrendPoint,
+} from '@/types/stats'
 import { useTimezoneStore } from './timezone'
 
 export type RangePreset = 'today' | '7d' | '30d' | 'custom'
@@ -15,6 +24,8 @@ export interface StatsFilters {
   to?: string
   page: number
   pageSize: number
+  includeToday: boolean
+  search?: string
 }
 
 export interface StatsState {
@@ -50,17 +61,18 @@ const buildRange = (preset: RangePreset): { from: string; to: string } => {
   }
 }
 
-const initialRange = buildRange('today')
+const initialRange = buildRange('7d')
 
 export const useStatsStore = create<StatsState>((set, get) => ({
   filters: {
     userServiceKey: '',
-    rangePreset: 'today',
-    timeframe: '90d',
+    rangePreset: '7d',
+    timeframe: '7d',
     from: initialRange.from,
     to: initialRange.to,
     page: 1,
     pageSize: 20,
+    includeToday: true,
   },
   loading: false,
   error: null,
@@ -95,15 +107,28 @@ export const useStatsStore = create<StatsState>((set, get) => ({
     })),
 
   clear: () =>
-    set((state) => ({
-      summary: [],
-      trend: [],
-      modelShare: { today: [], total: [] },
-      logs: null,
-      hasFetched: false,
-      error: null,
-      filters: { ...state.filters, page: 1 },
-    })),
+    set(() => {
+      const range = buildRange('7d')
+      return {
+        summary: [],
+        trend: [],
+        modelShare: { today: [], total: [] },
+        logs: null,
+        hasFetched: false,
+        error: null,
+        filters: {
+          userServiceKey: '',
+          rangePreset: '7d',
+          timeframe: '7d',
+          from: range.from,
+          to: range.to,
+          page: 1,
+          pageSize: 20,
+          includeToday: true,
+          search: undefined,
+        },
+      }
+    }),
 
   fetch: async (overrides) => {
     const { filters } = get()
@@ -123,19 +148,51 @@ export const useStatsStore = create<StatsState>((set, get) => ({
     set({ loading: true, error: null })
 
     try {
-      const response = await statsApi.fetchStats({
-        user_service_key: nextFilters.userServiceKey,
-        from: range.from,
-        to: range.to,
-        page: nextFilters.page,
-        page_size: nextFilters.pageSize,
-      })
+      const [overviewRes, trendRes, modelShareRes, logsRes] = await Promise.all([
+        statsApi.fetchOverview({
+          user_service_key: nextFilters.userServiceKey,
+          from: range.from,
+          to: range.to,
+        }),
+        statsApi.fetchTrend({
+          user_service_key: nextFilters.userServiceKey,
+          from: range.from,
+          to: range.to,
+          timeframe: nextFilters.timeframe,
+        }),
+        statsApi.fetchModelShare({
+          user_service_key: nextFilters.userServiceKey,
+          from: range.from,
+          to: range.to,
+          include_today: nextFilters.includeToday,
+        }),
+        statsApi.fetchLogs({
+          user_service_key: nextFilters.userServiceKey,
+          from: range.from,
+          to: range.to,
+          page: nextFilters.page,
+          page_size: nextFilters.pageSize,
+          search: nextFilters.search,
+        }),
+      ])
 
-      if (!response.success || !response.data) {
-        throw new Error(response.error?.message || '查询失败')
+      if (!overviewRes.success || !overviewRes.data) {
+        throw new Error(overviewRes.error?.message || '概览数据获取失败')
+      }
+      if (!trendRes.success || !trendRes.data) {
+        throw new Error(trendRes.error?.message || '趋势数据获取失败')
+      }
+      if (!modelShareRes.success || !modelShareRes.data) {
+        throw new Error(modelShareRes.error?.message || '模型占比数据获取失败')
+      }
+      if (!logsRes.success || !logsRes.data) {
+        throw new Error(logsRes.error?.message || '日志数据获取失败')
       }
 
-      const data: StatsResponse = response.data
+      const overview: StatsOverviewResponse = overviewRes.data
+      const trend: StatsTrendResponse = trendRes.data
+      const modelShare: StatsModelShareResponse = modelShareRes.data
+      const logsPayload: StatsLogsResponse = logsRes.data
 
       set({
         filters: {
@@ -143,13 +200,13 @@ export const useStatsStore = create<StatsState>((set, get) => ({
           from: range.from,
           to: range.to,
         },
-        summary: data.summary,
-        trend: data.trend,
+        summary: overview.summary,
+        trend: trend.trend,
         modelShare: {
-          today: data.model_share.today ?? [],
-          total: data.model_share.total ?? [],
+          today: modelShare.today ?? [],
+          total: modelShare.total ?? [],
         },
-        logs: data.logs,
+        logs: logsPayload.logs,
         loading: false,
         error: null,
         hasFetched: true,
