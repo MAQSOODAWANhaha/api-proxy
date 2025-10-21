@@ -17,11 +17,15 @@ const TREND_OPTIONS: Timeframe[] = ['7d', '30d']
 export default function StatsStandalonePage() {
   const {
     fetch,
+    fetchTrendOnly,
+    fetchModelShareOnly,
     summary,
     trend,
     modelShare,
     logs,
     loading,
+    trendLoading,
+    modelShareLoading,
     error,
     filters,
     setFilters,
@@ -151,41 +155,24 @@ export default function StatsStandalonePage() {
           <div className="grid gap-6 lg:grid-cols-2">
             <StatsTrendChart
               data={trend}
-              loading={loading}
+              loading={loading || trendLoading}
               hasFetched={hasFetched}
               timeframe={trendTimeframe}
               timeframeOptions={TREND_OPTIONS}
               onTimeframeChange={(value) => {
                 setTrendTimeframe(value)
-                const rangePreset = value === '30d' ? '30d' : '7d'
-                setFilters({ timeframe: value, rangePreset, page: 1 })
-                if (hasServiceKey) {
-                  void fetch({
-                    userServiceKey: filters.userServiceKey,
-                    timeframe: value,
-                    rangePreset,
-                    page: 1,
-                  })
-                }
+                void fetchTrendOnly(value)
               }}
             />
 
             <StatsModelShare
               data={modelShare}
-              loading={loading}
+              loading={loading || modelShareLoading}
               hasFetched={hasFetched}
               scope={modelScope}
               onScopeChange={(scope) => {
                 setModelScope(scope)
-                const includeToday = scope === 'today'
-                setFilters({ includeToday, page: 1 })
-                if (hasServiceKey) {
-                  void fetch({
-                    userServiceKey: filters.userServiceKey,
-                    includeToday,
-                    page: 1,
-                  })
-                }
+                void fetchModelShareOnly(scope === 'today')
               }}
             />
           </div>

@@ -52,7 +52,7 @@ export function StatsTrendChart({
   hasFetched,
   timeframe,
   onTimeframeChange,
-  timeframeOptions = ['7d', '30d'],
+  timeframeOptions = ['7d', '30d'] as Timeframe[],
 }: StatsTrendChartProps) {
   const timezone = useTimezoneStore((state) => state.timezone)
 

@@ -31,6 +31,8 @@ export interface StatsFilters {
 export interface StatsState {
   filters: StatsFilters
   loading: boolean
+  trendLoading: boolean
+  modelShareLoading: boolean
   error: string | null
   hasFetched: boolean
   summary: SummaryMetric[]
@@ -44,6 +46,8 @@ export interface StatsState {
   resetPagination: () => void
   setTimeframe: (timeframe: Timeframe) => void
   fetch: (overrides?: Partial<StatsFilters>) => Promise<void>
+  fetchTrendOnly: (timeframe: Timeframe) => Promise<void>
+  fetchModelShareOnly: (includeToday: boolean) => Promise<void>
   clear: () => void
 }
 
@@ -75,6 +79,8 @@ export const useStatsStore = create<StatsState>((set, get) => ({
     includeToday: true,
   },
   loading: false,
+  trendLoading: false,
+  modelShareLoading: false,
   error: null,
   hasFetched: false,
   summary: [],
@@ -116,6 +122,9 @@ export const useStatsStore = create<StatsState>((set, get) => ({
         logs: null,
         hasFetched: false,
         error: null,
+        loading: false,
+        trendLoading: false,
+        modelShareLoading: false,
         filters: {
           userServiceKey: '',
           rangePreset: '7d',
@@ -208,16 +217,125 @@ export const useStatsStore = create<StatsState>((set, get) => ({
         },
         logs: logsPayload.logs,
         loading: false,
+        trendLoading: false,
+        modelShareLoading: false,
         error: null,
         hasFetched: true,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : '网络异常'
-      set({ loading: false, error: message, hasFetched: false })
+      set({ loading: false, trendLoading: false, modelShareLoading: false, error: message, hasFetched: false })
     } finally {
       if (!timezone) {
         useTimezoneStore.getState().detectTimezone()
       }
+    }
+  },
+
+  fetchTrendOnly: async (timeframe) => {
+    const { filters } = get()
+    const key = filters.userServiceKey.trim()
+    if (!key) {
+      set({ error: '请先输入用户 API Key' })
+      return
+    }
+
+    const rangePreset: RangePreset = timeframe === '30d' ? '30d' : timeframe === '90d' ? '30d' : '7d'
+    const range = buildRange(rangePreset)
+
+    set({
+      trendLoading: true,
+      error: null,
+      filters: {
+        ...filters,
+        timeframe,
+        rangePreset,
+        from: range.from,
+        to: range.to,
+      },
+    })
+
+    try {
+      const response = await statsApi.fetchTrend({
+        user_service_key: key,
+        from: range.from,
+        to: range.to,
+        timeframe,
+      })
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message || '趋势数据获取失败')
+      }
+
+      const data: StatsTrendResponse = response.data
+
+      set((state) => ({
+        trend: data.trend,
+        trendLoading: false,
+        filters: {
+          ...state.filters,
+          timeframe,
+          rangePreset,
+          from: range.from,
+          to: range.to,
+        },
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '网络异常'
+      set({ trendLoading: false, error: message })
+    }
+  },
+
+  fetchModelShareOnly: async (includeToday) => {
+    const { filters } = get()
+    const key = filters.userServiceKey.trim()
+    if (!key) {
+      set({ error: '请先输入用户 API Key' })
+      return
+    }
+
+    const range =
+      filters.rangePreset === 'custom' && filters.from && filters.to
+        ? { from: filters.from, to: filters.to }
+        : buildRange(filters.rangePreset)
+
+    set({
+      modelShareLoading: true,
+      error: null,
+      filters: {
+        ...filters,
+        includeToday,
+      },
+    })
+
+    try {
+      const response = await statsApi.fetchModelShare({
+        user_service_key: key,
+        from: range.from,
+        to: range.to,
+        include_today: includeToday,
+      })
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message || '模型占比数据获取失败')
+      }
+
+      const data: StatsModelShareResponse = response.data
+
+      set((state) => ({
+        modelShare: {
+          today: data.today ?? [],
+          total: data.total ?? [],
+        },
+        modelShareLoading: false,
+        filters: {
+          ...state.filters,
+          includeToday,
+        },
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '网络异常'
+      set({ modelShareLoading: false, error: message })
     }
   },
 }))
