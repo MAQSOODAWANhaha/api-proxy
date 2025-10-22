@@ -31,6 +31,21 @@ import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse }
 type DialogType = 'details' | null
 
 /** 页面主组件 */
+const tryParseJson = (value?: string) => {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch (error) {
+    console.warn('解析错误信息为 JSON 失败:', error)
+    return null
+  }
+}
+
 const LogsPage: React.FC = () => {
   // 数据状态
   const [data, setData] = useState<ProxyTraceListEntry[]>([])
@@ -696,12 +711,22 @@ const LogDetailsDialog: React.FC<{
                   <span className="text-sm font-mono">{item.error_type}</span>
                 </div>
               )}
-              {item.error_message && (
-                <div>
-                  <span className="text-xs text-red-500">消息: </span>
-                  <span className="text-sm">{item.error_message}</span>
-                </div>
-              )}
+              {item.error_message && (() => {
+                const parsed = tryParseJson(item.error_message)
+                return parsed ? (
+                  <div className="mt-2">
+                    <div className="text-xs text-red-500 mb-1">详细信息:</div>
+                    <pre className="max-h-64 overflow-auto rounded bg-neutral-900 text-neutral-50 text-xs leading-relaxed p-3 whitespace-pre-wrap">
+                      {JSON.stringify(parsed, null, 2)}
+                    </pre>
+                  </div>
+                ) : (
+                  <div>
+                    <span className="text-xs text-red-500">消息: </span>
+                    <span className="text-sm">{item.error_message}</span>
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>
