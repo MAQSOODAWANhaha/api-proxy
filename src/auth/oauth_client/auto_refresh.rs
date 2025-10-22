@@ -386,32 +386,12 @@ impl AutoRefreshManager {
     }
 
     /// `验证会话是否有对应的user_provider_keys关联`
-    /// 如果没有关联且创建超过5分钟，说明这是一个孤立的会话，会被自动删除
+    /// 找不到关联时立即清理孤立的OAuth会话，避免保留废弃数据
     #[allow(clippy::cognitive_complexity)]
     async fn validate_session_association(
         &self,
         session: &oauth_client_sessions::Model,
     ) -> AuthResult<bool> {
-        // 🔒 安全检查：只处理创建超过5分钟的会话，避免误删正在处理的新会话
-        let now = Utc::now().naive_utc();
-        let session_age = now.signed_duration_since(session.created_at);
-        let min_age_threshold = Duration::try_minutes(5).unwrap_or_default();
-
-        if session_age < min_age_threshold {
-            ldebug!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "skip_orphan_check",
-                &format!(
-                    "Session {} 创建时间不足5分钟 ({}分钟)，跳过孤立检查",
-                    session.session_id,
-                    session_age.num_minutes()
-                )
-            );
-            return Ok(true);
-        }
-
         // 查找是否有user_provider_keys记录引用了这个session_id
         let associated_key = user_provider_keys::Entity::find()
             .filter(user_provider_keys::Column::UserId.eq(session.user_id))
@@ -434,44 +414,44 @@ impl AutoRefreshManager {
                     session.session_id
                 )
             );
+            return Ok(true);
+        }
+
+        linfo!(
+            "system",
+            LogStage::Authentication,
+            LogComponent::OAuth,
+            "orphan_session_cleanup",
+            &format!(
+                "Session {} 无user_provider_keys关联，判定为孤立会话，开始清理",
+                session.session_id
+            )
+        );
+
+        // 删除孤立会话
+        if let Err(e) = self
+            .session_manager
+            .delete_session(&session.session_id, session.user_id)
+            .await
+        {
+            lerror!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "orphan_session_delete_fail",
+                &format!("删除孤立会话失败 {}: {}", session.session_id, e)
+            );
         } else {
             linfo!(
                 "system",
                 LogStage::Authentication,
                 LogComponent::OAuth,
-                "orphan_session_cleanup",
-                &format!(
-                    "Session {} 创建 {} 分钟后仍无user_provider_keys关联，判定为孤立会话，开始清理",
-                    session.session_id,
-                    session_age.num_minutes()
-                )
+                "orphan_session_delete_ok",
+                &format!("成功删除孤立会话 {}", session.session_id)
             );
-
-            // 删除孤立会话
-            if let Err(e) = self
-                .session_manager
-                .delete_session(&session.session_id, session.user_id)
-                .await
-            {
-                lerror!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "orphan_session_delete_fail",
-                    &format!("删除孤立会话失败 {}: {}", session.session_id, e)
-                );
-            } else {
-                linfo!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "orphan_session_delete_ok",
-                    &format!("成功删除孤立会话 {}", session.session_id)
-                );
-            }
         }
 
-        Ok(has_association)
+        Ok(false)
     }
 }
 

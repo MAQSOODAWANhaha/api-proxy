@@ -164,79 +164,45 @@ async fn test_orphaned_session_cleanup_functionality() {
     // 创建 SessionManager 实例
     let session_manager = SessionManager::new(std::sync::Arc::new(db.clone()));
 
-    // 模拟 validate_session_association 的逻辑
-    // 测试6分钟的孤立会话：应该被删除
-    let now = Utc::now().naive_utc();
-    let orphaned_age = now.signed_duration_since(orphaned_session.created_at);
-    let orphaned_threshold = Duration::minutes(5);
-
-    if orphaned_age >= orphaned_threshold {
-        // 检查是否有关联
+    // 模拟 validate_session_association 的逻辑：无关联即刻清理
+    let sessions = oauth_client_sessions::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    for session in sessions {
         let has_association = user_provider_keys::Entity::find()
-            .filter(user_provider_keys::Column::UserId.eq(orphaned_session.user_id))
+            .filter(user_provider_keys::Column::UserId.eq(session.user_id))
             .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-            .filter(user_provider_keys::Column::ApiKey.eq(&orphaned_session.session_id))
+            .filter(user_provider_keys::Column::ApiKey.eq(&session.session_id))
             .one(&db)
             .await
             .unwrap()
             .is_some();
 
         if !has_association {
-            // 删除孤立会话
             let result = session_manager
-                .delete_session(&orphaned_session.session_id, orphaned_session.user_id)
+                .delete_session(&session.session_id, session.user_id)
                 .await;
             assert!(result.is_ok(), "删除孤立会话应该成功");
         }
     }
 
-    // 验证孤立会话被删除
-    let count_after_orphan_cleanup = oauth_client_sessions::Entity::find()
-        .count(&db)
-        .await
-        .unwrap();
-    assert_eq!(count_after_orphan_cleanup, 2);
-
-    // 测试6分钟的正常会话：不应该被删除
-    let normal_age = now.signed_duration_since(normal_session.created_at);
-    if normal_age >= orphaned_threshold {
-        // 检查是否有关联
-        let has_association = user_provider_keys::Entity::find()
-            .filter(user_provider_keys::Column::UserId.eq(normal_session.user_id))
-            .filter(user_provider_keys::Column::AuthType.eq("oauth"))
-            .filter(user_provider_keys::Column::ApiKey.eq(&normal_session.session_id))
-            .one(&db)
-            .await
-            .unwrap()
-            .is_some();
-
-        assert!(has_association, "正常会话应该有关联");
-    }
-
-    // 测试3分钟的年轻会话：不应该被删除（因为不足5分钟）
-    let young_age = now.signed_duration_since(young_session.created_at);
-    assert!(
-        young_age < orphaned_threshold,
-        "年轻会话不应该达到5分钟阈值"
-    );
-
-    // 验证正常会话和年轻会话仍然存在
+    // 验证仅剩下有user_provider_keys关联的会话
     let remaining_sessions = oauth_client_sessions::Entity::find()
         .all(&db)
         .await
         .unwrap();
 
-    assert_eq!(remaining_sessions.len(), 2);
+    assert_eq!(remaining_sessions.len(), 1);
+    assert_eq!(remaining_sessions[0].session_id, normal_session.session_id);
 
-    // 验证剩下的会话ID
     let remaining_ids: Vec<String> = remaining_sessions
-        .into_iter()
-        .map(|s| s.session_id)
+        .iter()
+        .map(|s| s.session_id.clone())
         .collect();
-
     assert!(remaining_ids.contains(&normal_session.session_id));
-    assert!(remaining_ids.contains(&young_session.session_id));
     assert!(!remaining_ids.contains(&orphaned_session.session_id));
+    assert!(!remaining_ids.contains(&young_session.session_id));
 
     // 验证关联记录仍然存在
     let final_keys_count = user_provider_keys::Entity::find().count(&db).await.unwrap();
@@ -245,7 +211,7 @@ async fn test_orphaned_session_cleanup_functionality() {
 
 #[tokio::test]
 #[serial]
-async fn test_young_session_not_cleaned() {
+async fn test_unlinked_session_cleaned_immediately() {
     let db = create_test_db().await;
 
     // 创建一个3分钟的孤立会话
@@ -261,24 +227,28 @@ async fn test_young_session_not_cleaned() {
     // 创建 SessionManager 实例
     let session_manager = SessionManager::new(std::sync::Arc::new(db.clone()));
 
-    // 模拟 validate_session_association 的逻辑
-    let now = Utc::now().naive_utc();
-    let young_age = now.signed_duration_since(young_session.created_at);
-    let threshold = Duration::minutes(5);
+    // 模拟新的关联校验逻辑：无关联立即删除
+    let has_association = user_provider_keys::Entity::find()
+        .filter(user_provider_keys::Column::UserId.eq(young_session.user_id))
+        .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+        .filter(user_provider_keys::Column::ApiKey.eq(&young_session.session_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .is_some();
+    assert!(!has_association, "测试会话应当没有user_provider_keys关联");
 
-    // 年轻会话不足5分钟，不应该被处理
-    assert!(young_age < threshold, "年轻会话不应该达到5分钟阈值");
+    let result = session_manager
+        .delete_session(&young_session.session_id, young_session.user_id)
+        .await;
+    assert!(result.is_ok(), "孤立会话应当立即被清理");
 
-    // 验证会话仍然存在
+    // 验证已经删除
     let final_count = oauth_client_sessions::Entity::find()
         .count(&db)
         .await
         .unwrap();
-    assert_eq!(final_count, 1);
-
-    // 验证可以获取到会话
-    let session = session_manager.get_session(&young_session.session_id).await;
-    assert!(session.is_ok());
+    assert_eq!(final_count, 0);
 }
 
 #[tokio::test]

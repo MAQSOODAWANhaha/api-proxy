@@ -523,13 +523,11 @@ impl OAuthTokenRefreshTask {
         let delay = Self::duration_until(entry.next_refresh_at);
         let session_id = entry.session_id.clone();
         session_schedules.insert(session_id.clone(), entry.clone());
-        if let Some(existing_key) = session_keys.get(&session_id).copied() {
-            queue.reset(&existing_key, delay);
-            session_keys.insert(session_id, existing_key);
-        } else {
-            let key = queue.insert(RefreshQueueItem::Session(session_id.clone()), delay);
-            session_keys.insert(session_id, key);
+        if let Some(existing_key) = session_keys.remove(&session_id) {
+            let _ = queue.remove(&existing_key);
         }
+        let key = queue.insert(RefreshQueueItem::Session(session_id.clone()), delay);
+        session_keys.insert(session_id, key);
     }
 
     async fn resync_schedule(

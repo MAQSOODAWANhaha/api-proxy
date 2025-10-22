@@ -20,7 +20,6 @@ const REFRESH_BUFFER_MINUTES: i64 = 5;
 const RETRY_INTERVAL_SECONDS: u64 = 30;
 const PENDING_EXPIRE_MINUTES: i64 = 30;
 const EXPIRED_RETENTION_DAYS: i64 = 7;
-const ORPHAN_RETENTION_HOURS: i64 = 24;
 
 /// OAuth Token智能刷新服务
 ///
@@ -124,10 +123,24 @@ impl OAuthTokenRefreshService {
 
     /// 列出所有授权且具备刷新条件的会话
     pub async fn list_authorized_sessions(&self) -> Result<Vec<oauth_client_sessions::Model>> {
+        let linked_session_ids: Vec<String> = user_provider_keys::Entity::find()
+            .filter(user_provider_keys::Column::AuthType.eq("oauth"))
+            .select_only()
+            .column(user_provider_keys::Column::ApiKey)
+            .into_tuple::<String>()
+            .all(&*self.db)
+            .await
+            .map_err(|e| crate::error!(Database, Query(e)))?;
+
+        if linked_session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
         oauth_client_sessions::Entity::find()
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .filter(oauth_client_sessions::Column::RefreshToken.is_not_null())
             .filter(oauth_client_sessions::Column::AccessToken.is_not_null())
+            .filter(oauth_client_sessions::Column::SessionId.is_in(linked_session_ids))
             .all(&*self.db)
             .await
             .map_err(|e| crate::error!(Database, Query(e)))
@@ -198,15 +211,10 @@ impl OAuthTokenRefreshService {
             .await
             .map_err(|e| crate::error!(Database, Query(e)))?;
 
-        let orphan_cutoff = Utc::now() - chrono::Duration::hours(ORPHAN_RETENTION_HOURS);
         let linked_ids = linked_session_ids;
         let orphan_ids: Vec<String> = orphan_sessions
             .into_iter()
-            .filter(|session| {
-                let is_linked = linked_ids.contains(&session.session_id);
-                let too_old = session.updated_at < orphan_cutoff.naive_utc();
-                !is_linked && too_old
-            })
+            .filter(|session| !linked_ids.contains(&session.session_id))
             .map(|session| session.session_id)
             .collect();
 
@@ -222,7 +230,7 @@ impl OAuthTokenRefreshService {
                 LogComponent::OAuth,
                 "cleanup_orphan_sessions",
                 &format!(
-                    "Deleted {} orphan OAuth sessions (no linked provider keys)",
+                    "Deleted {} orphan OAuth sessions lacking user_provider_keys association",
                     deleted.rows_affected
                 )
             );
