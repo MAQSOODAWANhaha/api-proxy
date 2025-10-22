@@ -31,19 +31,46 @@ import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse }
 type DialogType = 'details' | null
 
 /** 页面主组件 */
-const tryParseJson = (value?: string) => {
-  if (!value) return null
+const parseJsonString = (value: string): unknown | null => {
   const trimmed = value.trim()
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) {
     return null
   }
 
   try {
     return JSON.parse(trimmed)
   } catch (error) {
-    console.warn('解析错误信息为 JSON 失败:', error)
+    console.warn('解析 JSON 字符串失败:', error)
     return null
   }
+}
+
+const normalizeErrorPayload = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(normalizeErrorPayload)
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).map(([key, val]) => {
+      if (typeof val === 'string') {
+        const nested = parseJsonString(val)
+        return [key, nested ? normalizeErrorPayload(nested) : val]
+      }
+
+      return [key, normalizeErrorPayload(val)]
+    })
+
+    return Object.fromEntries(entries)
+  }
+
+  return value
+}
+
+const tryParseErrorPayload = (value?: string) => {
+  if (!value) return null
+  const parsed = parseJsonString(value)
+  if (!parsed) return null
+  return normalizeErrorPayload(parsed)
 }
 
 const LogsPage: React.FC = () => {
@@ -712,7 +739,7 @@ const LogDetailsDialog: React.FC<{
                 </div>
               )}
               {item.error_message && (() => {
-                const parsed = tryParseJson(item.error_message)
+                const parsed = tryParseErrorPayload(item.error_message)
                 return parsed ? (
                   <div className="mt-2">
                     <div className="text-xs text-red-500 mb-1">详细信息:</div>
