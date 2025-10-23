@@ -22,7 +22,7 @@ use crate::{
     management::{
         response,
         server::AppState,
-        services::stats::{
+        services::stats_public::{
             AggregateMode, LogsPayload, ModelShareItem, ModelSharePayload, StatsLogsParams,
             StatsModelShareParams, StatsOverviewParams, StatsService, StatsTrendParams,
             SummaryMetric, TrendPoint,

@@ -1,3 +1,7 @@
+//! # 管理端 HTTP 处理器
+//!
+//! 仅负责解析输入参数、执行权限校验与构造响应，具体业务逻辑委托给服务层。
+
 // pub mod adapters; // temporarily disabled: module file missing
 pub mod auth;
 pub mod health;
