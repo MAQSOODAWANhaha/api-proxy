@@ -124,12 +124,24 @@ const LogsPage: React.FC = () => {
         user_provider_key_name: providerKeyNameFilter || undefined,
       })
       
-      if (response.success && response.data) {
-        setData(response.data.traces)
-        setTotalItems(response.data.pagination.total)
-        setTotalPages(response.data.pagination.pages)
-      } else {
+      if (!response.success) {
         throw new Error(response.error?.message || '获取日志列表失败')
+      }
+
+      if (response.data && !Array.isArray(response.data)) {
+        throw new Error('日志数据格式异常')
+      }
+
+      const traces = response.data ?? []
+      setData(traces)
+
+      if (response.pagination) {
+        setTotalItems(response.pagination.total)
+        setTotalPages(response.pagination.pages)
+      } else {
+        const fallbackTotal = traces.length
+        setTotalItems(fallbackTotal)
+        setTotalPages(Math.max(1, Math.ceil(fallbackTotal / pageSize)))
       }
     } catch (error) {
       console.error('获取日志列表失败:', error)

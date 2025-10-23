@@ -642,16 +642,6 @@ export interface ProxyTraceEntry extends ProxyTraceBase {
   request_id: string
 }
 
-export interface LogsListResponse {
-  traces: ProxyTraceListEntry[]
-  pagination: {
-    page: number
-    limit: number
-    total: number
-    pages: number
-  }
-}
-
 export interface LogsDashboardStatsResponse {
   total_requests: number
   successful_requests: number
@@ -1865,7 +1855,7 @@ export const api = {
       user_provider_key_name?: string
       start_time?: string
       end_time?: string
-    }): Promise<ApiResponse<LogsListResponse>> {
+    }): Promise<ApiResponse<ProxyTraceListEntry[]>> {
       try {
         const queryParams: Record<string, string> = {}
         if (params?.page !== undefined) queryParams.page = params.page.toString()
@@ -1882,7 +1872,7 @@ export const api = {
         if (params?.start_time) queryParams.start_time = params.start_time
         if (params?.end_time) queryParams.end_time = params.end_time
 
-        return await apiClient.get<LogsListResponse>('/logs/traces', queryParams)
+        return await apiClient.get<ProxyTraceListEntry[]>('/logs/traces', queryParams)
       } catch (error) {
         console.error('[Logs] Failed to fetch logs list:', error)
         return {
