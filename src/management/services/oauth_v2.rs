@@ -14,7 +14,7 @@ use crate::auth::oauth_client::{
 use crate::error::auth::{AuthError, OAuthError};
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 use crate::types::TimezoneContext;
 use crate::types::timezone_utils;
 use crate::{ensure, error, lerror, linfo};
@@ -70,12 +70,12 @@ pub struct OAuthProviderSummary {
 }
 
 pub struct OAuthV2Service<'a> {
-    state: &'a AppState,
+    state: &'a ManagementState,
 }
 
 impl<'a> OAuthV2Service<'a> {
     #[must_use]
-    pub const fn new(state: &'a AppState) -> Self {
+    pub const fn new(state: &'a ManagementState) -> Self {
         Self { state }
     }
 

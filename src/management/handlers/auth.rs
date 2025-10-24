@@ -4,7 +4,7 @@ use crate::auth::types::UserInfo as AuthUserInfo;
 use crate::error::ProxyError;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::services::auth::{AuthManagementService, LoginOutput};
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::{linfo, lwarn};
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -62,7 +62,7 @@ impl From<AuthUserInfo> for UserInfo {
 /// 用户登录（完整密码验证版本）
 #[allow(clippy::cognitive_complexity)]
 pub async fn login(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Json(request): Json<LoginRequest>,
 ) -> axum::response::Response {
     let service = AuthManagementService::new(&state);
@@ -112,7 +112,10 @@ pub struct RefreshTokenResponse {
 
 /// 用户登出
 #[allow(clippy::cognitive_complexity)]
-pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
+pub async fn logout(
+    State(state): State<ManagementState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
     // 从Authorization头中提取token
     let auth_header = if let Some(header) = headers.get("Authorization") {
         match header.to_str() {
@@ -175,7 +178,7 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> axum::
 /// 验证JWT Token
 #[allow(clippy::cognitive_complexity)]
 pub async fn validate_token(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     linfo!(
@@ -252,7 +255,7 @@ pub async fn validate_token(
 /// 刷新access token
 #[allow(clippy::cognitive_complexity)]
 pub async fn refresh_token(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Json(request): Json<RefreshTokenRequest>,
 ) -> axum::response::Response {
     let service = AuthManagementService::new(&state);

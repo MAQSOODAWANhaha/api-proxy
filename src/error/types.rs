@@ -35,6 +35,10 @@ pub enum ProxyError {
         source: Option<anyhow::Error>,
     },
 
+    /// 构建器错误：依赖项缺失
+    #[error("Builder context: {0} must be set")]
+    BuilderContext(&'static str),
+
     #[error("内部错误: {message}")]
     Internal {
         message: String,
@@ -131,6 +135,7 @@ impl ProxyError {
             },
             Self::Conversion(_) => "CONVERSION_ERROR",
             Self::Provider { .. } => "AI_PROVIDER_ERROR",
+            Self::BuilderContext(_) => "BUILDER_INCOMPLETE",
             Self::Internal { .. } => "INTERNAL_SERVER_ERROR",
             Self::Io(_) => "IO_ERROR",
         }
@@ -184,9 +189,11 @@ impl ProxyError {
                 auth::AuthError::RateLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
                 _ => StatusCode::UNAUTHORIZED,
             },
-            Self::Config(_) | Self::Database(_) | Self::Internal { .. } | Self::Io(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            Self::Config(_)
+            | Self::Database(_)
+            | Self::Internal { .. }
+            | Self::Io(_)
+            | Self::BuilderContext(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Network(network::NetworkError::RateLimitExceeded) => {
                 StatusCode::TOO_MANY_REQUESTS
             }

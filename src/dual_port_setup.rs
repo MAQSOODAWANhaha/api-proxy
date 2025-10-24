@@ -1,17 +1,25 @@
 use crate::{
-    app::context::AppContext,
+    app::{context::AppContext, services::SharedServices},
     auth::{rate_limit_dist::DistributedRateLimiter, service::AuthService},
-    config::ConfigManager,
+    cache::CacheManager,
+    collect::service::CollectService,
+    config::{AppConfig, ConfigManager},
     error::{Context, Result},
-    management::server::{ManagementConfig, ManagementServer},
-    proxy::PingoraProxyServer,
-};
-/// 双端口分离架构：并发启动 Pingora 代理服务和 Axum 管理服务
-use crate::{
-    lerror, linfo,
+    key_pool::KeyPoolService,
+    linfo,
     logging::{LogComponent, LogStage},
-    lwarn,
+    management::server::{ManagementConfig, ManagementServer},
+    pricing::PricingCalculatorService,
+    proxy::{
+        PingoraProxyServer, authentication_service::AuthenticationService,
+        request_transform_service::RequestTransformService,
+        response_transform_service::ResponseTransformService, state::ProxyState,
+        upstream_service::UpstreamService,
+    },
+    trace::TraceManager,
 };
+use crate::{lerror, lwarn};
+use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// 双端口服务器启动函数
@@ -25,12 +33,13 @@ pub async fn run_dual_port_servers() -> Result<()> {
         "🚀 Starting dual-port architecture servers..."
     );
 
-    // 初始化共享资源
-    let context = initialize_shared_services().await?;
-    let config = context.config.clone();
-    let db = context.database.clone();
+    // 初始化所有共享服务和状态
+    let services = initialize_shared_services().await?;
+    let app_context = services.app_context;
+    let proxy_state = services.proxy_state;
+    let config = app_context.config.clone();
 
-    // 创建管理服务器配置 - 使用dual_port配置或默认值
+    // 创建管理服务器配置
     let (management_host, management_port) = config.dual_port.as_ref().map_or_else(
         || ("127.0.0.1".to_string(), 9090),
         |dual_port| {
@@ -46,7 +55,7 @@ pub async fn run_dual_port_servers() -> Result<()> {
         port: management_port,
         enable_cors: true,
         cors_origins: vec!["*".to_string()],
-        allowed_ips: vec!["0.0.0.0/0".to_string()], // 默认允许所有IP
+        allowed_ips: vec!["0.0.0.0/0".to_string()],
         denied_ips: vec![],
         api_prefix: "/api".to_string(),
         max_request_size: 16 * 1024 * 1024, // 16MB
@@ -82,56 +91,11 @@ pub async fn run_dual_port_servers() -> Result<()> {
     );
 
     // 创建管理服务器
-    let management_server = ManagementServer::new(management_config, context.clone())
+    let management_server = ManagementServer::new(management_config, app_context.clone())
         .context("Failed to create management server")?;
 
-    // 创建代理服务器，传递数据库连接和追踪系统
-    let proxy_server = PingoraProxyServer::new(
-        config.clone(),
-        Some(db.clone()),
-        Some(context.cache.clone()),
-        context.trace_system.clone(),
-    );
-
-    // 启动OAuth token后台刷新任务
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "start_oauth_refresh_task",
-        "🔄 Starting OAuth token refresh background task..."
-    );
-    if let Some(task) = context.oauth_token_refresh_task.as_ref() {
-        if let Err(e) = task.start().await {
-            lerror!(
-                "system",
-                LogStage::Startup,
-                LogComponent::ServerSetup,
-                "start_oauth_refresh_task_failed",
-                &format!("Failed to start OAuth token refresh task: {e:?}")
-            );
-            return Err(crate::error!(
-                Internal,
-                "OAuth token refresh task startup failed",
-                e
-            ));
-        }
-        linfo!(
-            "system",
-            LogStage::Startup,
-            LogComponent::ServerSetup,
-            "oauth_refresh_task_started",
-            "✅ OAuth token refresh background task started successfully"
-        );
-    } else {
-        lwarn!(
-            "system",
-            LogStage::Startup,
-            LogComponent::ServerSetup,
-            "oauth_refresh_task_missing",
-            "OAuth token refresh task not configured; skipping background startup"
-        );
-    }
+    // 创建代理服务器
+    let proxy_server = PingoraProxyServer::new(proxy_state);
 
     linfo!(
         "system",
@@ -199,9 +163,16 @@ pub async fn run_dual_port_servers() -> Result<()> {
                 "Received termination signal, shutting down..."
             );
             proxy.abort();
-            if let Some(task) = context.oauth_token_refresh_task.as_ref()
-                && let Err(e) = task.stop().await
-            {
+            if let Err(e) = app_context.key_pool_service.stop().await {
+                lwarn!(
+                    "system",
+                    LogStage::Shutdown,
+                    LogComponent::ServerSetup,
+                    "health_check_stop_failed",
+                    &format!("Failed to stop key pool service: {e:?}")
+                );
+            }
+            if let Err(e) = app_context.oauth_token_refresh_task.stop().await {
                 lwarn!(
                     "system",
                     LogStage::Shutdown,
@@ -215,10 +186,30 @@ pub async fn run_dual_port_servers() -> Result<()> {
     }
 }
 
-/// 初始化共享服务资源
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
-    // 加载配置
+/// 初始化所有共享服务和状态，并启动后台任务
+pub async fn initialize_shared_services() -> Result<SharedServices> {
+    // 1. 基础设置：加载配置和初始化数据库
+    let (config, db) = init_config_and_db().await?;
+
+    // 2. 创建全局上下文 AppContext
+    let app_context = build_app_context(config, db).await?;
+
+    // 3. 创建代理状态 ProxyState
+    let proxy_state = build_proxy_state(app_context.clone());
+
+    // 4. 启动后台任务
+    start_background_tasks(&app_context).await?;
+
+    // 5. 返回组装好的服务容器
+    Ok(SharedServices {
+        app_context,
+        proxy_state,
+    })
+}
+
+/// 职责1：加载配置和初始化数据库
+#[allow(clippy::cognitive_complexity)]
+async fn init_config_and_db() -> Result<(Arc<AppConfig>, Arc<DatabaseConnection>)> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -228,7 +219,7 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
     );
     let config_manager = Arc::new(ConfigManager::new().await?);
     let config = config_manager.get_config().await;
-
+    let config = Arc::new(config);
     linfo!(
         "system",
         LogStage::Startup,
@@ -237,7 +228,6 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
         "✅ Configuration loaded successfully"
     );
 
-    // 初始化数据库连接
     linfo!(
         "system",
         LogStage::Startup,
@@ -268,7 +258,6 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
         }
     };
 
-    // 运行数据库迁移
     linfo!(
         "system",
         LogStage::Startup,
@@ -319,43 +308,178 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
         "✅ Model pricing data is up to date"
     );
 
-    let config_arc = Arc::new(config);
+    Ok((config, db))
+}
 
-    // 初始化所有共享服务
+/// 职责2：创建全局上下文 `AppContext`
+async fn build_app_context(
+    config: Arc<AppConfig>,
+    db: Arc<DatabaseConnection>,
+) -> Result<Arc<AppContext>> {
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
-        "init_services",
-        "🛠️  Initializing shared services..."
+        "init_global_services",
+        "🛠️  Initializing global shared services (AppContext)..."
     );
 
-    // 初始化认证系统组件
     let auth_config = Arc::new(crate::auth::types::AuthConfig::default());
     let jwt_manager = Arc::new(
         crate::auth::jwt::JwtManager::new(auth_config.clone())
             .context("JWT manager init failed")?,
     );
-
-    // 初始化统一缓存管理器
-    let cache_manager = Arc::new(
-        crate::cache::abstract_cache::CacheManager::new(&config_arc.cache)
-            .context("Cache manager init failed")?,
-    );
-
+    let cache_manager =
+        Arc::new(CacheManager::new(&config.cache).context("Cache manager init failed")?);
     let rate_limiter = Arc::new(DistributedRateLimiter::new(
         cache_manager.clone(),
         db.clone(),
     ));
 
+    let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
+        db.clone(),
+        auth_config.clone(),
+        cache_manager.clone(),
+        Arc::new(config.cache.clone()),
+    ));
+
+    let auth_service = Arc::new(AuthService::new(
+        jwt_manager,
+        api_key_manager,
+        db.clone(),
+        auth_config,
+    ));
+
+    let tracer_config = crate::trace::immediate::ImmediateTracerConfig::default();
+    let trace_system = Arc::new(crate::trace::TraceSystem::new_immediate(
+        db.clone(),
+        tracer_config,
+    ));
+
+    let api_key_health_checker = Arc::new(
+        crate::key_pool::api_key_health::ApiKeyHealthChecker::new(db.clone(), None),
+    );
+    let key_pool_service = Arc::new(KeyPoolService::new(db.clone(), api_key_health_checker));
+
+    let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
+    let oauth_refresh_service = Arc::new(
+        crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService::new(
+            db.clone(),
+            oauth_client.clone(),
+        ),
+    );
+    let smart_api_key_provider = Arc::new(
+        crate::auth::smart_api_key_provider::SmartApiKeyProvider::new(
+            db.clone(),
+            oauth_client.clone(),
+            Arc::clone(&oauth_refresh_service),
+        ),
+    );
+    key_pool_service
+        .set_smart_provider(smart_api_key_provider.clone())
+        .await;
+
+    let oauth_token_refresh_task = Arc::new(
+        crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(oauth_refresh_service),
+    );
+
+    let app_context = Arc::new(
+        AppContext::builder()
+            .with_config(config)
+            .with_database(db)
+            .with_cache(cache_manager)
+            .with_auth_service(auth_service)
+            .with_rate_limiter(rate_limiter)
+            .with_key_pool_service(key_pool_service)
+            .with_oauth_token_refresh_task(oauth_token_refresh_task)
+            .with_trace_system(trace_system)
+            .with_oauth_client(oauth_client)
+            .with_smart_api_key_provider(smart_api_key_provider)
+            .build()?,
+    );
+
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
-        "warmup_rate_limit_cache",
-        "🔁 Warming up daily usage cache..."
+        "init_global_services_ok",
+        "✅ Global shared services (AppContext) initialized successfully"
     );
-    if let Err(e) = rate_limiter.warmup_daily_usage_cache().await {
+
+    Ok(app_context)
+}
+
+/// 职责3：创建代理状态 `ProxyState`
+fn build_proxy_state(app_context: Arc<AppContext>) -> Arc<ProxyState> {
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "init_proxy_services",
+        "🔧 Initializing proxy-specific services (ProxyState)..."
+    );
+
+    let db = app_context.database.clone();
+    let auth_service = app_context.auth_service.clone();
+    let cache_manager = app_context.cache.clone();
+    let key_pool_service = app_context.key_pool_service.clone();
+    let rate_limiter = app_context.rate_limiter.clone();
+    let trace_system = app_context.trace_system.clone();
+
+    let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
+    let collect_service = Arc::new(CollectService::new(pricing_calculator));
+    let trace_manager = Arc::new(TraceManager::new(
+        trace_system.immediate_tracer(),
+        rate_limiter.clone(),
+    ));
+    let upstream_service = Arc::new(UpstreamService::new(db.clone()));
+    let req_transform_service = Arc::new(RequestTransformService::new(db.clone()));
+    let resp_transform_service = Arc::new(ResponseTransformService::new());
+
+    let proxy_auth_service = Arc::new(AuthenticationService::new(
+        auth_service,
+        db.clone(),
+        cache_manager,
+        key_pool_service.clone(),
+        rate_limiter.clone(),
+    ));
+
+    let proxy_state = Arc::new(ProxyState {
+        context: app_context,
+        db,
+        auth_service: proxy_auth_service,
+        collect_service,
+        trace_manager,
+        upstream_service,
+        req_transform_service,
+        resp_transform_service,
+        key_pool_service,
+        rate_limiter,
+    });
+
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "init_proxy_services_ok",
+        "✅ Proxy-specific services (ProxyState) initialized successfully"
+    );
+
+    proxy_state
+}
+
+/// 职责4：启动后台任务
+#[allow(clippy::cognitive_complexity)]
+async fn start_background_tasks(app_context: &Arc<AppContext>) -> Result<()> {
+    linfo!(
+        "system",
+        LogStage::Startup,
+        LogComponent::ServerSetup,
+        "start_background_tasks",
+        "🏃 Starting background tasks..."
+    );
+
+    if let Err(e) = app_context.rate_limiter.warmup_daily_usage_cache().await {
         lwarn!(
             "system",
             LogStage::Startup,
@@ -373,168 +497,57 @@ pub async fn initialize_shared_services() -> Result<Arc<AppContext>> {
         );
     }
 
-    let api_key_manager = Arc::new(crate::auth::api_key::ApiKeyManager::new(
-        db.clone(),
-        auth_config.clone(),
-        cache_manager.clone(),
-        Arc::new(config_arc.cache.clone()),
-    ));
-    // 注意：认证服务在后续会统一创建一次
-
-    // Note: 旧的服务器健康检查已移除，现在使用API密钥健康检查系统
-    // 参见: src/key_pool/api_key_health.rs
-
-    // 创建认证服务
-    let auth_service = Arc::new(AuthService::new(
-        jwt_manager,
-        api_key_manager,
-        db.clone(),
-        auth_config.clone(),
-    ));
-
-    // 创建统一认证管理器
-
-    // 初始化统一追踪系统 - 这是关键的缺失组件!
+    if let Err(e) = app_context.key_pool_service.start().await {
+        lerror!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "start_health_check_failed",
+            &format!("Failed to start key pool service: {e:?}")
+        );
+        return Err(crate::error!(
+            Internal,
+            "Key pool service startup failed",
+            e
+        ));
+    }
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
-        "init_trace_system",
-        "🔍 Initializing unified trace system..."
-    );
-    let tracer_config = crate::trace::immediate::ImmediateTracerConfig::default();
-    let trace_system = Arc::new(crate::trace::TraceSystem::new_immediate(
-        db.clone(),
-        tracer_config,
-    ));
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_trace_system_ok",
-        "✅ Unified trace system initialized successfully"
+        "health_check_task_started",
+        "✅ Key pool service bootstrapped successfully"
     );
 
-    // 初始化API密钥健康检查器
+    if let Err(e) = app_context.oauth_token_refresh_task.start().await {
+        lerror!(
+            "system",
+            LogStage::Startup,
+            LogComponent::ServerSetup,
+            "start_oauth_refresh_task_failed",
+            &format!("Failed to start OAuth token refresh task: {e:?}")
+        );
+        return Err(crate::error!(
+            Internal,
+            "OAuth token refresh task startup failed",
+            e
+        ));
+    }
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
-        "init_health_checker",
-        "🏥 Initializing API key health checker..."
-    );
-    let api_key_health_checker = Arc::new(
-        crate::key_pool::api_key_health::ApiKeyHealthChecker::new(db.clone(), None),
-    );
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_health_checker_ok",
-        "✅ API key health checker initialized successfully"
-    );
-
-    // 初始化OAuth客户端
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_client",
-        "🔐 Initializing OAuth client..."
-    );
-    let oauth_client = Arc::new(crate::auth::oauth_client::OAuthClient::new(db.clone()));
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_client_ok",
-        "✅ OAuth client initialized successfully"
-    );
-
-    // 初始化OAuth token刷新服务
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_refresh_service",
-        "🔄 Initializing OAuth token refresh service..."
-    );
-    let oauth_refresh_service = Arc::new(
-        crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService::new(
-            db.clone(),
-            oauth_client.clone(),
-        ),
-    );
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_refresh_service_ok",
-        "✅ OAuth token refresh service initialized successfully"
-    );
-
-    // 初始化智能API密钥提供者
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_smart_provider",
-        "🧠 Initializing smart API key provider..."
-    );
-    let smart_api_key_provider = Arc::new(
-        crate::auth::smart_api_key_provider::SmartApiKeyProvider::new(
-            db.clone(),
-            oauth_client.clone(),
-            Arc::clone(&oauth_refresh_service),
-        ),
-    );
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_smart_provider_ok",
-        "✅ Smart API key provider initialized successfully"
-    );
-
-    // 初始化OAuth token刷新任务
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_task",
-        "⏰ Initializing OAuth token refresh task..."
-    );
-    let oauth_token_refresh_task = Arc::new(
-        crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask::new(oauth_refresh_service),
-    );
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::ServerSetup,
-        "init_oauth_task_ok",
-        "✅ OAuth token refresh task initialized successfully"
+        "oauth_refresh_task_started",
+        "✅ OAuth token refresh background task started successfully"
     );
 
     linfo!(
         "system",
         LogStage::Startup,
         LogComponent::ServerSetup,
-        "init_services_ok",
-        "✅ All shared services initialized successfully"
+        "start_background_tasks_ok",
+        "✅ All background tasks started successfully"
     );
 
-    let context = Arc::new(AppContext::new(
-        config_arc,
-        db,
-        cache_manager,
-        auth_service,
-        rate_limiter,
-        Some(trace_system),
-        Some(api_key_health_checker),
-        Some(oauth_client),
-        Some(smart_api_key_provider),
-        Some(oauth_token_refresh_task),
-    ));
-
-    Ok(context)
+    Ok(())
 }

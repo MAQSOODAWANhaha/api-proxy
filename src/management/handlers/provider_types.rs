@@ -1,6 +1,6 @@
 use crate::management::middleware::auth::AuthContext;
 use crate::management::services::provider_types;
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
 use axum::extract::{Extension, State};
 use serde_json::json;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 /// 获取服务提供商类型列表
 pub async fn list_provider_types(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     match provider_types::list_active_types(&state, &timezone_context.timezone).await {

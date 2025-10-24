@@ -13,12 +13,12 @@ use crate::management::services::{
     CreateProviderKeyRequest, ProviderKeyService, ProviderKeysListQuery, ServiceResponse,
     TrendQuery, UpdateProviderKeyRequest, UserProviderKeyQuery,
 };
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
 
 /// 获取提供商密钥列表
 pub async fn get_provider_keys_list(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<ProviderKeysListQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -38,7 +38,7 @@ pub async fn get_provider_keys_list(
 
 /// 创建提供商密钥
 pub async fn create_provider_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(payload): Json<CreateProviderKeyRequest>,
@@ -61,7 +61,7 @@ pub async fn create_provider_key(
 
 /// 获取提供商密钥详情
 pub async fn get_provider_key_detail(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -81,7 +81,7 @@ pub async fn get_provider_key_detail(
 
 /// 更新提供商密钥
 pub async fn update_provider_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -105,7 +105,7 @@ pub async fn update_provider_key(
 
 /// 删除提供商密钥
 pub async fn delete_provider_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -128,7 +128,7 @@ pub async fn delete_provider_key(
 
 /// 获取密钥统计信息
 pub async fn get_provider_key_stats(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -148,7 +148,7 @@ pub async fn get_provider_key_stats(
 
 /// 获取密钥卡片统计
 pub async fn get_provider_keys_dashboard_stats(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ProviderKeyService::new(&state);
@@ -163,7 +163,7 @@ pub async fn get_provider_keys_dashboard_stats(
 
 /// 获取简化的密钥列表
 pub async fn get_simple_provider_keys_list(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<UserProviderKeyQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
@@ -179,7 +179,7 @@ pub async fn get_simple_provider_keys_list(
 
 /// 执行密钥健康检查
 pub async fn health_check_provider_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -202,7 +202,7 @@ pub async fn health_check_provider_key(
 
 /// 获取密钥趋势数据
 pub async fn get_provider_key_trends(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Query(query): Query<TrendQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -223,7 +223,7 @@ pub async fn get_provider_key_trends(
 
 /// 获取用户服务 API 趋势数据
 pub async fn get_user_service_api_trends(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Query(query): Query<TrendQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,

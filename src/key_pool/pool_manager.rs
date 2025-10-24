@@ -8,38 +8,38 @@ use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
 use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, types::AuthStatus};
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
-use crate::types::ProviderTypeId;
 use crate::{ldebug, lerror, linfo, lwarn};
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// API密钥池管理器
-/// 职责：管理用户的API密钥池，根据策略选择合适的密钥，并集成OAuth token智能刷新
-pub struct ApiKeyPoolManager {
+/// API 密钥池服务
+/// 职责：管理用户的 API 密钥池，根据策略选择合适的密钥，并集成健康检查与 OAuth 智能刷新
+pub struct KeyPoolService {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
-    /// 缓存的密钥池
-    key_pools: tokio::sync::RwLock<HashMap<String, Vec<user_provider_keys::Model>>>,
     /// 选择器缓存
     selectors: tokio::sync::RwLock<HashMap<SchedulingStrategy, Arc<dyn ApiKeySelector>>>,
-    /// API密钥健康检查器
+    /// API 密钥健康检查器
     health_checker: Arc<ApiKeyHealthChecker>,
-    /// 智能API密钥提供者（支持OAuth token刷新）
-    smart_provider: Option<Arc<SmartApiKeyProvider>>,
+    /// 智能 API 密钥提供者（支持 OAuth token 刷新）
+    smart_provider: tokio::sync::RwLock<Option<Arc<SmartApiKeyProvider>>>,
+    /// 是否已完成启动预热
+    ready: AtomicBool,
 }
 
-impl ApiKeyPoolManager {
+impl KeyPoolService {
     /// 创建新的API密钥池管理器
     #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, health_checker: Arc<ApiKeyHealthChecker>) -> Self {
         Self {
             db,
-            key_pools: tokio::sync::RwLock::new(HashMap::new()),
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             health_checker,
-            smart_provider: None,
+            smart_provider: tokio::sync::RwLock::new(None),
+            ready: AtomicBool::new(false),
         }
     }
 
@@ -52,16 +52,43 @@ impl ApiKeyPoolManager {
     ) -> Self {
         Self {
             db,
-            key_pools: tokio::sync::RwLock::new(HashMap::new()),
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             health_checker,
-            smart_provider: Some(smart_provider),
+            smart_provider: tokio::sync::RwLock::new(Some(smart_provider)),
+            ready: AtomicBool::new(false),
         }
     }
 
     /// 设置智能密钥提供者
-    pub fn set_smart_provider(&mut self, smart_provider: Arc<SmartApiKeyProvider>) {
-        self.smart_provider = Some(smart_provider);
+    pub async fn set_smart_provider(&self, smart_provider: Arc<SmartApiKeyProvider>) {
+        let mut guard = self.smart_provider.write().await;
+        *guard = Some(smart_provider);
+    }
+
+    /// 启动并预热密钥池服务
+    pub async fn start(&self) -> Result<()> {
+        self.health_checker
+            .start()
+            .await
+            .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))?;
+        self.ready.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// 停止健康检查服务
+    pub async fn stop(&self) -> Result<()> {
+        self.health_checker
+            .stop()
+            .await
+            .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))?;
+        self.ready.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// 当前服务是否已准备就绪
+    #[must_use]
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
     }
 
     /// 从用户服务API配置中获取API密钥池并选择密钥
@@ -151,7 +178,8 @@ impl ApiKeyPoolManager {
             .await?;
 
         // 如果有智能提供者，获取有效凭证
-        if let Some(smart_provider) = &self.smart_provider {
+        let smart_provider = { self.smart_provider.read().await.clone() };
+        if let Some(smart_provider) = smart_provider {
             match smart_provider
                 .get_valid_credential(selection_result.selected_key.id)
                 .await
@@ -213,63 +241,6 @@ impl ApiKeyPoolManager {
                 smart_enhanced: false,
             })
         }
-    }
-
-    /// 缓存用户的API密钥池
-    pub async fn cache_user_key_pool(
-        &self,
-        user_id: i32,
-        provider_type_id: ProviderTypeId,
-    ) -> Result<Vec<user_provider_keys::Model>> {
-        let cache_key = format!("user_{user_id}_{provider_type_id}");
-
-        // 查询用户的API密钥
-        let user_keys = entity::user_provider_keys::Entity::find()
-            .filter(entity::user_provider_keys::Column::UserId.eq(user_id))
-            .filter(entity::user_provider_keys::Column::ProviderTypeId.eq(provider_type_id))
-            .filter(entity::user_provider_keys::Column::IsActive.eq(true))
-            .all(&*self.db)
-            .await
-            .map_err(|_| ProxyError::internal("Database error when caching key pool"))?;
-
-        // 缓存到内存
-        {
-            let mut pools = self.key_pools.write().await;
-            pools.insert(cache_key, user_keys.clone());
-        }
-
-        Ok(user_keys)
-    }
-
-    /// 从缓存获取API密钥池
-    pub async fn get_cached_key_pool(
-        &self,
-        user_id: i32,
-        provider_type_id: ProviderTypeId,
-    ) -> Option<Vec<user_provider_keys::Model>> {
-        let cache_key = format!("user_{user_id}_{provider_type_id}");
-        let pools = self.key_pools.read().await;
-        pools.get(&cache_key).cloned()
-    }
-
-    /// 清理指定用户的密钥池缓存
-    pub async fn invalidate_user_cache(&self, user_id: i32) {
-        let mut pools = self.key_pools.write().await;
-        let keys_to_remove: Vec<String> = pools
-            .keys()
-            .filter(|key| key.starts_with(&format!("user_{user_id}_")))
-            .cloned()
-            .collect();
-
-        for key in keys_to_remove {
-            pools.remove(&key);
-        }
-    }
-
-    /// 清理所有缓存
-    pub async fn clear_cache(&self) {
-        self.key_pools.write().await.clear();
-        self.selectors.write().await.clear();
     }
 
     /// 获取或创建API密钥选择器
@@ -726,35 +697,118 @@ impl ApiKeyPoolManager {
     }
 
     /// 获取密钥池统计信息
-    pub async fn get_pool_stats(&self) -> PoolStats {
-        let pools = self.key_pools.read().await;
+    pub async fn get_pool_stats(&self) -> KeyPoolStats {
         let selectors = self.selectors.read().await;
         let healthy_key_ids = self.health_checker.get_healthy_keys().await;
         let all_health_status = self.health_checker.get_all_health_status().await;
 
-        PoolStats {
-            cached_pools: pools.len(),
-            total_keys: pools.values().map(std::vec::Vec::len).sum(),
+        KeyPoolStats {
             active_selectors: selectors.len(),
             available_strategies: vec![
                 SchedulingStrategy::RoundRobin,
                 SchedulingStrategy::Weighted,
-                SchedulingStrategy::HealthBest,
             ],
             healthy_keys: healthy_key_ids.len(),
             total_tracked_keys: all_health_status.len(),
             health_check_running: self.health_checker.is_running().await,
+            ready: self.is_ready(),
         }
+    }
+
+    /// 处理新增密钥：拉取最新信息并立即执行一次健康检测
+    pub async fn register_new_key(&self, key_id: i32) -> Result<()> {
+        let key = self
+            .load_key_model(key_id)
+            .await?
+            .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
+        self.health_checker
+            .check_api_key(&key)
+            .await
+            .map_err(|e| ProxyError::internal_with_source("Failed to register provider key", e))?;
+
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::KeyPool,
+            "provider_key_registered",
+            "Registered new provider key for health tracking",
+            key_id = key_id,
+            provider_type_id = key.provider_type_id
+        );
+
+        Ok(())
+    }
+
+    /// 处理密钥更新：重新获取信息并刷新健康状态
+    pub async fn refresh_key(&self, key_id: i32) -> Result<()> {
+        let key = self
+            .load_key_model(key_id)
+            .await?
+            .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
+        self.health_checker
+            .check_api_key(&key)
+            .await
+            .map_err(|e| ProxyError::internal_with_source("Failed to refresh provider key", e))?;
+
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::KeyPool,
+            "provider_key_refreshed",
+            "Refreshed provider key after management update",
+            key_id = key_id,
+            provider_type_id = key.provider_type_id
+        );
+
+        Ok(())
+    }
+
+    /// 处理密钥删除：移除健康状态并取消限流重置任务
+    pub async fn remove_key(&self, key_id: i32) -> Result<()> {
+        self.health_checker
+            .load_health_status_from_database()
+            .await
+            .map_err(|e| {
+                ProxyError::internal_with_source("Failed to refresh health status cache", e)
+            })?;
+
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::KeyPool,
+            "provider_key_removed",
+            "Removed provider key from health tracking",
+            key_id = key_id
+        );
+
+        Ok(())
+    }
+
+    async fn load_key_model(&self, key_id: i32) -> Result<Option<user_provider_keys::Model>> {
+        entity::user_provider_keys::Entity::find_by_id(key_id)
+            .one(&*self.db)
+            .await
+            .map_err(|err| {
+                lerror!(
+                    "system",
+                    LogStage::Db,
+                    LogComponent::Database,
+                    "load_key_model_failed",
+                    &format!("Failed to load provider key {key_id}: {err}")
+                );
+                ProxyError::internal("Failed to load provider key")
+            })
+    }
+
+    #[must_use]
+    pub const fn health_checker(&self) -> &Arc<ApiKeyHealthChecker> {
+        &self.health_checker
     }
 }
 
 /// 密钥池统计信息
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct PoolStats {
-    /// 缓存的密钥池数量
-    pub cached_pools: usize,
-    /// 总密钥数量
-    pub total_keys: usize,
+pub struct KeyPoolStats {
     /// 活跃选择器数量
     pub active_selectors: usize,
     /// 可用策略
@@ -765,6 +819,8 @@ pub struct PoolStats {
     pub total_tracked_keys: usize,
     /// 健康检查服务是否运行中
     pub health_check_running: bool,
+    /// 服务是否已准备就绪
+    pub ready: bool,
 }
 
 /// 智能API密钥选择结果
@@ -823,11 +879,14 @@ impl SmartApiKeySelectionResult {
     }
 }
 
-impl std::fmt::Debug for ApiKeyPoolManager {
+impl std::fmt::Debug for KeyPoolService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ApiKeyPoolManager")
-            .field("cached_pools", &"<async>")
+        f.debug_struct("KeyPoolService")
+            .field("db", &"<Arc<DatabaseConnection>>")
             .field("selectors", &"<async>")
-            .finish()
+            .field("smart_provider", &"<async>")
+            .field("health_checker", &"<opaque>")
+            .field("ready", &self.ready.load(Ordering::SeqCst))
+            .finish_non_exhaustive()
     }
 }

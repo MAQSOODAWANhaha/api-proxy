@@ -11,8 +11,6 @@ pub enum SchedulingStrategy {
     RoundRobin,
     /// 权重调度
     Weighted,
-    /// 健康度最佳调度
-    HealthBest,
 }
 
 /// API密钥健康状态枚举
@@ -107,9 +105,6 @@ impl FromStr for SchedulingStrategy {
         match s.to_lowercase().as_str() {
             "round_robin" | "roundrobin" | "rr" => Ok(Self::RoundRobin),
             "weighted" | "weight" | "w" => Ok(Self::Weighted),
-            "health_best" | "healthbest" | "health" | "hb" | "health_based" | "healthbased" => {
-                Ok(Self::HealthBest)
-            }
             _ => Err(format!("Unknown scheduling strategy: {s}")),
         }
     }
@@ -128,7 +123,6 @@ impl SchedulingStrategy {
         match self {
             Self::RoundRobin => "round_robin",
             Self::Weighted => "weighted",
-            Self::HealthBest => "health_best",
         }
     }
 }
@@ -147,10 +141,6 @@ mod tests {
             SchedulingStrategy::parse("weighted"),
             Some(SchedulingStrategy::Weighted)
         );
-        assert_eq!(
-            SchedulingStrategy::parse("health_best"),
-            Some(SchedulingStrategy::HealthBest)
-        );
         assert_eq!(SchedulingStrategy::parse("unknown"), None);
     }
 
@@ -158,7 +148,6 @@ mod tests {
     fn test_scheduling_strategy_as_str() {
         assert_eq!(SchedulingStrategy::RoundRobin.as_str(), "round_robin");
         assert_eq!(SchedulingStrategy::Weighted.as_str(), "weighted");
-        assert_eq!(SchedulingStrategy::HealthBest.as_str(), "health_best");
     }
 
     #[test]

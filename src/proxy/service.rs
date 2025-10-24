@@ -11,58 +11,26 @@ use pingora_core::prelude::*;
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
-use sea_orm::DatabaseConnection;
 use serde_json::Value;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::collect::service::CollectService;
-use crate::key_pool::ApiKeyHealthChecker;
+use crate::proxy::context::ProxyContext;
+use crate::proxy::provider_strategy;
 use crate::proxy::response::{JsonError, build_auth_error_response, write_json_error};
-use crate::proxy::{
-    AuthenticationService, context::ProxyContext, provider_strategy,
-    request_transform_service::RequestTransformService,
-    response_transform_service::ResponseTransformService, upstream_service::UpstreamService,
-};
-use crate::trace::TraceManager;
+use crate::proxy::state::ProxyState;
 
 /// 核心AI代理服务 - 作为编排器
 pub struct ProxyService {
-    db: Arc<DatabaseConnection>,
-    auth_service: Arc<AuthenticationService>,
-    collect_service: Arc<CollectService>,
-    trace_manager: Arc<TraceManager>,
-    upstream_service: Arc<UpstreamService>,
-    req_transform_service: Arc<RequestTransformService>,
-    resp_transform_service: Arc<ResponseTransformService>,
-    health_checker: Arc<ApiKeyHealthChecker>,
+    state: Arc<ProxyState>,
 }
 
 impl ProxyService {
     /// 创建新的代理服务实例
-    #[allow(clippy::too_many_arguments)]
-    pub const fn new(
-        db: Arc<DatabaseConnection>,
-        auth_service: Arc<AuthenticationService>,
-        collect_service: Arc<CollectService>,
-        trace_manager: Arc<TraceManager>,
-        upstream_service: Arc<UpstreamService>,
-        req_transform_service: Arc<RequestTransformService>,
-        resp_transform_service: Arc<ResponseTransformService>,
-        health_checker: Arc<ApiKeyHealthChecker>,
-    ) -> pingora_core::Result<Self> {
-        Ok(Self {
-            db,
-            auth_service,
-            collect_service,
-            trace_manager,
-            upstream_service,
-            req_transform_service,
-            resp_transform_service,
-            health_checker,
-        })
+    pub const fn new(state: Arc<ProxyState>) -> pingora_core::Result<Self> {
+        Ok(Self { state })
     }
 
     /// 检测是否为连接失败错误
@@ -198,6 +166,7 @@ impl ProxyHttp for ProxyService {
 
         // 1. 执行完整的认证和授权流程
         if let Err(e) = self
+            .state
             .auth_service
             .authenticate_and_authorize(session, ctx)
             .await
@@ -253,14 +222,17 @@ impl ProxyHttp for ProxyService {
 
             if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
             {
-                ctx.strategy =
-                    provider_strategy::make_strategy(name, Some(self.health_checker.clone()));
+                ctx.strategy = provider_strategy::make_strategy(
+                    name,
+                    Some(self.state.key_pool_service.health_checker().clone()),
+                );
             }
         }
 
         // 3. 收集请求统计信息并启动追踪
-        let req_stats = self.collect_service.collect_request_stats(session);
+        let req_stats = self.state.collect_service.collect_request_stats(session);
         ctx.request_details = self
+            .state
             .collect_service
             .collect_request_details(session, &req_stats);
 
@@ -268,6 +240,7 @@ impl ProxyHttp for ProxyService {
             let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
             let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
             let _ = self
+                .state
                 .trace_manager
                 .start_trace(
                     &ctx.request_id,
@@ -291,7 +264,7 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        let peer = self.upstream_service.select_peer(ctx).await?;
+        let peer = self.state.upstream_service.select_peer(ctx).await?;
         Ok(peer)
     }
 
@@ -301,7 +274,8 @@ impl ProxyHttp for ProxyService {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.req_transform_service
+        self.state
+            .req_transform_service
             .filter_request(session, upstream_request, ctx)
             .await?;
         Ok(())
@@ -445,10 +419,12 @@ impl ProxyHttp for ProxyService {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<()> {
-        self.resp_transform_service
+        self.state
+            .resp_transform_service
             .filter_response(session, upstream_response, ctx)?;
 
         let resp_stats = self
+            .state
             .collect_service
             .collect_response_details(upstream_response, ctx);
         ctx.response_details.headers = resp_stats.headers;
@@ -498,11 +474,13 @@ impl ProxyHttp for ProxyService {
         }
 
         let metrics = self
+            .state
             .collect_service
             .finalize_metrics(ctx, status_code)
             .await;
 
-        self.trace_manager
+        self.state
+            .trace_manager
             .update_model(
                 &ctx.request_id,
                 metrics.provider_type_id,
@@ -512,7 +490,7 @@ impl ProxyHttp for ProxyService {
             .await;
 
         if status_code < 400 {
-            if let Err(err) = self.trace_manager.record_success(&metrics, ctx).await {
+            if let Err(err) = self.state.trace_manager.record_success(&metrics, ctx).await {
                 lwarn!(
                     &ctx.request_id,
                     LogStage::Error,
@@ -522,7 +500,8 @@ impl ProxyHttp for ProxyService {
                 );
             }
         } else {
-            self.trace_manager
+            self.state
+                .trace_manager
                 .record_failure(Some(&metrics), status_code, e, ctx)
                 .await;
         }

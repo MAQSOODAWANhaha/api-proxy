@@ -1,8 +1,7 @@
 //! API密钥健康检查相关处理器
 
 use crate::error::ProxyError;
-use crate::key_pool::api_key_health::ApiKeyHealthChecker;
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
 use crate::types::timezone_utils;
 use crate::{
@@ -16,7 +15,6 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sea_orm::{FromQueryResult, PaginatorTrait, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
-use std::sync::Arc;
 
 /// API密钥健康检查信息
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,7 +81,7 @@ fn get_timezone_from_request(request: &Request) -> Option<TimezoneContext> {
 
 /// 简单健康检查处理器（系统存活检查）
 pub async fn health_check(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     request: Request,
 ) -> axum::response::Response {
     let timezone_ctx = get_timezone_from_request(&request);
@@ -140,7 +138,7 @@ struct LastTraceRow {
 }
 
 pub async fn detailed_health_check(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     request: Request,
 ) -> axum::response::Response {
     let timezone_ctx = get_timezone_from_request(&request);
@@ -224,12 +222,12 @@ pub async fn detailed_health_check(
 
 /// 获取所有API密钥健康状态
 pub async fn get_api_keys_health(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     request: Request,
 ) -> axum::response::Response {
     let timezone_ctx = get_timezone_from_request(&request);
 
-    // 注意：这需要从AppState中获取ApiKeyHealthChecker
+    // 注意：这需要从ManagementState中获取ApiKeyHealthChecker
     // 当前我们需要通过数据库查询来获取健康状态
     match get_api_keys_health_internal(&state, timezone_ctx).await {
         Ok(health_infos) => response::success(health_infos),
@@ -252,7 +250,7 @@ pub async fn get_api_keys_health(
 /// 获取健康检查统计信息
 #[allow(clippy::similar_names)]
 pub async fn get_health_stats(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     request: Request,
 ) -> axum::response::Response {
     let timezone_ctx = get_timezone_from_request(&request);
@@ -277,7 +275,7 @@ pub async fn get_health_stats(
 
 /// 手动触发指定API密钥的健康检查
 pub async fn trigger_key_health_check(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
 ) -> axum::response::Response {
     match trigger_key_health_check_internal(&state, key_id).await {
@@ -300,7 +298,7 @@ pub async fn trigger_key_health_check(
 
 /// 标记API密钥为不健康
 pub async fn mark_key_unhealthy(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
 ) -> axum::response::Response {
     let reason = "Manually marked unhealthy via management API".to_string();
@@ -325,7 +323,7 @@ pub async fn mark_key_unhealthy(
 // 内部实现函数
 
 async fn get_api_keys_health_internal(
-    state: &AppState,
+    state: &ManagementState,
     timezone_ctx: Option<TimezoneContext>,
 ) -> crate::error::Result<Vec<ApiKeyHealthInfo>> {
     // 从数据库获取所有活跃的API密钥
@@ -349,11 +347,8 @@ async fn get_api_keys_health_internal(
 
     let mut health_infos = Vec::new();
 
-    // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = state.api_key_health_checker.as_ref().map_or_else(
-        || Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-        std::clone::Clone::clone,
-    );
+    // 使用共享的健康检查器
+    let health_checker = state.key_pool().health_checker().clone();
 
     for key in active_keys {
         let provider_info = provider_types_map.get(&key.provider_type_id);
@@ -418,7 +413,7 @@ async fn get_api_keys_health_internal(
 }
 
 async fn get_health_stats_internal(
-    state: &AppState,
+    state: &ManagementState,
     timezone_ctx: Option<TimezoneContext>,
 ) -> crate::error::Result<HealthCheckStats> {
     let health_infos = get_api_keys_health_internal(state, timezone_ctx).await?;
@@ -467,7 +462,7 @@ async fn get_health_stats_internal(
         .collect();
 
     // 检查健康检查服务是否运行中
-    let health_check_running = state.api_key_health_checker.is_some();
+    let health_check_running = state.key_pool().health_checker().is_running().await;
 
     Ok(HealthCheckStats {
         total_keys,
@@ -479,7 +474,7 @@ async fn get_health_stats_internal(
 }
 
 async fn trigger_key_health_check_internal(
-    state: &AppState,
+    state: &ManagementState,
     key_id: i32,
 ) -> crate::error::Result<crate::key_pool::api_key_health::ApiKeyCheckResult> {
     // 获取指定的API密钥
@@ -488,23 +483,17 @@ async fn trigger_key_health_check_internal(
         .await?
         .ok_or_else(|| crate::error!(Database, "API key not found: {key_id}"))?;
 
-    // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = state.api_key_health_checker.as_ref().map_or_else(
-        || Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-        std::clone::Clone::clone,
-    );
+    // 使用共享的健康检查器
+    let health_checker = state.key_pool().health_checker().clone();
     health_checker.check_api_key(&key).await
 }
 
 async fn mark_key_unhealthy_internal(
-    state: &AppState,
+    state: &ManagementState,
     key_id: i32,
     reason: String,
 ) -> crate::error::Result<()> {
-    // 使用共享的健康检查器，如果不存在则创建临时的
-    let health_checker = state.api_key_health_checker.as_ref().map_or_else(
-        || Arc::new(ApiKeyHealthChecker::new(state.database.clone(), None)),
-        std::clone::Clone::clone,
-    );
+    // 使用共享的健康检查器
+    let health_checker = state.key_pool().health_checker().clone();
     health_checker.mark_key_unhealthy(key_id, reason).await
 }

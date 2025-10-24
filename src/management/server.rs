@@ -10,13 +10,12 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::context::AppContext;
+use crate::error::Result;
+use crate::key_pool::KeyPoolService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
-// Note: 旧的HealthCheckService已移除，健康检查功能现在通过API密钥健康检查实现
-use crate::error::Result;
 use axum::Router;
 use axum::routing::get;
-// use axum::http::StatusCode; // not needed with manage_error!
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -68,11 +67,11 @@ impl Default for ManagementConfig {
 
 /// 管理服务器应用状态
 #[derive(Clone)]
-pub struct AppState {
+pub struct ManagementState {
     context: Arc<AppContext>,
 }
 
-impl AppState {
+impl ManagementState {
     #[must_use]
     pub const fn new(context: Arc<AppContext>) -> Self {
         Self { context }
@@ -82,9 +81,15 @@ impl AppState {
     pub const fn context_arc(&self) -> &Arc<AppContext> {
         &self.context
     }
+
+    /// 获取密钥池服务的便捷方法
+    #[must_use]
+    pub fn key_pool(&self) -> &Arc<KeyPoolService> {
+        &self.context.key_pool_service
+    }
 }
 
-impl Deref for AppState {
+impl Deref for ManagementState {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -98,7 +103,7 @@ pub struct ManagementServer {
     config: ManagementConfig,
     /// 应用状态
     #[allow(dead_code)]
-    state: AppState,
+    state: ManagementState,
     /// 路由器
     router: Router,
 }
@@ -106,7 +111,7 @@ pub struct ManagementServer {
 impl ManagementServer {
     /// 创建新的管理服务器
     pub fn new(config: ManagementConfig, context: Arc<AppContext>) -> Result<Self> {
-        let state = AppState::new(context);
+        let state = ManagementState::new(context);
 
         let router = Self::create_router(state.clone(), &config)?;
 
@@ -118,7 +123,7 @@ impl ManagementServer {
     }
 
     /// 创建路由器
-    fn create_router(state: AppState, config: &ManagementConfig) -> Result<Router> {
+    fn create_router(state: ManagementState, config: &ManagementConfig) -> Result<Router> {
         // 使用统一的路由配置，现在认证中间件已在 routes.rs 中应用
         let api_routes = super::routes::create_routes(state);
 

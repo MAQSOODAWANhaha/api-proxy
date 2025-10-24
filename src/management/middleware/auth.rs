@@ -11,7 +11,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::auth::AuthUtils;
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 
 /// 包含认证用户信息的上下文
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub struct AuthContext {
 
 /// Axum认证中间件
 pub async fn auth(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {

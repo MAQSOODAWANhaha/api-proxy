@@ -12,7 +12,7 @@ use crate::{
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
     lwarn,
-    management::server::AppState,
+    management::server::ManagementState,
 };
 
 /// 登录响应
@@ -38,12 +38,12 @@ pub struct RefreshTokenOutput {
 }
 
 pub struct AuthManagementService<'a> {
-    state: &'a AppState,
+    state: &'a ManagementState,
 }
 
 impl<'a> AuthManagementService<'a> {
     #[must_use]
-    pub const fn new(state: &'a AppState) -> Self {
+    pub const fn new(state: &'a ManagementState) -> Self {
         Self { state }
     }
 

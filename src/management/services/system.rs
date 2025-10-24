@@ -16,7 +16,7 @@ use tokio::task;
 use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::lwarn;
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 use crate::types::timezone_utils;
 
 use super::shared::metrics::ratio_as_percentage;
@@ -84,7 +84,7 @@ pub fn init_start_time() {
 
 /// 构建系统信息，供 handler 返回。
 #[must_use]
-pub fn build_system_info(state: &AppState) -> SystemInfo {
+pub fn build_system_info(state: &ManagementState) -> SystemInfo {
     SystemInfo {
         service: ServiceInfo {
             name: "AI Proxy",

@@ -1,7 +1,7 @@
 //! # 系统信息处理器
 
 use crate::management::response;
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 use crate::management::services::system;
 use crate::types::TimezoneContext;
 use axum::extract::{Extension, State};
@@ -13,13 +13,13 @@ pub fn init_start_time() {
 }
 
 /// 获取系统信息
-pub async fn get_system_info(State(state): State<AppState>) -> axum::response::Response {
+pub async fn get_system_info(State(state): State<ManagementState>) -> axum::response::Response {
     let info = system::build_system_info(&state);
     response::success(info)
 }
 
 /// 获取系统指标
-pub async fn get_system_metrics(State(_state): State<AppState>) -> axum::response::Response {
+pub async fn get_system_metrics(State(_state): State<ManagementState>) -> axum::response::Response {
     match system::collect_system_metrics().await {
         Ok(metrics) => response::success(metrics),
         Err(err) => {

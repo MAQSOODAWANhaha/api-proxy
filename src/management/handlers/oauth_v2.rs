@@ -16,7 +16,7 @@ use crate::management::services::{
     OAuthProviderSummary, OAuthV2AuthorizeRequest, OAuthV2ExchangeRequest, OAuthV2PollQuery,
     OAuthV2Service,
 };
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
 
 /// 提取请求中的时区上下文
@@ -29,7 +29,7 @@ fn get_timezone_from_request(request: &Request) -> Option<TimezoneContext> {
 
 /// 开始 OAuth 授权流程
 pub async fn start_authorization(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2AuthorizeRequest>,
 ) -> impl IntoResponse {
@@ -48,7 +48,7 @@ pub async fn start_authorization(
 
 /// 轮询 OAuth 会话状态
 pub async fn poll_session(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Query(query): Query<OAuthV2PollQuery>,
 ) -> impl IntoResponse {
@@ -64,7 +64,7 @@ pub async fn poll_session(
 
 /// 交换授权码获取令牌
 pub async fn exchange_token(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2ExchangeRequest>,
 ) -> impl IntoResponse {
@@ -80,7 +80,7 @@ pub async fn exchange_token(
 
 /// 获取用户 OAuth 会话列表
 pub async fn list_sessions(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     request: Request,
 ) -> impl IntoResponse {
@@ -100,7 +100,7 @@ pub async fn list_sessions(
 
 /// 删除 OAuth 会话
 pub async fn delete_session(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
@@ -119,7 +119,7 @@ pub async fn delete_session(
 
 /// 刷新 OAuth 令牌
 pub async fn refresh_token(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
@@ -138,7 +138,7 @@ pub async fn refresh_token(
 
 /// 获取 OAuth 会话统计
 pub async fn get_statistics(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     let service = OAuthV2Service::new(&state);
@@ -153,7 +153,7 @@ pub async fn get_statistics(
 
 /// 清理过期会话（管理员接口）
 pub async fn cleanup_expired_sessions(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     linfo!(
@@ -178,7 +178,7 @@ pub async fn cleanup_expired_sessions(
 }
 
 /// 获取支持的 OAuth 提供商列表
-pub async fn list_providers(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn list_providers(State(state): State<ManagementState>) -> impl IntoResponse {
     let service = OAuthV2Service::new(&state);
     match service.list_providers().await {
         Ok(providers) => {

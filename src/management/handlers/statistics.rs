@@ -8,7 +8,7 @@ use crate::{
     management::{
         middleware::auth::AuthContext,
         response,
-        server::AppState,
+        server::ManagementState,
         services::statistics::{StatisticsService, TimeRangeQuery},
     },
     types::TimezoneContext,
@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 /// 今日仪表板卡片 API: /api/statistics/today/cards
 pub async fn get_today_dashboard_cards(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -44,7 +44,7 @@ pub async fn get_today_dashboard_cards(
 
 /// 模型使用占比 API: /api/statistics/models/rate
 pub async fn get_models_usage_rate(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<TimeRangeQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -71,7 +71,7 @@ pub async fn get_models_usage_rate(
 
 /// 模型详细统计 API: /api/statistics/models/statistics
 pub async fn get_models_statistics(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<TimeRangeQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -98,7 +98,7 @@ pub async fn get_models_statistics(
 
 /// Token 使用趋势 API: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -124,7 +124,7 @@ pub async fn get_tokens_trend(
 
 /// 用户 API Keys 请求趋势 API: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -150,7 +150,7 @@ pub async fn get_user_api_keys_request_trend(
 
 /// 用户 API Keys Token 趋势 API: /api/statistics/user-service-api-keys/token
 pub async fn get_user_api_keys_token_trend(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {

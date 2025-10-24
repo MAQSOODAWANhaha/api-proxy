@@ -6,7 +6,7 @@ use crate::{
     error::{ProxyError, Result},
     lerror,
     logging::{LogComponent, LogStage},
-    management::server::AppState,
+    management::server::ManagementState,
     types::{TimezoneContext, ratio_as_percentage, timezone_utils},
 };
 use chrono::{DateTime, Duration, Utc};
@@ -139,7 +139,7 @@ pub struct StatisticsService<'a> {
 
 impl<'a> StatisticsService<'a> {
     #[must_use]
-    pub fn new(state: &'a AppState) -> Self {
+    pub fn new(state: &'a ManagementState) -> Self {
         Self {
             db: state.database.as_ref(),
         }

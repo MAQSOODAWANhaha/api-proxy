@@ -21,7 +21,7 @@ use crate::{
     logging::{LogComponent, LogStage},
     management::{
         response,
-        server::AppState,
+        server::ManagementState,
         services::stats_public::{
             AggregateMode, LogsPayload, ModelShareItem, ModelSharePayload, StatsLogsParams,
             StatsModelShareParams, StatsOverviewParams, StatsService, StatsTrendParams,
@@ -136,7 +136,7 @@ pub struct LogsResponse {
 
 /// 公共概览接口
 pub async fn get_stats_overview(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<OverviewQuery>,
 ) -> Response {
@@ -191,7 +191,7 @@ pub async fn get_stats_overview(
 
 /// 公共趋势接口
 pub async fn get_stats_trend(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<TrendQuery>,
 ) -> Response {
@@ -246,7 +246,7 @@ pub async fn get_stats_trend(
 
 /// 公共模型占比接口
 pub async fn get_stats_model_share(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<ModelShareQuery>,
 ) -> Response {
@@ -303,7 +303,7 @@ pub async fn get_stats_model_share(
 
 /// 公共日志接口
 pub async fn get_stats_logs(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<LogsQuery>,
 ) -> Response {

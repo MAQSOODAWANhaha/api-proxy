@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::key_pool::types::SchedulingStrategy;
 use crate::lerror;
 use crate::logging::{LogComponent, LogStage};
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 use crate::types::timezone_utils;
 
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
@@ -39,7 +39,10 @@ pub struct SchedulingStrategyItem {
 }
 
 /// 列出全部激活的提供商类型。
-pub async fn list_active_types(state: &AppState, timezone: &Tz) -> Result<Vec<ProviderTypeItem>> {
+pub async fn list_active_types(
+    state: &ManagementState,
+    timezone: &Tz,
+) -> Result<Vec<ProviderTypeItem>> {
     let rows = ProviderTypes::find()
         .filter(provider_types::Column::IsActive.eq(true))
         .order_by_asc(provider_types::Column::Id)
@@ -102,12 +105,6 @@ pub fn list_scheduling_strategies() -> Vec<SchedulingStrategyItem> {
             SchedulingStrategy::Weighted,
             "权重调度",
             "根据权重比例分配请求到上游服务器",
-            false,
-        ),
-        (
-            SchedulingStrategy::HealthBest,
-            "健康优选",
-            "优先选择健康状态最佳的上游服务器",
             false,
         ),
     ]

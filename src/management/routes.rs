@@ -3,13 +3,13 @@
 //! 定义所有API路由和路由组织
 
 use crate::management::middleware::auth::auth;
-use crate::management::server::AppState;
+use crate::management::server::ManagementState;
 use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
 
 /// 创建所有路由
-pub fn create_routes(state: AppState) -> Router {
+pub fn create_routes(state: ManagementState) -> Router {
     let public_routes = Router::new()
         .route(
             "/ping",
@@ -51,7 +51,7 @@ pub fn create_routes(state: AppState) -> Router {
 }
 
 /// 公开统计路由
-fn public_stats_routes() -> Router<AppState> {
+fn public_stats_routes() -> Router<ManagementState> {
     Router::new()
         .route(
             "/overview",
@@ -72,7 +72,7 @@ fn public_stats_routes() -> Router<AppState> {
 }
 
 /// 健康检查路由
-fn health_routes() -> Router<AppState> {
+fn health_routes() -> Router<ManagementState> {
     Router::new()
         .route("/", get(crate::management::handlers::health::health_check))
         .route(
@@ -98,7 +98,7 @@ fn health_routes() -> Router<AppState> {
 }
 
 /// 系统信息路由
-fn system_routes() -> Router<AppState> {
+fn system_routes() -> Router<ManagementState> {
     Router::new()
         .route(
             "/info",
@@ -111,7 +111,7 @@ fn system_routes() -> Router<AppState> {
 }
 
 /// 统计查询路由
-fn statistics_routes() -> Router<AppState> {
+fn statistics_routes() -> Router<ManagementState> {
     Router::new()
         // 新的功能分组API结构（基于docs/new.md要求）
         .nest("/today", today_stats_routes())
@@ -121,7 +121,7 @@ fn statistics_routes() -> Router<AppState> {
 }
 
 /// 今日统计路由
-fn today_stats_routes() -> Router<AppState> {
+fn today_stats_routes() -> Router<ManagementState> {
     Router::new().route(
         "/cards",
         get(crate::management::handlers::statistics::get_today_dashboard_cards),
@@ -129,7 +129,7 @@ fn today_stats_routes() -> Router<AppState> {
 }
 
 /// 模型统计路由
-fn models_stats_routes() -> Router<AppState> {
+fn models_stats_routes() -> Router<ManagementState> {
     Router::new()
         .route(
             "/rate",
@@ -142,7 +142,7 @@ fn models_stats_routes() -> Router<AppState> {
 }
 
 /// Token统计路由
-fn tokens_stats_routes() -> Router<AppState> {
+fn tokens_stats_routes() -> Router<ManagementState> {
     Router::new().route(
         "/trend",
         get(crate::management::handlers::statistics::get_tokens_trend),
@@ -150,7 +150,7 @@ fn tokens_stats_routes() -> Router<AppState> {
 }
 
 /// 用户API Keys统计路由
-fn user_api_keys_stats_routes() -> Router<AppState> {
+fn user_api_keys_stats_routes() -> Router<ManagementState> {
     Router::new()
         .route(
             "/request",
@@ -163,7 +163,7 @@ fn user_api_keys_stats_routes() -> Router<AppState> {
 }
 
 /// 用户管理路由
-fn user_routes() -> Router<AppState> {
+fn user_routes() -> Router<ManagementState> {
     use axum::routing::{delete, patch, put};
     Router::new()
         // 用户CRUD基础接口
@@ -220,7 +220,7 @@ fn user_routes() -> Router<AppState> {
 }
 
 /// Provider API密钥路由（内部密钥池管理）- 核心功能
-fn provider_api_keys_routes() -> Router<AppState> {
+fn provider_api_keys_routes() -> Router<ManagementState> {
     use axum::routing::{delete, post, put};
     Router::new()
         // 获取提供商密钥卡片统计数据
@@ -276,7 +276,7 @@ fn provider_api_keys_routes() -> Router<AppState> {
 }
 
 /// 用户服务API路由（对外API服务管理）
-fn user_service_routes() -> Router<AppState> {
+fn user_service_routes() -> Router<ManagementState> {
     use axum::routing::{delete, put};
     Router::new()
         // 用户API Keys卡片展示
@@ -332,7 +332,7 @@ fn user_service_routes() -> Router<AppState> {
 }
 
 /// Provider类型管理路由
-fn provider_type_routes() -> Router<AppState> {
+fn provider_type_routes() -> Router<ManagementState> {
     Router::new()
         .route(
             "/providers",
@@ -345,7 +345,7 @@ fn provider_type_routes() -> Router<AppState> {
 }
 
 /// 日志管理路由
-fn logs_routes() -> Router<AppState> {
+fn logs_routes() -> Router<ManagementState> {
     Router::new()
         // 获取日志仪表板统计数据
         .route(
@@ -372,7 +372,7 @@ fn logs_routes() -> Router<AppState> {
 // OAuth认证路由已迁移到oauth_v2_routes
 
 /// OAuth v2客户端路由
-fn oauth_v2_routes() -> Router<AppState> {
+fn oauth_v2_routes() -> Router<ManagementState> {
     use axum::routing::delete;
     Router::new()
         // 开始OAuth授权流程

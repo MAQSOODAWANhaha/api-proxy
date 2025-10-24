@@ -8,7 +8,7 @@ use crate::{
     management::{
         middleware::auth::AuthContext,
         response::{self, ApiResponse},
-        server::AppState,
+        server::ManagementState,
         services::logs::{LogsAnalyticsQuery, LogsListQuery, LogsService},
     },
     types::TimezoneContext,
@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 /// 获取日志仪表板统计数据
 pub async fn get_dashboard_stats(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     let service = LogsService::new(&state);
@@ -36,7 +36,7 @@ pub async fn get_dashboard_stats(
 
 /// 获取日志列表
 pub async fn get_traces_list(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<LogsListQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -63,7 +63,7 @@ pub async fn get_traces_list(
 
 /// 获取日志详情
 pub async fn get_trace_detail(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(id): Path<i32>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -91,7 +91,7 @@ pub async fn get_trace_detail(
 
 /// 获取日志统计分析
 pub async fn get_logs_analytics(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<LogsAnalyticsQuery>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Extension(_auth_context): Extension<Arc<AuthContext>>,

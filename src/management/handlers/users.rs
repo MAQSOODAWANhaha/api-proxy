@@ -7,14 +7,14 @@ use crate::management::services::users::{
     BatchDeleteRequest, ChangePasswordRequest, CreateUserRequest, ListUsersResult,
     ResetPasswordRequest, UpdateProfileRequest, UpdateUserRequest, UserQuery, UsersService,
 };
-use crate::management::{response, server::AppState};
+use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
 use std::sync::Arc;
 
 pub async fn list_users(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<UserQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -34,7 +34,7 @@ pub async fn list_users(
 
 /// 创建用户
 pub async fn create_user(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserRequest>,
@@ -57,7 +57,7 @@ pub async fn create_user(
 
 /// 获取单个用户
 pub async fn get_user(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -77,7 +77,7 @@ pub async fn get_user(
 
 /// 获取用户档案
 pub async fn get_user_profile(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -96,7 +96,7 @@ pub async fn get_user_profile(
 
 /// 更新用户档案
 pub async fn update_user_profile(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<UpdateProfileRequest>,
@@ -119,7 +119,7 @@ pub async fn update_user_profile(
 
 /// 修改密码
 pub async fn change_password(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ChangePasswordRequest>,
 ) -> axum::response::Response {
@@ -141,7 +141,7 @@ pub async fn change_password(
 
 /// 更新用户
 pub async fn update_user(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -165,7 +165,7 @@ pub async fn update_user(
 
 /// 删除用户
 pub async fn delete_user(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
@@ -184,7 +184,7 @@ pub async fn delete_user(
 
 /// 批量删除用户
 pub async fn batch_delete_users(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<BatchDeleteRequest>,
 ) -> axum::response::Response {
@@ -203,7 +203,7 @@ pub async fn batch_delete_users(
 
 /// 切换用户状态
 pub async fn toggle_user_status(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -226,7 +226,7 @@ pub async fn toggle_user_status(
 
 /// 重置用户密码
 pub async fn reset_user_password(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ResetPasswordRequest>,

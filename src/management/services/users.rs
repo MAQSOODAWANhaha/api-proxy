@@ -18,7 +18,7 @@ use crate::{
     logging::{LogComponent, LogStage},
     management::middleware::auth::AuthContext,
     management::response::Pagination,
-    management::server::AppState,
+    management::server::ManagementState,
     types::{TimezoneContext, timezone_utils},
 };
 
@@ -164,7 +164,7 @@ pub struct UsersService<'a> {
 
 impl<'a> UsersService<'a> {
     #[must_use]
-    pub fn new(state: &'a AppState) -> Self {
+    pub fn new(state: &'a ManagementState) -> Self {
         Self {
             db: state.database.as_ref(),
         }

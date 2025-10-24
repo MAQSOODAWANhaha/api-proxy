@@ -23,7 +23,7 @@ use crate::{
     lerror,
     logging::{LogComponent, LogStage},
     management::response::Pagination,
-    management::server::AppState,
+    management::server::ManagementState,
     types::{ProviderTypeId, timezone_utils},
 };
 
@@ -215,7 +215,7 @@ pub struct ServiceApiService<'a> {
 
 impl<'a> ServiceApiService<'a> {
     #[must_use]
-    pub fn new(state: &'a AppState) -> Self {
+    pub fn new(state: &'a ManagementState) -> Self {
         Self {
             db: state.database.as_ref(),
         }

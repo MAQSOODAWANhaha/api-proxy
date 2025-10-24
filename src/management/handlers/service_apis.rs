@@ -16,7 +16,7 @@ use crate::{
     management::{
         middleware::auth::AuthContext,
         response,
-        server::AppState,
+        server::ManagementState,
         services::service_apis::{
             CreateUserServiceKeyRequest, ServiceApiService, UpdateStatusRequest,
             UpdateUserServiceKeyRequest, UsageStatsQuery, UserServiceKeyQuery,
@@ -27,7 +27,7 @@ use crate::{
 
 /// 1. 用户 API Keys 卡片展示
 pub async fn get_user_service_cards(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ServiceApiService::new(&state);
@@ -42,7 +42,7 @@ pub async fn get_user_service_cards(
 
 /// 2. 用户 API Keys 列表
 pub async fn list_user_service_keys(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Query(query): Query<UserServiceKeyQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -62,7 +62,7 @@ pub async fn list_user_service_keys(
 
 /// 3. 新增 API Key
 pub async fn create_user_service_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserServiceKeyRequest>,
@@ -82,7 +82,7 @@ pub async fn create_user_service_key(
 
 /// 4. 获取 API Key 详情
 pub async fn get_user_service_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
@@ -102,7 +102,7 @@ pub async fn get_user_service_key(
 
 /// 5. 编辑 API Key
 pub async fn update_user_service_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateUserServiceKeyRequest>,
@@ -119,7 +119,7 @@ pub async fn update_user_service_key(
 
 /// 6. 删除 API Key
 pub async fn delete_user_service_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
@@ -135,7 +135,7 @@ pub async fn delete_user_service_key(
 
 /// 7. API Key 使用统计
 pub async fn get_user_service_key_usage(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Query(query): Query<UsageStatsQuery>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
@@ -161,7 +161,7 @@ pub async fn get_user_service_key_usage(
 
 /// 8. 重新生成 API Key
 pub async fn regenerate_user_service_key(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
@@ -177,7 +177,7 @@ pub async fn regenerate_user_service_key(
 
 /// 9. 启用/禁用 API Key
 pub async fn update_user_service_key_status(
-    State(state): State<AppState>,
+    State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateStatusRequest>,

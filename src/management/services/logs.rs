@@ -6,7 +6,7 @@ use crate::{
     error::{ProxyError, Result},
     lerror, linfo,
     logging::{LogComponent, LogStage},
-    management::{middleware::auth::AuthContext, server::AppState},
+    management::{middleware::auth::AuthContext, server::ManagementState},
     types::{ConvertToUtc, ProviderTypeId, TimezoneContext, timezone_utils},
 };
 use chrono::{DateTime, Utc};
@@ -189,7 +189,7 @@ pub struct LogsService<'a> {
 
 impl<'a> LogsService<'a> {
     #[must_use]
-    pub fn new(state: &'a AppState) -> Self {
+    pub fn new(state: &'a ManagementState) -> Self {
         Self {
             db: state.database.as_ref(),
         }
