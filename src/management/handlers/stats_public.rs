@@ -212,6 +212,7 @@ pub async fn get_stats_trend(
             user_service_key: query.user_service_key.clone(),
             range,
             aggregate: query.aggregate,
+            timezone,
         };
         service.trend(&params).await
     }
@@ -326,6 +327,7 @@ pub async fn get_stats_logs(
             page: query.page,
             page_size: query.page_size,
             search: query.search.clone(),
+            timezone,
         };
         service.logs(&params).await
     }

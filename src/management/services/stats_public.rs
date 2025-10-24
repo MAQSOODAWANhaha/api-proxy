@@ -58,7 +58,7 @@ pub struct SummaryMetric {
 /// 趋势数据点
 #[derive(Debug, Clone, Serialize)]
 pub struct TrendPoint {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: String,
     pub requests: i64,
     pub tokens: i64,
     pub cost: f64,
@@ -87,7 +87,7 @@ pub struct ModelSharePayload {
 #[derive(Debug, Clone, Serialize)]
 pub struct LogItem {
     pub id: i32,
-    pub timestamp: NaiveDateTime,
+    pub timestamp: String,
     pub method: String,
     pub path: Option<String>,
     pub status_code: Option<i32>,
@@ -133,6 +133,7 @@ pub struct StatsTrendParams {
     pub user_service_key: String,
     pub range: Range<DateTime<Utc>>,
     pub aggregate: AggregateMode,
+    pub timezone: Tz,
 }
 
 /// 模型占比查询参数
@@ -154,6 +155,7 @@ pub struct StatsLogsParams {
     pub page: u32,
     pub page_size: u32,
     pub search: Option<String>,
+    pub timezone: Tz,
 }
 
 /// 内部汇总查询结果
@@ -253,7 +255,7 @@ impl<'a> StatsService<'a> {
             .resolve_service_ids(&params.user_service_key, params.aggregate)
             .await?;
 
-        self.fetch_trend(&service_ids, &params.range).await
+        self.fetch_trend(&service_ids, params).await
     }
 
     pub async fn model_share(&self, params: &StatsModelShareParams) -> Result<ModelSharePayload> {
@@ -301,14 +303,7 @@ impl<'a> StatsService<'a> {
             .resolve_service_ids(&params.user_service_key, params.aggregate)
             .await?;
 
-        self.fetch_logs(
-            &service_ids,
-            &params.range,
-            params.page,
-            params.page_size,
-            params.search.clone(),
-        )
-        .await
+        self.fetch_logs(&service_ids, params).await
     }
 
     /// 解析 `user_service_key` 对应的 service id 列表
@@ -413,9 +408,9 @@ impl<'a> StatsService<'a> {
     async fn fetch_trend(
         &self,
         service_ids: &[i32],
-        range: &Range<DateTime<Utc>>,
+        params: &StatsTrendParams,
     ) -> Result<Vec<TrendPoint>> {
-        let interval = pick_trend_interval(range);
+        let interval = pick_trend_interval(&params.range);
         let bucket_expr = trend_bucket_expr(self.db.get_database_backend(), interval);
 
         let select = ProxyTracing::find()
@@ -429,8 +424,8 @@ impl<'a> StatsService<'a> {
                 "success_rate",
             )
             .filter(proxy_tracing::Column::UserServiceApiId.is_in(service_ids.to_vec()))
-            .filter(proxy_tracing::Column::CreatedAt.gte(range.start.naive_utc()))
-            .filter(proxy_tracing::Column::CreatedAt.lt(range.end.naive_utc()))
+            .filter(proxy_tracing::Column::CreatedAt.gte(params.range.start.naive_utc()))
+            .filter(proxy_tracing::Column::CreatedAt.lt(params.range.end.naive_utc()))
             .group_by(Expr::cust(bucket_expr))
             .order_by(Expr::cust(bucket_expr), Order::Asc);
 
@@ -443,7 +438,10 @@ impl<'a> StatsService<'a> {
         Ok(rows
             .into_iter()
             .map(|row| TrendPoint {
-                timestamp: DateTime::<Utc>::from_naive_utc_and_offset(row.bucket, Utc),
+                timestamp: timezone_utils::format_naive_utc_for_response(
+                    &row.bucket,
+                    &params.timezone,
+                ),
                 requests: row.requests.unwrap_or(0),
                 tokens: row.tokens.unwrap_or(0),
                 cost: row.cost.unwrap_or(0.0),
@@ -501,20 +499,17 @@ impl<'a> StatsService<'a> {
     async fn fetch_logs(
         &self,
         service_ids: &[i32],
-        range: &Range<DateTime<Utc>>,
-        page: u32,
-        page_size: u32,
-        search: Option<String>,
+        params: &StatsLogsParams,
     ) -> Result<LogsPayload> {
-        let page = page.max(1);
-        let page_size = page_size.clamp(1, 200);
+        let page = params.page.max(1);
+        let page_size = params.page_size.clamp(1, 200);
 
         let mut base = ProxyTracing::find()
             .filter(proxy_tracing::Column::UserServiceApiId.is_in(service_ids.to_vec()))
-            .filter(proxy_tracing::Column::CreatedAt.gte(range.start.naive_utc()))
-            .filter(proxy_tracing::Column::CreatedAt.lt(range.end.naive_utc()));
+            .filter(proxy_tracing::Column::CreatedAt.gte(params.range.start.naive_utc()))
+            .filter(proxy_tracing::Column::CreatedAt.lt(params.range.end.naive_utc()));
 
-        if let Some(query) = search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(query) = params.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             let pattern = format!("%{query}%");
             base = base.filter(
                 Condition::any()
@@ -542,7 +537,10 @@ impl<'a> StatsService<'a> {
             .into_iter()
             .map(|model| LogItem {
                 id: model.id,
-                timestamp: model.created_at,
+                timestamp: timezone_utils::format_naive_utc_for_response(
+                    &model.created_at,
+                    &params.timezone,
+                ),
                 method: model.method,
                 path: model.path,
                 status_code: model.status_code,
