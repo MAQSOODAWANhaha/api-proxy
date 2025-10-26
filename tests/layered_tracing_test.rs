@@ -3,14 +3,11 @@
 //! 覆盖模型信息更新、成功/失败写入等关键路径，确保新的 Collect → Trace
 //! 流程在数据库层面的表现符合预期。
 
-use api_proxy::auth::rate_limit_dist::DistributedRateLimiter;
+use api_proxy::auth::rate_limit_dist::RateLimiter;
 use api_proxy::cache::CacheManager;
 use api_proxy::collect::types::{CollectedCost, CollectedMetrics, TokenUsageMetrics};
 use api_proxy::proxy::ProxyContext;
-use api_proxy::trace::{
-    TraceManager,
-    immediate::{ImmediateProxyTracer, ImmediateTracerConfig},
-};
+use api_proxy::trace::{TraceManager, immediate::ImmediateProxyTracer};
 use api_proxy::types::ProviderTypeId;
 use chrono::Utc;
 use entity::{provider_types, proxy_tracing, user_provider_keys, user_service_apis, users};
@@ -116,12 +113,9 @@ async fn seed_provider_key(
 }
 
 fn build_trace_manager(db: Arc<sea_orm::DatabaseConnection>) -> Arc<TraceManager> {
-    let tracer = Arc::new(ImmediateProxyTracer::new(
-        db.clone(),
-        ImmediateTracerConfig::default(),
-    ));
+    let tracer = Arc::new(ImmediateProxyTracer::new(db.clone()));
     let cache = Arc::new(CacheManager::memory_only());
-    let rate_limiter = Arc::new(DistributedRateLimiter::new(cache, db));
+    let rate_limiter = Arc::new(RateLimiter::new(cache, db));
     Arc::new(TraceManager::new(Some(tracer), rate_limiter))
 }
 

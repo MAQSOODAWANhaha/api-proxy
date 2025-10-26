@@ -17,8 +17,9 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 
+use super::rate_limit_reset_task::ScheduleResetCommand;
 use super::types::ApiKeyHealthStatus;
 use crate::proxy::types::ProviderId;
 use crate::types::ProviderTypeId;
@@ -145,6 +146,8 @@ pub struct ApiKeyHealthChecker {
     config: ApiKeyHealthConfig,
     /// 是否正在运行
     is_running: Arc<RwLock<bool>>,
+    /// 限流重置命令发送器（可选，用于发送事件）
+    rate_limit_reset_sender: Arc<RwLock<Option<mpsc::Sender<ScheduleResetCommand>>>>,
 }
 
 impl ApiKeyHealthChecker {
@@ -166,7 +169,20 @@ impl ApiKeyHealthChecker {
             health_status: Arc::new(RwLock::new(HashMap::new())),
             config: config.unwrap_or_default(),
             is_running: Arc::new(RwLock::new(false)),
+            rate_limit_reset_sender: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// 设置限流重置命令发送器（依赖注入）
+    pub async fn set_rate_limit_reset_sender(&self, sender: mpsc::Sender<ScheduleResetCommand>) {
+        let mut guard = self.rate_limit_reset_sender.write().await;
+        *guard = Some(sender);
+    }
+
+    /// 获取健康状态缓存的引用
+    #[must_use]
+    pub fn get_health_status_cache(&self) -> Arc<RwLock<HashMap<i32, ApiKeyHealth>>> {
+        Arc::clone(&self.health_status)
     }
 
     /// 启动健康检查服务
@@ -937,7 +953,25 @@ impl ApiKeyHealthChecker {
     }
 
     /// 将密钥标记为速率受限
+    /// 将密钥标记为速率受限
     pub async fn mark_key_as_rate_limited(
+        &self,
+        key_id: i32,
+        resets_at: Option<chrono::NaiveDateTime>,
+        details: &str,
+    ) -> Result<()> {
+        // 更新数据库
+        self.update_key_rate_limited_in_db(key_id, resets_at, details)
+            .await?;
+
+        // 发送重置命令
+        self.send_rate_limit_reset_command(key_id, resets_at).await;
+
+        Ok(())
+    }
+
+    /// 在数据库中更新密钥为限流状态
+    async fn update_key_rate_limited_in_db(
         &self,
         key_id: i32,
         resets_at: Option<chrono::NaiveDateTime>,
@@ -985,6 +1019,33 @@ impl ApiKeyHealthChecker {
         );
 
         Ok(())
+    }
+
+    /// 发送限流重置命令
+    async fn send_rate_limit_reset_command(
+        &self,
+        key_id: i32,
+        resets_at: Option<chrono::NaiveDateTime>,
+    ) {
+        if let Some(resets_at_time) = resets_at
+            && let Some(sender) = self.rate_limit_reset_sender.read().await.as_ref()
+            && let Err(e) = sender
+                .send(ScheduleResetCommand {
+                    key_id,
+                    resets_at: resets_at_time,
+                })
+                .await
+        {
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::HealthChecker,
+                "send_reset_command_failed",
+                "发送限流重置命令失败",
+                key_id = key_id,
+                error = %e
+            );
+        }
     }
 }
 

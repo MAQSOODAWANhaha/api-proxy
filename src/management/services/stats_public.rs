@@ -509,7 +509,12 @@ impl<'a> StatsService<'a> {
             .filter(proxy_tracing::Column::CreatedAt.gte(params.range.start.naive_utc()))
             .filter(proxy_tracing::Column::CreatedAt.lt(params.range.end.naive_utc()));
 
-        if let Some(query) = params.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(query) = params
+            .search
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             let pattern = format!("%{query}%");
             base = base.filter(
                 Condition::any()

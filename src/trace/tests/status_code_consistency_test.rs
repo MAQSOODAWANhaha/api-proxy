@@ -2,9 +2,7 @@
 //!
 //! 测试追踪系统中的状态码一致性验证功能
 
-use crate::trace::immediate::{
-    ImmediateProxyTracer, ImmediateTracerConfig, SimpleCompleteTraceParams,
-};
+use crate::trace::immediate::{ImmediateProxyTracer, SimpleCompleteTraceParams};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, EntityTrait, Set};
 use serial_test::serial;
@@ -75,7 +73,7 @@ mod tests {
     #[serial]
     async fn test_status_code_consistency_validation_success() {
         let db = setup_test_db().await;
-        let tracer = ImmediateProxyTracer::new(db.clone(), ImmediateTracerConfig::default());
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // 启动追踪
         let user_id = setup_test_user(&db).await;
@@ -113,7 +111,7 @@ mod tests {
     #[serial]
     async fn test_status_code_consistency_validation_mismatch() {
         let db = setup_test_db().await;
-        let tracer = ImmediateProxyTracer::new(db.clone(), ImmediateTracerConfig::default());
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // 启动追踪
         let user_id = setup_test_user(&db).await;
@@ -151,7 +149,7 @@ mod tests {
     #[serial]
     async fn test_connection_failure_status_codes() {
         let db = setup_test_db().await;
-        let tracer = ImmediateProxyTracer::new(db.clone(), ImmediateTracerConfig::default());
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // 启动追踪
         let user_id = setup_test_user(&db).await;
@@ -202,7 +200,7 @@ mod tests {
     #[serial]
     async fn test_error_status_codes() {
         let db = setup_test_db().await;
-        let tracer = ImmediateProxyTracer::new(db.clone(), ImmediateTracerConfig::default());
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // 启动追踪
         let user_id = setup_test_user(&db).await;
@@ -253,7 +251,7 @@ mod tests {
     #[serial]
     async fn test_database_record_accuracy() {
         let db = setup_test_db().await;
-        let tracer = ImmediateProxyTracer::new(db.clone(), ImmediateTracerConfig::default());
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // 启动追踪
         let user_id = setup_test_user(&db).await;

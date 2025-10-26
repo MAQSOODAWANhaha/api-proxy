@@ -43,7 +43,7 @@ pub async fn auth(
     };
 
     // 使用 JwtManager 验证 Token
-    match state.auth_service.jwt_manager.validate_token(&token) {
+    match state.auth_service().jwt_manager.validate_token(&token) {
         Ok(claims) => {
             // Token有效，将用户信息注入到请求扩展中
             let user_id = claims

@@ -42,12 +42,12 @@ impl PingoraProxyServer {
     /// 获取代理服务器监听地址
     #[must_use]
     pub fn get_server_address(&self) -> String {
-        let config = &self.state.context.config;
+        let config = self.state.context().config();
         let proxy_port = config.get_proxy_port();
         let host = config
             .dual_port
             .as_ref()
-            .map_or("0.0.0.0", |d| &d.proxy.http.host);
+            .map_or_else(|| "0.0.0.0".to_string(), |d| d.proxy.http.host.clone());
         format!("{host}:{proxy_port}")
     }
 

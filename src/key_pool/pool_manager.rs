@@ -91,6 +91,14 @@ impl KeyPoolService {
         self.ready.load(Ordering::SeqCst)
     }
 
+    /// 获取健康状态缓存的引用
+    #[must_use]
+    pub fn health_status_cache(
+        &self,
+    ) -> Arc<tokio::sync::RwLock<HashMap<i32, super::api_key_health::ApiKeyHealth>>> {
+        self.health_checker.get_health_status_cache()
+    }
+
     /// 从用户服务API配置中获取API密钥池并选择密钥
     pub async fn select_api_key_from_service_api(
         &self,
@@ -763,8 +771,12 @@ impl KeyPoolService {
         Ok(())
     }
 
-    /// 处理密钥删除：移除健康状态并取消限流重置任务
+    /// 处理密钥删除：移除健康状态（延迟验证会自动处理限流任务取消）
     pub async fn remove_key(&self, key_id: i32) -> Result<()> {
+        // 注意：不再需要显式取消限流重置任务
+        // 延迟验证机制会在任务执行时检查密钥是否存在，自动跳过已删除的密钥
+
+        // 刷新健康状态缓存
         self.health_checker
             .load_health_status_from_database()
             .await

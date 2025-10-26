@@ -9,13 +9,16 @@
 )]
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
-use crate::app::context::AppContext;
-use crate::error::Result;
+use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
+use crate::auth::{AuthService, oauth_token_refresh_task::OAuthTokenRefreshTask};
+use crate::config::AppConfig;
+use crate::error::{ProxyError, Result};
 use crate::key_pool::KeyPoolService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 use axum::Router;
 use axum::routing::get;
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -43,10 +46,6 @@ pub struct ManagementConfig {
     pub denied_ips: Vec<String>,
     /// API前缀
     pub api_prefix: String,
-    /// 最大请求大小
-    pub max_request_size: usize,
-    /// 请求超时时间（秒）
-    pub request_timeout: u64,
 }
 
 impl Default for ManagementConfig {
@@ -58,23 +57,51 @@ impl Default for ManagementConfig {
             cors_origins: vec!["*".to_string()],
             allowed_ips: vec!["0.0.0.0/0".to_string()],
             denied_ips: vec![],
-            api_prefix: "/api".to_string(), // 修改为 /api 与前端一致
-            max_request_size: 1024 * 1024,  // 1MB
-            request_timeout: 30,
+            api_prefix: "/api".to_string(),
         }
     }
+}
+
+/// 管理端服务集合
+#[derive(Clone)]
+pub struct ManagementServices {
+    auth_service: Arc<AuthService>,
+    key_pool_service: Arc<KeyPoolService>,
+    oauth_token_refresh_task: Arc<OAuthTokenRefreshTask>,
 }
 
 /// 管理服务器应用状态
 #[derive(Clone)]
 pub struct ManagementState {
+    pub database: Arc<DatabaseConnection>,
+    pub config: Arc<AppConfig>,
     context: Arc<AppContext>,
+    services: Arc<ManagementServices>,
 }
 
 impl ManagementState {
-    #[must_use]
-    pub const fn new(context: Arc<AppContext>) -> Self {
-        Self { context }
+    pub fn new(context: Arc<AppContext>) -> Result<Self> {
+        let oauth_token_refresh_task = context
+            .tasks()
+            .get_task::<OAuthTokenRefreshTask>(TaskType::OAuthTokenRefresh)
+            .ok_or_else(|| {
+                ProxyError::internal("oauth_token_refresh task not registered in AppTasks")
+            })?;
+
+        let services = ManagementServices {
+            auth_service: context.services().auth_service(),
+            key_pool_service: context.services().key_pool_service(),
+            oauth_token_refresh_task,
+        };
+        let database = context.database();
+        let config = context.config();
+
+        Ok(Self {
+            database,
+            config,
+            context,
+            services: Arc::new(services),
+        })
     }
 
     #[must_use]
@@ -82,10 +109,40 @@ impl ManagementState {
         &self.context
     }
 
+    #[must_use]
+    pub fn database(&self) -> Arc<DatabaseConnection> {
+        Arc::clone(&self.database)
+    }
+
+    #[must_use]
+    pub fn config(&self) -> Arc<AppConfig> {
+        Arc::clone(&self.config)
+    }
+
     /// 获取密钥池服务的便捷方法
     #[must_use]
-    pub fn key_pool(&self) -> &Arc<KeyPoolService> {
-        &self.context.key_pool_service
+    pub fn key_pool(&self) -> Arc<KeyPoolService> {
+        Arc::clone(&self.services.key_pool_service)
+    }
+
+    #[must_use]
+    pub fn auth_service(&self) -> Arc<AuthService> {
+        Arc::clone(&self.services.auth_service)
+    }
+
+    #[must_use]
+    pub fn oauth_token_refresh_task(&self) -> Arc<OAuthTokenRefreshTask> {
+        Arc::clone(&self.services.oauth_token_refresh_task)
+    }
+
+    #[must_use]
+    pub fn services(&self) -> &ManagementServices {
+        self.services.as_ref()
+    }
+
+    #[must_use]
+    pub fn scheduler(&self) -> Arc<TaskScheduler> {
+        self.context.tasks().scheduler()
     }
 }
 
@@ -102,18 +159,15 @@ pub struct ManagementServer {
     /// 配置
     config: ManagementConfig,
     /// 应用状态
-    #[allow(dead_code)]
-    state: ManagementState,
+    state: Arc<ManagementState>,
     /// 路由器
     router: Router,
 }
 
 impl ManagementServer {
     /// 创建新的管理服务器
-    pub fn new(config: ManagementConfig, context: Arc<AppContext>) -> Result<Self> {
-        let state = ManagementState::new(context);
-
-        let router = Self::create_router(state.clone(), &config)?;
+    pub fn new(config: ManagementConfig, state: Arc<ManagementState>) -> Result<Self> {
+        let router = Self::create_router(&state, &config)?;
 
         Ok(Self {
             config,
@@ -123,9 +177,9 @@ impl ManagementServer {
     }
 
     /// 创建路由器
-    fn create_router(state: ManagementState, config: &ManagementConfig) -> Result<Router> {
+    fn create_router(state: &Arc<ManagementState>, config: &ManagementConfig) -> Result<Router> {
         // 使用统一的路由配置，现在认证中间件已在 routes.rs 中应用
-        let api_routes = super::routes::create_routes(state);
+        let api_routes = super::routes::create_routes(state.as_ref().clone());
 
         // 静态文件服务配置
         let static_dir = std::path::Path::new("/app/static");

@@ -55,7 +55,7 @@ impl<'a> AuthManagementService<'a> {
 
         let token_pair = self
             .state
-            .auth_service
+            .auth_service()
             .login(username, password)
             .await
             .map_err(|err| {
@@ -71,7 +71,7 @@ impl<'a> AuthManagementService<'a> {
 
         let claims = self
             .state
-            .auth_service
+            .auth_service()
             .jwt_manager
             .validate_token(&token_pair.access_token)
             .map_err(|err| {
@@ -98,7 +98,7 @@ impl<'a> AuthManagementService<'a> {
 
         let auth_user = self
             .state
-            .auth_service
+            .auth_service()
             .get_user_info(user_id)
             .await
             .map_err(|err| {
@@ -158,7 +158,7 @@ impl<'a> AuthManagementService<'a> {
 
     fn decode_token(&self, token: &str) -> Option<JwtClaims> {
         self.state
-            .auth_service
+            .auth_service()
             .jwt_manager
             .validate_token(token)
             .map_err(|err| {
@@ -191,7 +191,7 @@ impl<'a> AuthManagementService<'a> {
     }
 
     async fn load_user_info(&self, user_id: i32) -> Result<Option<AuthUserInfo>> {
-        match self.state.auth_service.get_user_info(user_id).await {
+        match self.state.auth_service().get_user_info(user_id).await {
             Ok(Some(user)) => Ok(Some(user)),
             Ok(None) => {
                 lwarn!(
@@ -220,7 +220,7 @@ impl<'a> AuthManagementService<'a> {
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<RefreshTokenOutput> {
         let refresh_claims = self
             .state
-            .auth_service
+            .auth_service()
             .jwt_manager
             .validate_token(refresh_token)
             .map_err(|err| {
@@ -247,7 +247,7 @@ impl<'a> AuthManagementService<'a> {
 
         let auth_user = self
             .state
-            .auth_service
+            .auth_service()
             .get_user_info(user_id)
             .await
             .map_err(|err| {
@@ -279,7 +279,7 @@ impl<'a> AuthManagementService<'a> {
 
         let new_access_token = self
             .state
-            .auth_service
+            .auth_service()
             .jwt_manager
             .generate_access_token(
                 user_id,
@@ -311,7 +311,7 @@ impl<'a> AuthManagementService<'a> {
             token_type: "Bearer".to_string(),
             expires_in: self
                 .state
-                .auth_service
+                .auth_service()
                 .jwt_manager
                 .get_config()
                 .jwt_expires_in,

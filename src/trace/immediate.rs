@@ -54,26 +54,19 @@ pub struct StartTraceParams {
     pub user_agent: Option<String>,
 }
 
-/// 即时写入追踪器配置（已简化）
-#[derive(Debug, Clone, Default)]
-pub struct ImmediateTracerConfig {}
-
 /// 即时写入追踪器
 ///
 /// 与原有设计不同，此追踪器不在内存中保持状态，
 /// 而是在请求开始时立即写入数据库，响应结束时更新记录
 #[derive(Debug, Clone)]
 pub struct ImmediateProxyTracer {
-    /// 配置
-    #[allow(dead_code)]
-    config: ImmediateTracerConfig,
     /// 数据库连接
     db: Arc<DatabaseConnection>,
 }
 
 impl ImmediateProxyTracer {
     /// 创建新的即时写入追踪器
-    pub fn new(db: Arc<DatabaseConnection>, _config: ImmediateTracerConfig) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
         linfo!(
             "system",
             LogStage::Startup,
@@ -82,10 +75,7 @@ impl ImmediateProxyTracer {
             "Initializing immediate proxy tracer with all requests traced"
         );
 
-        Self {
-            config: ImmediateTracerConfig::default(),
-            db,
-        }
+        Self { db }
     }
 
     /// 开始追踪请求 - 立即写入数据库
@@ -290,7 +280,7 @@ impl ImmediateProxyTracer {
         }
     }
 
-    /// 完成追踪 - `使用TraceStats`
+    /// 完成追踪 - 使用结构化统计参数
     pub async fn complete_trace_with_stats(
         &self,
         request_id: &str,
@@ -385,59 +375,6 @@ impl ImmediateProxyTracer {
         Ok(())
     }
 
-    /// 使用TraceStats完成追踪（第二层：批量更新统计信息）
-    ///
-    /// 在请求完成时一次性更新所有统计字段，减少数据库压力
-    pub async fn complete_trace_with_trace_stats(
-        &self,
-        request_id: &str,
-        status_code: u16,
-        is_success: bool,
-        trace_stats: crate::trace::TraceStats,
-    ) -> Result<()> {
-        let params = CompleteTraceParams {
-            status_code,
-            is_success,
-            tokens_prompt: trace_stats.input_tokens,
-            tokens_completion: trace_stats.output_tokens,
-            error_type: trace_stats.error_type,
-            error_message: trace_stats.error_message,
-            cache_create_tokens: trace_stats.cache_create_tokens,
-            cache_read_tokens: trace_stats.cache_read_tokens,
-            cost: trace_stats.cost,
-            cost_currency: trace_stats.cost_currency,
-        };
-        let result = self.complete_trace_with_stats(request_id, params).await;
-
-        match &result {
-            Ok(()) => {
-                linfo!(
-                    request_id,
-                    LogStage::Response,
-                    LogComponent::Tracing,
-                    "trace_completed_batch",
-                    "Completed trace with batch statistics update (Layer 2: Batch)",
-                    status_code = status_code,
-                    is_success = is_success,
-                    input_tokens = ?trace_stats.input_tokens,
-                    output_tokens = ?trace_stats.output_tokens,
-                    cost = ?trace_stats.cost
-                );
-            }
-            Err(e) => {
-                lerror!(
-                    request_id,
-                    LogStage::Response,
-                    LogComponent::Tracing,
-                    "trace_complete_batch_failed",
-                    &format!("Failed to complete trace with batch statistics: {e}")
-                );
-            }
-        }
-
-        result
-    }
-
     /// 查询进行中的请求（未完成的追踪记录）
     pub async fn get_active_requests(&self, limit: u64) -> Result<Vec<proxy_tracing::Model>> {
         let records = proxy_tracing::Entity::find()
@@ -500,8 +437,7 @@ mod tests {
     #[serial]
     async fn test_immediate_trace_lifecycle() {
         let db = setup_test_db().await;
-        let config = ImmediateTracerConfig::default();
-        let tracer = ImmediateProxyTracer::new(db.clone(), config);
+        let tracer = ImmediateProxyTracer::new(db.clone());
 
         // Insert a user record
         let user = entity::users::ActiveModel {

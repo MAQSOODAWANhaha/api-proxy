@@ -4,7 +4,7 @@
 
 use crate::auth::{
     AuthService,
-    rate_limit_dist::DistributedRateLimiter,
+    rate_limit_dist::RateLimiter,
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
@@ -65,7 +65,7 @@ pub struct AuthenticationService {
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
     api_key_pool: Arc<KeyPoolService>,
-    rate_limiter: Arc<DistributedRateLimiter>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl AuthenticationService {
@@ -75,7 +75,7 @@ impl AuthenticationService {
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         api_key_pool: Arc<KeyPoolService>,
-        rate_limiter: Arc<DistributedRateLimiter>,
+        rate_limiter: Arc<RateLimiter>,
     ) -> Self {
         Self {
             auth_service,
@@ -251,7 +251,7 @@ impl AuthenticationService {
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(DistributedRateLimiter::rate_limit_error(
+                return Err(RateLimiter::rate_limit_error(
                     RateLimitKind::PerMinute,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
@@ -279,7 +279,7 @@ impl AuthenticationService {
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(DistributedRateLimiter::rate_limit_error(
+                return Err(RateLimiter::rate_limit_error(
                     RateLimitKind::DailyRequests,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
@@ -349,7 +349,7 @@ impl AuthenticationService {
             limit,
             current,
             resets_in: resets,
-            plan_type: DistributedRateLimiter::PLAN_TYPE.to_string(),
+            plan_type: RateLimiter::PLAN_TYPE.to_string(),
         };
         let message = format_rate_limit_message(&info);
         let resets_secs = resets.map(|d| d.as_secs());

@@ -28,7 +28,7 @@ pub struct DistRateLimitOutcome {
 }
 
 /// 简单的分布式限流器
-pub struct DistributedRateLimiter {
+pub struct RateLimiter {
     cache: Arc<CacheManager>,
     db: Arc<DatabaseConnection>,
 }
@@ -47,7 +47,7 @@ struct ApiOwner {
     user_id: i32,
 }
 
-impl DistributedRateLimiter {
+impl RateLimiter {
     pub(crate) const PLAN_TYPE: &'static str = "pro";
 
     const TOKEN_PREFIX: &'static str = "ratelimit:daily:tokens";
@@ -400,7 +400,7 @@ mod tests {
                 .await
                 .expect("create in-memory db"),
         );
-        let rl = DistributedRateLimiter::new(cache, db);
+        let rl = RateLimiter::new(cache, db);
 
         for i in 1..=3 {
             let out = rl.check_per_minute(1, "/v1/test", 2).await.unwrap();

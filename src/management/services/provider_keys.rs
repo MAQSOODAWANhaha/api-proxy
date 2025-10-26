@@ -190,7 +190,7 @@ impl<'a> ProviderKeyService<'a> {
         Self {
             state,
             db: state.database.as_ref(),
-            refresh_task: Some(state.oauth_token_refresh_task.clone()),
+            refresh_task: Some(state.oauth_token_refresh_task()),
         }
     }
 
@@ -331,10 +331,7 @@ impl<'a> ProviderKeyService<'a> {
             record.id,
         );
 
-        self.state
-            .key_pool_service
-            .register_new_key(record.id)
-            .await?;
+        self.state.key_pool().register_new_key(record.id).await?;
 
         let provider_name = ProviderType::find_by_id(payload.provider_type_id)
             .one(self.db())
@@ -417,7 +414,7 @@ impl<'a> ProviderKeyService<'a> {
         self.cleanup_obsolete_session(refresh_task, old_session_id, &updated_key, user_id, key_id)
             .await;
 
-        self.state.key_pool_service.refresh_key(key_id).await?;
+        self.state.key_pool().refresh_key(key_id).await?;
 
         let payload = build_update_response(&updated_key, timezone_context);
         Ok(ServiceResponse::with_message(payload, "更新成功"))
@@ -539,7 +536,7 @@ impl<'a> ProviderKeyService<'a> {
             );
         }
 
-        self.state.key_pool_service.remove_key(key_id).await?;
+        self.state.key_pool().remove_key(key_id).await?;
 
         let data = json!({
             "id": key_id,
