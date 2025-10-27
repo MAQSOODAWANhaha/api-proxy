@@ -12,7 +12,7 @@ pub mod provider_strategy_claude;
 pub mod provider_strategy_gemini;
 pub mod provider_strategy_openai;
 
-use crate::key_pool::ApiKeyHealthChecker;
+use crate::key_pool::ApiKeyHealthService;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 
@@ -143,7 +143,7 @@ impl ProviderRegistry {
 #[must_use]
 pub fn make_strategy(
     name: &str,
-    health_checker: Option<Arc<ApiKeyHealthChecker>>,
+    health_checker: Option<Arc<ApiKeyHealthService>>,
 ) -> Option<Arc<dyn ProviderStrategy>> {
     ProviderType::from_str(name).map_or_else(
         || None,

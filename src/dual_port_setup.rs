@@ -401,7 +401,7 @@ fn build_proxy_state(app_context: &Arc<AppContext>) -> Arc<ProxyState> {
     let db = resources.database();
     let auth_service = services_ctx.auth_service();
     let cache_manager = resources.cache();
-    let key_pool_service = services_ctx.key_pool_service();
+    let api_key_scheduler_service = services_ctx.api_key_scheduler_service();
     let rate_limiter = services_ctx.rate_limiter();
     let trace_system = services_ctx.trace_system();
 
@@ -419,7 +419,7 @@ fn build_proxy_state(app_context: &Arc<AppContext>) -> Arc<ProxyState> {
         auth_service,
         db,
         cache_manager,
-        key_pool_service.clone(),
+        api_key_scheduler_service.clone(),
         rate_limiter.clone(),
     ));
 
@@ -430,7 +430,7 @@ fn build_proxy_state(app_context: &Arc<AppContext>) -> Arc<ProxyState> {
         upstream_service,
         req_transform_service,
         resp_transform_service,
-        key_pool_service,
+        key_scheduler_service: api_key_scheduler_service,
         rate_limiter,
     };
 

@@ -44,23 +44,24 @@ impl AppTasks {
         // 从 services 获取核心服务
         let database = resources.database();
         let rate_limiter = services.rate_limiter();
-        let key_pool = services.key_pool_service();
-        let oauth_refresh_service = services.oauth_refresh_service();
-        let api_key_health_checker = services.api_key_health_checker();
+        let api_key_scheduler_service = services.api_key_scheduler_service();
+        let api_key_refresh_service: Arc<crate::auth::ApiKeyRefreshService> =
+            services.api_key_refresh_service();
+        let api_key_health_service = services.api_key_health_service();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）
         let oauth_token_refresh_task =
-            Arc::new(OAuthTokenRefreshTask::new(oauth_refresh_service.clone()));
+            Arc::new(OAuthTokenRefreshTask::new(api_key_refresh_service.clone()));
 
         let rate_limit_reset_task = Arc::new(RateLimitResetTask::new(
             database.clone(),
-            api_key_health_checker.get_health_status_cache(),
+            api_key_health_service.get_health_status_cache(),
         ));
 
         // 建立 Service 与 Task 的双向通信
         // 将 rate_limit_reset_task 的 sender 注入到 health_checker
         if let Some(sender) = rate_limit_reset_task.get_command_sender().await {
-            api_key_health_checker
+            api_key_health_service
                 .set_rate_limit_reset_sender(sender)
                 .await;
         }
@@ -83,14 +84,14 @@ impl AppTasks {
                     .build(),
                 ScheduledTask::builder(TaskType::KeyPoolHealthChecker)
                     .on_start({
-                        let key_pool = key_pool.clone();
+                        let key_scheduler = api_key_scheduler_service.clone();
                         move || {
-                            let service = key_pool.clone();
+                            let service = key_scheduler.clone();
                             async move { service.start().await }
                         }
                     })
                     .on_stop(move || {
-                        let service = key_pool.clone();
+                        let service = api_key_scheduler_service.clone();
                         async move { service.stop().await }
                     })
                     .build(),

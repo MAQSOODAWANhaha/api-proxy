@@ -13,8 +13,8 @@ pub use algorithms::{
     create_api_key_selector,
 };
 pub use api_key_health::{
-    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealth, ApiKeyHealthChecker,
-    ApiKeyHealthConfig,
+    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealth, ApiKeyHealthConfig,
+    ApiKeyHealthService,
 };
-pub use pool_manager::{KeyPoolService, KeyPoolStats, SmartApiKeySelectionResult};
+pub use pool_manager::{ApiKeySchedulerService, KeyPoolStats, SmartApiKeySelectionResult};
 pub use types::SchedulingStrategy;

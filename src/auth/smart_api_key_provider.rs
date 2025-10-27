@@ -4,7 +4,7 @@
 //! 支持双重刷新机制：被动刷新（使用时检查）+ 主动刷新（后台任务）
 
 use crate::auth::oauth_client::OAuthClient;
-use crate::auth::oauth_token_refresh_service::OAuthTokenRefreshService;
+use crate::auth::oauth_token_refresh_service::ApiKeyRefreshService;
 use crate::error::Result;
 use crate::{
     ldebug, lerror, linfo,
@@ -30,7 +30,7 @@ pub struct SmartApiKeyProvider {
     oauth_client: Arc<OAuthClient>,
 
     /// OAuth token智能刷新服务
-    refresh_service: Arc<OAuthTokenRefreshService>,
+    refresh_service: Arc<ApiKeyRefreshService>,
 
     /// `内存缓存：provider_key_id` -> `CachedCredential`
     credential_cache: Arc<RwLock<HashMap<i32, CachedCredential>>>,
@@ -87,7 +87,7 @@ impl SmartApiKeyProvider {
     pub fn new(
         db: Arc<DatabaseConnection>,
         oauth_client: Arc<OAuthClient>,
-        refresh_service: Arc<OAuthTokenRefreshService>,
+        refresh_service: Arc<ApiKeyRefreshService>,
     ) -> Self {
         Self {
             db,

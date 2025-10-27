@@ -4,7 +4,7 @@
 
 use super::ProviderStrategy;
 use crate::error::{ProxyError, Result};
-use crate::key_pool::ApiKeyHealthChecker;
+use crate::key_pool::ApiKeyHealthService;
 use crate::proxy::ProxyContext;
 use crate::{
     ldebug, linfo,
@@ -24,13 +24,13 @@ use std::sync::Arc;
 /// 3. 设置 Claude 特定的请求头
 pub struct ClaudeStrategy {
     #[allow(dead_code)]
-    health_checker: Option<Arc<ApiKeyHealthChecker>>,
+    health_checker: Option<Arc<ApiKeyHealthService>>,
     unified_client_id: String,
 }
 
 impl ClaudeStrategy {
     #[must_use]
-    pub fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
+    pub fn new(health_checker: Option<Arc<ApiKeyHealthService>>) -> Self {
         Self {
             health_checker,
             unified_client_id: "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"

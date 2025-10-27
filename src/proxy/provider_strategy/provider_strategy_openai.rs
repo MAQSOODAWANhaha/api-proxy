@@ -4,7 +4,7 @@
 
 use crate::auth::oauth_client::JWTParser;
 use crate::error::{Context, Result};
-use crate::key_pool::ApiKeyHealthChecker;
+use crate::key_pool::ApiKeyHealthService;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::ProxyContext;
 use crate::proxy::context::ResolvedCredential;
@@ -33,12 +33,12 @@ pub struct OpenAIErrorDetail {
 
 #[derive(Default)]
 pub struct OpenAIStrategy {
-    health_checker: Option<Arc<ApiKeyHealthChecker>>,
+    health_checker: Option<Arc<ApiKeyHealthService>>,
 }
 
 impl OpenAIStrategy {
     #[must_use]
-    pub const fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
+    pub const fn new(health_checker: Option<Arc<ApiKeyHealthService>>) -> Self {
         Self { health_checker }
     }
 

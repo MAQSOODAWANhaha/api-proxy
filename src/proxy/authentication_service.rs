@@ -12,7 +12,7 @@ use crate::error::{
     ProxyError, Result,
     auth::{AuthError, RateLimitInfo, RateLimitKind},
 };
-use crate::key_pool::{KeyPoolService, SelectionContext};
+use crate::key_pool::{ApiKeySchedulerService, SelectionContext};
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use crate::proxy::response::format_rate_limit_message;
@@ -64,7 +64,7 @@ pub struct AuthenticationService {
     auth_service: Arc<AuthService>,
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
-    api_key_pool: Arc<KeyPoolService>,
+    api_key_pool: Arc<ApiKeySchedulerService>,
     rate_limiter: Arc<RateLimiter>,
 }
 
@@ -74,7 +74,7 @@ impl AuthenticationService {
         auth_service: Arc<AuthService>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
-        api_key_pool: Arc<KeyPoolService>,
+        api_key_pool: Arc<ApiKeySchedulerService>,
         rate_limiter: Arc<RateLimiter>,
     ) -> Self {
         Self {

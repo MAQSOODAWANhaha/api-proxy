@@ -3,7 +3,7 @@
 //! 专门管理用户API密钥池的选择和调度，替代传统的负载均衡器概念
 
 use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext};
-use super::api_key_health::ApiKeyHealthChecker;
+use super::api_key_health::ApiKeyHealthService;
 use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
 use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, types::AuthStatus};
 use crate::error::{ProxyError, Result};
@@ -17,27 +17,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// API 密钥池服务
 /// 职责：管理用户的 API 密钥池，根据策略选择合适的密钥，并集成健康检查与 OAuth 智能刷新
-pub struct KeyPoolService {
+pub struct ApiKeySchedulerService {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
     /// 选择器缓存
     selectors: tokio::sync::RwLock<HashMap<SchedulingStrategy, Arc<dyn ApiKeySelector>>>,
     /// API 密钥健康检查器
-    health_checker: Arc<ApiKeyHealthChecker>,
+    api_key_health_service: Arc<ApiKeyHealthService>,
     /// 智能 API 密钥提供者（支持 OAuth token 刷新）
     smart_provider: tokio::sync::RwLock<Option<Arc<SmartApiKeyProvider>>>,
     /// 是否已完成启动预热
     ready: AtomicBool,
 }
 
-impl KeyPoolService {
+impl ApiKeySchedulerService {
     /// 创建新的API密钥池管理器
     #[must_use]
-    pub fn new(db: Arc<DatabaseConnection>, health_checker: Arc<ApiKeyHealthChecker>) -> Self {
+    pub fn new(
+        db: Arc<DatabaseConnection>,
+        api_key_health_service: Arc<ApiKeyHealthService>,
+    ) -> Self {
         Self {
             db,
             selectors: tokio::sync::RwLock::new(HashMap::new()),
-            health_checker,
+            api_key_health_service,
             smart_provider: tokio::sync::RwLock::new(None),
             ready: AtomicBool::new(false),
         }
@@ -47,13 +50,13 @@ impl KeyPoolService {
     #[must_use]
     pub fn new_with_smart_provider(
         db: Arc<DatabaseConnection>,
-        health_checker: Arc<ApiKeyHealthChecker>,
+        health_checker: Arc<ApiKeyHealthService>,
         smart_provider: Arc<SmartApiKeyProvider>,
     ) -> Self {
         Self {
             db,
             selectors: tokio::sync::RwLock::new(HashMap::new()),
-            health_checker,
+            api_key_health_service: health_checker,
             smart_provider: tokio::sync::RwLock::new(Some(smart_provider)),
             ready: AtomicBool::new(false),
         }
@@ -67,7 +70,7 @@ impl KeyPoolService {
 
     /// 启动并预热密钥池服务
     pub async fn start(&self) -> Result<()> {
-        self.health_checker
+        self.api_key_health_service
             .start()
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))?;
@@ -77,7 +80,7 @@ impl KeyPoolService {
 
     /// 停止健康检查服务
     pub async fn stop(&self) -> Result<()> {
-        self.health_checker
+        self.api_key_health_service
             .stop()
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))?;
@@ -96,7 +99,7 @@ impl KeyPoolService {
     pub fn health_status_cache(
         &self,
     ) -> Arc<tokio::sync::RwLock<HashMap<i32, super::api_key_health::ApiKeyHealth>>> {
-        self.health_checker.get_health_status_cache()
+        self.api_key_health_service.get_health_status_cache()
     }
 
     /// 从用户服务API配置中获取API密钥池并选择密钥
@@ -601,7 +604,7 @@ impl KeyPoolService {
         &self,
         keys: &[user_provider_keys::Model],
     ) -> Vec<user_provider_keys::Model> {
-        let healthy_key_ids = self.health_checker.get_healthy_keys().await;
+        let healthy_key_ids = self.api_key_health_service.get_healthy_keys().await;
 
         keys.iter()
             .filter(|key| {
@@ -650,7 +653,7 @@ impl KeyPoolService {
         &self,
         key: &user_provider_keys::Model,
     ) -> Result<super::api_key_health::ApiKeyCheckResult> {
-        self.health_checker
+        self.api_key_health_service
             .check_api_key(key)
             .await
             .map_err(|e| ProxyError::internal_with_source("Health check failed", e))
@@ -661,7 +664,7 @@ impl KeyPoolService {
         &self,
         keys: Vec<user_provider_keys::Model>,
     ) -> Result<HashMap<i32, super::api_key_health::ApiKeyCheckResult>> {
-        self.health_checker
+        self.api_key_health_service
             .batch_check_keys(keys)
             .await
             .map_err(|e| ProxyError::internal_with_source("Batch health check failed", e))
@@ -669,7 +672,7 @@ impl KeyPoolService {
 
     /// 手动标记API密钥为不健康
     pub async fn mark_key_unhealthy(&self, key_id: i32, reason: String) -> Result<()> {
-        self.health_checker
+        self.api_key_health_service
             .mark_key_unhealthy(key_id, reason)
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to mark key unhealthy", e))
@@ -680,17 +683,19 @@ impl KeyPoolService {
         &self,
         key_id: i32,
     ) -> Option<super::api_key_health::ApiKeyHealth> {
-        self.health_checker.get_key_health_status(key_id).await
+        self.api_key_health_service
+            .get_key_health_status(key_id)
+            .await
     }
 
     /// 获取所有API密钥的健康状态
     pub async fn get_all_health_status(&self) -> HashMap<i32, super::api_key_health::ApiKeyHealth> {
-        self.health_checker.get_all_health_status().await
+        self.api_key_health_service.get_all_health_status().await
     }
 
     /// 启动健康检查服务
     pub async fn start_health_checking(&self) -> Result<()> {
-        self.health_checker
+        self.api_key_health_service
             .start()
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))
@@ -698,7 +703,7 @@ impl KeyPoolService {
 
     /// 停止健康检查服务
     pub async fn stop_health_checking(&self) -> Result<()> {
-        self.health_checker
+        self.api_key_health_service
             .stop()
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))
@@ -707,8 +712,8 @@ impl KeyPoolService {
     /// 获取密钥池统计信息
     pub async fn get_pool_stats(&self) -> KeyPoolStats {
         let selectors = self.selectors.read().await;
-        let healthy_key_ids = self.health_checker.get_healthy_keys().await;
-        let all_health_status = self.health_checker.get_all_health_status().await;
+        let healthy_key_ids = self.api_key_health_service.get_healthy_keys().await;
+        let all_health_status = self.api_key_health_service.get_all_health_status().await;
 
         KeyPoolStats {
             active_selectors: selectors.len(),
@@ -718,7 +723,7 @@ impl KeyPoolService {
             ],
             healthy_keys: healthy_key_ids.len(),
             total_tracked_keys: all_health_status.len(),
-            health_check_running: self.health_checker.is_running().await,
+            health_check_running: self.api_key_health_service.is_running().await,
             ready: self.is_ready(),
         }
     }
@@ -729,7 +734,7 @@ impl KeyPoolService {
             .load_key_model(key_id)
             .await?
             .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
-        self.health_checker
+        self.api_key_health_service
             .check_api_key(&key)
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to register provider key", e))?;
@@ -753,7 +758,7 @@ impl KeyPoolService {
             .load_key_model(key_id)
             .await?
             .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
-        self.health_checker
+        self.api_key_health_service
             .check_api_key(&key)
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to refresh provider key", e))?;
@@ -777,7 +782,7 @@ impl KeyPoolService {
         // 延迟验证机制会在任务执行时检查密钥是否存在，自动跳过已删除的密钥
 
         // 刷新健康状态缓存
-        self.health_checker
+        self.api_key_health_service
             .load_health_status_from_database()
             .await
             .map_err(|e| {
@@ -813,8 +818,8 @@ impl KeyPoolService {
     }
 
     #[must_use]
-    pub const fn health_checker(&self) -> &Arc<ApiKeyHealthChecker> {
-        &self.health_checker
+    pub const fn health_checker(&self) -> &Arc<ApiKeyHealthService> {
+        &self.api_key_health_service
     }
 }
 
@@ -891,9 +896,9 @@ impl SmartApiKeySelectionResult {
     }
 }
 
-impl std::fmt::Debug for KeyPoolService {
+impl std::fmt::Debug for ApiKeySchedulerService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KeyPoolService")
+        f.debug_struct("KeySchedulerService")
             .field("db", &"<Arc<DatabaseConnection>>")
             .field("selectors", &"<async>")
             .field("smart_provider", &"<async>")

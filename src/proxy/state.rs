@@ -1,7 +1,7 @@
 use crate::app::context::AppContext;
 use crate::auth::rate_limit_dist::RateLimiter;
 use crate::collect::service::CollectService;
-use crate::key_pool::KeyPoolService;
+use crate::key_pool::ApiKeySchedulerService;
 use crate::proxy::authentication_service::AuthenticationService;
 use crate::proxy::request_transform_service::RequestTransformService;
 use crate::proxy::response_transform_service::ResponseTransformService;
@@ -19,7 +19,7 @@ pub struct ProxyServices {
     pub upstream_service: Arc<UpstreamService>,
     pub req_transform_service: Arc<RequestTransformService>,
     pub resp_transform_service: Arc<ResponseTransformService>,
-    pub key_pool_service: Arc<KeyPoolService>,
+    pub key_scheduler_service: Arc<ApiKeySchedulerService>,
     pub rate_limiter: Arc<RateLimiter>,
 }
 

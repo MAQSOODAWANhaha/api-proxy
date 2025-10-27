@@ -1,11 +1,11 @@
 use crate::app::resources::AppResources;
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::{
-    ApiKeyManager, AuthService, OAuthTokenRefreshService, SmartApiKeyProvider, jwt::JwtManager,
+    ApiKeyManager, ApiKeyRefreshService, AuthService, SmartApiKeyProvider, jwt::JwtManager,
     rate_limit_dist::RateLimiter, types::AuthConfig,
 };
 use crate::error::{Context, Result};
-use crate::key_pool::{KeyPoolService, api_key_health::ApiKeyHealthChecker};
+use crate::key_pool::{ApiKeyHealthService, ApiKeySchedulerService};
 use crate::trace::TraceSystem;
 use std::sync::Arc;
 
@@ -18,11 +18,11 @@ pub struct AppServices {
     auth_service: Arc<AuthService>,
     rate_limiter: Arc<RateLimiter>,
     trace_system: Arc<TraceSystem>,
-    key_pool_service: Arc<KeyPoolService>,
     oauth_client: Arc<OAuthClient>,
     smart_api_key_provider: Arc<SmartApiKeyProvider>,
-    oauth_refresh_service: Arc<OAuthTokenRefreshService>,
-    api_key_health_checker: Arc<ApiKeyHealthChecker>,
+    api_key_scheduler_service: Arc<ApiKeySchedulerService>,
+    api_key_refresh_service: Arc<ApiKeyRefreshService>,
+    api_key_health_service: Arc<ApiKeyHealthService>,
 }
 
 impl AppServices {
@@ -52,15 +52,15 @@ impl AppServices {
 
         let trace_system = Arc::new(TraceSystem::new_immediate(database.clone()));
 
-        let api_key_health_checker = Arc::new(ApiKeyHealthChecker::new(database.clone(), None));
+        let api_key_health_service = Arc::new(ApiKeyHealthService::new(database.clone(), None));
 
-        let key_pool_service = Arc::new(KeyPoolService::new(
+        let api_key_scheduler_service = Arc::new(ApiKeySchedulerService::new(
             database.clone(),
-            api_key_health_checker.clone(),
+            api_key_health_service.clone(),
         ));
 
         let oauth_client = Arc::new(OAuthClient::new(database.clone()));
-        let oauth_refresh_service = Arc::new(OAuthTokenRefreshService::new(
+        let api_key_refresh_service = Arc::new(ApiKeyRefreshService::new(
             database.clone(),
             oauth_client.clone(),
         ));
@@ -68,10 +68,10 @@ impl AppServices {
         let smart_api_key_provider = Arc::new(SmartApiKeyProvider::new(
             database.clone(),
             oauth_client.clone(),
-            oauth_refresh_service.clone(),
+            api_key_refresh_service.clone(),
         ));
 
-        key_pool_service
+        api_key_scheduler_service
             .set_smart_provider(smart_api_key_provider.clone())
             .await;
 
@@ -79,11 +79,11 @@ impl AppServices {
             auth_service,
             rate_limiter,
             trace_system,
-            key_pool_service,
             oauth_client,
             smart_api_key_provider,
-            oauth_refresh_service,
-            api_key_health_checker,
+            api_key_scheduler_service,
+            api_key_refresh_service,
+            api_key_health_service,
         }))
     }
 
@@ -103,8 +103,8 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn key_pool_service(&self) -> Arc<KeyPoolService> {
-        Arc::clone(&self.key_pool_service)
+    pub fn api_key_scheduler_service(&self) -> Arc<ApiKeySchedulerService> {
+        Arc::clone(&self.api_key_scheduler_service)
     }
 
     #[must_use]
@@ -118,12 +118,12 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn oauth_refresh_service(&self) -> Arc<OAuthTokenRefreshService> {
-        Arc::clone(&self.oauth_refresh_service)
+    pub fn api_key_refresh_service(&self) -> Arc<ApiKeyRefreshService> {
+        Arc::clone(&self.api_key_refresh_service)
     }
 
     #[must_use]
-    pub fn api_key_health_checker(&self) -> Arc<ApiKeyHealthChecker> {
-        Arc::clone(&self.api_key_health_checker)
+    pub fn api_key_health_service(&self) -> Arc<ApiKeyHealthService> {
+        Arc::clone(&self.api_key_health_service)
     }
 }

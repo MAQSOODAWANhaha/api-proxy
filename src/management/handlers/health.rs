@@ -227,7 +227,7 @@ pub async fn get_api_keys_health(
 ) -> axum::response::Response {
     let timezone_ctx = get_timezone_from_request(&request);
 
-    // 注意：这需要从ManagementState中获取ApiKeyHealthChecker
+    // 注意：这需要从ManagementState中获取KeyStateService
     // 当前我们需要通过数据库查询来获取健康状态
     match get_api_keys_health_internal(&state, timezone_ctx).await {
         Ok(health_infos) => response::success(health_infos),

@@ -13,7 +13,7 @@ use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::Task
 use crate::auth::{AuthService, oauth_token_refresh_task::OAuthTokenRefreshTask};
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
-use crate::key_pool::KeyPoolService;
+use crate::key_pool::ApiKeySchedulerService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 use axum::Router;
@@ -66,7 +66,7 @@ impl Default for ManagementConfig {
 #[derive(Clone)]
 pub struct ManagementServices {
     auth_service: Arc<AuthService>,
-    key_pool_service: Arc<KeyPoolService>,
+    api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     oauth_token_refresh_task: Arc<OAuthTokenRefreshTask>,
 }
 
@@ -90,7 +90,7 @@ impl ManagementState {
 
         let services = ManagementServices {
             auth_service: context.services().auth_service(),
-            key_pool_service: context.services().key_pool_service(),
+            api_key_scheduler_service: context.services().api_key_scheduler_service(),
             oauth_token_refresh_task,
         };
         let database = context.database();
@@ -121,8 +121,8 @@ impl ManagementState {
 
     /// 获取密钥池服务的便捷方法
     #[must_use]
-    pub fn key_pool(&self) -> Arc<KeyPoolService> {
-        Arc::clone(&self.services.key_pool_service)
+    pub fn key_pool(&self) -> Arc<ApiKeySchedulerService> {
+        Arc::clone(&self.services.api_key_scheduler_service)
     }
 
     #[must_use]

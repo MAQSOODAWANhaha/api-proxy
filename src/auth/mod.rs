@@ -24,8 +24,9 @@ pub use jwt::JwtManager;
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
 pub use oauth_token_refresh_service::{
-    OAuthTokenRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
+    ApiKeyRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
 };
+pub type TokenStateService = ApiKeyRefreshService;
 pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
 pub use permissions::UserRole;
 pub use service::AuthService;

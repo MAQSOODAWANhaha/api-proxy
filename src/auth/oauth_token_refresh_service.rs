@@ -28,7 +28,7 @@ const EXPIRED_RETENTION_DAYS: i64 = 7;
 /// 2. 主动刷新：后台任务定期检查即将过期的token并提前刷新
 /// 3. 刷新锁：防止并发刷新同一个token
 /// 4. 失败重试：token刷新失败时的智能重试机制
-pub struct OAuthTokenRefreshService {
+pub struct ApiKeyRefreshService {
     db: Arc<DatabaseConnection>,
     oauth_client: Arc<OAuthClient>,
 
@@ -109,7 +109,7 @@ pub enum RefreshType {
     Active,
 }
 
-impl OAuthTokenRefreshService {
+impl ApiKeyRefreshService {
     /// `创建新的OAuth` Token智能刷新服务
     #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, oauth_client: Arc<OAuthClient>) -> Self {

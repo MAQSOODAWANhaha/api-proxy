@@ -224,7 +224,7 @@ impl ProxyHttp for ProxyService {
             {
                 ctx.strategy = provider_strategy::make_strategy(
                     name,
-                    Some(self.state.key_pool_service.health_checker().clone()),
+                    Some(self.state.key_scheduler_service.health_checker().clone()),
                 );
             }
         }

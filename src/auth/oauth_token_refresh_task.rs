@@ -7,7 +7,7 @@
 //! - 提供任务控制接口（启动、停止、暂停）
 
 use crate::auth::oauth_token_refresh_service::{
-    OAuthTokenRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
+    ApiKeyRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
 };
 use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
@@ -35,7 +35,7 @@ const ERROR_RETRY_INTERVAL_SECS: u64 = 60;
 /// 3. 监控统计：记录任务执行情况和刷新结果
 /// 4. 错误处理：任务失败时的重试和告警机制
 pub struct OAuthTokenRefreshTask {
-    refresh_service: Arc<OAuthTokenRefreshService>,
+    refresh_service: Arc<ApiKeyRefreshService>,
     /// 任务状态
     task_state: Arc<RwLock<TaskState>>,
 
@@ -96,7 +96,7 @@ enum RefreshCommand {
 impl OAuthTokenRefreshTask {
     /// `创建新的OAuth` Token刷新后台任务
     #[must_use]
-    pub fn new(refresh_service: Arc<OAuthTokenRefreshService>) -> Self {
+    pub fn new(refresh_service: Arc<ApiKeyRefreshService>) -> Self {
         let (control_sender, _) = broadcast::channel(10);
 
         Self {
@@ -531,7 +531,7 @@ impl OAuthTokenRefreshTask {
     }
 
     async fn resync_schedule(
-        refresh_service: &Arc<OAuthTokenRefreshService>,
+        refresh_service: &Arc<ApiKeyRefreshService>,
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
         session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
@@ -576,7 +576,7 @@ impl OAuthTokenRefreshTask {
     }
 
     async fn process_session_entry(
-        refresh_service: &Arc<OAuthTokenRefreshService>,
+        refresh_service: &Arc<ApiKeyRefreshService>,
         entry: ScheduledTokenRefresh,
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
@@ -638,7 +638,7 @@ impl OAuthTokenRefreshTask {
     }
 
     async fn schedule_next_for_result(
-        refresh_service: &Arc<OAuthTokenRefreshService>,
+        refresh_service: &Arc<ApiKeyRefreshService>,
         session_id: &str,
         result: &TokenRefreshResult,
         queue: &mut DelayQueue<RefreshQueueItem>,
@@ -667,7 +667,7 @@ impl OAuthTokenRefreshTask {
                 if result.should_retry {
                     let retry_at = Utc::now()
                         + Duration::seconds(
-                            i64::try_from(OAuthTokenRefreshService::retry_interval_seconds())
+                            i64::try_from(ApiKeyRefreshService::retry_interval_seconds())
                                 .unwrap_or(i64::MAX),
                         );
                     let schedule = ScheduledTokenRefresh {

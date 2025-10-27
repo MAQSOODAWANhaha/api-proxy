@@ -135,7 +135,7 @@ impl Default for ApiKeyHealthConfig {
 }
 
 /// API密钥健康检查器
-pub struct ApiKeyHealthChecker {
+pub struct ApiKeyHealthService {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
     /// HTTP客户端
@@ -150,7 +150,7 @@ pub struct ApiKeyHealthChecker {
     rate_limit_reset_sender: Arc<RwLock<Option<mpsc::Sender<ScheduleResetCommand>>>>,
 }
 
-impl ApiKeyHealthChecker {
+impl ApiKeyHealthService {
     /// 创建新的API密钥健康检查器
     #[must_use]
     pub fn new(db: Arc<DatabaseConnection>, config: Option<ApiKeyHealthConfig>) -> Self {
@@ -1084,13 +1084,13 @@ mod tests {
     async fn test_error_categorization() {
         let error = crate::error!(Network, "unauthorized access");
         assert_eq!(
-            ApiKeyHealthChecker::categorize_error(&error),
+            ApiKeyHealthService::categorize_error(&error),
             ApiKeyErrorCategory::InvalidKey
         );
 
         let error = crate::error!(Network, "rate limit exceeded");
         assert_eq!(
-            ApiKeyHealthChecker::categorize_error(&error),
+            ApiKeyHealthService::categorize_error(&error),
             ApiKeyErrorCategory::QuotaExceeded
         );
     }
@@ -1123,14 +1123,14 @@ mod tests {
             ],
         };
 
-        let score = ApiKeyHealthChecker::calculate_health_score(&status);
+        let score = ApiKeyHealthService::calculate_health_score(&status);
         assert!(score > 90.0);
         assert!(score <= 100.0);
 
         // 测试连续失败的情况
         status.consecutive_failures = 3;
         status.consecutive_successes = 0;
-        let score = ApiKeyHealthChecker::calculate_health_score(&status);
+        let score = ApiKeyHealthService::calculate_health_score(&status);
         assert!(score < 80.0);
     }
 }

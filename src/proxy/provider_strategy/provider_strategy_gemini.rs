@@ -29,18 +29,18 @@ impl GeminiProxyMode {
     }
 }
 
-use crate::key_pool::ApiKeyHealthChecker;
+use crate::key_pool::ApiKeyHealthService;
 use std::sync::Arc;
 
 #[derive(Default)]
 pub struct GeminiStrategy {
     #[allow(dead_code)]
-    health_checker: Option<Arc<ApiKeyHealthChecker>>,
+    health_checker: Option<Arc<ApiKeyHealthService>>,
 }
 
 impl GeminiStrategy {
     #[must_use]
-    pub const fn new(health_checker: Option<Arc<ApiKeyHealthChecker>>) -> Self {
+    pub const fn new(health_checker: Option<Arc<ApiKeyHealthService>>) -> Self {
         Self { health_checker }
     }
 }
