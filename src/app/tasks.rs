@@ -1,6 +1,6 @@
 use crate::app::service_registry::AppServices;
 use crate::app::task_scheduler::{ScheduledTask, TaskScheduler};
-use crate::auth::oauth_token_refresh_task::OAuthTokenRefreshTask;
+use crate::auth::api_key_refresh_task::OAuthTokenRefreshTask;
 use crate::error::Result;
 use crate::key_pool::rate_limit_reset_task::RateLimitResetTask;
 use std::any::Any;

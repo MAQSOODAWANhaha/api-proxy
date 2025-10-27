@@ -5,16 +5,16 @@
 pub mod api_key;
 pub mod cache_strategy;
 
+pub mod api_key_refresh_service;
+pub mod api_key_refresh_task;
+pub mod api_key_select_service;
 pub mod gemini_code_assist_client;
 pub mod header_parser;
 pub mod jwt;
 pub mod oauth_client;
-pub mod oauth_token_refresh_service;
-pub mod oauth_token_refresh_task;
 pub mod permissions;
 pub mod rate_limit_dist;
 pub mod service;
-pub mod smart_api_key_provider;
 pub mod types;
 pub mod utils;
 
@@ -23,16 +23,16 @@ pub use header_parser::{AuthHeader, AuthHeaderParser};
 pub use jwt::JwtManager;
 // 注意：旧的oauth模块已被oauth_client替代
 // pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
-pub use oauth_token_refresh_service::{
+pub use api_key_refresh_service::{
     ApiKeyRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
 };
 pub type TokenStateService = ApiKeyRefreshService;
-pub use oauth_token_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
+pub use api_key_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
+pub use api_key_select_service::{
+    ApiKeySelectService, AuthCredentialType, CredentialResult, SmartApiKeyProviderConfig,
+};
 pub use permissions::UserRole;
 pub use service::AuthService;
-pub use smart_api_key_provider::{
-    AuthCredentialType, CredentialResult, SmartApiKeyProvider, SmartApiKeyProviderConfig,
-};
 pub use types::*;
 pub use utils::AuthUtils;
 

@@ -3,8 +3,8 @@
 //! 为代理端提供统一的API密钥获取接口，透明处理传统API密钥和OAuth token刷新
 //! 支持双重刷新机制：被动刷新（使用时检查）+ 主动刷新（后台任务）
 
+use crate::auth::api_key_refresh_service::ApiKeyRefreshService;
 use crate::auth::oauth_client::OAuthClient;
-use crate::auth::oauth_token_refresh_service::ApiKeyRefreshService;
 use crate::error::Result;
 use crate::{
     ldebug, lerror, linfo,
@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 /// 2. 被动刷新：使用时自动检查并刷新过期token
 /// 3. 缓存管理：内存缓存有效token避免频繁数据库查询
 /// 4. 错误处理：token刷新失败时的降级策略
-pub struct SmartApiKeyProvider {
+pub struct ApiKeySelectService {
     db: Arc<DatabaseConnection>,
     oauth_client: Arc<OAuthClient>,
 
@@ -81,7 +81,7 @@ pub struct CredentialResult {
     pub refreshed: bool,
 }
 
-impl SmartApiKeyProvider {
+impl ApiKeySelectService {
     /// 创建新的智能API密钥提供者
     #[must_use]
     pub fn new(

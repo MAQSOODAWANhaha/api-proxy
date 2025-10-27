@@ -1,7 +1,7 @@
 use crate::app::resources::AppResources;
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::{
-    ApiKeyManager, ApiKeyRefreshService, AuthService, SmartApiKeyProvider, jwt::JwtManager,
+    ApiKeyManager, ApiKeyRefreshService, ApiKeySelectService, AuthService, jwt::JwtManager,
     rate_limit_dist::RateLimiter, types::AuthConfig,
 };
 use crate::error::{Context, Result};
@@ -19,7 +19,7 @@ pub struct AppServices {
     rate_limiter: Arc<RateLimiter>,
     trace_system: Arc<TraceSystem>,
     oauth_client: Arc<OAuthClient>,
-    smart_api_key_provider: Arc<SmartApiKeyProvider>,
+    api_key_select_service: Arc<ApiKeySelectService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     api_key_refresh_service: Arc<ApiKeyRefreshService>,
     api_key_health_service: Arc<ApiKeyHealthService>,
@@ -52,7 +52,7 @@ impl AppServices {
 
         let trace_system = Arc::new(TraceSystem::new_immediate(database.clone()));
 
-        let api_key_health_service = Arc::new(ApiKeyHealthService::new(database.clone(), None));
+        let api_key_health_service = Arc::new(ApiKeyHealthService::new(database.clone()));
 
         let api_key_scheduler_service = Arc::new(ApiKeySchedulerService::new(
             database.clone(),
@@ -65,7 +65,7 @@ impl AppServices {
             oauth_client.clone(),
         ));
 
-        let smart_api_key_provider = Arc::new(SmartApiKeyProvider::new(
+        let smart_api_key_provider = Arc::new(ApiKeySelectService::new(
             database.clone(),
             oauth_client.clone(),
             api_key_refresh_service.clone(),
@@ -80,7 +80,7 @@ impl AppServices {
             rate_limiter,
             trace_system,
             oauth_client,
-            smart_api_key_provider,
+            api_key_select_service: smart_api_key_provider,
             api_key_scheduler_service,
             api_key_refresh_service,
             api_key_health_service,
@@ -113,8 +113,8 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn smart_api_key_provider(&self) -> Arc<SmartApiKeyProvider> {
-        Arc::clone(&self.smart_api_key_provider)
+    pub fn smart_api_key_provider(&self) -> Arc<ApiKeySelectService> {
+        Arc::clone(&self.api_key_select_service)
     }
 
     #[must_use]

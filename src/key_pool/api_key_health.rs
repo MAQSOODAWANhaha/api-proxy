@@ -101,39 +101,6 @@ pub enum ApiKeyErrorCategory {
     Unknown,
 }
 
-/// API密钥健康检查配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyHealthConfig {
-    /// 健康密钥的检查间隔
-    pub healthy_check_interval: Duration,
-    /// 不健康密钥的重试间隔
-    pub unhealthy_retry_interval: Duration,
-    /// 请求超时时间
-    pub request_timeout: Duration,
-    /// 失败阈值（连续失败多少次标记为不健康）
-    pub failure_threshold: u32,
-    /// 成功阈值（连续成功多少次标记为健康）
-    pub success_threshold: u32,
-    /// 保留历史结果数量
-    pub max_history_results: usize,
-    /// 是否启用健康检查
-    pub enabled: bool,
-}
-
-impl Default for ApiKeyHealthConfig {
-    fn default() -> Self {
-        Self {
-            healthy_check_interval: Duration::from_secs(600), // 10分钟
-            unhealthy_retry_interval: Duration::from_secs(120), // 2分钟
-            request_timeout: Duration::from_secs(30),
-            failure_threshold: 3,
-            success_threshold: 2,
-            max_history_results: 20,
-            enabled: true,
-        }
-    }
-}
-
 /// API密钥健康检查器
 pub struct ApiKeyHealthService {
     /// 数据库连接
@@ -142,24 +109,31 @@ pub struct ApiKeyHealthService {
     client: Client,
     /// 健康状态存储
     health_status: Arc<RwLock<HashMap<i32, ApiKeyHealth>>>,
-    /// 检查配置
-    config: ApiKeyHealthConfig,
     /// 是否正在运行
     is_running: Arc<RwLock<bool>>,
     /// 限流重置命令发送器（可选，用于发送事件）
     rate_limit_reset_sender: Arc<RwLock<Option<mpsc::Sender<ScheduleResetCommand>>>>,
+    /// 请求超时时间
+    request_timeout: Duration,
+    /// 失败阈值（连续失败多少次标记为不健康）
+    failure_threshold: u32,
+    /// 保留历史结果数量
+    max_history_results: usize,
+    /// 是否启用健康检查
+    enabled: bool,
+    /// 健康密钥的检查间隔
+    healthy_check_interval: Duration,
+    /// 不健康密钥的重试间隔
+    unhealthy_retry_interval: Duration,
 }
 
 impl ApiKeyHealthService {
     /// 创建新的API密钥健康检查器
     #[must_use]
-    pub fn new(db: Arc<DatabaseConnection>, config: Option<ApiKeyHealthConfig>) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+        let request_timeout = Duration::from_secs(30);
         let client = Client::builder()
-            .timeout(
-                config
-                    .as_ref()
-                    .map_or(Duration::from_secs(30), |c| c.request_timeout),
-            )
+            .timeout(request_timeout)
             .build()
             .expect("Failed to create HTTP client for API key health checking");
 
@@ -167,9 +141,14 @@ impl ApiKeyHealthService {
             db,
             client,
             health_status: Arc::new(RwLock::new(HashMap::new())),
-            config: config.unwrap_or_default(),
             is_running: Arc::new(RwLock::new(false)),
             rate_limit_reset_sender: Arc::new(RwLock::new(None)),
+            request_timeout,
+            failure_threshold: 3,
+            max_history_results: 20,
+            enabled: true,
+            healthy_check_interval: Duration::from_secs(600),
+            unhealthy_retry_interval: Duration::from_secs(120),
         }
     }
 
@@ -228,18 +207,6 @@ impl ApiKeyHealthService {
         &self,
         key_model: &user_provider_keys::Model,
     ) -> Result<ApiKeyCheckResult> {
-        if !self.config.enabled {
-            return Ok(ApiKeyCheckResult {
-                timestamp: Utc::now(),
-                is_success: true,
-                response_time_ms: 0,
-                status_code: Some(200),
-                error_message: Some("Health check disabled".to_string()),
-                check_type: ApiKeyCheckType::Custom,
-                error_category: None,
-            });
-        }
-
         let start_time = Instant::now();
         let provider_id = ProviderId::from_database_id(key_model.provider_type_id);
 
@@ -509,13 +476,13 @@ impl ApiKeyHealthService {
 
         // 添加检查结果到历史记录
         status.recent_results.push(check_result.clone());
-        if status.recent_results.len() > self.config.max_history_results {
+        if status.recent_results.len() > self.max_history_results {
             status.recent_results.remove(0);
         }
 
         // 重新计算健康状态
         let was_healthy = status.is_healthy;
-        status.is_healthy = status.consecutive_failures < self.config.failure_threshold;
+        status.is_healthy = status.consecutive_failures < self.failure_threshold;
 
         // 计算平均响应时间
         if !status.recent_results.is_empty() {
@@ -1049,36 +1016,10 @@ impl ApiKeyHealthService {
     }
 }
 
-impl ApiKeyHealth {
-    /// 检查是否应该进行下次检查
-    #[must_use]
-    pub fn should_check(&self, config: &ApiKeyHealthConfig) -> bool {
-        self.last_check.is_none_or(|last_check| {
-            let interval = if self.is_healthy {
-                config.healthy_check_interval
-            } else {
-                config.unhealthy_retry_interval
-            };
-
-            let next_check_time =
-                last_check + chrono::Duration::from_std(interval).unwrap_or_default();
-            Utc::now() > next_check_time
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio;
-
-    #[tokio::test]
-    async fn test_health_config_default() {
-        let config = ApiKeyHealthConfig::default();
-        assert_eq!(config.healthy_check_interval, Duration::from_secs(600));
-        assert_eq!(config.unhealthy_retry_interval, Duration::from_secs(120));
-        assert!(config.enabled);
-    }
 
     #[tokio::test]
     async fn test_error_categorization() {

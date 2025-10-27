@@ -5,7 +5,7 @@
 use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext};
 use super::api_key_health::ApiKeyHealthService;
 use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
-use crate::auth::{AuthCredentialType, CredentialResult, SmartApiKeyProvider, types::AuthStatus};
+use crate::auth::{ApiKeySelectService, types::AuthStatus};
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -25,7 +25,7 @@ pub struct ApiKeySchedulerService {
     /// API 密钥健康检查器
     api_key_health_service: Arc<ApiKeyHealthService>,
     /// 智能 API 密钥提供者（支持 OAuth token 刷新）
-    smart_provider: tokio::sync::RwLock<Option<Arc<SmartApiKeyProvider>>>,
+    api_key_select_service: tokio::sync::RwLock<Option<Arc<ApiKeySelectService>>>,
     /// 是否已完成启动预热
     ready: AtomicBool,
 }
@@ -41,30 +41,14 @@ impl ApiKeySchedulerService {
             db,
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             api_key_health_service,
-            smart_provider: tokio::sync::RwLock::new(None),
-            ready: AtomicBool::new(false),
-        }
-    }
-
-    /// 创建带有智能密钥提供者的API密钥池管理器
-    #[must_use]
-    pub fn new_with_smart_provider(
-        db: Arc<DatabaseConnection>,
-        health_checker: Arc<ApiKeyHealthService>,
-        smart_provider: Arc<SmartApiKeyProvider>,
-    ) -> Self {
-        Self {
-            db,
-            selectors: tokio::sync::RwLock::new(HashMap::new()),
-            api_key_health_service: health_checker,
-            smart_provider: tokio::sync::RwLock::new(Some(smart_provider)),
+            api_key_select_service: tokio::sync::RwLock::new(None),
             ready: AtomicBool::new(false),
         }
     }
 
     /// 设置智能密钥提供者
-    pub async fn set_smart_provider(&self, smart_provider: Arc<SmartApiKeyProvider>) {
-        let mut guard = self.smart_provider.write().await;
+    pub async fn set_smart_provider(&self, smart_provider: Arc<ApiKeySelectService>) {
+        let mut guard = self.api_key_select_service.write().await;
         *guard = Some(smart_provider);
     }
 
@@ -147,111 +131,6 @@ impl ApiKeySchedulerService {
         let selector = self.get_selector(scheduling_strategy).await;
 
         selector.select_key(keys_to_use, context).await
-    }
-
-    /// 从密钥池中直接选择API密钥
-    pub async fn select_api_key_from_pool(
-        &self,
-        keys: &[user_provider_keys::Model],
-        strategy: SchedulingStrategy,
-        context: &SelectionContext,
-    ) -> Result<ApiKeySelectionResult> {
-        if keys.is_empty() {
-            return Err(ProxyError::internal("Empty API key pool"));
-        }
-
-        // 过滤健康的密钥
-        let healthy_keys = self.filter_healthy_keys(keys).await;
-        let keys_to_use = if healthy_keys.is_empty() {
-            keys
-        } else {
-            &healthy_keys
-        };
-
-        let selector = self.get_selector(strategy).await;
-        selector.select_key(keys_to_use, context).await
-    }
-
-    /// 使用智能提供者获取有效的API凭证（支持OAuth token刷新）
-    ///
-    /// `这个方法集成了OAuth` token的智能刷新功能：
-    /// 1. 使用传统的密钥选择逻辑选择API密钥
-    /// 2. 通过SmartApiKeyProvider获取有效凭证（自动处理OAuth token刷新）
-    /// 3. 返回增强的选择结果，包含实际可用的凭证
-    pub async fn select_smart_api_key_from_service_api(
-        &self,
-        service_api: &entity::user_service_apis::Model,
-        context: &SelectionContext,
-    ) -> Result<SmartApiKeySelectionResult> {
-        // 先使用传统方法选择密钥
-        let selection_result = self
-            .select_api_key_from_service_api(service_api, context)
-            .await?;
-
-        // 如果有智能提供者，获取有效凭证
-        let smart_provider = { self.smart_provider.read().await.clone() };
-        if let Some(smart_provider) = smart_provider {
-            match smart_provider
-                .get_valid_credential(selection_result.selected_key.id)
-                .await
-            {
-                Ok(credential_result) => {
-                    linfo!(
-                        "system",
-                        LogStage::Scheduling,
-                        LogComponent::KeyPool,
-                        "smart_credential_ok",
-                        "Successfully obtained smart API credential",
-                        key_id = selection_result.selected_key.id,
-                        auth_type = ?credential_result.auth_type,
-                        refreshed = credential_result.refreshed,
-                    );
-
-                    Ok(SmartApiKeySelectionResult {
-                        selection_result,
-                        credential: credential_result,
-                        smart_enhanced: true,
-                    })
-                }
-                Err(e) => {
-                    lerror!(
-                        "system",
-                        LogStage::Scheduling,
-                        LogComponent::KeyPool,
-                        "smart_credential_fail",
-                        "Failed to get smart API credential, falling back to raw key",
-                        key_id = selection_result.selected_key.id,
-                        error = ?e,
-                    );
-
-                    // 降级：使用原始API密钥
-                    let fallback_credential = CredentialResult {
-                        credential: selection_result.selected_key.api_key.clone(),
-                        auth_type: AuthCredentialType::ApiKey,
-                        refreshed: false,
-                    };
-
-                    Ok(SmartApiKeySelectionResult {
-                        selection_result,
-                        credential: fallback_credential,
-                        smart_enhanced: false,
-                    })
-                }
-            }
-        } else {
-            // 没有智能提供者，使用原始API密钥
-            let basic_credential = CredentialResult {
-                credential: selection_result.selected_key.api_key.clone(),
-                auth_type: AuthCredentialType::ApiKey,
-                refreshed: false,
-            };
-
-            Ok(SmartApiKeySelectionResult {
-                selection_result,
-                credential: basic_credential,
-                smart_enhanced: false,
-            })
-        }
     }
 
     /// 获取或创建API密钥选择器
@@ -648,28 +527,6 @@ impl ApiKeySchedulerService {
             .collect()
     }
 
-    /// 检查指定API密钥的健康状态
-    pub async fn check_key_health(
-        &self,
-        key: &user_provider_keys::Model,
-    ) -> Result<super::api_key_health::ApiKeyCheckResult> {
-        self.api_key_health_service
-            .check_api_key(key)
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Health check failed", e))
-    }
-
-    /// 批量检查多个API密钥的健康状态
-    pub async fn batch_check_keys_health(
-        &self,
-        keys: Vec<user_provider_keys::Model>,
-    ) -> Result<HashMap<i32, super::api_key_health::ApiKeyCheckResult>> {
-        self.api_key_health_service
-            .batch_check_keys(keys)
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Batch health check failed", e))
-    }
-
     /// 手动标记API密钥为不健康
     pub async fn mark_key_unhealthy(&self, key_id: i32, reason: String) -> Result<()> {
         self.api_key_health_service
@@ -686,46 +543,6 @@ impl ApiKeySchedulerService {
         self.api_key_health_service
             .get_key_health_status(key_id)
             .await
-    }
-
-    /// 获取所有API密钥的健康状态
-    pub async fn get_all_health_status(&self) -> HashMap<i32, super::api_key_health::ApiKeyHealth> {
-        self.api_key_health_service.get_all_health_status().await
-    }
-
-    /// 启动健康检查服务
-    pub async fn start_health_checking(&self) -> Result<()> {
-        self.api_key_health_service
-            .start()
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))
-    }
-
-    /// 停止健康检查服务
-    pub async fn stop_health_checking(&self) -> Result<()> {
-        self.api_key_health_service
-            .stop()
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))
-    }
-
-    /// 获取密钥池统计信息
-    pub async fn get_pool_stats(&self) -> KeyPoolStats {
-        let selectors = self.selectors.read().await;
-        let healthy_key_ids = self.api_key_health_service.get_healthy_keys().await;
-        let all_health_status = self.api_key_health_service.get_all_health_status().await;
-
-        KeyPoolStats {
-            active_selectors: selectors.len(),
-            available_strategies: vec![
-                SchedulingStrategy::RoundRobin,
-                SchedulingStrategy::Weighted,
-            ],
-            healthy_keys: healthy_key_ids.len(),
-            total_tracked_keys: all_health_status.len(),
-            health_check_running: self.api_key_health_service.is_running().await,
-            ready: self.is_ready(),
-        }
     }
 
     /// 处理新增密钥：拉取最新信息并立即执行一次健康检测
@@ -820,79 +637,6 @@ impl ApiKeySchedulerService {
     #[must_use]
     pub const fn health_checker(&self) -> &Arc<ApiKeyHealthService> {
         &self.api_key_health_service
-    }
-}
-
-/// 密钥池统计信息
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct KeyPoolStats {
-    /// 活跃选择器数量
-    pub active_selectors: usize,
-    /// 可用策略
-    pub available_strategies: Vec<SchedulingStrategy>,
-    /// 健康的密钥数量
-    pub healthy_keys: usize,
-    /// 正在追踪的密钥总数
-    pub total_tracked_keys: usize,
-    /// 健康检查服务是否运行中
-    pub health_check_running: bool,
-    /// 服务是否已准备就绪
-    pub ready: bool,
-}
-
-/// 智能API密钥选择结果
-///
-/// 扩展了传统的ApiKeySelectionResult，增加了OAuth token智能刷新支持
-#[derive(Debug, Clone)]
-pub struct SmartApiKeySelectionResult {
-    /// 传统的密钥选择结果
-    pub selection_result: ApiKeySelectionResult,
-
-    /// 智能凭证（可能是刷新后的OAuth token或原始API密钥）
-    pub credential: CredentialResult,
-
-    /// 是否启用了智能增强（即是否使用了SmartApiKeyProvider）
-    pub smart_enhanced: bool,
-}
-
-impl SmartApiKeySelectionResult {
-    /// 获取实际可用的API凭证
-    #[must_use]
-    pub fn get_credential(&self) -> &str {
-        &self.credential.credential
-    }
-
-    /// `检查凭证是否是OAuth` token
-    #[must_use]
-    pub const fn is_oauth_token(&self) -> bool {
-        matches!(
-            self.credential.auth_type,
-            AuthCredentialType::OAuthToken { .. }
-        )
-    }
-
-    /// 检查凭证是否刚刚刷新过
-    #[must_use]
-    pub const fn is_refreshed(&self) -> bool {
-        self.credential.refreshed
-    }
-
-    /// 获取选中的密钥ID
-    #[must_use]
-    pub const fn get_key_id(&self) -> i32 {
-        self.selection_result.selected_key.id
-    }
-
-    /// 获取选中的密钥名称
-    #[must_use]
-    pub fn get_key_name(&self) -> &str {
-        &self.selection_result.selected_key.name
-    }
-
-    /// 获取用户ID
-    #[must_use]
-    pub const fn get_user_id(&self) -> i32 {
-        self.selection_result.selected_key.user_id
     }
 }
 

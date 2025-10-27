@@ -64,7 +64,7 @@ pub struct AuthenticationService {
     auth_service: Arc<AuthService>,
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
-    api_key_pool: Arc<ApiKeySchedulerService>,
+    api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     rate_limiter: Arc<RateLimiter>,
 }
 
@@ -81,7 +81,7 @@ impl AuthenticationService {
             auth_service,
             db,
             cache,
-            api_key_pool,
+            api_key_scheduler_service: api_key_pool,
             rate_limiter,
         }
     }
@@ -412,7 +412,7 @@ impl AuthenticationService {
             route_group,
         );
         let result = self
-            .api_key_pool
+            .api_key_scheduler_service
             .select_api_key_from_service_api(user_service_api, &context)
             .await?;
         ldebug!(

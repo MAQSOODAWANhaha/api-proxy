@@ -6,7 +6,7 @@
 //! - 监控和统计刷新任务的执行情况
 //! - 提供任务控制接口（启动、停止、暂停）
 
-use crate::auth::oauth_token_refresh_service::{
+use crate::auth::api_key_refresh_service::{
     ApiKeyRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
 };
 use crate::error::Result;
