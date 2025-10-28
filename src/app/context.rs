@@ -22,7 +22,7 @@ impl AppContext {
         database: Arc<DatabaseConnection>,
     ) -> Result<Arc<Self>> {
         let resources = AppResources::build(config, database)?;
-        let services = AppServices::initialize(&resources).await?;
+        let services = AppServices::initialize(&resources)?;
         let tasks = AppTasks::initialize(&resources, &services).await?;
 
         Ok(Arc::new(Self {

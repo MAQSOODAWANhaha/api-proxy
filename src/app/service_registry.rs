@@ -1,7 +1,7 @@
 use crate::app::resources::AppResources;
 use crate::auth::oauth_client::OAuthClient;
 use crate::auth::{
-    ApiKeyManager, ApiKeyRefreshService, ApiKeySelectService, AuthService, jwt::JwtManager,
+    ApiKeyManager, ApiKeyOAuthStateService, ApiKeyRefreshService, AuthService, jwt::JwtManager,
     rate_limit_dist::RateLimiter, types::AuthConfig,
 };
 use crate::error::{Context, Result};
@@ -19,7 +19,7 @@ pub struct AppServices {
     rate_limiter: Arc<RateLimiter>,
     trace_system: Arc<TraceSystem>,
     oauth_client: Arc<OAuthClient>,
-    api_key_select_service: Arc<ApiKeySelectService>,
+    api_key_oauth_state_service: Arc<ApiKeyOAuthStateService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     api_key_refresh_service: Arc<ApiKeyRefreshService>,
     api_key_health_service: Arc<ApiKeyHealthService>,
@@ -27,7 +27,7 @@ pub struct AppServices {
 
 impl AppServices {
     /// 根据基础资源初始化业务服务
-    pub async fn initialize(resources: &Arc<AppResources>) -> Result<Arc<Self>> {
+    pub fn initialize(resources: &Arc<AppResources>) -> Result<Arc<Self>> {
         let config = resources.config();
         let database = resources.database();
         let cache = resources.cache();
@@ -48,7 +48,7 @@ impl AppServices {
             auth_config,
         ));
 
-        let rate_limiter = Arc::new(RateLimiter::new(cache.clone(), database.clone()));
+        let rate_limiter = Arc::new(RateLimiter::new(cache, database.clone()));
 
         let trace_system = Arc::new(TraceSystem::new_immediate(database.clone()));
 
@@ -60,27 +60,15 @@ impl AppServices {
         ));
 
         let oauth_client = Arc::new(OAuthClient::new(database.clone()));
-        let api_key_refresh_service = Arc::new(ApiKeyRefreshService::new(
-            database.clone(),
-            oauth_client.clone(),
-        ));
-
-        let smart_api_key_provider = Arc::new(ApiKeySelectService::new(
-            database.clone(),
-            oauth_client.clone(),
-            api_key_refresh_service.clone(),
-        ));
-
-        api_key_scheduler_service
-            .set_smart_provider(smart_api_key_provider.clone())
-            .await;
+        let api_key_oauth_state_service = Arc::new(ApiKeyOAuthStateService::new(database));
+        let api_key_refresh_service = Arc::new(ApiKeyRefreshService::new(oauth_client.clone()));
 
         Ok(Arc::new(Self {
             auth_service,
             rate_limiter,
             trace_system,
             oauth_client,
-            api_key_select_service: smart_api_key_provider,
+            api_key_oauth_state_service,
             api_key_scheduler_service,
             api_key_refresh_service,
             api_key_health_service,
@@ -113,8 +101,8 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn smart_api_key_provider(&self) -> Arc<ApiKeySelectService> {
-        Arc::clone(&self.api_key_select_service)
+    pub fn api_key_oauth_state_service(&self) -> Arc<ApiKeyOAuthStateService> {
+        Arc::clone(&self.api_key_oauth_state_service)
     }
 
     #[must_use]

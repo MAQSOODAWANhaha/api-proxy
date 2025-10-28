@@ -6,9 +6,8 @@
 //! - 监控和统计刷新任务的执行情况
 //! - 提供任务控制接口（启动、停止、暂停）
 
-use crate::auth::api_key_refresh_service::{
-    ApiKeyRefreshService, RefreshStats, RefreshType, ScheduledTokenRefresh, TokenRefreshResult,
-};
+use crate::auth::api_key_oauth_state_service::{ApiKeyOAuthStateService, ScheduledTokenRefresh};
+use crate::auth::api_key_refresh_service::{ApiKeyRefreshService, TokenRefreshResult};
 use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
@@ -25,7 +24,6 @@ use tokio_util::time::{DelayQueue, delay_queue::Key};
 const FALLBACK_RESCAN_INTERVAL_SECS: u64 = 600;
 const COMMAND_CHANNEL_CAPACITY: usize = 128;
 const MAX_ERROR_RETRIES: u32 = 3;
-const ERROR_RETRY_INTERVAL_SECS: u64 = 60;
 
 /// OAuth Token刷新后台任务
 ///
@@ -36,6 +34,7 @@ const ERROR_RETRY_INTERVAL_SECS: u64 = 60;
 /// 4. 错误处理：任务失败时的重试和告警机制
 pub struct ApiKeyOAuthTokenRefreshTask {
     refresh_service: Arc<ApiKeyRefreshService>,
+    oauth_state_service: Arc<ApiKeyOAuthStateService>,
     /// 任务状态
     task_state: Arc<RwLock<TaskState>>,
 
@@ -96,11 +95,15 @@ enum RefreshCommand {
 impl ApiKeyOAuthTokenRefreshTask {
     /// `创建新的OAuth` Token刷新后台任务
     #[must_use]
-    pub fn new(refresh_service: Arc<ApiKeyRefreshService>) -> Self {
+    pub fn new(
+        refresh_service: Arc<ApiKeyRefreshService>,
+        oauth_state_service: Arc<ApiKeyOAuthStateService>,
+    ) -> Self {
         let (control_sender, _) = broadcast::channel(10);
 
         Self {
             refresh_service,
+            oauth_state_service,
             task_state: Arc::new(RwLock::new(TaskState::NotStarted)),
             control_sender,
             command_sender: Arc::new(RwLock::new(None)),
@@ -117,7 +120,11 @@ impl ApiKeyOAuthTokenRefreshTask {
         }
 
         // 启动前执行一次全局扫描
-        let initial_schedule = match self.refresh_service.initialize_refresh_schedule().await {
+        let initial_schedule = match self
+            .oauth_state_service
+            .init_refresh_schedules(Utc::now())
+            .await
+        {
             Ok(entries) => entries,
             Err(e) => {
                 lerror!(
@@ -241,8 +248,8 @@ impl ApiKeyOAuthTokenRefreshTask {
 
     /// 预计算会话的刷新计划，不立即入队
     pub async fn prepare_schedule(&self, session_id: &str) -> Result<ScheduledTokenRefresh> {
-        self.refresh_service
-            .register_session_for_refresh(session_id)
+        self.oauth_state_service
+            .schedule_session_refresh(session_id, Utc::now())
             .await
     }
 
@@ -290,10 +297,6 @@ impl ApiKeyOAuthTokenRefreshTask {
     }
 
     /// 获取刷新服务统计信息
-    pub async fn get_refresh_stats(&self) -> RefreshStats {
-        self.refresh_service.get_refresh_stats().await
-    }
-
     /// 生成任务循环
     #[allow(clippy::too_many_lines)]
     fn spawn_task_loop(
@@ -302,6 +305,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         command_receiver: mpsc::Receiver<RefreshCommand>,
     ) -> JoinHandle<()> {
         let refresh_service = Arc::clone(&self.refresh_service);
+        let oauth_state_service = Arc::clone(&self.oauth_state_service);
         let task_state = Arc::clone(&self.task_state);
         let mut control_receiver = self.control_sender.subscribe();
 
@@ -362,6 +366,7 @@ impl ApiKeyOAuthTokenRefreshTask {
 
                                 let results = Self::process_session_entry(
                                     &refresh_service,
+                                    &oauth_state_service,
                                     schedule,
                                     &mut queue,
                                     &mut session_keys,
@@ -390,7 +395,7 @@ impl ApiKeyOAuthTokenRefreshTask {
                                 rescan_key = None;
                                 let rescan_result =
                                     Self::resync_schedule(
-                                        &refresh_service,
+                                        &oauth_state_service,
                                         &mut queue,
                                         &mut session_keys,
                                         &mut session_schedules,
@@ -462,7 +467,7 @@ impl ApiKeyOAuthTokenRefreshTask {
                             TaskControl::ExecuteNow => {
                                 linfo!("system", LogStage::BackgroundTask, LogComponent::OAuth, "execute_now_signal", "Received execute now signal, triggering immediate rescan");
                                 if let Err(e) = Self::resync_schedule(
-                                    &refresh_service,
+                                    &oauth_state_service,
                                     &mut queue,
                                     &mut session_keys,
                                     &mut session_schedules,
@@ -531,28 +536,40 @@ impl ApiKeyOAuthTokenRefreshTask {
     }
 
     async fn resync_schedule(
-        refresh_service: &Arc<ApiKeyRefreshService>,
+        oauth_state_service: &Arc<ApiKeyOAuthStateService>,
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
         session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
     ) -> Result<()> {
-        if let Err(err) = refresh_service.cleanup_stale_sessions().await {
-            lwarn!(
-                "system",
-                LogStage::BackgroundTask,
-                LogComponent::OAuth,
-                "cleanup_failed",
-                &format!("Failed to cleanup stale OAuth sessions: {err:?}")
-            );
+        let now = Utc::now();
+        match oauth_state_service.prune_stale_sessions(now).await {
+            Ok(report) => {
+                let request_id = uuid::Uuid::new_v4().to_string();
+                linfo!(
+                    &request_id,
+                    LogStage::BackgroundTask,
+                    LogComponent::OAuth,
+                    "cleanup",
+                    "OAuth session cleanup finished",
+                    removed_expired = report.removed_expired,
+                    removed_orphaned = report.removed_orphaned
+                );
+            }
+            Err(err) => {
+                err.log();
+            }
         }
 
-        let sessions = refresh_service.list_authorized_sessions().await?;
+        let sessions = oauth_state_service.list_authorized_sessions().await?;
         let mut active_ids = HashSet::new();
 
         for session in sessions {
             let session_id = session.session_id.clone();
             active_ids.insert(session_id.clone());
-            if let Some(schedule) = refresh_service.build_schedule_for_session(&session) {
+            if let Some(mut schedule) = oauth_state_service.build_session_schedule(&session) {
+                if ApiKeyOAuthStateService::is_refresh_due(&session, now) {
+                    schedule.next_refresh_at = now;
+                }
                 Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
             } else if let Some(key) = session_keys.remove(&session_id) {
                 queue.remove(&key);
@@ -575,8 +592,10 @@ impl ApiKeyOAuthTokenRefreshTask {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     async fn process_session_entry(
         refresh_service: &Arc<ApiKeyRefreshService>,
+        oauth_state_service: &Arc<ApiKeyOAuthStateService>,
         entry: ScheduledTokenRefresh,
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
@@ -587,45 +606,138 @@ impl ApiKeyOAuthTokenRefreshTask {
         session_schedules.remove(&session_id);
 
         let mut results = Vec::new();
+        let stage = LogStage::BackgroundTask;
+        let component = LogComponent::OAuth;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let previous_attempts = entry.retry_attempts;
 
-        let result = match refresh_service
-            .refresh_session(&session_id, RefreshType::Active)
-            .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                lerror!(
-                    "system",
-                    LogStage::BackgroundTask,
-                    LogComponent::OAuth,
-                    "refresh_failed",
-                    &format!("Failed to refresh token for session {session_id}: {e:?}")
+        let session = match oauth_state_service.fetch_session(&session_id).await {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                lwarn!(
+                    &request_id,
+                    stage,
+                    component,
+                    "session_missing",
+                    "OAuth session not found while processing refresh",
+                    session_id = %session_id
                 );
-                let failure = TokenRefreshResult {
+                results.push(TokenRefreshResult {
                     success: false,
                     new_access_token: None,
                     new_expires_at: None,
-                    error_message: Some(e.to_string()),
-                    should_retry: true,
-                    refresh_type: RefreshType::Active,
-                };
-                Self::schedule_next_for_result(
-                    refresh_service,
-                    &session_id,
-                    &failure,
-                    queue,
-                    session_keys,
-                    session_schedules,
-                )
-                .await;
-                results.push(failure);
+                    new_refresh_token: None,
+                    error_message: Some("OAuth session missing".to_string()),
+                });
+                return results;
+            }
+            Err(err) => {
+                err.log();
+                lwarn!(
+                    &request_id,
+                    stage,
+                    component,
+                    "session_load_failed",
+                    "Failed to load OAuth session",
+                    session_id = %session_id,
+                    error = %err
+                );
+                results.push(TokenRefreshResult {
+                    success: false,
+                    new_access_token: None,
+                    new_expires_at: None,
+                    new_refresh_token: None,
+                    error_message: Some(err.to_string()),
+                });
                 return results;
             }
         };
 
+        let Some(_refresh_token) = session.refresh_token.as_ref() else {
+            lwarn!(
+                &request_id,
+                stage,
+                component,
+                "missing_refresh_token",
+                "OAuth session missing refresh token",
+                session_id = %session_id
+            );
+            results.push(TokenRefreshResult {
+                success: false,
+                new_access_token: None,
+                new_expires_at: None,
+                new_refresh_token: None,
+                error_message: Some("missing refresh token".to_string()),
+            });
+            return results;
+        };
+
+        let result = match refresh_service
+            .execute_token_refresh(request_id.clone(), &session_id)
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                err.log();
+                lerror!(
+                    &request_id,
+                    stage,
+                    component,
+                    "refresh_execution_failed",
+                    "Token refresh execution returned error",
+                    session_id = %session_id,
+                    error = %err
+                );
+                TokenRefreshResult {
+                    success: false,
+                    new_access_token: None,
+                    new_expires_at: None,
+                    new_refresh_token: None,
+                    error_message: Some(err.to_string()),
+                }
+            }
+        };
+
+        if result.success {
+            if let (Some(access_token), Some(expires_at)) =
+                (result.new_access_token.clone(), result.new_expires_at)
+            {
+                if let Err(err) = oauth_state_service
+                    .update_session_tokens(
+                        &session_id,
+                        access_token,
+                        expires_at,
+                        result.new_refresh_token.clone(),
+                    )
+                    .await
+                {
+                    err.log();
+                    lwarn!(
+                        &request_id,
+                        stage,
+                        component,
+                        "state_update_failed",
+                        "Failed to persist refreshed OAuth token",
+                        session_id = %session_id,
+                        error = %err
+                    );
+                }
+            } else {
+                lwarn!(
+                    &request_id,
+                    stage,
+                    component,
+                    "missing_refresh_payload",
+                    "Refresh result missing access token or expiry",
+                    session_id = %session_id
+                );
+            }
+        }
+
         Self::schedule_next_for_result(
-            refresh_service,
+            oauth_state_service,
             &session_id,
+            previous_attempts,
             &result,
             queue,
             session_keys,
@@ -638,15 +750,16 @@ impl ApiKeyOAuthTokenRefreshTask {
     }
 
     async fn schedule_next_for_result(
-        refresh_service: &Arc<ApiKeyRefreshService>,
+        oauth_state_service: &Arc<ApiKeyOAuthStateService>,
         session_id: &str,
+        previous_attempts: u32,
         result: &TokenRefreshResult,
         queue: &mut DelayQueue<RefreshQueueItem>,
         session_keys: &mut HashMap<String, Key>,
         session_schedules: &mut HashMap<String, ScheduledTokenRefresh>,
     ) {
-        match refresh_service
-            .determine_next_refresh_after(session_id, result)
+        match oauth_state_service
+            .resolve_next_schedule(session_id, previous_attempts, result)
             .await
         {
             Ok(Some(schedule)) => {
@@ -656,38 +769,27 @@ impl ApiKeyOAuthTokenRefreshTask {
                 session_keys.remove(session_id);
                 session_schedules.remove(session_id);
             }
-            Err(e) => {
+            Err(err) => {
+                err.log();
                 lwarn!(
                     "system",
                     LogStage::BackgroundTask,
                     LogComponent::OAuth,
                     "next_refresh_fail",
-                    &format!("Failed to determine next refresh for session {session_id}: {e:?}")
+                    &format!("Failed to determine next refresh for session {session_id}")
                 );
-                if result.should_retry {
-                    let retry_at = Utc::now()
-                        + Duration::seconds(
-                            i64::try_from(ApiKeyRefreshService::retry_interval_seconds())
-                                .unwrap_or(i64::MAX),
-                        );
-                    let schedule = ScheduledTokenRefresh {
-                        session_id: session_id.to_string(),
-                        next_refresh_at: retry_at,
-                        expires_at: retry_at,
-                    };
-                    Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
-                } else {
-                    let retry_at = Utc::now()
-                        + Duration::seconds(
-                            i64::try_from(ERROR_RETRY_INTERVAL_SECS).unwrap_or(i64::MAX),
-                        );
-                    let schedule = ScheduledTokenRefresh {
-                        session_id: session_id.to_string(),
-                        next_refresh_at: retry_at,
-                        expires_at: retry_at,
-                    };
-                    Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
-                }
+                let retry_at = Utc::now()
+                    + Duration::seconds(
+                        i64::try_from(ApiKeyOAuthStateService::retry_interval_secs())
+                            .unwrap_or(i64::MAX),
+                    );
+                let schedule = ScheduledTokenRefresh {
+                    session_id: session_id.to_string(),
+                    next_refresh_at: retry_at,
+                    expires_at: retry_at,
+                    retry_attempts: previous_attempts.saturating_add(1),
+                };
+                Self::insert_or_update_entry(queue, session_keys, session_schedules, &schedule);
             }
         }
     }

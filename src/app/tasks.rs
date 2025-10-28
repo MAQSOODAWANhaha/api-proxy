@@ -43,10 +43,15 @@ impl AppTasks {
         let rate_limiter = services.rate_limiter();
         let api_refresh: Arc<crate::auth::ApiKeyRefreshService> =
             services.api_key_refresh_service();
+        let api_oauth_state: Arc<crate::auth::ApiKeyOAuthStateService> =
+            services.api_key_oauth_state_service();
         let database = resources.database();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）
-        let refresh = Arc::new(ApiKeyOAuthTokenRefreshTask::new(api_refresh.clone()));
+        let refresh = Arc::new(ApiKeyOAuthTokenRefreshTask::new(
+            api_refresh.clone(),
+            api_oauth_state.clone(),
+        ));
         let reset = Arc::new(ApiKeyRateLimitResetTask::new(database.clone()));
 
         // 注册需要通过 get_task() 访问的任务实例

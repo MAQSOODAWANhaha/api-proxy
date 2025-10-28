@@ -5,7 +5,7 @@
 pub mod algorithms;
 pub mod api_key_health;
 pub mod api_key_rate_limit_reset_task;
-pub mod pool_manager;
+pub mod api_key_scheduler_service;
 pub mod types;
 
 pub use algorithms::{
@@ -14,5 +14,5 @@ pub use algorithms::{
 };
 pub use api_key_health::ApiKeyHealthService;
 pub use api_key_rate_limit_reset_task::ApiKeyRateLimitResetTask;
-pub use pool_manager::ApiKeySchedulerService;
+pub use api_key_scheduler_service::ApiKeySchedulerService;
 pub use types::SchedulingStrategy;

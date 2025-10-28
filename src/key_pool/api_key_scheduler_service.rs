@@ -5,7 +5,7 @@
 use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext};
 use super::api_key_health::ApiKeyHealthService;
 use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
-use crate::auth::{ApiKeySelectService, types::AuthStatus};
+use crate::auth::types::AuthStatus;
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, linfo};
@@ -23,8 +23,6 @@ pub struct ApiKeySchedulerService {
     selectors: tokio::sync::RwLock<HashMap<SchedulingStrategy, Arc<dyn ApiKeySelector>>>,
     /// API 密钥健康检查器
     api_key_health_service: Arc<ApiKeyHealthService>,
-    /// 智能 API 密钥提供者（支持 OAuth token 刷新）
-    api_key_select_service: tokio::sync::RwLock<Option<Arc<ApiKeySelectService>>>,
 }
 
 impl ApiKeySchedulerService {
@@ -38,19 +36,12 @@ impl ApiKeySchedulerService {
             db,
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             api_key_health_service,
-            api_key_select_service: tokio::sync::RwLock::new(None),
         }
     }
 
     #[must_use]
     pub const fn api_key_health_service(&self) -> &Arc<ApiKeyHealthService> {
         &self.api_key_health_service
-    }
-
-    /// 设置智能密钥提供者
-    pub async fn set_smart_provider(&self, smart_provider: Arc<ApiKeySelectService>) {
-        let mut guard = self.api_key_select_service.write().await;
-        *guard = Some(smart_provider);
     }
 
     /// 从用户服务API配置中获取API密钥池并选择密钥
