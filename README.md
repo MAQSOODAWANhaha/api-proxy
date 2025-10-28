@@ -1,6 +1,6 @@
 # AI Proxy Platform
 
-> 基于 **Rust (2024 Edition)** + **Pingora** + **Axum** 构建的企业级 AI 服务代理平台，提供统一鉴权、动态路由、实时追踪与可视化运维能力。
+> 基于 **Rust (2024 Edition)** + **Pingora** + **Axum** 构建的企业级 AI 服务代理平台，采用**双端口分离架构**设计，提供统一鉴权、动态路由、实时追踪与可视化运维能力。
 
 ![Rust](https://img.shields.io/badge/Rust-2024-orange.svg) ![Pingora](https://img.shields.io/badge/Pingora-0.6.0-blue.svg) ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -20,16 +20,19 @@ graph TD
 
     subgraph "Shared Core"
         direction LR
-        Auth["Authentication<br/>(JWT, API Key, OAuth2)"]
-        Scheduler["Scheduler<br/>(RR, Weighted, Health)"]
-        HealthChecker["Health Checker"]
+        AuthService["认证服务<br/>(JWT, API Key, OAuth2)"]
+        ApiKeySchedulerService["API密钥调度服务<br/>(智能选择, 负载均衡)"]
+        ApiKeyHealthService["API密钥健康检查服务<br/>(主动探测, 故障恢复)"]
+        RateLimiter["分布式速率限制器<br/>(QPS, 每日配额)"]
         Tracing["Tracing & Stats"]
+        OAuthClient["OAuth客户端<br/>(授权, Token交换, 自动刷新)"]
+        OAuthTokenRefreshTask["OAuth Token刷新后台任务"]
     end
 
     subgraph "Data Layer"
         direction LR
         DB[(Database<br/>SQLite/Postgres)]
-        Cache[(Cache<br/>Redis)]
+        Cache[(Cache<br/>Redis / Moka)]
     end
 
     subgraph "Upstream AI Providers"
@@ -39,20 +42,39 @@ graph TD
     Clients -- "AI Requests" --> Proxy
     Clients -- "Admin Actions" --> Admin
 
-    Proxy -- "Uses" --> Auth
-    Proxy -- "Uses" --> Scheduler
-    Admin -- "Uses" --> Auth
-
-    Scheduler -- "Uses" --> HealthChecker
-    Scheduler -- "Uses" --> DB
-    Scheduler -- "Uses" --> Cache
-
+    Proxy -- "Uses" --> AuthService
+    Proxy -- "Uses" --> ApiKeySchedulerService
+    Proxy -- "Uses" --> RateLimiter
     Proxy -- "Records" --> Tracing
-    Admin -- "Reads" --> Tracing
+
+    Admin -- "Uses" --> AuthService
+    Admin -- "Uses" --> ApiKeySchedulerService
+    Admin -- "Uses" --> OAuthClient
+    Admin -- "Reads/Writes" --> DB
+    Admin -- "Reads/Writes" --> Cache
+
+    AuthService -- "Uses" --> OAuthClient
+    AuthService -- "Uses" --> RateLimiter
+
+    ApiKeySchedulerService -- "Depends on" --> ApiKeyHealthService
+    ApiKeySchedulerService -- "Uses" --> OAuthClient
+    ApiKeySchedulerService -- "Reads/Writes" --> DB
+    ApiKeySchedulerService -- "Reads/Writes" --> Cache
+
+    ApiKeyHealthService -- "Updates" --> DB
+    ApiKeyHealthService -- "Updates" --> Cache
+    ApiKeyHealthService -- "Triggers" --> OAuthTokenRefreshTask
+
+    RateLimiter -- "Reads/Writes" --> Cache
+    RateLimiter -- "Reads" --> DB
+
+    OAuthClient -- "Reads/Writes" --> DB
+    OAuthClient -- "Reads/Writes" --> Cache
+
+    OAuthTokenRefreshTask -- "Uses" --> OAuthClient
+    OAuthTokenRefreshTask -- "Reads/Writes" --> DB
 
     Tracing -- "Writes" --> DB
-    HealthChecker -- "Writes" --> DB
-    HealthChecker -- "Writes" --> Cache
 
     Proxy -- "Forwards to" --> Providers
 ```
@@ -64,8 +86,10 @@ graph TD
 
 - 🔐 **多种认证模式**: 支持入口 API Key、JWT、OAuth 2.0 客户端凭证等多种认证方式，完全由数据库动态配置驱动。
 - 🚀 **透明代理设计**: 用户决定请求格式与目标服务商，代理层只负责认证、密钥替换和转发，最大化兼容性。
-- ⚖️ **智能调度与健康检查**: 提供轮询、权重、健康度优先等多种密钥池调度策略。实时被动+主动健康检查，自动隔离故障节点并恢复。
-- 🔄 **OAuth 2.0 自动刷新**: 内置 `SmartApiKeyProvider` 和后台刷新任务，自动管理需要 OAuth 2.0 授权的后端密钥，保证服务高可用。
+- ⚖️ **智能API密钥管理与调度**: `ApiKeySchedulerService` 综合考虑API密钥的健康状态、认证状态、过期时间、速率限制等因素，动态选择最优密钥。提供轮询、权重等多种密钥池调度策略。
+- 🏥 **先进的API密钥健康检查**: `ApiKeyHealthService` 定期主动探测API密钥的可用性和性能，细致分类错误类型，计算健康分数，并支持自动限流恢复。
+- 🔄 **OAuth 2.0 自动刷新与PKCE**: 内置 `ApiKeyRefreshService` 和后台 `OAuthTokenRefreshTask`，自动管理需要 OAuth 2.0 授权的后端密钥，确保服务高可用。支持PKCE安全机制，并自动清理孤立会话。
+- ⚡ **分布式速率限制**: `RateLimiter` 基于Redis实现分布式、高精度的QPS、每日Token和成本配额限制，保护系统资源和上游AI服务商。
 - 📊 **实时追踪与统计**: 所有请求的完整生命周期（包括重试）都被即时写入数据库。提供精确实时成本计算与 Token 统计，支持流式响应。
 - ⚙️ **数据驱动配置**: 服务商认证方式、API 地址、超时、Token 计算方式等均从数据库加载，修改配置无需重启服务。
 - 🛡️ **源信息隐藏**: 彻底隐藏客户端的 IP、API 密钥等信息，确保上游服务商只能看到代理本身。
@@ -125,26 +149,39 @@ pnpm dev
 sequenceDiagram
     actor Client
     participant Proxy as Pingora Proxy
-    participant Auth as AuthService
-    participant Health as HealthChecker
-    participant Scheduler as ApiKeyPoolManager
+    participant AuthService as AuthService
+    participant RateLimiter as RateLimiter
+    participant ApiKeySchedulerService as ApiKeySchedulerService
+    participant ApiKeyHealthService as ApiKeyHealthService
+    participant ApiKeySelectService as ApiKeySelectService
+    participant OAuthClient as OAuthClient
     participant Tracer as TracingService
     participant Provider as Upstream AI Provider
 
-    Client->>Proxy: AI Request (with Inbound API Key)
-    Proxy->>Auth: 1. Authenticate Request
-    Auth-->>Proxy: User/Service Info
+    Client->>Proxy: AI Request (with Client API Key)
+    Proxy->>AuthService: 1. Authenticate Client API Key
+    AuthService-->>Proxy: User Service API Info
     Proxy->>Tracer: 2. Start Trace
-    note right of Proxy: Pipeline: RateLimit -> Config -> Select Key
-    Proxy->>Scheduler: 3. Select Backend API Key
-    Scheduler->>Health: Get Healthy Keys
-    Health-->>Scheduler: Healthy Keys List
-    Scheduler-->>Proxy: Selected Backend Key
-    Proxy->>Tracer: Update Trace (with backend key info)
-    Proxy->>Provider: 4. Forward Request (with Backend API Key)
-    Provider-->>Proxy: AI Response
-    Proxy->>Tracer: 5. Complete Trace (stats, cost, tokens)
-    Tracer-->>Client: Response
+    note right of Proxy: Pipeline: RateLimit -> Config -> Select Backend Key
+    Proxy->>RateLimiter: 3. Check Distributed Rate Limits
+    RateLimiter-->>Proxy: Allowed / Denied
+    alt If Allowed
+        Proxy->>ApiKeySchedulerService: 4. Select Backend API Key
+        ApiKeySchedulerService->>ApiKeyHealthService: Get Healthy Keys
+        ApiKeyHealthService-->>ApiKeySchedulerService: Healthy Keys List
+        ApiKeySchedulerService->>ApiKeySelectService: Get Credential (for selected key)
+        ApiKeySelectService->>OAuthClient: Check/Refresh OAuth Token (if needed)
+        OAuthClient-->>ApiKeySelectService: Valid Access Token
+        ApiKeySelectService-->>ApiKeySchedulerService: Selected Backend Key / OAuth Token
+        ApiKeySchedulerService-->>Proxy: Selected Backend Key / OAuth Token
+        Proxy->>Tracer: Update Trace (with backend key info)
+        Proxy->>Provider: 5. Forward Request (with Backend API Key/OAuth Token)
+        Provider-->>Proxy: AI Response
+        Proxy->>Tracer: 6. Complete Trace (stats, cost, tokens)
+        Tracer-->>Client: Response
+    else If Denied
+        Proxy->>Client: 429 Rate Limit Exceeded
+    end
 ```
 
 - 追踪数据实时写入 `proxy_tracing` 表，前端日志页面 & ProviderKey 弹窗使用同一数据源。

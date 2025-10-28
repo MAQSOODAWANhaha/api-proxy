@@ -73,28 +73,10 @@ fn public_stats_routes() -> Router<ManagementState> {
 
 /// 健康检查路由
 fn health_routes() -> Router<ManagementState> {
-    Router::new()
-        .route("/", get(crate::management::handlers::health::health_check))
-        .route(
-            "/detailed",
-            get(crate::management::handlers::health::detailed_health_check),
-        )
-        .route(
-            "/api-keys",
-            get(crate::management::handlers::health::get_api_keys_health),
-        )
-        .route(
-            "/stats",
-            get(crate::management::handlers::health::get_health_stats),
-        )
-        .route(
-            "/check/{key_id}",
-            post(crate::management::handlers::health::trigger_key_health_check),
-        )
-        .route(
-            "/mark-unhealthy/{key_id}",
-            post(crate::management::handlers::health::mark_key_unhealthy),
-        )
+    Router::new().route(
+        "/mark-unhealthy/{key_id}",
+        post(crate::management::handlers::health::mark_key_unhealthy),
+    )
 }
 
 /// 系统信息路由

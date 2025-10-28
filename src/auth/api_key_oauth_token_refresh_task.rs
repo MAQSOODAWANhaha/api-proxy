@@ -34,7 +34,7 @@ const ERROR_RETRY_INTERVAL_SECS: u64 = 60;
 /// 2. 任务调度管理：支持启动、停止、暂停、恢复
 /// 3. 监控统计：记录任务执行情况和刷新结果
 /// 4. 错误处理：任务失败时的重试和告警机制
-pub struct OAuthTokenRefreshTask {
+pub struct ApiKeyOAuthTokenRefreshTask {
     refresh_service: Arc<ApiKeyRefreshService>,
     /// 任务状态
     task_state: Arc<RwLock<TaskState>>,
@@ -93,7 +93,7 @@ enum RefreshCommand {
     Remove(String),
 }
 
-impl OAuthTokenRefreshTask {
+impl ApiKeyOAuthTokenRefreshTask {
     /// `创建新的OAuth` Token刷新后台任务
     #[must_use]
     pub fn new(refresh_service: Arc<ApiKeyRefreshService>) -> Self {

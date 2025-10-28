@@ -1,8 +1,8 @@
 use crate::app::service_registry::AppServices;
 use crate::app::task_scheduler::{ScheduledTask, TaskScheduler};
-use crate::auth::api_key_refresh_task::OAuthTokenRefreshTask;
+use crate::auth::api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask;
 use crate::error::Result;
-use crate::key_pool::rate_limit_reset_task::RateLimitResetTask;
+use crate::key_pool::ApiKeyRateLimitResetTask;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,13 +11,11 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskType {
     /// 速率限制缓存预热
-    RateLimitCacheWarmup,
-    /// 密钥池健康检查
-    KeyPoolHealthChecker,
+    ApiKeyRateLimitCache,
+    /// 限流状态自动恢复
+    ApiKeyRateLimitReset,
     /// OAuth Token 刷新
-    OAuthTokenRefresh,
-    /// 限流重置任务（常驻服务）
-    RateLimitReset,
+    ApiKeyOAuthTokenRefresh,
 }
 
 /// 后台任务集合：调度器及任务实例统一管理
@@ -42,86 +40,58 @@ impl AppTasks {
         let mut task_instances: HashMap<TaskType, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         // 从 services 获取核心服务
-        let database = resources.database();
         let rate_limiter = services.rate_limiter();
-        let api_key_scheduler_service = services.api_key_scheduler_service();
-        let api_key_refresh_service: Arc<crate::auth::ApiKeyRefreshService> =
+        let api_refresh: Arc<crate::auth::ApiKeyRefreshService> =
             services.api_key_refresh_service();
-        let api_key_health_service = services.api_key_health_service();
+        let database = resources.database();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）
-        let oauth_token_refresh_task =
-            Arc::new(OAuthTokenRefreshTask::new(api_key_refresh_service.clone()));
-
-        let rate_limit_reset_task = Arc::new(RateLimitResetTask::new(
-            database.clone(),
-            api_key_health_service.get_health_status_cache(),
-        ));
-
-        // 建立 Service 与 Task 的双向通信
-        // 将 rate_limit_reset_task 的 sender 注入到 health_checker
-        if let Some(sender) = rate_limit_reset_task.get_command_sender().await {
-            api_key_health_service
-                .set_rate_limit_reset_sender(sender)
-                .await;
-        }
+        let refresh = Arc::new(ApiKeyOAuthTokenRefreshTask::new(api_refresh.clone()));
+        let reset = Arc::new(ApiKeyRateLimitResetTask::new(database.clone()));
 
         // 注册需要通过 get_task() 访问的任务实例
-        task_instances.insert(
-            TaskType::OAuthTokenRefresh,
-            oauth_token_refresh_task.clone(),
-        );
-        task_instances.insert(TaskType::RateLimitReset, rate_limit_reset_task.clone());
+        task_instances.insert(TaskType::ApiKeyOAuthTokenRefresh, refresh.clone());
+        task_instances.insert(TaskType::ApiKeyRateLimitReset, reset.clone());
 
         // 注册任务到调度器
         scheduler
             .register_many(vec![
-                ScheduledTask::builder(TaskType::RateLimitCacheWarmup)
+                ScheduledTask::builder(TaskType::ApiKeyRateLimitCache)
                     .on_start(move || {
                         let rate_limiter = rate_limiter.clone();
                         async move { rate_limiter.warmup_daily_usage_cache().await }
                     })
                     .build(),
-                ScheduledTask::builder(TaskType::KeyPoolHealthChecker)
+                ScheduledTask::builder(TaskType::ApiKeyRateLimitReset)
                     .on_start({
-                        let key_scheduler = api_key_scheduler_service.clone();
+                        let task = reset.clone();
                         move || {
-                            let service = key_scheduler.clone();
-                            async move { service.start().await }
+                            let task = task.clone();
+                            async move { task.start().await }
                         }
                     })
-                    .on_stop(move || {
-                        let service = api_key_scheduler_service.clone();
-                        async move { service.stop().await }
+                    .on_stop({
+                        let task = reset.clone();
+                        move || {
+                            let task = task.clone();
+                            async move {
+                                task.stop().await;
+                                Ok(())
+                            }
+                        }
                     })
                     .build(),
-                ScheduledTask::builder(TaskType::OAuthTokenRefresh)
+                ScheduledTask::builder(TaskType::ApiKeyOAuthTokenRefresh)
                     .on_start({
-                        let task = oauth_token_refresh_task.clone();
+                        let task = refresh.clone();
                         move || {
                             let task = task.clone();
                             async move { task.start().await }
                         }
                     })
                     .on_stop(move || {
-                        let task = oauth_token_refresh_task.clone();
+                        let task = refresh.clone();
                         async move { task.stop().await }
-                    })
-                    .build(),
-                ScheduledTask::builder(TaskType::RateLimitReset)
-                    .on_start({
-                        let task = rate_limit_reset_task.clone();
-                        move || {
-                            let task = task.clone();
-                            async move { task.start().await }
-                        }
-                    })
-                    .on_stop(move || {
-                        let task = rate_limit_reset_task.clone();
-                        async move {
-                            task.stop().await;
-                            Ok(())
-                        }
                     })
                     .build(),
             ])
@@ -142,7 +112,7 @@ impl AppTasks {
     ///
     /// # Example
     /// ```ignore
-    /// let oauth_task = app_tasks.get_task::<OAuthTokenRefreshTask>(TaskType::OAuthTokenRefresh);
+    /// let oauth_task = app_tasks.get_task::<OAuthTokenRefreshTask>(TaskType::ApiKeyOAuthTokenRefresh);
     /// ```
     #[must_use]
     pub fn get_task<T: Send + Sync + 'static>(&self, task_type: TaskType) -> Option<Arc<T>> {

@@ -16,7 +16,9 @@
 
 - **核心框架**: Rust 2024 Edition + Pingora 0.6.0 + Axum 0.8.4
 - **数据库**: SQLite + Sea-ORM 1.x + Sea-ORM-Migration
-- **缓存**: Redis with CacheManager (支持内存/Redis后端)
+- **缓存**: Redis with CacheManager (支持内存/Redis后端) + Moka (内存缓存)
+- **并发工具**: DashMap, Tokio-Util (DelayQueue)
+- **HTTP客户端**: Reqwest
 - **认证**: AuthService + JWT + API Key + RBAC + OAuth 2.0
 - **追踪**: TraceSystem + ImmediateProxyTracer
 - **前端**: React 18 + TypeScript + shadcn/ui (已完成)
@@ -27,14 +29,14 @@
 flowchart TD
     %% 客户端请求入口
     Client[客户端请求] --> ProxyPort[":8080 PingoraProxyServer"]
-    
+
     %% 系统启动阶段
     subgraph SystemStartup["🚀 系统启动阶段"]
-        MainRS["main.rs:30<br/>dual_port_setup::run_dual_port_servers()"] 
+        MainRS["main.rs:30<br/>dual_port_setup::run_dual_port_servers()"]
         MainRS --> InitShared["initialize_shared_services()"]
         InitShared --> InitDB["初始化数据库连接<br/>crate::database::init_database()"]
         InitShared --> InitComponents["初始化所有共享组件"]
-        
+
         subgraph SharedComponents["共享组件初始化"]
             InitComponents --> AuthConfig["创建AuthConfig"]
             AuthConfig --> JWTManager["JwtManager::new()"]
@@ -45,113 +47,84 @@ flowchart TD
             InitComponents --> CacheManager["UnifiedCacheManager::new()"]
             InitComponents --> CollectService["CollectService::new()"]
             InitComponents --> TraceSystem["TraceSystem::new_immediate()"]
-            InitComponents --> HealthChecker["ApiKeyHealthChecker::new()"]
+            InitComponents --> ApiKeyHealthService["ApiKeyHealthService::new()"]
             InitComponents --> OAuthClient["OAuthClient::new()"]
-            InitComponents --> SmartApiKeyProvider["SmartApiKeyProvider::new()"]
+            InitComponents --> ApiKeyRefreshService["ApiKeyRefreshService::new()"]
+            InitComponents --> ApiKeySelectService["ApiKeySelectService::new()"]
+            InitComponents --> ApiKeySchedulerService["ApiKeySchedulerService::new()"]
             InitComponents --> OAuthTokenRefreshTask["OAuthTokenRefreshTask::new()"]
+            InitComponents --> RateLimitResetTask["RateLimitResetTask::new()"]
+            InitComponents --> RateLimiter["RateLimiter::new()"]
         end
-        
+
         InitShared --> ConcurrentStart["并发启动双端口服务"]
         ConcurrentStart --> StartPingora["PingoraProxyServer::start():8080"]
         ConcurrentStart --> StartManagement["ManagementServer::serve():9090"]
     end
-    
-    %% Pingora服务组件构建  
+
+    %% Pingora服务组件构建
     subgraph ProxyBuild["🔧 代理服务构建 (ProxyServerBuilder)"]
         StartPingora --> ProxyBuilder["ProxyServerBuilder::new()"]
         ProxyBuilder --> WithDB["with_database(shared_db)"]
         WithDB --> WithTrace["with_trace_system(trace_system)"]
         WithTrace --> BuildComponents["build_components()"]
-        
+
         subgraph BuilderSteps["构建器步骤"]
             BuildComponents --> EnsureDB["ensure_database()"]
-            EnsureDB --> EnsureCache["ensure_cache()"]  
+            EnsureDB --> EnsureCache["ensure_cache()"]
             EnsureCache --> CreateAuth["create_auth_service()"]
             CreateAuth --> CreateProxy["create_proxy_service()"]
         end
-        
+
         CreateProxy --> ProxyService["ProxyService::new()"]
         ProxyService --> HTTPService["http_proxy_service()"]
         HTTPService --> AddTCP["add_tcp(server_address)"]
         AddTCP --> RegisterService["server.add_service()"]
     end
-    
+
     %% 请求处理主流程
     ProxyPort --> ProxyServiceImpl["ProxyService (实现 ProxyHttp trait)"]
-    
+
     subgraph RequestFlow["🔄 请求处理流程 (ProxyHttp 生命周期)"]
         ProxyServiceImpl --> NewCtx["new_ctx()<br/>创建ProxyContext + request_id"]
         NewCtx --> RequestFilter["request_filter(session, ctx)"]
-        
+
         subgraph RequestFilterDetail["request_filter 详细流程"]
             RequestFilter --> HandleCORS{"method == OPTIONS?"}
             HandleCORS -->|是| Return200["返回200 CORS响应"]
-            HandleCORS -->|否| AuthPhase["身份验证<br/>AuthenticationStep"]
-            AuthPhase --> StartTrace["开始追踪<br/>TraceManager::start_trace()"]
-            StartTrace --> PrepareProxy["Pipeline 执行 (限流→配置→选 key)"]
+            HandleCORS -->|否| ClientAuth["客户端API密钥认证<br/>AuthService.authenticate_user_service_api()"]
+            ClientAuth --> StartTrace["开始追踪<br/>TraceManager::start_trace()"]
+            StartTrace --> RateLimitCheck["分布式速率限制<br/>RateLimiter.check_rate_limit()"]
+            RateLimitCheck --> LoadProviderConfig["加载Provider配置"]
+            LoadProviderConfig --> BackendKeySelection["智能后端API密钥选择<br/>ApiKeySchedulerService.select_api_key_from_service_api()"]
+            BackendKeySelection --> UpdateTrace["更新追踪信息"]
         end
-        
-        subgraph PrepareProxyDetail["Pipeline 模式（准备阶段）"]
-            PrepareProxy --> Step2["步骤2: 速率限制检查<br/>RateLimitStepReal"]
-            
-            subgraph AuthFlow["🔐 认证流程详细"]
-                AuthPhase --> ParseKey["parse_inbound_api_key_from_client()<br/>解析客户端认证头"]
-                ParseKey --> CheckAuthType{"认证类型?"}
-                CheckAuthType -->|API Key| ExtractHeaders["根据provider.auth_header_format<br/>提取认证信息"]
-                CheckAuthType -->|OAuth 2.0| OAuthFlow["OAuth 2.0流程"]
-                ExtractHeaders --> Auth["AuthService<br/>.authenticate_proxy_request()"]
-                OAuthFlow --> SmartKeyProvider["SmartApiKeyProvider<br/>.get_valid_api_key()"]
-                SmartKeyProvider --> CheckToken{"检查Token有效性"}
-                CheckToken -->|有效| UseToken["使用现有Token"]
-                CheckToken -->|过期/无效| RefreshToken["OAuthTokenRefreshService<br/>.refresh_access_token()"]
-                RefreshToken --> UpdateToken["更新数据库Token"]
-                UpdateToken --> UseToken
-                UseToken --> Auth["AuthService<br/>.authenticate_proxy_request()"]
-                Auth --> VerifyMatch["验证provider类型匹配"]
-                VerifyMatch --> AuthResult["构造AuthenticationResult"]
-            end
-            
-            Step2 --> Step3["步骤3: 启动追踪<br/>TraceManager::start_trace()"]
-            Step3 --> Step4["步骤4: API密钥选择<br/>ApiKeySelectionStep"]
-            
-            subgraph LoadBalance["⚖️ 智能密钥管理详细"]
-                Step4 --> CreateSelectionCtx["创建SelectionContext"]
-                CreateSelectionCtx --> ApiKeyPool["ApiKeyPoolManager<br/>.select_api_key_from_service_api()"]
-                ApiKeyPool --> ParseUserKeys["解析user_provider_keys_ids JSON"]
-                ParseUserKeys --> HealthCheck["ApiKeyHealthChecker过滤"]
 
-                subgraph HealthCheckDetail["🏥 健康检查系统"]
-                    HealthCheck --> CheckKeyStatus{"密钥状态检查"}
-                    CheckKeyStatus -->|健康| HealthyKey["健康密钥池"]
-                    CheckKeyStatus -->|不健康| UnhealthyKey["隔离不健康密钥"]
-                    CheckKeyStatus -->|未知| CheckRealTime["实时健康探测"]
-                    CheckRealTime --> UpdateHealth["更新健康状态"]
-                    UpdateHealth --> HealthyKey
-                end
-
-                HealthyKey --> SelectAlgorithm{"智能调度策略选择"}
-                SelectAlgorithm -->|round_robin| RoundRobin["轮询算法"]
-                SelectAlgorithm -->|weighted| Weighted["权重算法"]
-                SelectAlgorithm -->|health_best| HealthBest["健康优选算法"]
-
-                subgraph AlgorithmDetail["🧠 算法详细逻辑"]
-                    RoundRobin --> KeySelection["基于索引选择"]
-                    Weighted --> CalculateWeight["计算权重比例"]
-                    HealthBest --> MeasureResponse["测量响应时间"]
-                    Adaptive --> AnalyzePattern["分析请求模式"]
-                    CalculateWeight --> KeySelection
-                    MeasureResponse --> KeySelection
-                    AnalyzePattern --> KeySelection
-                end
-
-                KeySelection --> SelectedKey["返回ApiKeySelectionResult<br/>包含选择原因和健康状态"]
-            end
-            
-            Step4 --> UpdateTrace["ProxyService 统一更新扩展追踪信息<br/>(provider_type_id / user_provider_key_id)"]
+        subgraph BackendKeySelectionDetail["⚖️ 智能后端API密钥选择详细"]
+            BackendKeySelection --> GetProviderKeyIDs["从user_service_apis获取provider_key_ids"]
+            GetProviderKeyIDs --> LoadActiveKeys["从DB加载活跃user_provider_keys"]
+            LoadActiveKeys --> FilterValidKeys["初步有效性过滤<br/>(is_active, auth_status, expires_at, health_status)"]
+            FilterValidKeys --> FilterHealthyKeys["健康状态过滤<br/>(ApiKeyHealthService)"]
+            FilterHealthyKeys --> GetCredential["获取凭证<br/>(ApiKeySelectService)<br/>(OAuth Token自动刷新)"]
+            GetCredential --> SelectAlgorithm{"调度策略选择"}
+            SelectAlgorithm -->|round_robin| RoundRobin["轮询算法"]
+            SelectAlgorithm -->|weighted| Weighted["权重算法"]
+            RoundRobin --> SelectedKey["返回ApiKeySelectionResult"]
+            Weighted --> SelectedKey
         end
-        
-        PrepareProxy --> UpstreamPeer["upstream_peer(session, ctx)<br/>选择上游节点"]
-        
+
+        subgraph OAuthTokenRefreshFlow["🔄 OAuth Token自动刷新流程"]
+            GetCredential --> CheckTokenExpiry{"OAuth Token即将过期?"}
+            CheckTokenExpiry -->|是| AcquireRefreshLock["获取刷新锁"]
+            AcquireRefreshLock --> PerformRefresh["执行Token刷新<br/>(ApiKeyRefreshService.passive_refresh_if_needed())"]
+            PerformRefresh --> UpdateSessionDB["更新oauth_client_sessions"]
+            UpdateSessionDB --> ReleaseRefreshLock["释放刷新锁"]
+            ReleaseRefreshLock --> ReturnNewToken["返回新Access Token"]
+            CheckTokenExpiry -->|否| ReturnCurrentToken["返回当前Access Token"]
+        end
+
+        UpdateTrace --> UpstreamPeer["upstream_peer(session, ctx)<br/>选择上游节点"]
+
         subgraph UpstreamSelection["🎯 上游选择"]
             UpstreamPeer --> CheckRetry{"ctx.retry_count > 0?"}
             CheckRetry -->|是| AddDelay["添加重试延迟"]
@@ -159,30 +132,30 @@ flowchart TD
             AddDelay --> SelectUpstream
             SelectUpstream --> BuildPeer["HttpPeer::new(upstream_addr, TLS)"]
         end
-        
+
         UpstreamPeer --> UpstreamReqFilter["upstream_request_filter()<br/>上游请求过滤"]
-        
+
         subgraph UpstreamReqProcessing["🔄 上游请求处理"]
-            UpstreamReqFilter --> ReplaceAuth["替换认证信息<br/>隐藏客户端API密钥<br/>使用后端API密钥"]
+            UpstreamReqFilter --> ReplaceAuth["替换认证信息<br/>隐藏客户端API密钥<br/>使用后端API密钥/OAuth Token"]
             ReplaceAuth --> AddReqHeaders["添加必要请求头<br/>User-Agent等"]
         end
-        
+
         UpstreamReqFilter --> ResponseFilter["response_filter()<br/>响应过滤"]
-        
+
         subgraph ResponseProcessing["📥 响应处理"]
             ResponseFilter --> CollectRespStats["CollectService<br/>.collect_response_details()"]
             CollectRespStats --> LogRespTime["记录响应时间和状态码"]
         end
-        
+
         ResponseFilter --> ResponseBodyFilter["response_body_filter()<br/>响应体过滤"]
-        
+
         subgraph ResponseBodyProcessing["📝 响应体处理"]
             ResponseBodyFilter --> CollectChunks["ctx.response_details<br/>.add_body_chunk()"]
             CollectChunks --> LogChunkSize["记录数据块大小"]
         end
-        
+
         ResponseBodyFilter --> Logging["logging()<br/>最终日志记录"]
-        
+
         subgraph FinalProcessing["✅ 最终处理"]
             Logging --> CheckError{"有错误?<br/>检查fail_to_proxy"}
             CheckError -->|是| RecordFailure["TraceManager::record_failure()"]
@@ -192,12 +165,12 @@ flowchart TD
             RecordSuccess --> ClientResponse
         end
     end
-    
+
     %% 错误处理分支
     subgraph ErrorHandling["⚠️ 错误处理"]
         ReturnError --> ErrorResponse["错误响应"]
         Return200 --> CorsResponse["CORS响应"]
-        PrepareProxy -->|失败| AuthError{"认证/配置错误"}
+        ClientAuth -->|失败| AuthError{"认证/配置错误"}
         AuthError -->|401| Auth401["401未授权<br/>API密钥无效"]
         AuthError -->|429| RateLimit429["429速率限制<br/>请求频率过高"]
         AuthError -->|500| Config500["500配置错误<br/>Provider不存在"]
@@ -207,7 +180,7 @@ flowchart TD
         Config500 --> ErrorResponse
         NoKey503 --> ErrorResponse
     end
-    
+
     %% 重试机制 (Pingora内置)
     subgraph RetryMechanism["🔄 重试机制"]
         Logging --> FailToProxy{"fail_to_proxy事件?<br/>上游连接失败"}
@@ -221,11 +194,11 @@ flowchart TD
         MaxRetriesReached --> ErrorResponse
         NonRetryableError --> ErrorResponse
     end
-    
+
     ClientResponse --> Client
-    ErrorResponse --> Client  
+    ErrorResponse --> Client
     CorsResponse --> Client
-    
+
     %% 样式定义
     classDef startEnd fill:#e1f5fe
     classDef process fill:#f3e5f5
@@ -233,7 +206,7 @@ flowchart TD
     classDef error fill:#ffebee
     classDef success fill:#e8f5e8
     classDef component fill:#e8f2ff
-    
+
     class Client,ProxyPort startEnd
     class ProxyServiceImpl,RequestFilter,PrepareProxy,UpstreamPeer process
     class CheckProxyReq,HandleCORS,CheckError,FailToProxy decision
@@ -255,16 +228,19 @@ main.rs:30 → dual_port_setup::run_dual_port_servers()
 │   │   ├── JwtManager::new()
 │   │   ├── ApiKeyManager::new()
 │   │   ├── AuthService::new()
-│   │   └── AuthService::new()
+│   │   └── OAuthClient::new() // OAuth客户端
+│   │   ├── ApiKeyRefreshService::new() // OAuth Token智能刷新服务
+│   │   ├── ApiKeySelectService::new() // 智能API密钥提供者
+│   │   └── OAuthTokenRefreshTask::new() // OAuth Token刷新后台任务
 │   ├── 缓存与辅助组件
 │   │   └── UnifiedCacheManager::new()
 │   ├── 其他服务组件
 │   │   ├── CollectService::new()
 │   │   ├── TraceSystem::new_immediate()
-│   │   ├── ApiKeyHealthChecker::new()
-│   │   ├── OAuthClient::new()
-│   │   ├── SmartApiKeyProvider::new()
-│   │   └── OAuthTokenRefreshTask::new()
+│   │   ├── ApiKeyHealthService::new() // API密钥健康检查服务
+│   │   ├── RateLimitResetTask::new() // 限流重置后台任务
+│   │   ├── ApiKeySchedulerService::new() // API密钥调度服务
+│   │   └── RateLimiter::new() // 分布式速率限制器
 │   └── SharedServices 结构体封装
 └── tokio::select! 并发启动双端口服务
     ├── ManagementServer::serve() :9090
@@ -309,19 +285,16 @@ ProxyService (实现 ProxyHttp trait):
 ├── request_filter(session, ctx):97
 │   ├── OPTIONS方法的CORS预检处理
 │   └── ProxyService::early_request_filter() // 编排器核心逻辑
-│       ├── AuthenticationService::authenticate_and_authorize()
-│       │   ├── parse_inbound_api_key_from_client() // 解析客户端认证头
-│       │   ├── AuthService::authenticate_proxy_request()
-│       │   └── 填充 ctx.user_service_api / ctx.provider_type / ctx.selected_backend
+│       ├── AuthService::authenticate_user_service_api() // 客户端API密钥认证
 │       ├── TraceManager::start_trace() // 开始追踪
-│       ├── rate_limiter.check_per_minute() // 速率限制检查
-│       ├── 设置 ctx.timeout_seconds 与 ProviderStrategy
-│       └── CollectService::collect_request_stats()/collect_request_details()
+│       ├── RateLimiter::check_rate_limit() // 分布式速率限制检查
+│       ├── ApiKeySchedulerService::select_api_key_from_service_api() // 智能后端API密钥选择
+│       └── 填充 ctx.user_service_api / ctx.provider_type / ctx.selected_backend
 ├── upstream_peer(session, ctx) // 选择上游节点
 │   ├── 重试延迟处理 (如果ctx.retry_count > 0)
 │   └── HttpPeer::new(provider.base_url, TLS)
 ├── upstream_request_filter() // 上游请求过滤
-│   ├── 替换认证信息 (隐藏客户端密钥，使用后端密钥)
+│   ├── 替换认证信息 (隐藏客户端密钥，使用后端密钥/OAuth Token)
 │   └── 添加必要请求头
 ├── response_filter() // 响应处理
 │   └── CollectService::collect_response_details()
@@ -339,61 +312,53 @@ ProxyService (实现 ProxyHttp trait):
 - `src/proxy/service.rs`: `upstream_request_filter()`
 - `src/proxy/service.rs`: `logging()`
 
-### 4. 认证流程 (`src/proxy/authentication_service.rs`)
+### 4. 认证流程 (`src/auth/service.rs` & `src/auth/api_key_select_service.rs`)
 
-```rust
-AuthenticationService::authenticate_with_provider()
-├── parse_inbound_api_key_from_client() // 解析客户端入站API密钥
-│   ├── 解析provider的auth_header_format配置 (支持JSON数组格式)
-│   ├── AuthHeaderParser::extract_header_names_from_array()
-│   ├── 遍历所有配置的认证头格式 (Authorization, X-API-Key等)
-│   ├── AuthHeaderParser::parse_api_key_from_inbound_headers_smart() // 直接调用底层解析器
-│   │   └── 使用统一的错误转换机制 (From<AuthParseError> for ProxyError)
-│   └── Fallback到查询参数 (?api_key=...)
-├── AuthService::authenticate_proxy_request()
-│   ├── 验证API密钥有效性
-│   ├── 检查用户权限和状态
-│   └── 验证provider类型匹配
-├── apply_auth_result_to_context() // 将认证结果应用到ProxyContext
-└── 构造AuthenticationResult
-    ├── user_service_api: 用户服务API信息
-    ├── user_id: 用户ID
-    ├── provider_type_id: 服务商类型ID
-    └── api_key_preview: 脱敏的API密钥预览
-```
+**客户端API密钥认证 (`AuthService.authenticate_user_service_api`)**:
+- `AuthService` 负责验证客户端请求中携带的 `user_service_apis` API密钥。
+- 流程包括从数据库查询 `user_service_apis` 记录，验证其活跃状态和过期时间。
+
+**后端API密钥/OAuth Token获取 (`ApiKeySelectService.get_valid_credential`)**:
+- `ApiKeySelectService` 提供统一接口，用于获取后端AI服务商的API密钥或OAuth Access Token。
+- **缓存检查**: 首先检查内存缓存中是否有有效的凭证。
+- **数据库加载**: 如果缓存中没有，则从数据库加载 `user_provider_keys` 记录。
+- **OAuth Token处理**:
+    - 如果是OAuth类型的密钥，`ApiKeySelectService` 会调用 `ApiKeyRefreshService.passive_refresh_if_needed()` 进行被动刷新。
+    - `ApiKeyRefreshService` 会检查Token是否即将过期，如果需要则使用 `OAuthClient` 进行刷新，并更新 `oauth_client_sessions` 表。
+    - 刷新过程中会使用锁机制防止并发刷新。
+- **凭证返回**: 返回有效的API密钥字符串或OAuth Access Token。
 
 **关键代码路径：**
-- `src/proxy/authentication_service.rs:52`: `parse_inbound_api_key_from_client()`
-- `src/proxy/authentication_service.rs:162`: `authenticate_with_provider()`
-- `src/auth/header_parser.rs`: `AuthHeaderParser` 统一头部解析器
-- `src/auth/auth_manager.rs`: `AuthService`
-- `src/error/types.rs:1047`: `From<AuthParseError> for ProxyError` 自动转换
+- `src/auth/service.rs`: `authenticate_user_service_api()`
+- `src/auth/api_key_select_service.rs`: `get_valid_credential()`
+- `src/auth/api_key_refresh_service.rs`: `passive_refresh_if_needed()`
+- `src/auth/oauth_client/mod.rs`: `OAuthClient` 及其子模块
 
-### 5. 负载均衡算法 (`src/key_pool/pool_manager.rs`)
+### 5. API密钥调度服务 (`src/key_pool/pool_manager.rs`)
 
-```rust
-ApiKeyPoolManager::select_api_key_from_service_api():64
-├── 解析user_service_apis.user_provider_keys_ids JSON数组
-├── 从数据库批量查询用户的API密钥池
-├── ApiKeyHealthChecker健康检查过滤
-│   ├── 过滤掉不健康的API密钥
-│   └── 根据响应时间和错误率评估健康度
-├── 创建SelectionContext选择上下文
-└── 调度算法选择 (algorithms.rs)：
-    ├── round_robin: 轮询调度 - 按顺序轮流分配请求到各个上游服务器
-    ├── weighted: 权重调度 - 根据权重比例分配请求到上游服务器
-    └── health_best: 健康优选 - 优先选择健康状态最佳的上游服务器
-└── 返回ApiKeySelectionResult
-    ├── selected_key: 选中的API密钥
-    ├── selection_reason: 选择原因 (算法+原因)
-    └── backend_info: 后端密钥信息
-```
+`ApiKeySchedulerService` 是核心的API密钥调度器，负责从用户的API密钥池中智能选择最合适的密钥。它整合了认证状态、健康检查、速率限制和调度算法，以确保高可用性和性能。
+
+**密钥选择流程 (`select_api_key_from_service_api`)**:
+1.  **获取候选密钥ID**: 从 `user_service_apis.user_provider_keys_ids` 中解析出用户配置的后端API密钥ID列表。
+2.  **加载活跃密钥**: 从数据库加载这些ID对应的 `user_provider_keys` 记录，并过滤掉非活跃密钥。
+3.  **初步有效性过滤 (`filter_valid_keys`)**:
+    *   检查密钥的 `is_active` 状态。
+    *   对于OAuth类型的密钥，检查其 `auth_status` (必须为 `authorized`)。
+    *   检查密钥的 `expires_at` (确保未过期)。
+    *   检查密钥的 `health_status` (排除 `unhealthy` 状态，并处理 `rate_limited` 状态的恢复)。
+4.  **健康状态过滤 (`filter_healthy_keys`)**:
+    *   调用 `ApiKeyHealthService` 获取所有健康的密钥ID。
+    *   结合密钥自身的 `health_status` 字段（特别是 `rate_limited` 状态下的 `rate_limit_resets_at`），进一步过滤出当前可用的健康密钥。
+    *   **降级策略**: 如果所有密钥都不健康，系统将进入降级模式，使用所有通过初步有效性过滤的密钥进行尝试，以避免完全中断服务。
+5.  **凭证获取与刷新**: 对于OAuth类型的密钥，`ApiKeySelectService` 会在需要时自动获取或刷新Access Token，确保调度器总是拿到有效的凭证。
+6.  **调度算法选择**: 根据 `user_service_apis.scheduling_strategy` (如 `RoundRobin`, `Weighted`) 选择相应的 `ApiKeySelector`。
+7.  **执行调度**: 选定的 `ApiKeySelector` 从过滤后的健康密钥池中，根据其算法（如轮询、权重）选择最终的API密钥。
 
 **关键代码路径：**
 - `src/key_pool/pool_manager.rs`: `select_api_key_from_service_api()`
 - `src/key_pool/algorithms.rs`: `ApiKeySelector` trait 实现
-- `src/key_pool/api_key_health.rs`: `ApiKeyHealthChecker`
-- `src/proxy/authentication_service.rs`: `select_api_key()` 协调密钥选择
+- `src/key_pool/api_key_health.rs`: `ApiKeyHealthService`
+- `src/auth/api_key_select_service.rs`: `ApiKeySelectService`
 
 ### 6. 采集与追踪 (`src/collect/service.rs` + `src/trace/manager.rs`)
 
@@ -438,61 +403,61 @@ Collect → Trace 生命周期：
 - 统计统一入口：
   - `CollectService::finalize_metrics(ctx, status_code)` 统一流/非流：基于 `usage_model::finalize_eos()` 聚合事件，再使用 `token_mappings_json + TokenFieldExtractor` 提取 `tokens_*` 与模型，随后计算费用
 
-### 8. OAuth 2.0 授权系统 (`src/auth/oauth_v2/` + `src/auth/oauth_client.rs`)
+### 8. OAuth 2.0 授权系统 (`src/auth/oauth_client/` 模块群)
 
-```rust
-OAuth 2.0 完整授权流程：
-├── OAuthClient::new() // OAuth客户端管理器
-│   ├── 管理OAuth会话状态
-│   ├── 处理授权码交换
-│   └── 集成第三方OAuth提供商
-├── SmartApiKeyProvider::new() // 智能API密钥提供者
-│   ├── get_valid_api_key() // 获取有效API密钥
-│   ├── 检查Token有效性
-│   └── 触发Token刷新（如需要）
-├── OAuthTokenRefreshService::new() // Token刷新服务
-│   ├── refresh_access_token() // 刷新访问令牌
-│   ├── 自动处理refresh_token流程
-│   └── 更新数据库存储的新Token
-└── OAuthTokenRefreshTask::new() // 后台刷新任务
-    ├── 定期检查即将过期的Token
-    ├── 批量刷新多个Token
-    └── 确保服务的持续可用性
-```
+OAuth 2.0 授权系统是平台认证模块的核心组成部分，负责处理与第三方OAuth Provider的交互，包括授权码流程、PKCE安全机制、Token交换、以及Access Token的智能刷新和生命周期管理。
 
-**关键代码路径：**
-- `src/auth/oauth_client.rs:45`: `OAuthClient::new()`
-- `src/auth/smart_api_key_provider.rs:78`: `get_valid_api_key()`
-- `src/auth/oauth_token_refresh_service.rs:92`: `refresh_access_token()`
-- `src/auth/oauth_token_refresh_task.rs:56`: `start_background_refresh()`
+**核心组件**:
+- **`OAuthClient` (`src/auth/oauth_client/mod.rs`)**: OAuth模块的入口，封装了所有OAuth操作，协调各个子组件。
+- **`OAuthProviderManager` (`src/auth/oauth_client/providers.rs`)**: 管理OAuth Provider的配置，支持从数据库动态加载。
+- **`SessionManager` (`src/auth/oauth_client/session_manager.rs`)**: 管理 `oauth_client_sessions` 表中的OAuth会话生命周期。
+- **`TokenExchangeClient` (`src/auth/oauth_client/token_exchange.rs`)**: 负责与OAuth Provider的Token端点交互，执行授权码交换和Token刷新。
+- **`AutoRefreshManager` (`src/auth/oauth_client/auto_refresh.rs`)**: 封装了Token自动刷新和孤立会话清理的核心逻辑。
+- **`ApiKeyRefreshService` (`src/auth/api_key_refresh_service.rs`)**: 实现了被动和主动的Token刷新逻辑，处理并发刷新锁。
+- **`OAuthTokenRefreshTask` (`src/auth/api_key_refresh_task.rs`)**: 后台任务，使用 `DelayQueue` 调度和执行主动Token刷新。
+- **`ApiKeySelectService` (`src/auth/api_key_select_service.rs`)**: 智能凭证提供者，为代理端提供统一的API密钥/OAuth Token获取接口，并触发被动刷新。
+- **`PKCE` (`src/auth/oauth_client/pkce.rs`)**: 实现了PKCE安全机制，防止授权码拦截攻击。
 
-### 9. 智能API密钥健康管理系统 (`src/key_pool/api_key_health.rs`)
-
-```rust
-API密钥健康监控和恢复：
-├── ApiKeyHealthChecker::new() // 健康检查器
-│   ├── 实时健康状态监控
-│   ├── 自动故障检测
-│   └── 智能恢复机制
-├── 健康检查策略：
-│   ├── 主动探测：定期发送测试请求
-│   ├── 被动监控：基于实际请求响应时间
-│   └── 错误率统计：记录和分析错误模式
-├── 健康状态评估：
-│   ├── 响应时间阈值检查
-│   ├── 错误率统计分析
-│   └── 连接成功率监控
-└── 自动恢复机制：
-    ├── 不健康密钥自动隔离
-    ├── 健康恢复后自动重新加入池
-    └── 负载均衡算法动态调整
-```
+**OAuth 2.0 完整授权流程**:
+1.  **启动授权**: 客户端调用 `OAuthClient.start_authorization()`，系统生成PKCE参数和会话ID，并返回授权URL。
+2.  **用户授权**: 用户在OAuth Provider完成授权，Provider将授权码重定向回AI Proxy。
+3.  **Token交换**: AI Proxy使用授权码和PKCE `code_verifier` 调用 `OAuthClient.exchange_token()`，从Provider获取Access Token和Refresh Token。
+4.  **会话存储**: 获取到的Token和相关信息存储在 `oauth_client_sessions` 表中。
+5.  **Token刷新**:
+    *   **被动刷新**: 当 `ApiKeySelectService` 请求OAuth Token时，如果发现Token即将过期，会触发 `ApiKeyRefreshService` 进行被动刷新。
+    *   **主动刷新**: `OAuthTokenRefreshTask` 后台任务定期检查并刷新即将过期的Token。
+6.  **凭证获取**: `ApiKeySelectService` 负责向代理端提供有效的Access Token，透明处理Token的获取和刷新。
 
 **关键代码路径：**
-- `src/key_pool/api_key_health.rs:87`: `ApiKeyHealthChecker::new()`
-- `src/key_pool/api_key_health.rs:134`: `check_key_health()`
-- `src/key_pool/api_key_health.rs:189`: `update_health_status()`
-- `src/key_pool/pool_manager.rs:156`: 健康检查集成逻辑
+- `src/auth/oauth_client/mod.rs`: `OAuthClient`
+- `src/auth/api_key_refresh_service.rs`: `ApiKeyRefreshService`
+- `src/auth/api_key_refresh_task.rs`: `OAuthTokenRefreshTask`
+- `src/auth/api_key_select_service.rs`: `ApiKeySelectService`
+- `src/auth/oauth_client/auto_refresh.rs`: `AutoRefreshManager`
+- `src/auth/oauth_client/pkce.rs`: `PkceParams`
+- `entity/oauth_client_sessions.rs`: OAuth会话数据库实体
+
+### 9. API密钥健康检查服务 (`src/key_pool/api_key_health.rs`)
+
+`ApiKeyHealthService` 负责对API密钥进行主动健康检查，评估其可用性和性能，并根据检查结果更新密钥的健康状态。它集成了错误分类、健康评分和与数据库的同步机制，确保调度器能够获取到最准确的密钥健康信息。
+
+**核心流程**:
+1.  **执行API测试**: 根据 `provider_types` 配置的 `health_check_path` 和 `api_format`，构建并发送针对AI服务商的健康检查请求。这可能包括GET `/models` 或POST `/messages` 等。
+2.  **结果分析**: 记录响应时间、HTTP状态码。
+3.  **错误分类**: 将失败的响应或网络错误分类为 `InvalidKey`, `QuotaExceeded`, `NetworkError`, `ServerError` 等。
+4.  **更新内存状态**:
+    *   更新 `ApiKeyHealth` 结构体中的 `is_healthy` 状态、连续成功/失败计数、平均响应时间、最后错误信息和最近检查结果历史。
+    *   如果检测到429状态码，尝试从错误信息中解析 `resets_in_seconds`。
+5.  **健康分数计算**: 根据最近的成功率、平均响应时间（惩罚高延迟）和连续失败次数（惩罚不稳定），计算一个介于0到100之间的 `health_score`。
+6.  **同步到数据库**: 将更新后的健康状态（`health_status`, `health_status_detail`, `rate_limit_resets_at`, `last_error_time`）持久化到 `user_provider_keys` 表中。
+7.  **限流重置调度**: 如果密钥被标记为 `rate_limited` 且解析到 `resets_in_seconds`，则向 `RateLimitResetTask` 发送命令，调度在指定时间后自动重置密钥状态。
+
+**关键代码路径：**
+- `src/key_pool/api_key_health.rs`: `ApiKeyHealthService`
+- `src/key_pool/api_key_health.rs`: `check_api_key()`
+- `src/key_pool/api_key_health.rs`: `update_health_status()`
+- `src/key_pool/api_key_health.rs`: `sync_health_status_to_database()`
+- `src/key_pool/api_key_health.rs`: `calculate_health_score()`
 
 ## 🎯 核心设计特点
 

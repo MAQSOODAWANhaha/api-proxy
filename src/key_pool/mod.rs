@@ -4,16 +4,15 @@
 
 pub mod algorithms;
 pub mod api_key_health;
+pub mod api_key_rate_limit_reset_task;
 pub mod pool_manager;
-pub mod rate_limit_reset_task;
 pub mod types;
 
 pub use algorithms::{
     ApiKeySelectionResult, ApiKeySelector, RoundRobinApiKeySelector, SelectionContext,
     create_api_key_selector,
 };
-pub use api_key_health::{
-    ApiKeyCheckResult, ApiKeyCheckType, ApiKeyErrorCategory, ApiKeyHealth, ApiKeyHealthService,
-};
+pub use api_key_health::ApiKeyHealthService;
+pub use api_key_rate_limit_reset_task::ApiKeyRateLimitResetTask;
 pub use pool_manager::ApiKeySchedulerService;
 pub use types::SchedulingStrategy;

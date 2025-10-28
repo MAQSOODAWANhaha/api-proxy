@@ -24,8 +24,8 @@ const OAUTH_AUTH_TYPE: &str = "oauth";
 
 use crate::{
     auth::{
+        api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
         api_key_refresh_service::ScheduledTokenRefresh,
-        api_key_refresh_task::OAuthTokenRefreshTask,
         gemini_code_assist_client::GeminiCodeAssistClient, types::AuthStatus,
     },
     error::{ProxyError, Result, auth::AuthError},
@@ -181,7 +181,7 @@ fn aggregate_daily_stats(
 pub struct ProviderKeyService<'a> {
     state: &'a ManagementState,
     db: &'a DatabaseConnection,
-    refresh_task: Option<Arc<OAuthTokenRefreshTask>>,
+    refresh_task: Option<Arc<ApiKeyOAuthTokenRefreshTask>>,
 }
 
 impl<'a> ProviderKeyService<'a> {
@@ -200,7 +200,7 @@ impl<'a> ProviderKeyService<'a> {
     }
 
     #[must_use]
-    const fn refresh_task(&self) -> Option<&Arc<OAuthTokenRefreshTask>> {
+    const fn refresh_task(&self) -> Option<&Arc<ApiKeyOAuthTokenRefreshTask>> {
         self.refresh_task.as_ref()
     }
 
@@ -331,8 +331,6 @@ impl<'a> ProviderKeyService<'a> {
             record.id,
         );
 
-        self.state.key_pool().register_new_key(record.id).await?;
-
         let provider_name = ProviderType::find_by_id(payload.provider_type_id)
             .one(self.db())
             .await
@@ -413,8 +411,6 @@ impl<'a> ProviderKeyService<'a> {
 
         self.cleanup_obsolete_session(refresh_task, old_session_id, &updated_key, user_id, key_id)
             .await;
-
-        self.state.key_pool().refresh_key(key_id).await?;
 
         let payload = build_update_response(&updated_key, timezone_context);
         Ok(ServiceResponse::with_message(payload, "更新成功"))
@@ -535,8 +531,6 @@ impl<'a> ProviderKeyService<'a> {
                 session_id = session_id.as_str(),
             );
         }
-
-        self.state.key_pool().remove_key(key_id).await?;
 
         let data = json!({
             "id": key_id,
@@ -1065,7 +1059,7 @@ impl<'a> ProviderKeyService<'a> {
 
     async fn prepare_pending_schedule(
         &self,
-        refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+        refresh_task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
         payload: &UpdateProviderKeyRequest,
         user_id: i32,
         key_id: i32,
@@ -1115,7 +1109,7 @@ impl<'a> ProviderKeyService<'a> {
 
     async fn enqueue_pending_schedule(
         &self,
-        refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+        refresh_task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
         pending_schedule: Option<ScheduledTokenRefresh>,
         original_key: user_provider_keys::Model,
         updated_key: &user_provider_keys::Model,
@@ -1173,7 +1167,7 @@ impl<'a> ProviderKeyService<'a> {
 
     async fn cleanup_obsolete_session(
         &self,
-        refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+        refresh_task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
         old_session_id: Option<String>,
         updated_key: &user_provider_keys::Model,
         user_id: i32,
@@ -1996,7 +1990,7 @@ fn mark_project_id_pending(user_id: i32, context: &mut PrepareGeminiContext) {
 }
 
 async fn schedule_oauth_if_needed(
-    refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+    refresh_task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
     payload: &CreateProviderKeyRequest,
     user_id: i32,
     key_id: Option<i32>,
@@ -2009,7 +2003,7 @@ async fn schedule_oauth_if_needed(
 }
 
 async fn prepare_oauth_schedule(
-    task: Option<&Arc<OAuthTokenRefreshTask>>,
+    task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
     session_id: Option<&String>,
     user_id: i32,
     key_id: Option<i32>,
@@ -2088,7 +2082,7 @@ async fn insert_provider_key_record(
 }
 
 async fn enqueue_oauth_schedule(
-    refresh_task: Option<&Arc<OAuthTokenRefreshTask>>,
+    refresh_task: Option<&Arc<ApiKeyOAuthTokenRefreshTask>>,
     pending_schedule: Option<ScheduledTokenRefresh>,
     db: &DatabaseConnection,
     user_id: i32,

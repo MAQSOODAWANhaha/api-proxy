@@ -10,7 +10,7 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
-use crate::auth::{AuthService, api_key_refresh_task::OAuthTokenRefreshTask};
+use crate::auth::{AuthService, api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask};
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::key_pool::ApiKeySchedulerService;
@@ -67,7 +67,7 @@ impl Default for ManagementConfig {
 pub struct ManagementServices {
     auth_service: Arc<AuthService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
-    oauth_token_refresh_task: Arc<OAuthTokenRefreshTask>,
+    oauth_token_refresh_task: Arc<ApiKeyOAuthTokenRefreshTask>,
 }
 
 /// 管理服务器应用状态
@@ -83,7 +83,7 @@ impl ManagementState {
     pub fn new(context: Arc<AppContext>) -> Result<Self> {
         let oauth_token_refresh_task = context
             .tasks()
-            .get_task::<OAuthTokenRefreshTask>(TaskType::OAuthTokenRefresh)
+            .get_task::<ApiKeyOAuthTokenRefreshTask>(TaskType::ApiKeyOAuthTokenRefresh)
             .ok_or_else(|| {
                 ProxyError::internal("oauth_token_refresh task not registered in AppTasks")
             })?;
@@ -131,7 +131,7 @@ impl ManagementState {
     }
 
     #[must_use]
-    pub fn oauth_token_refresh_task(&self) -> Arc<OAuthTokenRefreshTask> {
+    pub fn oauth_token_refresh_task(&self) -> Arc<ApiKeyOAuthTokenRefreshTask> {
         Arc::clone(&self.services.oauth_token_refresh_task)
     }
 

@@ -2,8 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**沟通语言**：使用中文进行对话和代码注释。
-
 ## 项目概述
 
 这是一个基于 Rust + Pingora 的企业级 AI 服务代理平台，采用**双端口分离架构**设计，为用户提供统一的 AI 服务访问接口，支持多个主流 AI 服务提供商（OpenAI、Google Gemini、Anthropic Claude），具备**全面的 OAuth 2.0 支持、智能 API 密钥管理、先进的健康检查、分布式速率限制**以及负载均衡、监控统计、安全防护等功能。

@@ -8,12 +8,11 @@ use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
 use crate::auth::{ApiKeySelectService, types::AuthStatus};
 use crate::error::{ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
-use crate::{ldebug, lerror, linfo, lwarn};
+use crate::{ldebug, linfo};
 use entity::user_provider_keys;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// API 密钥池服务
 /// 职责：管理用户的 API 密钥池，根据策略选择合适的密钥，并集成健康检查与 OAuth 智能刷新
@@ -26,8 +25,6 @@ pub struct ApiKeySchedulerService {
     api_key_health_service: Arc<ApiKeyHealthService>,
     /// 智能 API 密钥提供者（支持 OAuth token 刷新）
     api_key_select_service: tokio::sync::RwLock<Option<Arc<ApiKeySelectService>>>,
-    /// 是否已完成启动预热
-    ready: AtomicBool,
 }
 
 impl ApiKeySchedulerService {
@@ -42,48 +39,18 @@ impl ApiKeySchedulerService {
             selectors: tokio::sync::RwLock::new(HashMap::new()),
             api_key_health_service,
             api_key_select_service: tokio::sync::RwLock::new(None),
-            ready: AtomicBool::new(false),
         }
+    }
+
+    #[must_use]
+    pub const fn api_key_health_service(&self) -> &Arc<ApiKeyHealthService> {
+        &self.api_key_health_service
     }
 
     /// 设置智能密钥提供者
     pub async fn set_smart_provider(&self, smart_provider: Arc<ApiKeySelectService>) {
         let mut guard = self.api_key_select_service.write().await;
         *guard = Some(smart_provider);
-    }
-
-    /// 启动并预热密钥池服务
-    pub async fn start(&self) -> Result<()> {
-        self.api_key_health_service
-            .start()
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to start health checker", e))?;
-        self.ready.store(true, Ordering::SeqCst);
-        Ok(())
-    }
-
-    /// 停止健康检查服务
-    pub async fn stop(&self) -> Result<()> {
-        self.api_key_health_service
-            .stop()
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to stop health checker", e))?;
-        self.ready.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-
-    /// 当前服务是否已准备就绪
-    #[must_use]
-    pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::SeqCst)
-    }
-
-    /// 获取健康状态缓存的引用
-    #[must_use]
-    pub fn health_status_cache(
-        &self,
-    ) -> Arc<tokio::sync::RwLock<HashMap<i32, super::api_key_health::ApiKeyHealth>>> {
-        self.api_key_health_service.get_health_status_cache()
     }
 
     /// 从用户服务API配置中获取API密钥池并选择密钥
@@ -107,16 +74,9 @@ impl ApiKeySchedulerService {
             .load_active_provider_keys(&provider_key_ids, context)
             .await?;
         let user_keys = Self::filter_valid_keys_with_logging(&all_candidate_keys, context)?;
-        let healthy_keys = self
-            .filter_healthy_keys_with_logging(&user_keys, service_api, context)
-            .await;
         Self::log_key_limits(&user_keys);
 
-        let keys_to_use = if healthy_keys.is_empty() {
-            user_keys.as_slice()
-        } else {
-            healthy_keys.as_slice()
-        };
+        let keys_to_use = user_keys.as_slice();
 
         linfo!(
             &context.request_id,
@@ -402,52 +362,6 @@ impl ApiKeySchedulerService {
         }
     }
 
-    async fn filter_healthy_keys_with_logging(
-        &self,
-        user_keys: &[user_provider_keys::Model],
-        service_api: &entity::user_service_apis::Model,
-        context: &SelectionContext,
-    ) -> Vec<user_provider_keys::Model> {
-        let healthy_keys = self.filter_healthy_keys(user_keys).await;
-
-        ldebug!(
-            &context.request_id,
-            LogStage::Scheduling,
-            LogComponent::KeyPool,
-            "healthy_keys_count",
-            "Keys remaining after health filter",
-            count = healthy_keys.len()
-        );
-
-        if healthy_keys.is_empty() {
-            lwarn!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::KeyPool,
-                "no_healthy_keys",
-                "No healthy API keys available, using all keys in degraded mode",
-                service_api_id = service_api.id,
-                total_keys = user_keys.len(),
-            );
-        } else if healthy_keys.len() != user_keys.len() {
-            ldebug!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::KeyPool,
-                "unhealthy_keys_filtered",
-                &format!(
-                    "Filtered out {} unhealthy API keys",
-                    user_keys.len() - healthy_keys.len()
-                ),
-                service_api_id = service_api.id,
-                total_keys = user_keys.len(),
-                healthy_keys = healthy_keys.len(),
-            );
-        }
-
-        healthy_keys
-    }
-
     fn resolve_strategy(service_api: &entity::user_service_apis::Model) -> SchedulingStrategy {
         service_api
             .scheduling_strategy
@@ -478,165 +392,12 @@ impl ApiKeySchedulerService {
         }
     }
 
-    /// 过滤健康的API密钥
-    async fn filter_healthy_keys(
-        &self,
-        keys: &[user_provider_keys::Model],
-    ) -> Vec<user_provider_keys::Model> {
-        let healthy_key_ids = self.api_key_health_service.get_healthy_keys().await;
-
-        keys.iter()
-            .filter(|key| {
-                // 首先检查健康检查器中的状态
-                let is_healthy_by_checker = healthy_key_ids.contains(&key.id);
-
-                // 然后检查本地的健康状态字段，考虑限流状态的自动恢复
-                let is_locally_healthy =
-                    match key.health_status.as_str().parse::<ApiKeyHealthStatus>() {
-                        Ok(ApiKeyHealthStatus::Healthy) => true,
-                        Ok(ApiKeyHealthStatus::RateLimited) => {
-                            key.rate_limit_resets_at.is_some_and(|resets_at| {
-                                let now = chrono::Utc::now().naive_utc();
-                                now > resets_at
-                            })
-                        }
-                        Ok(ApiKeyHealthStatus::Unhealthy) | Err(_) => false,
-                    };
-
-                let final_result = is_healthy_by_checker || is_locally_healthy;
-
-                if !final_result {
-                    ldebug!(
-                        "system",
-                        LogStage::Scheduling,
-                        LogComponent::KeyPool,
-                        "key_unhealthy_filtered",
-                        "Key filtered out due to health status",
-                        key_id = key.id,
-                        key_name = %key.name,
-                        health_status = %key.health_status,
-                        is_healthy_by_checker,
-                        is_locally_healthy,
-                        rate_limit_resets_at = ?key.rate_limit_resets_at,
-                    );
-                }
-
-                final_result
-            })
-            .cloned()
-            .collect()
-    }
-
     /// 手动标记API密钥为不健康
     pub async fn mark_key_unhealthy(&self, key_id: i32, reason: String) -> Result<()> {
         self.api_key_health_service
             .mark_key_unhealthy(key_id, reason)
             .await
             .map_err(|e| ProxyError::internal_with_source("Failed to mark key unhealthy", e))
-    }
-
-    /// 获取API密钥的健康状态
-    pub async fn get_key_health_status(
-        &self,
-        key_id: i32,
-    ) -> Option<super::api_key_health::ApiKeyHealth> {
-        self.api_key_health_service
-            .get_key_health_status(key_id)
-            .await
-    }
-
-    /// 处理新增密钥：拉取最新信息并立即执行一次健康检测
-    pub async fn register_new_key(&self, key_id: i32) -> Result<()> {
-        let key = self
-            .load_key_model(key_id)
-            .await?
-            .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
-        self.api_key_health_service
-            .check_api_key(&key)
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to register provider key", e))?;
-
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::KeyPool,
-            "provider_key_registered",
-            "Registered new provider key for health tracking",
-            key_id = key_id,
-            provider_type_id = key.provider_type_id
-        );
-
-        Ok(())
-    }
-
-    /// 处理密钥更新：重新获取信息并刷新健康状态
-    pub async fn refresh_key(&self, key_id: i32) -> Result<()> {
-        let key = self
-            .load_key_model(key_id)
-            .await?
-            .ok_or_else(|| ProxyError::internal(format!("Provider key {key_id} not found")))?;
-        self.api_key_health_service
-            .check_api_key(&key)
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to refresh provider key", e))?;
-
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::KeyPool,
-            "provider_key_refreshed",
-            "Refreshed provider key after management update",
-            key_id = key_id,
-            provider_type_id = key.provider_type_id
-        );
-
-        Ok(())
-    }
-
-    /// 处理密钥删除：移除健康状态（延迟验证会自动处理限流任务取消）
-    pub async fn remove_key(&self, key_id: i32) -> Result<()> {
-        // 注意：不再需要显式取消限流重置任务
-        // 延迟验证机制会在任务执行时检查密钥是否存在，自动跳过已删除的密钥
-
-        // 刷新健康状态缓存
-        self.api_key_health_service
-            .load_health_status_from_database()
-            .await
-            .map_err(|e| {
-                ProxyError::internal_with_source("Failed to refresh health status cache", e)
-            })?;
-
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::KeyPool,
-            "provider_key_removed",
-            "Removed provider key from health tracking",
-            key_id = key_id
-        );
-
-        Ok(())
-    }
-
-    async fn load_key_model(&self, key_id: i32) -> Result<Option<user_provider_keys::Model>> {
-        entity::user_provider_keys::Entity::find_by_id(key_id)
-            .one(&*self.db)
-            .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "load_key_model_failed",
-                    &format!("Failed to load provider key {key_id}: {err}")
-                );
-                ProxyError::internal("Failed to load provider key")
-            })
-    }
-
-    #[must_use]
-    pub const fn health_checker(&self) -> &Arc<ApiKeyHealthService> {
-        &self.api_key_health_service
     }
 }
 
@@ -647,7 +408,6 @@ impl std::fmt::Debug for ApiKeySchedulerService {
             .field("selectors", &"<async>")
             .field("smart_provider", &"<async>")
             .field("health_checker", &"<opaque>")
-            .field("ready", &self.ready.load(Ordering::SeqCst))
             .finish_non_exhaustive()
     }
 }

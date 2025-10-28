@@ -5,8 +5,8 @@
 pub mod api_key;
 pub mod cache_strategy;
 
+pub mod api_key_oauth_token_refresh_task;
 pub mod api_key_refresh_service;
-pub mod api_key_refresh_task;
 pub mod api_key_select_service;
 pub mod gemini_code_assist_client;
 pub mod header_parser;
@@ -27,7 +27,7 @@ pub use api_key_refresh_service::{
     ApiKeyRefreshService, RefreshStats, RefreshType, TokenRefreshResult,
 };
 pub type TokenStateService = ApiKeyRefreshService;
-pub use api_key_refresh_task::{OAuthTokenRefreshTask, TaskControl, TaskState};
+pub use api_key_oauth_token_refresh_task::{ApiKeyOAuthTokenRefreshTask, TaskControl, TaskState};
 pub use api_key_select_service::{
     ApiKeySelectService, AuthCredentialType, CredentialResult, SmartApiKeyProviderConfig,
 };

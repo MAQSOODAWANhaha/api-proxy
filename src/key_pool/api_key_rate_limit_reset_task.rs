@@ -1,12 +1,10 @@
 use crate::error::Result;
-use crate::key_pool::api_key_health::ApiKeyHealth;
 use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::logging::{LogComponent, LogStage};
 use crate::{lerror, linfo};
 use chrono::{DateTime, Utc};
 use entity::user_provider_keys;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tokio::sync::{RwLock, mpsc};
@@ -24,21 +22,17 @@ pub struct ScheduleResetCommand {
 }
 
 #[derive(Clone)]
-pub struct RateLimitResetTask {
+pub struct ApiKeyRateLimitResetTask {
     db: Arc<DatabaseConnection>,
-    health_status_cache: Arc<RwLock<HashMap<i32, ApiKeyHealth>>>,
     command_sender: Arc<RwLock<Option<mpsc::Sender<ScheduleResetCommand>>>>,
     task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
-impl RateLimitResetTask {
-    pub fn new(
-        db: Arc<DatabaseConnection>,
-        health_status_cache: Arc<RwLock<HashMap<i32, ApiKeyHealth>>>,
-    ) -> Self {
+impl ApiKeyRateLimitResetTask {
+    #[must_use]
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self {
             db,
-            health_status_cache,
             command_sender: Arc::new(RwLock::new(None)),
             task_handle: Arc::new(RwLock::new(None)),
         }
@@ -50,12 +44,7 @@ impl RateLimitResetTask {
         // 从数据库恢复未过期的限流任务
         let pending_resets = self.load_pending_resets_from_db().await?;
 
-        let task_handle = tokio::spawn(run(
-            self.db.clone(),
-            self.health_status_cache.clone(),
-            command_receiver,
-            pending_resets,
-        ));
+        let task_handle = tokio::spawn(run(self.db.clone(), command_receiver, pending_resets));
         *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
@@ -137,12 +126,9 @@ impl RateLimitResetTask {
                     );
                     // 异步重置，不阻塞启动
                     let db_clone = self.db.clone();
-                    let cache_clone = self.health_status_cache.clone();
                     let key_id = key.id;
                     tokio::spawn(async move {
-                        if let Err(e) =
-                            reset_key_status(db_clone.as_ref(), &cache_clone, key_id).await
-                        {
+                        if let Err(e) = reset_key_status(db_clone.as_ref(), key_id).await {
                             lerror!(
                                 "system",
                                 LogStage::Startup,
@@ -190,7 +176,6 @@ impl RateLimitResetTask {
 #[allow(clippy::cognitive_complexity)] // 核心调度逻辑，已经是最简化版本
 async fn run(
     db: Arc<DatabaseConnection>,
-    health_status_cache: Arc<RwLock<HashMap<i32, ApiKeyHealth>>>,
     mut command_receiver: mpsc::Receiver<ScheduleResetCommand>,
     pending_resets: Vec<(i32, chrono::NaiveDateTime)>,
 ) {
@@ -228,9 +213,8 @@ async fn run(
 
                 // 异步执行重置，延迟验证：只有当 key 确实处于 rate_limited 状态时才重置
                 let db_clone = db.clone();
-                let cache_clone = health_status_cache.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = reset_key_status(db_clone.as_ref(), &cache_clone, key_id).await {
+                    if let Err(e) = reset_key_status(db_clone.as_ref(), key_id).await {
                         lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "key_reset_failed", "Failed to reset key status", key_id = key_id, error = %e);
                     }
                 });
@@ -269,14 +253,17 @@ fn calculate_delay(resets_at: chrono::NaiveDateTime) -> StdDuration {
 }
 
 /// 重置密钥状态（带延迟验证）
-async fn reset_key_status(
-    db: &DatabaseConnection,
-    health_status_cache: &RwLock<HashMap<i32, ApiKeyHealth>>,
-    key_id: i32,
-) -> Result<()> {
+async fn reset_key_status(db: &DatabaseConnection, key_id: i32) -> Result<()> {
     let updated = reset_key_in_db(db, key_id).await?;
     if updated {
-        reset_key_in_cache(health_status_cache, key_id).await;
+        linfo!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "key_status_reset",
+            "Key status reset to healthy",
+            key_id = key_id
+        );
     }
     Ok(())
 }
@@ -312,23 +299,4 @@ async fn reset_key_in_db(db: &DatabaseConnection, key_id: i32) -> Result<bool> {
 
     // 已经不是 rate_limited 状态，无需重置（可能已被其他流程处理）
     Ok(false)
-}
-
-/// 缓存中重置密钥状态
-async fn reset_key_in_cache(health_status_cache: &RwLock<HashMap<i32, ApiKeyHealth>>, key_id: i32) {
-    let mut health_map = health_status_cache.write().await;
-    if let Some(status) = health_map.get_mut(&key_id) {
-        status.is_healthy = true;
-        status.health_score = 100.0;
-        status.consecutive_failures = 0;
-        status.last_error = None;
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "in_memory_cache_reset",
-            "In-memory health cache reset for key.",
-            key_id = key_id
-        );
-    }
 }
