@@ -7,7 +7,7 @@
 //! 4. 不同提供商的配置处理
 
 use api_proxy::auth::oauth_client::OAuthProviderConfig;
-use api_proxy::auth::oauth_client::providers::{OAuthProviderManager, ProviderConfigBuilder};
+use api_proxy::auth::oauth_client::providers::{ApiKeyConfig, ProviderConfigBuilder};
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
@@ -80,14 +80,14 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_provider_config_creation() {
         let db = create_test_db().await;
-        let _manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let _manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         // 只要能够顺利创建管理器，即视为通过
     }
 
     #[tokio::test]
     async fn test_oauth_url_generation_no_duplicate_params() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
         let oauth_config = create_openai_oauth_config();
 
@@ -187,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_url_generation_with_empty_extra_params() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建没有额外参数的配置
@@ -239,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_url_generation_without_pkce() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建不需要PKCE的配置
@@ -299,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_url_parameter_precedence() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建包含response_type的额外参数配置
@@ -344,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_url_special_characters_in_params() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建包含特殊字符的参数
@@ -459,7 +459,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_oauth_url_generation() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
         let oauth_config = create_claude_oauth_config();
 
@@ -567,7 +567,7 @@ mod tests {
     #[tokio::test]
     async fn test_gemini_oauth_url_generation() {
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
         let oauth_config = create_gemini_oauth_config();
 
@@ -661,7 +661,7 @@ mod tests {
         ];
 
         let db = create_test_db().await;
-        let manager = OAuthProviderManager::new(std::sync::Arc::new(db));
+        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         for (provider_name, oauth_config) in providers {

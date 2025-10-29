@@ -1,8 +1,8 @@
 use crate::app::resources::AppResources;
-use crate::auth::oauth_client::OAuthClient;
+use crate::auth::oauth_client::ApiKeyAuthentication;
 use crate::auth::{
-    ApiKeyManager, ApiKeyOAuthStateService, ApiKeyRefreshService, AuthService, jwt::JwtManager,
-    rate_limit_dist::RateLimiter, types::AuthConfig,
+    ApiKeyManager, ApiKeyOAuthRefreshService, ApiKeyOAuthStateService, AuthService,
+    jwt::JwtManager, rate_limit_dist::RateLimiter, types::AuthConfig,
 };
 use crate::error::{Context, Result};
 use crate::key_pool::{ApiKeyHealthService, ApiKeySchedulerService};
@@ -18,10 +18,10 @@ pub struct AppServices {
     auth_service: Arc<AuthService>,
     rate_limiter: Arc<RateLimiter>,
     trace_system: Arc<TraceSystem>,
-    oauth_client: Arc<OAuthClient>,
+    oauth_client: Arc<ApiKeyAuthentication>,
     api_key_oauth_state_service: Arc<ApiKeyOAuthStateService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
-    api_key_refresh_service: Arc<ApiKeyRefreshService>,
+    api_key_refresh_service: Arc<ApiKeyOAuthRefreshService>,
     api_key_health_service: Arc<ApiKeyHealthService>,
 }
 
@@ -59,9 +59,9 @@ impl AppServices {
             api_key_health_service.clone(),
         ));
 
-        let oauth_client = Arc::new(OAuthClient::new(database.clone()));
-        let api_key_oauth_state_service = Arc::new(ApiKeyOAuthStateService::new(database));
-        let api_key_refresh_service = Arc::new(ApiKeyRefreshService::new(oauth_client.clone()));
+        let oauth_client = Arc::new(ApiKeyAuthentication::new(database));
+        let api_key_oauth_state_service = oauth_client.api_key_oauth_state_service();
+        let api_key_refresh_service = oauth_client.api_key_oauth_refresh_service();
 
         Ok(Arc::new(Self {
             auth_service,
@@ -96,7 +96,7 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn oauth_client(&self) -> Arc<OAuthClient> {
+    pub fn oauth_client(&self) -> Arc<ApiKeyAuthentication> {
         Arc::clone(&self.oauth_client)
     }
 
@@ -106,7 +106,7 @@ impl AppServices {
     }
 
     #[must_use]
-    pub fn api_key_refresh_service(&self) -> Arc<ApiKeyRefreshService> {
+    pub fn api_key_refresh_service(&self) -> Arc<ApiKeyOAuthRefreshService> {
         Arc::clone(&self.api_key_refresh_service)
     }
 

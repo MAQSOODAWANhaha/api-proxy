@@ -10,7 +10,11 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
-use crate::auth::{AuthService, api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask};
+use crate::auth::oauth_client::ApiKeyAuthentication;
+use crate::auth::{
+    ApiKeyOAuthRefreshService, ApiKeyOAuthStateService, AuthService,
+    api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
+};
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::key_pool::ApiKeySchedulerService;
@@ -68,6 +72,41 @@ pub struct ManagementServices {
     auth_service: Arc<AuthService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     oauth_token_refresh_task: Arc<ApiKeyOAuthTokenRefreshTask>,
+    oauth_client: Arc<ApiKeyAuthentication>,
+    api_key_oauth_state_service: Arc<ApiKeyOAuthStateService>,
+    api_key_oauth_refresh_service: Arc<ApiKeyOAuthRefreshService>,
+}
+
+impl ManagementServices {
+    #[must_use]
+    pub fn auth_service(&self) -> Arc<AuthService> {
+        Arc::clone(&self.auth_service)
+    }
+
+    #[must_use]
+    pub fn api_key_scheduler_service(&self) -> Arc<ApiKeySchedulerService> {
+        Arc::clone(&self.api_key_scheduler_service)
+    }
+
+    #[must_use]
+    pub fn oauth_token_refresh_task(&self) -> Arc<ApiKeyOAuthTokenRefreshTask> {
+        Arc::clone(&self.oauth_token_refresh_task)
+    }
+
+    #[must_use]
+    pub fn oauth_client(&self) -> Arc<ApiKeyAuthentication> {
+        Arc::clone(&self.oauth_client)
+    }
+
+    #[must_use]
+    pub fn api_key_oauth_state_service(&self) -> Arc<ApiKeyOAuthStateService> {
+        Arc::clone(&self.api_key_oauth_state_service)
+    }
+
+    #[must_use]
+    pub fn api_key_oauth_refresh_service(&self) -> Arc<ApiKeyOAuthRefreshService> {
+        Arc::clone(&self.api_key_oauth_refresh_service)
+    }
 }
 
 /// 管理服务器应用状态
@@ -92,6 +131,9 @@ impl ManagementState {
             auth_service: context.services().auth_service(),
             api_key_scheduler_service: context.services().api_key_scheduler_service(),
             oauth_token_refresh_task,
+            oauth_client: context.services().oauth_client(),
+            api_key_oauth_state_service: context.services().api_key_oauth_state_service(),
+            api_key_oauth_refresh_service: context.services().api_key_refresh_service(),
         };
         let database = context.database();
         let config = context.config();
@@ -122,17 +164,32 @@ impl ManagementState {
     /// 获取密钥池服务的便捷方法
     #[must_use]
     pub fn key_pool(&self) -> Arc<ApiKeySchedulerService> {
-        Arc::clone(&self.services.api_key_scheduler_service)
+        self.services.api_key_scheduler_service()
     }
 
     #[must_use]
     pub fn auth_service(&self) -> Arc<AuthService> {
-        Arc::clone(&self.services.auth_service)
+        self.services.auth_service()
     }
 
     #[must_use]
     pub fn oauth_token_refresh_task(&self) -> Arc<ApiKeyOAuthTokenRefreshTask> {
-        Arc::clone(&self.services.oauth_token_refresh_task)
+        self.services.oauth_token_refresh_task()
+    }
+
+    #[must_use]
+    pub fn oauth_client(&self) -> Arc<ApiKeyAuthentication> {
+        self.services.oauth_client()
+    }
+
+    #[must_use]
+    pub fn api_key_oauth_state_service(&self) -> Arc<ApiKeyOAuthStateService> {
+        self.services.api_key_oauth_state_service()
+    }
+
+    #[must_use]
+    pub fn api_key_oauth_refresh_service(&self) -> Arc<ApiKeyOAuthRefreshService> {
+        self.services.api_key_oauth_refresh_service()
     }
 
     #[must_use]

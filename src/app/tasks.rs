@@ -41,7 +41,7 @@ impl AppTasks {
 
         // 从 services 获取核心服务
         let rate_limiter = services.rate_limiter();
-        let api_refresh: Arc<crate::auth::ApiKeyRefreshService> =
+        let api_refresh: Arc<crate::auth::ApiKeyOAuthRefreshService> =
             services.api_key_refresh_service();
         let api_oauth_state: Arc<crate::auth::ApiKeyOAuthStateService> =
             services.api_key_oauth_state_service();

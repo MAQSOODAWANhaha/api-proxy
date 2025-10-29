@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Extension, Path, Query, Request, State};
+use axum::extract::{Extension, Path, Request, State};
 use axum::response::IntoResponse;
 use serde_json::json;
 
@@ -13,8 +13,7 @@ use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::management::middleware::auth::AuthContext;
 use crate::management::services::{
-    OAuthProviderSummary, OAuthV2AuthorizeRequest, OAuthV2ExchangeRequest, OAuthV2PollQuery,
-    OAuthV2Service,
+    OAuthProviderSummary, OAuthV2AuthorizeRequest, OAuthV2ExchangeRequest, OAuthV2Service,
 };
 use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
@@ -39,22 +38,6 @@ pub async fn start_authorization(
         .await
     {
         Ok(authorize_response) => response::success(authorize_response),
-        Err(err) => {
-            err.log();
-            response::app_error(err)
-        }
-    }
-}
-
-/// 轮询 OAuth 会话状态
-pub async fn poll_session(
-    State(state): State<ManagementState>,
-    Extension(auth_context): Extension<Arc<AuthContext>>,
-    Query(query): Query<OAuthV2PollQuery>,
-) -> impl IntoResponse {
-    let service = OAuthV2Service::new(&state);
-    match service.poll_session(auth_context.user_id, &query).await {
-        Ok(polling_status) => response::success(polling_status),
         Err(err) => {
             err.log();
             response::app_error(err)
@@ -129,21 +112,6 @@ pub async fn refresh_token(
         .await
     {
         Ok(token_response) => response::success(token_response),
-        Err(err) => {
-            err.log();
-            response::app_error(err)
-        }
-    }
-}
-
-/// 获取 OAuth 会话统计
-pub async fn get_statistics(
-    State(state): State<ManagementState>,
-    Extension(auth_context): Extension<Arc<AuthContext>>,
-) -> impl IntoResponse {
-    let service = OAuthV2Service::new(&state);
-    match service.statistics(Some(auth_context.user_id)).await {
-        Ok(statistics) => response::success(statistics),
         Err(err) => {
             err.log();
             response::app_error(err)

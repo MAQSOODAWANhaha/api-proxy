@@ -8,8 +8,7 @@ use std::convert::TryFrom;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::oauth_client::{
-    AuthorizeUrlResponse, OAuthClient, OAuthPollingResponse, OAuthSessionInfo, OAuthTokenResponse,
-    session_manager::SessionStatistics,
+    ApiKeyAuthentication, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
 use crate::error::auth::{AuthError, OAuthError};
 use crate::error::{ProxyError, Result};
@@ -18,6 +17,7 @@ use crate::management::server::ManagementState;
 use crate::types::TimezoneContext;
 use crate::types::timezone_utils;
 use crate::{ensure, error, lerror, linfo};
+use std::sync::Arc;
 
 /// OAuth v2授权请求
 #[derive(Debug, Deserialize)]
@@ -79,8 +79,8 @@ impl<'a> OAuthV2Service<'a> {
         Self { state }
     }
 
-    fn client(&self) -> OAuthClient {
-        OAuthClient::new(self.state.database.clone())
+    fn client(&self) -> Arc<ApiKeyAuthentication> {
+        self.state.oauth_client()
     }
 
     /// 开始授权流程
@@ -116,48 +116,6 @@ impl<'a> OAuthV2Service<'a> {
                     &format!(
                         "Failed to start OAuth authorization: {err:?} (provider={})",
                         request.provider_name
-                    )
-                );
-                Err(err)
-            }
-        }
-    }
-
-    /// 轮询 OAuth 会话状态
-    pub async fn poll_session(
-        &self,
-        user_id: i32,
-        query: &OAuthV2PollQuery,
-    ) -> Result<OAuthPollingResponse> {
-        let client = self.client();
-        let has_access = client
-            .validate_session_access(&query.session_id, user_id)
-            .await
-            .unwrap_or(false);
-
-        ensure!(
-            has_access,
-            Authentication,
-            "Session not found or access denied"
-        );
-
-        match client.poll_session(&query.session_id).await {
-            Ok(resp) => Ok(resp),
-            Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::InvalidSession(_)))) => {
-                Err(error!(
-                    Authentication,
-                    format!("Session not found: {}", query.session_id)
-                ))
-            }
-            Err(err) => {
-                lerror!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "poll_session_fail",
-                    &format!(
-                        "Failed to poll session: {err:?}, session_id={}",
-                        query.session_id
                     )
                 );
                 Err(err)
@@ -316,11 +274,6 @@ impl<'a> OAuthV2Service<'a> {
                 Err(err)
             }
         }
-    }
-
-    /// 获取 OAuth 会话统计
-    pub async fn statistics(&self, user_id: Option<i32>) -> Result<SessionStatistics> {
-        self.client().get_session_statistics(user_id).await
     }
 
     /// 清理过期会话

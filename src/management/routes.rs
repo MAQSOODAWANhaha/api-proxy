@@ -362,11 +362,6 @@ fn oauth_v2_routes() -> Router<ManagementState> {
             "/authorize",
             post(crate::management::handlers::oauth_v2::start_authorization),
         )
-        // 轮询OAuth会话状态
-        .route(
-            "/poll",
-            get(crate::management::handlers::oauth_v2::poll_session),
-        )
         // 交换授权码获取令牌
         .route(
             "/exchange",
@@ -386,11 +381,6 @@ fn oauth_v2_routes() -> Router<ManagementState> {
         .route(
             "/sessions/{session_id}/refresh",
             post(crate::management::handlers::oauth_v2::refresh_token),
-        )
-        // 获取统计信息
-        .route(
-            "/statistics",
-            get(crate::management::handlers::oauth_v2::get_statistics),
         )
         // 清理过期会话（管理员接口）
         .route(
