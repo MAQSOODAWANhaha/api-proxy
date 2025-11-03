@@ -15,6 +15,7 @@ use entity::user_provider_keys;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// `OpenAI` 429错误响应体结构
@@ -85,6 +86,93 @@ impl OpenAIStrategy {
         }
         Ok(())
     }
+
+    /// 记录OpenAI返回的主/次限流窗口信息
+    fn log_openai_rate_limits(ctx: &ProxyContext) {
+        let headers = &ctx.response_details.headers;
+        if headers.is_empty() {
+            return;
+        }
+
+        let Some(snapshot) = Self::extract_rate_limit_snapshot_from_headers(headers) else {
+            return;
+        };
+
+        let primary_used_percent = snapshot.primary.as_ref().map(|w| w.used_percent);
+        let primary_window_seconds = snapshot.primary.as_ref().and_then(|w| w.window_seconds);
+        let primary_resets_at = snapshot.primary.as_ref().and_then(|w| w.resets_at);
+
+        let secondary_used_percent = snapshot.secondary.as_ref().map(|w| w.used_percent);
+        let secondary_window_seconds = snapshot.secondary.as_ref().and_then(|w| w.window_seconds);
+        let secondary_resets_at = snapshot.secondary.as_ref().and_then(|w| w.resets_at);
+
+        linfo!(
+            &ctx.request_id,
+            LogStage::Response,
+            LogComponent::OpenAIStrategy,
+            "openai_rate_limit_snapshot",
+            "记录OpenAI返回的限流窗口信息",
+            primary_used_percent = primary_used_percent,
+            primary_window_seconds = primary_window_seconds,
+            primary_resets_at = primary_resets_at,
+            secondary_used_percent = secondary_used_percent,
+            secondary_window_seconds = secondary_window_seconds,
+            secondary_resets_at = secondary_resets_at
+        );
+    }
+
+    fn extract_rate_limit_snapshot_from_headers(
+        headers: &HashMap<String, String>,
+    ) -> Option<RateLimitSnapshotLog> {
+        let primary = Self::parse_rate_limit_window_from_headers(headers, "x-codex-primary");
+        let secondary = Self::parse_rate_limit_window_from_headers(headers, "x-codex-secondary");
+
+        if primary.is_none() && secondary.is_none() {
+            return None;
+        }
+
+        Some(RateLimitSnapshotLog { primary, secondary })
+    }
+
+    fn parse_rate_limit_window_from_headers(
+        headers: &HashMap<String, String>,
+        prefix: &str,
+    ) -> Option<RateLimitWindowLog> {
+        let used_percent =
+            Self::parse_header_value_f64(headers, &format!("{prefix}-used-percent"))?;
+        let window_seconds =
+            Self::parse_header_value_i64(headers, &format!("{prefix}-window-minutes"))
+                .map(|minutes| minutes.saturating_mul(60));
+        let resets_at = Self::parse_header_value_i64(headers, &format!("{prefix}-reset-at"));
+
+        Some(RateLimitWindowLog {
+            used_percent,
+            window_seconds,
+            resets_at,
+        })
+    }
+
+    fn parse_header_value_f64(headers: &HashMap<String, String>, name: &str) -> Option<f64> {
+        Self::find_header_value_case_insensitive(headers, name)?
+            .parse::<f64>()
+            .ok()
+    }
+
+    fn parse_header_value_i64(headers: &HashMap<String, String>, name: &str) -> Option<i64> {
+        Self::find_header_value_case_insensitive(headers, name)?
+            .parse::<i64>()
+            .ok()
+    }
+
+    fn find_header_value_case_insensitive<'a>(
+        headers: &'a HashMap<String, String>,
+        name: &str,
+    ) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 #[async_trait::async_trait]
@@ -130,6 +218,8 @@ impl ProviderStrategy for OpenAIStrategy {
         status_code: u16,
         body: &[u8],
     ) -> Result<()> {
+        Self::log_openai_rate_limits(ctx);
+
         if status_code == 429 {
             self.handle_429_error(ctx, body).await?;
         }
@@ -157,4 +247,17 @@ impl ProviderStrategy for OpenAIStrategy {
     fn build_auth_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![("Authorization".to_string(), format!("Bearer {api_key}"))]
     }
+}
+
+#[derive(Debug)]
+struct RateLimitSnapshotLog {
+    primary: Option<RateLimitWindowLog>,
+    secondary: Option<RateLimitWindowLog>,
+}
+
+#[derive(Debug)]
+struct RateLimitWindowLog {
+    used_percent: f64,
+    window_seconds: Option<i64>,
+    resets_at: Option<i64>,
 }
