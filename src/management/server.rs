@@ -12,7 +12,7 @@ use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middlewar
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
 use crate::auth::oauth_client::ApiKeyAuthentication;
 use crate::auth::{
-    AuthService, ApiKeyOAuthRefreshService, ApiKeyOAuthStateService,
+    ApiKeyOAuthRefreshService, ApiKeyOAuthStateService, AuthService,
     api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
 };
 use crate::config::AppConfig;

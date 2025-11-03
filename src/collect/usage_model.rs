@@ -235,6 +235,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         }
         if let Some(j) = last_json {
             stats.model_name = extract_model_from_json(&j);
+            stats.last_sse_json = Some(j);
         }
         if stats.model_name.is_none() {
             stats.model_name.clone_from(&ctx.requested_model);
@@ -317,6 +318,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &j);
         stats.usage = usage;
         stats.model_name = extract_model_from_json(&j);
+        stats.last_sse_json = Some(j);
     }
     if stats.usage.total_tokens.is_none() {
         stats.usage.prompt_tokens = Some(0);
