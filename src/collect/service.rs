@@ -12,7 +12,6 @@ use crate::collect::{
 use crate::pricing::{PricingCalculatorService, TokenUsage};
 use crate::proxy::ProxyContext;
 use crate::{
-    linfo,
     logging::{LogComponent, LogStage},
     lwarn,
 };
@@ -65,19 +64,6 @@ impl CollectService {
         let computed = usage_model::finalize_eos(ctx);
         let usage = computed.usage.clone();
         ctx.usage_final = Some(usage.clone());
-
-        if let Some(last_json) = computed.last_sse_json.as_ref()
-            && let Ok(last_json_str) = serde_json::to_string(last_json)
-        {
-            linfo!(
-                ctx.request_id,
-                LogStage::Response,
-                LogComponent::Statistics,
-                "sse_last_chunk",
-                &last_json_str
-            );
-        }
-
         // 尝试更新最终模型名称
         ctx.requested_model.clone_from(&computed.model_name);
 

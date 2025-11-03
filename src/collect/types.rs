@@ -1,7 +1,6 @@
 //! 数据采集阶段统一使用的类型定义
 
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::types::{ProviderTypeId, TokenCount};
 
@@ -60,8 +59,6 @@ pub struct ComputedStats {
     pub model_name: Option<String>,
     pub cost: Option<f64>,
     pub cost_currency: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_sse_json: Option<Value>,
 }
 
 /// 成本快照
