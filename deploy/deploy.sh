@@ -11,7 +11,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yaml"
-ENV_FILE="$SCRIPT_DIR/.env.production"
+ENV_FILE="$SCRIPT_DIR/.env"
 
 # TLS证书配置
 TLS_MODE="${TLS_MODE:-auto}"  # auto|selfsigned
@@ -693,7 +693,7 @@ regenerate_security_secrets() {
     log_step "重新生成安全密钥"
     
     echo ""
-    log_warning "⚠️  重要提醒：此操作将重新生成JWT_SECRET和API_KEY_SECRET"
+    log_warning "⚠️  重要提醒：此操作将重新生成 JWT_SECRET"
     echo ""
     echo "这将导致："
     echo "• 所有用户的JWT token失效，需要重新登录"
@@ -712,7 +712,6 @@ regenerate_security_secrets() {
     
     # 生成新密钥
     local new_jwt_secret=$(generate_secure_key)
-    local new_api_key_secret=$(generate_secure_key)
     
     # 更新环境文件
     if [[ -f "$ENV_FILE" ]]; then
@@ -722,7 +721,6 @@ regenerate_security_secrets() {
         
         # 更新密钥
         sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${new_jwt_secret}/" "$ENV_FILE"
-        sed -i "s/^API_KEY_SECRET=.*/API_KEY_SECRET=${new_api_key_secret}/" "$ENV_FILE"
         
         log_success "安全密钥已更新"
         
@@ -803,11 +801,9 @@ prepare_environment() {
     
     # 检查是否存在旧的环境文件以保持密钥持久化
     local existing_jwt_secret
-    local existing_api_key_secret
     
     if [[ -f "$ENV_FILE" ]]; then
         existing_jwt_secret=$(extract_env_value "JWT_SECRET" "$ENV_FILE")
-        existing_api_key_secret=$(extract_env_value "API_KEY_SECRET" "$ENV_FILE")
         log_info "发现现有环境文件，将保持密钥持久化"
     fi
     
@@ -819,13 +815,6 @@ prepare_environment() {
         log_info "保持现有JWT_SECRET不变"
     fi
     
-    if [[ -z "$existing_api_key_secret" ]]; then
-        existing_api_key_secret=$(generate_secure_key)
-        log_success "生成新的API_KEY_SECRET"
-    else
-        log_info "保持现有API_KEY_SECRET不变"
-    fi
-
     # 第3步：根据用户输入生成环境文件（现在安全密钥已经准备好）
     log_info "根据用户配置生成环境文件: $ENV_FILE"
     cat > "$ENV_FILE" << EOF
@@ -836,6 +825,7 @@ prepare_environment() {
 # ================================
 COMPOSE_PROJECT_NAME=api-proxy
 CONFIG_FILE=config.prod.toml
+API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE}
 
 # ================================
 # TLS证书配置 (用户交互式选择结果)
@@ -857,38 +847,13 @@ CERT_EMAIL=${CERT_EMAIL}
 EOF
     fi
 
-    # 添加通用配置
+    # 添加应用配置
     cat >> "$ENV_FILE" << EOF
 
 # ================================
-# 日志配置
-# ================================
-RUST_LOG=info
-RUST_BACKTRACE=1
-
-# ================================
-# 数据库配置
-# ================================
-DATABASE_URL=sqlite:///app/data/api-proxy.db
-
-# ================================
-# 安全配置 (持久化密钥，避免用户会话丢失)
+# 应用配置
 # ================================
 JWT_SECRET=${existing_jwt_secret}
-API_KEY_SECRET=${existing_api_key_secret}
-
-# ================================
-# 前端配置
-# ================================
-VITE_API_BASE_URL=/api
-VITE_WS_URL=/ws
-VITE_APP_VERSION=1.0.0
-
-# ================================
-# 监控配置
-# ================================
-ENABLE_METRICS=true
-METRICS_PORT=9091
 
 # ================================
 # 版本标识
