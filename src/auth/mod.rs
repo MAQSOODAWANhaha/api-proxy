@@ -2,23 +2,23 @@
 //!
 //! 提供完整的身份验证和权限控制功能
 
-pub mod api_key;
+pub mod api_key_manager;
 pub mod cache_strategy;
 
 pub mod api_key_oauth_refresh_service;
 pub mod api_key_oauth_state_service;
 pub mod api_key_oauth_token_refresh_task;
+pub mod api_key_usage_limit;
 pub mod gemini_code_assist_client;
 pub mod header_parser;
 pub mod jwt;
 pub mod oauth_client;
 pub mod permissions;
-pub mod rate_limit_dist;
 pub mod service;
 pub mod types;
 pub mod utils;
 
-pub use api_key::ApiKeyManager;
+pub use api_key_manager::ApiKeyManager;
 pub use header_parser::{AuthHeader, AuthHeaderParser};
 pub use jwt::JwtManager;
 // 注意：旧的oauth模块已被oauth_client替代

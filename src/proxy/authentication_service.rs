@@ -4,13 +4,13 @@
 
 use crate::auth::{
     AuthService,
-    rate_limit_dist::RateLimiter,
+    api_key_usage_limit::UsageLimiter,
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
 use crate::error::{
     ProxyError, Result,
-    auth::{AuthError, RateLimitInfo, RateLimitKind},
+    auth::{AuthError, UsageLimitInfo, UsageLimitKind},
 };
 use crate::key_pool::{ApiKeySchedulerService, SelectionContext};
 use crate::logging::{LogComponent, LogStage};
@@ -65,7 +65,7 @@ pub struct AuthenticationService {
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<UsageLimiter>,
 }
 
 impl AuthenticationService {
@@ -75,7 +75,7 @@ impl AuthenticationService {
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         api_key_pool: Arc<ApiKeySchedulerService>,
-        rate_limiter: Arc<RateLimiter>,
+        rate_limiter: Arc<UsageLimiter>,
     ) -> Self {
         Self {
             auth_service,
@@ -246,13 +246,13 @@ impl AuthenticationService {
                     .map(Duration::from_secs);
                 Self::log_rate_limit_hit(
                     request_id,
-                    RateLimitKind::PerMinute,
+                    UsageLimitKind::PerMinute,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(RateLimiter::rate_limit_error(
-                    RateLimitKind::PerMinute,
+                return Err(UsageLimiter::rate_limit_error(
+                    UsageLimitKind::PerMinute,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
                     resets,
@@ -274,13 +274,13 @@ impl AuthenticationService {
                     .map(Duration::from_secs);
                 Self::log_rate_limit_hit(
                     request_id,
-                    RateLimitKind::DailyRequests,
+                    UsageLimitKind::DailyRequests,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(RateLimiter::rate_limit_error(
-                    RateLimitKind::DailyRequests,
+                return Err(UsageLimiter::rate_limit_error(
+                    UsageLimitKind::DailyRequests,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
                     resets,
@@ -296,7 +296,7 @@ impl AuthenticationService {
                 .check_daily_token_limit(user_api.id, max_tokens)
                 .await
         {
-            if let ProxyError::Authentication(AuthError::RateLimitExceeded(info)) = &err {
+            if let ProxyError::Authentication(AuthError::UsageLimitExceeded(info)) = &err {
                 Self::log_rate_limit_hit(
                     request_id,
                     info.kind,
@@ -316,7 +316,7 @@ impl AuthenticationService {
                 .check_daily_cost_limit(user_api.id, max_cost)
                 .await
         {
-            if let ProxyError::Authentication(AuthError::RateLimitExceeded(info)) = &err {
+            if let ProxyError::Authentication(AuthError::UsageLimitExceeded(info)) = &err {
                 Self::log_rate_limit_hit(
                     request_id,
                     info.kind,
@@ -333,23 +333,23 @@ impl AuthenticationService {
 
     fn log_rate_limit_hit(
         request_id: &str,
-        kind: RateLimitKind,
+        kind: UsageLimitKind,
         limit: Option<f64>,
         current: Option<f64>,
         resets: Option<Duration>,
     ) {
         let kind_label = match kind {
-            RateLimitKind::PerMinute => "每分钟请求",
-            RateLimitKind::DailyRequests => "每日请求次数",
-            RateLimitKind::DailyTokens => "每日 Token 用量",
-            RateLimitKind::DailyCost => "每日成本",
+            UsageLimitKind::PerMinute => "每分钟请求",
+            UsageLimitKind::DailyRequests => "每日请求次数",
+            UsageLimitKind::DailyTokens => "每日 Token 用量",
+            UsageLimitKind::DailyCost => "每日成本",
         };
-        let info = RateLimitInfo {
+        let info = UsageLimitInfo {
             kind,
             limit,
             current,
             resets_in: resets,
-            plan_type: RateLimiter::PLAN_TYPE.to_string(),
+            plan_type: UsageLimiter::PLAN_TYPE.to_string(),
         };
         let message = format_rate_limit_message(&info);
         let resets_secs = resets.map(|d| d.as_secs());

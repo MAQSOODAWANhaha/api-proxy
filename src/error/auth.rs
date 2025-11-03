@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// 种类化的限制类型，便于格式化提示
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RateLimitKind {
+pub enum UsageLimitKind {
     PerMinute,
     DailyRequests,
     DailyTokens,
@@ -14,8 +14,8 @@ pub enum RateLimitKind {
 
 /// 限制被触发时的完整上下文
 #[derive(Debug, Clone)]
-pub struct RateLimitInfo {
-    pub kind: RateLimitKind,
+pub struct UsageLimitInfo {
+    pub kind: UsageLimitKind,
     pub limit: Option<f64>,
     pub current: Option<f64>,
     pub resets_in: Option<Duration>,
@@ -37,8 +37,8 @@ pub enum AuthError {
     #[error("Credential has been disabled")]
     ApiKeyInactive,
 
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded(RateLimitInfo),
+    #[error("Usage limit exceeded")]
+    UsageLimitExceeded(UsageLimitInfo),
 
     #[error("The user is not authenticated")]
     NotAuthenticated,

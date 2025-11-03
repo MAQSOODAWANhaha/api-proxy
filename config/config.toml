@@ -13,6 +13,9 @@ port = 8080
 # 必需的数据存储配置
 [database]
 url = "sqlite://./data/api_proxy.db"
+max_connections = 10
+connect_timeout = 30
+query_timeout = 60
 
 [cache]
 cache_type = "memory"

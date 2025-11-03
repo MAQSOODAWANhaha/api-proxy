@@ -125,7 +125,7 @@ impl JwtClaims {
 
 /// 代理端认证结果（原位于 auth/proxy.rs）
 #[derive(Debug, Clone)]
-pub struct ProxyAuthResult {
+pub struct Authentication {
     /// 用户服务API信息
     pub user_api: user_service_apis::Model,
     /// 用户ID
@@ -141,35 +141,22 @@ pub enum TokenType {
     Bearer(String),
     /// API 密钥
     ApiKey(String),
-    /// 基础认证
-    Basic { username: String, password: String },
 }
 
 impl TokenType {
     /// 从 Authorization 头解析令牌
     #[must_use]
     pub fn from_auth_header(auth_header: &str) -> Option<Self> {
-        if let Some(token) = auth_header.strip_prefix("Bearer ") {
-            Some(Self::Bearer(token.to_string()))
-        } else if let Some(encoded) = auth_header.strip_prefix("Basic ") {
-            // 解析基础认证
-            use base64::{Engine as _, engine::general_purpose};
-            if let Ok(decoded) = general_purpose::STANDARD.decode(encoded)
-                && let Ok(credentials) = String::from_utf8(decoded)
-                && let Some((username, password)) = credentials.split_once(':')
-            {
-                return Some(Self::Basic {
-                    username: username.to_string(),
-                    password: password.to_string(),
-                });
-            }
-            None
-        } else if auth_header.starts_with("sk-") {
-            // 直接的 API 密钥
-            Some(Self::ApiKey(auth_header.to_string()))
-        } else {
-            None
-        }
+        auth_header.strip_prefix("Bearer ").map_or_else(
+            || {
+                if auth_header.starts_with("sk-") {
+                    Some(Self::ApiKey(auth_header.to_string()))
+                } else {
+                    None
+                }
+            },
+            |token| Some(Self::Bearer(token.to_string())),
+        )
     }
 
     /// 获取令牌的字符串表示
@@ -177,7 +164,6 @@ impl TokenType {
     pub fn as_str(&self) -> &str {
         match self {
             Self::Bearer(token) | Self::ApiKey(token) => token,
-            Self::Basic { username, .. } => username,
         }
     }
 }
@@ -208,10 +194,11 @@ pub enum RateLimitType {
     Bandwidth,
 }
 
-/// 认证配置
+/// 认证配置（仅包含时效等非敏感信息）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    /// JWT 密钥
+    /// JWT 密钥（从环境变量注入，配置文件不保存）
+    #[serde(skip)]
     pub jwt_secret: String,
     /// JWT 过期时间（秒）
     pub jwt_expires_in: i64,
@@ -219,30 +206,48 @@ pub struct AuthConfig {
     pub refresh_expires_in: i64,
 }
 
-impl AuthConfig {
-    /// 开发环境配置
-    #[must_use]
-    pub fn development() -> Self {
-        Self::default()
-    }
-
-    /// 测试配置
-    #[must_use]
-    pub fn test() -> Self {
+impl Default for AuthConfig {
+    fn default() -> Self {
         Self {
-            jwt_secret: "test-secret-key".to_string(),
-            jwt_expires_in: 86400,
-            refresh_expires_in: 604_800,
+            jwt_secret: "development-secret-key-change-me-in-production".to_string(),
+            jwt_expires_in: 86400,       // 1 天
+            refresh_expires_in: 604_800, // 7 天
         }
     }
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
+impl AuthConfig {
+    /// 从环境变量注入 JWT 密钥
+    pub fn load_jwt_secret_from_env(&mut self) -> crate::error::Result<()> {
+        let jwt_secret = std::env::var("JWT_SECRET").map_err(|_| {
+            crate::error!(
+                Config,
+                "JWT_SECRET environment variable is required for authentication"
+            )
+        })?;
+
+        if jwt_secret.len() < 32 {
+            return Err(crate::error!(
+                Config,
+                format!(
+                    "JWT_SECRET must be at least 32 characters, got {}",
+                    jwt_secret.len()
+                )
+            ));
+        }
+
+        self.jwt_secret = jwt_secret;
+        Ok(())
+    }
+
+    /// 测试专用配置
+    #[cfg(test)]
+    #[must_use]
+    pub fn test() -> Self {
         Self {
-            jwt_secret: "your-secret-key".to_string(),
-            jwt_expires_in: 86400,       // 1 天
-            refresh_expires_in: 604_800, // 7 天
+            jwt_secret: "test-secret-key-for-jwt-testing-only-do-not-use-in-production".to_string(),
+            jwt_expires_in: 3600,
+            refresh_expires_in: 86400,
         }
     }
 }
@@ -481,7 +486,6 @@ mod tests {
 
     #[test]
     fn test_token_type_parsing() {
-        use base64::{Engine as _, engine::general_purpose};
         // Bearer token
         let auth_header = "Bearer abc123";
         assert_eq!(
@@ -494,17 +498,6 @@ mod tests {
         assert_eq!(
             TokenType::from_auth_header(auth_header),
             Some(TokenType::ApiKey("sk-1234567890abcdef".to_string()))
-        );
-
-        // Basic auth
-        let credentials = general_purpose::STANDARD.encode("user:pass");
-        let auth_header = format!("Basic {credentials}");
-        assert_eq!(
-            TokenType::from_auth_header(&auth_header),
-            Some(TokenType::Basic {
-                username: "user".to_string(),
-                password: "pass".to_string(),
-            })
         );
     }
 

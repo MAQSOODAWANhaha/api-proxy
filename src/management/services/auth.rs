@@ -309,38 +309,29 @@ impl<'a> AuthManagementService<'a> {
         Ok(RefreshTokenOutput {
             access_token: new_access_token,
             token_type: "Bearer".to_string(),
-            expires_in: self
-                .state
-                .auth_service()
-                .jwt_manager
-                .get_config()
-                .jwt_expires_in,
+            expires_in: self.state.auth_service().jwt_manager.access_expires_in(),
         })
     }
 
     /// 解码 token 用于登出场景（无状态处理）。
     pub fn decode_token_for_logout(&self, token: &str) -> Result<Option<JwtClaims>> {
-        let jwt_secret = std::env::var("JWT_SECRET")
-            .unwrap_or_else(|_| "change-me-in-production-jwt-secret-key".to_string());
+        let claims = self
+            .state
+            .auth_service()
+            .jwt_manager
+            .extract_claims_unsafe(token);
 
-        let validation = jsonwebtoken::Validation::default();
-        match jsonwebtoken::decode::<JwtClaims>(
-            token,
-            &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_ref()),
-            &validation,
-        ) {
-            Ok(data) => Ok(Some(data.claims)),
-            Err(err) => {
-                ldebug!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::Auth,
-                    "token_validation_fail_logout",
-                    &format!("Token validation failed during logout: {err}")
-                );
-                Ok(None)
-            }
+        if claims.is_none() {
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "token_validation_fail_logout",
+                "Token validation failed during logout"
+            );
         }
+
+        Ok(claims)
     }
 }
 

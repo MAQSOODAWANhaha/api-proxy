@@ -3,18 +3,14 @@
 //! 处理应用配置加载、验证和管理
 
 mod app_config;
-mod crypto;
 mod database;
 mod dual_port_config;
 mod manager;
-mod watcher;
 
 pub use app_config::{AppConfig, CacheConfig, CacheType, RedisConfig};
-pub use crypto::{ConfigCrypto, EncryptedValue, SensitiveFields};
 pub use database::DatabaseConfig;
 pub use dual_port_config::{DualPortServerConfig, ManagementPortConfig, ProxyPortConfig};
 pub use manager::ConfigManager;
-pub use watcher::{ConfigEvent, ConfigWatcher};
 
 use std::env;
 use std::path::Path;
@@ -81,6 +77,16 @@ fn validate_config(config: &AppConfig) -> crate::error::Result<()> {
         if redis_config.url.is_empty() {
             return Err(crate::error!(Config, "Redis URL不能为空"));
         }
+    }
+
+    if config.auth.jwt_expires_in <= 0 {
+        return Err(crate::error!(Config, "auth.jwt_expires_in 必须为正数"));
+    }
+    if config.auth.refresh_expires_in <= config.auth.jwt_expires_in {
+        return Err(crate::error!(
+            Config,
+            "auth.refresh_expires_in 必须大于 jwt_expires_in"
+        ));
     }
 
     Ok(())

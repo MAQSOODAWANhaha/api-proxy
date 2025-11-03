@@ -7,7 +7,6 @@ use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use crate::auth::permissions::UserRole;
 use crate::auth::types::{AuthConfig, JwtClaims};
@@ -21,13 +20,15 @@ pub struct JwtManager {
     decoding_key: DecodingKey,
     /// Validation configuration
     validation: Validation,
-    /// Authentication configuration
-    config: Arc<AuthConfig>,
+    /// Access token 过期时间（秒）
+    access_expires_in: i64,
+    /// Refresh token 过期时间（秒）
+    refresh_expires_in: i64,
 }
 
 impl JwtManager {
     /// Create new JWT manager
-    pub fn new(config: Arc<AuthConfig>) -> Result<Self> {
+    pub fn new(config: &AuthConfig) -> Result<Self> {
         let encoding_key = EncodingKey::from_secret(config.jwt_secret.as_bytes());
         let decoding_key = DecodingKey::from_secret(config.jwt_secret.as_bytes());
 
@@ -42,7 +43,8 @@ impl JwtManager {
             encoding_key,
             decoding_key,
             validation,
-            config,
+            access_expires_in: config.jwt_expires_in,
+            refresh_expires_in: config.refresh_expires_in,
         })
     }
 
@@ -60,7 +62,7 @@ impl JwtManager {
             username,
             is_admin,
             permissions,
-            self.config.jwt_expires_in,
+            self.access_expires_in,
         );
 
         let header = Header::new(Algorithm::HS256);
@@ -76,7 +78,7 @@ impl JwtManager {
             username,
             false,  // Refresh tokens don't include admin permissions
             vec![], // Refresh tokens don't include specific permissions
-            self.config.refresh_expires_in,
+            self.refresh_expires_in,
         );
 
         let header = Header::new(Algorithm::HS256);
@@ -167,8 +169,14 @@ impl JwtManager {
 
     /// Get configuration reference
     #[must_use]
-    pub fn get_config(&self) -> &AuthConfig {
-        &self.config
+    pub const fn access_expires_in(&self) -> i64 {
+        self.access_expires_in
+    }
+
+    /// 获取刷新令牌有效期
+    #[must_use]
+    pub const fn refresh_expires_in(&self) -> i64 {
+        self.refresh_expires_in
     }
 
     /// Generate token pair (access + refresh tokens)
@@ -187,7 +195,7 @@ impl JwtManager {
             access_token,
             refresh_token,
             token_type: "Bearer".to_string(),
-            expires_in: self.config.jwt_expires_in,
+            expires_in: self.access_expires_in,
         })
     }
 }
@@ -211,12 +219,8 @@ mod tests {
     use crate::auth::types::AuthConfig;
 
     fn create_test_manager() -> JwtManager {
-        let config = Arc::new(AuthConfig {
-            jwt_secret: "test-secret-key-for-jwt-testing".to_string(),
-            jwt_expires_in: 3600,
-            refresh_expires_in: 86400,
-        });
-        JwtManager::new(config).unwrap()
+        let config = AuthConfig::test();
+        JwtManager::new(&config).unwrap()
     }
 
     #[test]

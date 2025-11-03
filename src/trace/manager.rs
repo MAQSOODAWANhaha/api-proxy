@@ -3,7 +3,7 @@
 use std::convert::TryFrom;
 use std::sync::Arc;
 
-use crate::auth::rate_limit_dist::RateLimiter;
+use crate::auth::api_key_usage_limit::UsageLimiter;
 use crate::collect::types::CollectedMetrics;
 use crate::logging::{LogComponent, LogStage, log_proxy_failure_details};
 use crate::proxy::ProxyContext;
@@ -17,14 +17,14 @@ use std::io::Read;
 /// 统一的请求追踪管理器
 pub struct TraceManager {
     tracer: Option<Arc<ImmediateProxyTracer>>,
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<UsageLimiter>,
 }
 
 impl TraceManager {
     #[must_use]
     pub const fn new(
         tracer: Option<Arc<ImmediateProxyTracer>>,
-        rate_limiter: Arc<RateLimiter>,
+        rate_limiter: Arc<UsageLimiter>,
     ) -> Self {
         Self {
             tracer,

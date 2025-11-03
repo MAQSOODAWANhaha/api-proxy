@@ -7,7 +7,6 @@ use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
 use std::time::Duration;
 
-use crate::auth::types::AuthConfig;
 use crate::cache::CacheManager;
 use crate::error::Result;
 use std::sync::Arc;
@@ -85,22 +84,15 @@ impl AuthCacheKey {
 pub struct UnifiedAuthCacheManager {
     /// 底层缓存管理器
     cache_manager: Arc<CacheManager>,
-    /// 认证配置
-    auth_config: Arc<AuthConfig>,
     /// 缓存配置
     cache_config: Arc<CacheConfig>,
 }
 
 impl UnifiedAuthCacheManager {
     /// 创建新的统一认证缓存管理器
-    pub const fn new(
-        cache_manager: Arc<CacheManager>,
-        auth_config: Arc<AuthConfig>,
-        cache_config: Arc<CacheConfig>,
-    ) -> Self {
+    pub const fn new(cache_manager: Arc<CacheManager>, cache_config: Arc<CacheConfig>) -> Self {
         Self {
             cache_manager,
-            auth_config,
             cache_config,
         }
     }

@@ -1,4 +1,4 @@
-use crate::error::auth::{AuthError, RateLimitInfo, RateLimitKind};
+use crate::error::auth::{AuthError, UsageLimitInfo, UsageLimitKind};
 use bytes::Bytes;
 use pingora_core::{Error as PingoraError, ErrorType, Result as PingoraResult};
 use pingora_http::ResponseHeader;
@@ -14,12 +14,12 @@ pub struct JsonError {
 }
 
 #[must_use]
-pub fn format_rate_limit_message(info: &RateLimitInfo) -> String {
+pub fn format_rate_limit_message(info: &UsageLimitInfo) -> String {
     let kind_label = match info.kind {
-        RateLimitKind::PerMinute => "每分钟请求",
-        RateLimitKind::DailyRequests => "每日请求次数",
-        RateLimitKind::DailyTokens => "每日 Token 用量",
-        RateLimitKind::DailyCost => "每日成本",
+        UsageLimitKind::PerMinute => "每分钟请求",
+        UsageLimitKind::DailyRequests => "每日请求次数",
+        UsageLimitKind::DailyTokens => "每日 Token 用量",
+        UsageLimitKind::DailyCost => "每日成本",
     };
 
     let mut message = format!("已达到{kind_label}上限");
@@ -55,7 +55,7 @@ pub fn format_rate_limit_message(info: &RateLimitInfo) -> String {
 #[must_use]
 pub fn build_auth_error_response(err: &AuthError) -> JsonError {
     match err {
-        AuthError::RateLimitExceeded(info) => {
+        AuthError::UsageLimitExceeded(info) => {
             let message = format_rate_limit_message(info);
             let payload = json!({
                 "error": {
@@ -164,6 +164,6 @@ fn build_auth_failure_message(err: &AuthError) -> String {
         AuthError::OAuth(e) => format!("OAuth 流程发生异常：{e}"),
         AuthError::Pkce(e) => format!("PKCE 验证失败：{e}"),
         AuthError::Message(msg) => msg.clone(),
-        AuthError::RateLimitExceeded(info) => format_rate_limit_message(info),
+        AuthError::UsageLimitExceeded(info) => format_rate_limit_message(info),
     }
 }

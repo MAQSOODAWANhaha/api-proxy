@@ -290,10 +290,9 @@ pub async fn initialize_services() -> Result<SharedServices> {
 }
 
 /// 加载应用配置
-async fn load_config() -> Result<Arc<AppConfig>> {
-    let config_manager = Arc::new(ConfigManager::new().await?);
-    let config = config_manager.get_config().await;
-    Ok(Arc::new(config))
+fn load_config() -> Result<Arc<AppConfig>> {
+    let manager = ConfigManager::new()?;
+    Ok(manager.config())
 }
 
 /// 初始化数据库连接
@@ -346,7 +345,7 @@ async fn ensure_pricing_data(db: &DatabaseConnection) -> Result<()> {
 
 /// 加载配置并初始化数据库
 async fn setup_database() -> Result<(Arc<AppConfig>, Arc<DatabaseConnection>)> {
-    let config = load_config().await?;
+    let config = load_config()?;
     let db = init_database(&config).await?;
     run_migrations(&db).await?;
     ensure_pricing_data(&db).await?;

@@ -10,7 +10,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 
 use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
-use crate::auth::types::{ApiKeyInfo, AuthConfig};
+use crate::auth::types::ApiKeyInfo;
 use crate::cache::CacheManager;
 use crate::error::{Result, auth::AuthError};
 use entity::user_provider_keys;
@@ -19,9 +19,6 @@ use entity::user_provider_keys;
 pub struct ApiKeyManager {
     /// Database connection
     db: Arc<DatabaseConnection>,
-    /// Authentication configuration
-    #[allow(dead_code)]
-    config: Arc<AuthConfig>,
     /// Unified cache manager
     cache: Arc<UnifiedAuthCacheManager>,
 }
@@ -30,18 +27,13 @@ impl ApiKeyManager {
     /// Create new API key manager
     pub fn new(
         db: Arc<DatabaseConnection>,
-        auth_config: Arc<AuthConfig>,
         cache_manager: Arc<CacheManager>,
         cache_config: Arc<CacheConfig>,
     ) -> Self {
-        let auth_cache_manager = Arc::new(UnifiedAuthCacheManager::new(
-            cache_manager,
-            auth_config.clone(),
-            cache_config,
-        ));
+        let auth_cache_manager =
+            Arc::new(UnifiedAuthCacheManager::new(cache_manager, cache_config));
         Self {
             db,
-            config: auth_config,
             cache: auth_cache_manager,
         }
     }

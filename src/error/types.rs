@@ -123,7 +123,7 @@ impl ProxyError {
                 auth::AuthError::PermissionDenied { .. } => "PERMISSION_DENIED",
                 auth::AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
                 auth::AuthError::ApiKeyMissing => "API_KEY_MISSING",
-                auth::AuthError::RateLimitExceeded(_) => "RATE_LIMIT_EXCEEDED",
+                auth::AuthError::UsageLimitExceeded(_) => "RATE_LIMIT_EXCEEDED",
                 _ => "AUTHENTICATION_FAILED",
             },
             Self::KeyPool(pool_err) => match pool_err {
@@ -186,7 +186,7 @@ impl ProxyError {
     pub const fn status_code(&self) -> StatusCode {
         match self {
             Self::Authentication(auth_err) => match auth_err {
-                auth::AuthError::RateLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+                auth::AuthError::UsageLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
                 _ => StatusCode::UNAUTHORIZED,
             },
             Self::Config(_)

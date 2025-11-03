@@ -1,6 +1,7 @@
 //! # 应用配置结构定义
 
 use super::dual_port_config::DualPortServerConfig;
+use crate::auth::types::AuthConfig;
 use serde::{Deserialize, Serialize};
 
 /// 应用主配置结构
@@ -13,6 +14,9 @@ pub struct AppConfig {
     pub database: super::DatabaseConfig,
     /// 缓存配置
     pub cache: CacheConfig,
+    /// 认证配置
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 // PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
@@ -100,6 +104,7 @@ impl Default for AppConfig {
             dual_port: Some(DualPortServerConfig::default()),
             database: super::DatabaseConfig::default(),
             cache: CacheConfig::default(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -172,6 +177,13 @@ impl AppConfig {
                     return Err("Redis URL cannot be empty".to_string());
                 }
             }
+        }
+
+        if self.auth.jwt_expires_in <= 0 {
+            return Err("auth.jwt_expires_in 必须为正数".to_string());
+        }
+        if self.auth.refresh_expires_in <= self.auth.jwt_expires_in {
+            return Err("auth.refresh_expires_in 必须大于 jwt_expires_in".to_string());
         }
 
         Ok(())

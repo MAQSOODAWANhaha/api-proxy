@@ -6,7 +6,7 @@
 use crate::cache::{CacheManager, keys::CacheKeyBuilder};
 use crate::error::{
     ProxyError, Result,
-    auth::{AuthError, RateLimitInfo, RateLimitKind},
+    auth::{AuthError, UsageLimitInfo, UsageLimitKind},
 };
 use entity::{proxy_tracing, user_service_apis};
 use sea_orm::prelude::Decimal;
@@ -28,7 +28,7 @@ pub struct DistRateLimitOutcome {
 }
 
 /// 简单的分布式限流器
-pub struct RateLimiter {
+pub struct UsageLimiter {
     cache: Arc<CacheManager>,
     db: Arc<DatabaseConnection>,
 }
@@ -47,7 +47,7 @@ struct ApiOwner {
     user_id: i32,
 }
 
-impl RateLimiter {
+impl UsageLimiter {
     pub(crate) const PLAN_TYPE: &'static str = "pro";
 
     const TOKEN_PREFIX: &'static str = "ratelimit:daily:tokens";
@@ -58,12 +58,12 @@ impl RateLimiter {
     }
 
     pub(crate) fn rate_limit_error(
-        kind: RateLimitKind,
+        kind: UsageLimitKind,
         limit: Option<f64>,
         current: Option<f64>,
         resets_in: Option<Duration>,
     ) -> ProxyError {
-        ProxyError::Authentication(AuthError::RateLimitExceeded(RateLimitInfo {
+        ProxyError::Authentication(AuthError::UsageLimitExceeded(UsageLimitInfo {
             kind,
             limit,
             current,
@@ -148,7 +148,7 @@ impl RateLimiter {
         if let Some(cached_tokens) = self.cache.get::<i64>(&cache_key).await? {
             if cached_tokens >= limit {
                 return Err(Self::rate_limit_error(
-                    RateLimitKind::DailyTokens,
+                    UsageLimitKind::DailyTokens,
                     Some(Self::to_f64(limit)),
                     Some(Self::to_f64(cached_tokens)),
                     Some(ttl),
@@ -176,7 +176,7 @@ impl RateLimiter {
 
         if current_tokens >= limit {
             return Err(Self::rate_limit_error(
-                RateLimitKind::DailyTokens,
+                UsageLimitKind::DailyTokens,
                 Some(Self::to_f64(limit)),
                 Some(Self::to_f64(current_tokens)),
                 Some(ttl),
@@ -193,7 +193,7 @@ impl RateLimiter {
             let limit_value = Self::decimal_to_f64(limit)?;
             if cached_cost >= limit_value {
                 return Err(Self::rate_limit_error(
-                    RateLimitKind::DailyCost,
+                    UsageLimitKind::DailyCost,
                     Some(limit_value),
                     Some(cached_cost),
                     Some(ttl),
@@ -221,7 +221,7 @@ impl RateLimiter {
 
         if current_cost >= limit_value {
             return Err(Self::rate_limit_error(
-                RateLimitKind::DailyCost,
+                UsageLimitKind::DailyCost,
                 Some(limit_value),
                 Some(current_cost),
                 Some(ttl),
@@ -400,7 +400,7 @@ mod tests {
                 .await
                 .expect("create in-memory db"),
         );
-        let rl = RateLimiter::new(cache, db);
+        let rl = UsageLimiter::new(cache, db);
 
         for i in 1..=3 {
             let out = rl.check_per_minute(1, "/v1/test", 2).await.unwrap();

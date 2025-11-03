@@ -8,6 +8,7 @@ Cargo.lock
 .idea/
 *.swp
 *.swo
+.env
 
 # 操作系统文件
 .DS_Store
