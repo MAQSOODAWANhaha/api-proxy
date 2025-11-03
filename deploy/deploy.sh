@@ -786,6 +786,8 @@ prepare_environment() {
     
     # 设置配置文件路径 - 使用项目根目录的简化配置
     CONFIG_SOURCE="$PROJECT_ROOT/config/config.prod.toml"
+    local config_basename
+    config_basename="$(basename "$CONFIG_SOURCE")"
     log_info "使用生产环境配置: $CONFIG_SOURCE"
     
     # 检查配置文件是否存在
@@ -824,8 +826,8 @@ prepare_environment() {
 # 基础配置
 # ================================
 COMPOSE_PROJECT_NAME=api-proxy
-CONFIG_FILE=config.prod.toml
-API_PROXY_CONFIG_PATH=/app/config/${CONFIG_FILE}
+CONFIG_FILE=${config_basename}
+API_PROXY_CONFIG_PATH=/app/config/${config_basename}
 
 # ================================
 # TLS证书配置 (用户交互式选择结果)
