@@ -370,10 +370,10 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
                   </div>
                 )}
 
-                {/* OpenAI 限流窗口信息 - 仅在健康状态显示 */}
+                {/* 限流窗口信息 - 仅在健康状态显示 */}
                 {showLimitInfo && (
                   <div className="space-y-4">
-                    <h3 className="text-sm font-medium text-blue-600">OpenAI 限流窗口详情</h3>
+                    <h3 className="text-sm font-medium text-blue-600">限流窗口详情</h3>
 
                     {/* 主要限流窗口 */}
                     {detailData.data?.primary && (
