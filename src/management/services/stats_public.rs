@@ -25,16 +25,11 @@ use crate::{
 };
 
 /// 指定聚合模式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub enum AggregateMode {
+    #[default]
     Single,
     Aggregate,
-}
-
-impl Default for AggregateMode {
-    fn default() -> Self {
-        Self::Single
-    }
 }
 
 impl From<bool> for AggregateMode {

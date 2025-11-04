@@ -28,7 +28,7 @@ RUN npm run build
 # ================================
 # 后端构建阶段
 # ================================
-FROM docker.m.daocloud.io/rust:1.88.0-slim as backend-builder
+FROM docker.m.daocloud.io/rust:1.91.0-slim as backend-builder
 
 # 配置 Cargo 中国镜像源
 RUN mkdir -p $CARGO_HOME && \

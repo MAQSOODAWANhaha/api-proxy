@@ -127,11 +127,9 @@ impl JwtManager {
     /// Extract user info from token (unsafe - doesn't verify signature)
     #[must_use]
     pub fn extract_claims_unsafe(&self, token: &str) -> Option<JwtClaims> {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.insecure_disable_signature_validation();
-        validation.validate_exp = false;
+        use jsonwebtoken::dangerous::insecure_decode;
 
-        decode::<JwtClaims>(token, &self.decoding_key, &validation)
+        insecure_decode::<JwtClaims>(token)
             .map(|token_data| token_data.claims)
             .ok()
     }

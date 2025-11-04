@@ -5,9 +5,10 @@ use std::fmt;
 use std::str::FromStr;
 
 /// 调度策略枚举
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum SchedulingStrategy {
     /// 轮询调度
+    #[default]
     RoundRobin,
     /// 权重调度
     Weighted,
@@ -92,11 +93,6 @@ impl FromStr for ApiKeyHealthStatus {
     }
 }
 
-impl Default for SchedulingStrategy {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
-}
 
 impl FromStr for SchedulingStrategy {
     type Err = String;

@@ -3,7 +3,7 @@
 //! 测试Claude `OAuth`配置的scope处理问题
 
 use api_proxy::auth::oauth_client::OAuthProviderConfig;
-use api_proxy::auth::oauth_client::providers::ApiKeyConfig;
+use api_proxy::auth::oauth_client::providers::ApiKeyProviderConfig;
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
@@ -70,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_multiple_scopes_url_generation() {
         let db = create_test_db().await;
-        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
+        let manager = ApiKeyProviderConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
         let oauth_config = create_claude_oauth_config();
 
@@ -204,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn test_claude_config_with_url_encoding() {
         let db = create_test_db().await;
-        let manager = ApiKeyConfig::new(std::sync::Arc::new(db));
+        let manager = ApiKeyProviderConfig::new(std::sync::Arc::new(db));
         let session = create_test_session();
 
         // 创建Claude配置，测试URL编码

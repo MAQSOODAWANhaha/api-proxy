@@ -16,7 +16,7 @@ pub mod providers;
 
 pub use jwt_extractor::{JWTParser, OpenAIAuthInfo, OpenAIJWTPayload};
 pub use pkce::{PkceChallenge, PkceVerifier};
-pub use providers::ApiKeyConfig;
+pub use providers::ApiKeyProviderConfig;
 
 use crate::auth::types::AuthStatus;
 use crate::error::AuthResult;
@@ -113,7 +113,7 @@ pub struct OAuthProviderConfig {
 #[derive(Debug)]
 pub struct ApiKeyAuthentication {
     /// 提供商配置管理器
-    config: Arc<ApiKeyConfig>,
+    config: Arc<ApiKeyProviderConfig>,
     /// 会话状态服务
     state: Arc<ApiKeyOAuthStateService>,
     /// 令牌刷新服务
@@ -124,7 +124,7 @@ impl ApiKeyAuthentication {
     /// 创建新的`OAuth`客户端
     #[must_use]
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
-        let config = Arc::new(ApiKeyConfig::new(db.clone()));
+        let config = Arc::new(ApiKeyProviderConfig::new(db.clone()));
         let state = Arc::new(ApiKeyOAuthStateService::new(db));
         let refresh = Arc::new(ApiKeyOAuthRefreshService::new(
             reqwest::Client::new(), // Create a new reqwest client

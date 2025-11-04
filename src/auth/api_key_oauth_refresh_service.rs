@@ -4,7 +4,7 @@
 //! 不直接访问数据库，也不承担调度与状态管理职责。
 
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
-use crate::auth::oauth_client::{ApiKeyConfig, OAuthTokenResponse};
+use crate::auth::oauth_client::{ApiKeyProviderConfig, OAuthTokenResponse};
 use crate::auth::types::AuthStatus;
 use crate::error::AuthResult;
 use crate::error::auth::OAuthError;
@@ -84,7 +84,7 @@ pub struct ApiKeyOAuthRefreshService {
     http_client: reqwest::Client,
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     session_manager: Arc<ApiKeyOAuthStateService>,
-    provider_manager: Arc<ApiKeyConfig>,
+    provider_manager: Arc<ApiKeyProviderConfig>,
 }
 
 /// 刷新结果
@@ -101,7 +101,7 @@ impl ApiKeyOAuthRefreshService {
     pub fn new(
         http_client: reqwest::Client,
         session_manager: Arc<ApiKeyOAuthStateService>,
-        provider_manager: Arc<ApiKeyConfig>,
+        provider_manager: Arc<ApiKeyProviderConfig>,
     ) -> Self {
         Self {
             http_client,

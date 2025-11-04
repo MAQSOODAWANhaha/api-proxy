@@ -19,12 +19,12 @@ use url::Url;
 
 /// `OAuth提供商管理器`
 #[derive(Debug, Clone)]
-pub struct ApiKeyConfig {
+pub struct ApiKeyProviderConfig {
     db: std::sync::Arc<DatabaseConnection>,
     cache: std::sync::Arc<std::sync::RwLock<HashMap<String, OAuthProviderConfig>>>,
 }
 
-impl ApiKeyConfig {
+impl ApiKeyProviderConfig {
     /// 创建新的提供商管理器
     #[must_use]
     pub fn new(db: std::sync::Arc<DatabaseConnection>) -> Self {

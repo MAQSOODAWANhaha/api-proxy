@@ -28,7 +28,7 @@ RUN npm run build
 # ================================
 # 后端构建阶段
 # ================================
-FROM rust:1.88.0-slim as backend-builder
+FROM rust:1.91.0-slim as backend-builder
 
 # 设置工作目录
 WORKDIR /app

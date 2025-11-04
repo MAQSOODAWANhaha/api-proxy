@@ -22,19 +22,14 @@ pub struct AppConfig {
 // PingoraConfig 已删除，超时配置现在从数据库 user_service_apis.timeout_seconds 获取
 
 /// 缓存类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CacheType {
     /// 内存缓存
+    #[default]
     Memory,
     /// Redis缓存
     Redis,
-}
-
-impl Default for CacheType {
-    fn default() -> Self {
-        Self::Memory
-    }
 }
 
 /// 缓存配置
