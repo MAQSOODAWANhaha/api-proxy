@@ -285,6 +285,7 @@ export interface ProviderKey {
   created_at: string
   updated_at: string
   health_status: 'healthy' | 'warning' | 'error'
+  health_status_detail?: string
 }
 
 export interface ProviderKeysListResponse {

@@ -26,6 +26,7 @@ import FilterSelect from '../../components/common/FilterSelect'
 import ModernSelect from '../../components/common/ModernSelect'
 import AuthTypeSelector from '../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthStatus, OAuthResult } from '../../components/common/OAuthHandler'
+import HealthStatusDetail from '../../components/provider/HealthStatusDetail'
 import { api, CreateProviderKeyRequest, ProviderKey, ProviderKeysDashboardStatsResponse, ProviderKeysListResponse, ProviderType, UpdateProviderKeyRequest } from '../../lib/api'
 import { toast } from 'sonner'
 import { createSafeStats, safeLargeNumber, safePercentage, safeResponseTime, safeCurrency } from '../../lib/dataValidation'
@@ -62,6 +63,7 @@ interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
   rateLimitRemainingSeconds?: number // 限流剩余时间（秒）
   provider_type_id?: number // 服务商类型ID
   project_id?: string // Gemini OAuth extra project scope
+  health_status_detail?: string // 健康状态详情（JSON字符串）
 }
 
 interface ProviderKeyFormState {
@@ -169,6 +171,8 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
     },
     // 添加限流剩余时间（可选字段）
     rateLimitRemainingSeconds: (apiKey.status as any)?.rate_limit_remaining_seconds,
+    // 添加健康状态详情
+    health_status_detail: apiKey.health_status_detail,
   }
 }
 
@@ -689,7 +693,10 @@ const ProviderKeysPage: React.FC = () => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <HealthStatus healthStatus={item.healthStatus} rateLimitRemainingSeconds={item.rateLimitRemainingSeconds} />
+                      <HealthStatusDetail
+                        health_status_detail={item.health_status_detail}
+                        health_status={item.healthStatus as any}
+                      />
                       <button
                         onClick={() => performHealthCheck(String(item.id))}
                         className="text-neutral-500 hover:text-neutral-700"

@@ -87,15 +87,15 @@ impl OpenAIStrategy {
         Ok(())
     }
 
-    /// 记录OpenAI返回的主/次限流窗口信息
-    fn log_openai_rate_limits(ctx: &ProxyContext) {
+    /// `更新OpenAI速率限制信息到健康状态详情`
+    async fn update_health_status_detail(&self, ctx: &ProxyContext) -> Result<()> {
         let headers = &ctx.response_details.headers;
         if headers.is_empty() {
-            return;
+            return Ok(());
         }
 
         let Some(snapshot) = Self::extract_rate_limit_snapshot_from_headers(headers) else {
-            return;
+            return Ok(());
         };
 
         let primary_used_percent = snapshot.primary.as_ref().map(|w| w.used_percent);
@@ -119,6 +119,14 @@ impl OpenAIStrategy {
             secondary_window_seconds = secondary_window_seconds,
             secondary_resets_at = secondary_resets_at
         );
+
+        // 更新数据库中的健康状态详情
+        if let Some(key_id) = ctx.selected_backend.as_ref().map(|k| k.id)
+            && let Some(health_checker) = &self.health_checker {
+            health_checker.update_health_status_detail(key_id, &snapshot).await?;
+        }
+
+        Ok(())
     }
 
     fn extract_rate_limit_snapshot_from_headers(
@@ -218,7 +226,7 @@ impl ProviderStrategy for OpenAIStrategy {
         status_code: u16,
         body: &[u8],
     ) -> Result<()> {
-        Self::log_openai_rate_limits(ctx);
+        self.update_health_status_detail(ctx).await?;
 
         if status_code == 429 {
             self.handle_429_error(ctx, body).await?;
@@ -249,13 +257,13 @@ impl ProviderStrategy for OpenAIStrategy {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct RateLimitSnapshotLog {
     primary: Option<RateLimitWindowLog>,
     secondary: Option<RateLimitWindowLog>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct RateLimitWindowLog {
     used_percent: f64,
     window_seconds: Option<i64>,

@@ -8,6 +8,7 @@ use crate::{ldebug, linfo, lwarn};
 use chrono::{NaiveDateTime, Utc};
 use entity::user_provider_keys;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use serde::Serialize;
 use std::sync::Arc;
 
 use super::types::ApiKeyHealthStatus;
@@ -149,6 +150,45 @@ impl ApiKeyHealthService {
             LogComponent::HealthChecker,
             "mark_healthy",
             "API key marked as healthy",
+            key_id = key_id
+        );
+
+        Ok(())
+    }
+
+    /// 更新密钥的健康状态详情信息（不改变健康状态）
+    pub async fn update_health_status_detail<T: Serialize + Sync>(
+        &self,
+        key_id: i32,
+        data: &T,
+    ) -> Result<()> {
+        let now = Utc::now().naive_utc();
+        let mut model: user_provider_keys::ActiveModel =
+            user_provider_keys::Entity::find_by_id(key_id)
+                .one(self.db.as_ref())
+                .await?
+                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
+                .into();
+
+        // 构造健康状态详情JSON
+        let health_detail = serde_json::json!({
+            "data": data,
+            "updated_at": now
+        }).to_string();
+
+        // 只更新 health_status_detail，不改变 health_status
+        model.health_status_detail = Set(Some(health_detail));
+        model.updated_at = Set(now);
+
+        model.update(self.db.as_ref()).await
+            .context(format!("更新API密钥健康状态详情失败，ID: {key_id}"))?;
+
+        ldebug!(
+            "system",
+            LogStage::HealthCheck,
+            LogComponent::HealthChecker,
+            "update_health_status_detail",
+            "API key health status detail updated",
             key_id = key_id
         );
 

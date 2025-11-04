@@ -1478,6 +1478,7 @@ fn build_provider_key_json(
         "auth_type": provider_key.auth_type,
         "auth_status": provider_key.auth_status,
         "health_status": provider_key.health_status,
+        "health_status_detail": provider_key.health_status_detail,
         "weight": provider_key.weight,
         "max_requests_per_minute": provider_key.max_requests_per_minute,
         "max_tokens_prompt_per_minute": provider_key.max_tokens_prompt_per_minute,
