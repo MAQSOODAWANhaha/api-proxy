@@ -72,7 +72,7 @@ RUN cargo build --release
 # ================================
 # 统一运行阶段
 # ================================
-FROM docker.m.daocloud.io/debian:bookworm-slim
+FROM docker.m.daocloud.io/debian:trixie-slim
 
 # 配置中国镜像源
 RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \

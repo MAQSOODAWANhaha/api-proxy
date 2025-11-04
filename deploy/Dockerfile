@@ -58,7 +58,7 @@ RUN cargo build --release
 # ================================
 # 统一运行阶段
 # ================================
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # 安装运行时依赖
 RUN apt-get update && apt-get install -y \
