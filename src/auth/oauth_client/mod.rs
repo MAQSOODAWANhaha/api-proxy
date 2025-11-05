@@ -111,7 +111,7 @@ pub struct OAuthProviderConfig {
 
 /// `ApiKeyAuthentication`客户端主入口
 #[derive(Debug)]
-pub struct ApiKeyAuthentication {
+pub struct ApiKeyOauthService {
     /// 提供商配置管理器
     config: Arc<ApiKeyProviderConfig>,
     /// 会话状态服务
@@ -120,7 +120,7 @@ pub struct ApiKeyAuthentication {
     refresh: Arc<ApiKeyOAuthRefreshService>,
 }
 
-impl ApiKeyAuthentication {
+impl ApiKeyOauthService {
     /// 创建新的`OAuth`客户端
     #[must_use]
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {

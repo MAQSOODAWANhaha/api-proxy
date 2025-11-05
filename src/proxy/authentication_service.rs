@@ -3,8 +3,8 @@
 //! 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 
 use crate::auth::{
-    AuthService,
-    api_key_usage_limit::UsageLimiter,
+    ApiKeyAuthenticationService,
+    api_key_usage_limit_service::ApiKeyUsageLimitService,
     types::{AuthStatus, AuthType},
 };
 use crate::cache::CacheManager;
@@ -61,21 +61,21 @@ pub struct Authorization {
 ///
 /// 职责：作为认证与授权中心，全权负责所有认证、授权、凭证管理和限流逻辑。
 pub struct AuthenticationService {
-    auth_service: Arc<AuthService>,
+    auth_service: Arc<ApiKeyAuthenticationService>,
     db: Arc<DatabaseConnection>,
     cache: Arc<CacheManager>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
-    rate_limiter: Arc<UsageLimiter>,
+    rate_limiter: Arc<ApiKeyUsageLimitService>,
 }
 
 impl AuthenticationService {
     /// 创建新的认证服务
     pub const fn new(
-        auth_service: Arc<AuthService>,
+        auth_service: Arc<ApiKeyAuthenticationService>,
         db: Arc<DatabaseConnection>,
         cache: Arc<CacheManager>,
         api_key_pool: Arc<ApiKeySchedulerService>,
-        rate_limiter: Arc<UsageLimiter>,
+        rate_limiter: Arc<ApiKeyUsageLimitService>,
     ) -> Self {
         Self {
             auth_service,
@@ -251,7 +251,7 @@ impl AuthenticationService {
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(UsageLimiter::rate_limit_error(
+                return Err(ApiKeyUsageLimitService::rate_limit_error(
                     UsageLimitKind::PerMinute,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
@@ -279,7 +279,7 @@ impl AuthenticationService {
                     Some(Self::to_f64(outcome.current)),
                     resets,
                 );
-                return Err(UsageLimiter::rate_limit_error(
+                return Err(ApiKeyUsageLimitService::rate_limit_error(
                     UsageLimitKind::DailyRequests,
                     Some(Self::to_f64(outcome.limit)),
                     Some(Self::to_f64(outcome.current)),
@@ -349,7 +349,7 @@ impl AuthenticationService {
             limit,
             current,
             resets_in: resets,
-            plan_type: UsageLimiter::PLAN_TYPE.to_string(),
+            plan_type: ApiKeyUsageLimitService::PLAN_TYPE.to_string(),
         };
         let message = format_rate_limit_message(&info);
         let resets_secs = resets.map(|d| d.as_secs());

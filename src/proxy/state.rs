@@ -1,5 +1,5 @@
 use crate::app::context::AppContext;
-use crate::auth::api_key_usage_limit::UsageLimiter;
+use crate::auth::api_key_usage_limit_service::ApiKeyUsageLimitService;
 use crate::collect::service::CollectService;
 use crate::key_pool::ApiKeySchedulerService;
 use crate::proxy::authentication_service::AuthenticationService;
@@ -20,7 +20,7 @@ pub struct ProxyServices {
     pub req_transform_service: Arc<RequestTransformService>,
     pub resp_transform_service: Arc<ResponseTransformService>,
     pub key_scheduler_service: Arc<ApiKeySchedulerService>,
-    pub rate_limiter: Arc<UsageLimiter>,
+    pub rate_limiter: Arc<ApiKeyUsageLimitService>,
 }
 
 /// 代理服务的共享状态

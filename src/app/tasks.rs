@@ -37,7 +37,7 @@ impl AppTasks {
         let mut task_instances: HashMap<TaskType, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
         // 从 services 获取核心服务
-        let rate_limiter = services.rate_limiter();
+        let rate_limiter = services.api_key_rate_limit_service();
         let api_refresh: Arc<crate::auth::ApiKeyOAuthRefreshService> =
             services.api_key_refresh_service();
         let api_oauth_state: Arc<crate::auth::ApiKeyOAuthStateService> =

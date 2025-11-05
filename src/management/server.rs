@@ -10,9 +10,9 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
-use crate::auth::oauth_client::ApiKeyAuthentication;
+use crate::auth::oauth_client::ApiKeyOauthService;
 use crate::auth::{
-    ApiKeyOAuthRefreshService, ApiKeyOAuthStateService, AuthService,
+    ApiKeyAuthenticationService, ApiKeyOAuthRefreshService, ApiKeyOAuthStateService,
     api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
 };
 use crate::config::AppConfig;
@@ -69,17 +69,17 @@ impl Default for ManagementConfig {
 /// 管理端服务集合
 #[derive(Clone)]
 pub struct ManagementServices {
-    auth_service: Arc<AuthService>,
+    auth_service: Arc<ApiKeyAuthenticationService>,
     api_key_scheduler_service: Arc<ApiKeySchedulerService>,
     oauth_token_refresh_task: Arc<ApiKeyOAuthTokenRefreshTask>,
-    oauth_client: Arc<ApiKeyAuthentication>,
+    oauth_client: Arc<ApiKeyOauthService>,
     api_key_oauth_state_service: Arc<ApiKeyOAuthStateService>,
     api_key_oauth_refresh_service: Arc<ApiKeyOAuthRefreshService>,
 }
 
 impl ManagementServices {
     #[must_use]
-    pub fn auth_service(&self) -> Arc<AuthService> {
+    pub fn auth_service(&self) -> Arc<ApiKeyAuthenticationService> {
         Arc::clone(&self.auth_service)
     }
 
@@ -94,7 +94,7 @@ impl ManagementServices {
     }
 
     #[must_use]
-    pub fn oauth_client(&self) -> Arc<ApiKeyAuthentication> {
+    pub fn oauth_client(&self) -> Arc<ApiKeyOauthService> {
         Arc::clone(&self.oauth_client)
     }
 
@@ -128,10 +128,10 @@ impl ManagementState {
             })?;
 
         let services = ManagementServices {
-            auth_service: context.services().auth_service(),
+            auth_service: context.services().api_key_authentication_service(),
             api_key_scheduler_service: context.services().api_key_scheduler_service(),
             oauth_token_refresh_task,
-            oauth_client: context.services().oauth_client(),
+            oauth_client: context.services().api_key_oauth_service(),
             api_key_oauth_state_service: context.services().api_key_oauth_state_service(),
             api_key_oauth_refresh_service: context.services().api_key_refresh_service(),
         };
@@ -168,7 +168,7 @@ impl ManagementState {
     }
 
     #[must_use]
-    pub fn auth_service(&self) -> Arc<AuthService> {
+    pub fn auth_service(&self) -> Arc<ApiKeyAuthenticationService> {
         self.services.auth_service()
     }
 
@@ -178,7 +178,7 @@ impl ManagementState {
     }
 
     #[must_use]
-    pub fn oauth_client(&self) -> Arc<ApiKeyAuthentication> {
+    pub fn oauth_client(&self) -> Arc<ApiKeyOauthService> {
         self.services.oauth_client()
     }
 

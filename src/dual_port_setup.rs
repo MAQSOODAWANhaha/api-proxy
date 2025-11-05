@@ -398,11 +398,11 @@ fn build_proxy_state(app_context: &Arc<AppContext>) -> Arc<ProxyState> {
     let services_ctx = app_context.services();
 
     let db = resources.database();
-    let auth_service = services_ctx.auth_service();
+    let auth_service = services_ctx.api_key_authentication_service();
     let cache_manager = resources.cache();
     let api_key_scheduler_service = services_ctx.api_key_scheduler_service();
-    let rate_limiter = services_ctx.rate_limiter();
-    let trace_system = services_ctx.trace_system();
+    let rate_limiter = services_ctx.api_key_rate_limit_service();
+    let trace_system = services_ctx.api_key_trace_service();
 
     let pricing_calculator = Arc::new(PricingCalculatorService::new(db.clone()));
     let collect_service = Arc::new(CollectService::new(pricing_calculator));

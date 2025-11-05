@@ -18,7 +18,7 @@ use crate::auth::{
 use crate::error::{ProxyError, Result};
 
 /// Authentication service
-pub struct AuthService {
+pub struct ApiKeyAuthenticationService {
     /// JWT manager
     pub jwt_manager: Arc<JwtManager>,
     /// API key manager
@@ -27,7 +27,7 @@ pub struct AuthService {
     db: Arc<DatabaseConnection>,
 }
 
-impl AuthService {
+impl ApiKeyAuthenticationService {
     /// Create new authentication service
     #[must_use]
     pub const fn new(

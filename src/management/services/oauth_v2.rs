@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::oauth_client::{
-    ApiKeyAuthentication, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
+    ApiKeyOauthService, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
 use crate::error::auth::{AuthError, OAuthError};
 use crate::error::{ProxyError, Result};
@@ -79,7 +79,7 @@ impl<'a> OAuthV2Service<'a> {
         Self { state }
     }
 
-    fn client(&self) -> Arc<ApiKeyAuthentication> {
+    fn client(&self) -> Arc<ApiKeyOauthService> {
         self.state.oauth_client()
     }
 

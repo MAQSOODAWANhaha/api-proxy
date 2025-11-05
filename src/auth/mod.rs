@@ -8,7 +8,7 @@ pub mod cache_strategy;
 pub mod api_key_oauth_refresh_service;
 pub mod api_key_oauth_state_service;
 pub mod api_key_oauth_token_refresh_task;
-pub mod api_key_usage_limit;
+pub mod api_key_usage_limit_service;
 pub mod gemini_code_assist_client;
 pub mod header_parser;
 pub mod jwt;
@@ -34,7 +34,7 @@ pub use api_key_oauth_state_service::{
 pub use api_key_oauth_token_refresh_task::{ApiKeyOAuthTokenRefreshTask, TaskControl, TaskState};
 pub use oauth_client::OAuthSessionInfo;
 pub use permissions::UserRole;
-pub use service::AuthService;
+pub use service::ApiKeyAuthenticationService;
 pub use types::*;
 pub use utils::AuthUtils;
 
