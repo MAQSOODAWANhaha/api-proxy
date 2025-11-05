@@ -32,10 +32,7 @@ pub struct AppTasks {
 
 impl AppTasks {
     /// 初始化调度器并注册所有后台任务
-    pub async fn initialize(
-        resources: &Arc<crate::app::resources::AppResources>,
-        services: &Arc<AppServices>,
-    ) -> Result<Arc<Self>> {
+    pub async fn initialize(services: &Arc<AppServices>) -> Result<Arc<Self>> {
         let scheduler = Arc::new(TaskScheduler::new());
         let mut task_instances: HashMap<TaskType, Arc<dyn Any + Send + Sync>> = HashMap::new();
 
@@ -45,14 +42,17 @@ impl AppTasks {
             services.api_key_refresh_service();
         let api_oauth_state: Arc<crate::auth::ApiKeyOAuthStateService> =
             services.api_key_oauth_state_service();
-        let database = resources.database();
+        let api_key_health_service = services.api_key_health_service();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）
         let refresh = Arc::new(ApiKeyOAuthTokenRefreshTask::new(
             api_refresh.clone(),
             api_oauth_state.clone(),
         ));
-        let reset = Arc::new(ApiKeyRateLimitResetTask::new(database.clone()));
+        let reset = Arc::new(ApiKeyRateLimitResetTask::new(&api_key_health_service));
+
+        // 将恢复任务注册到健康服务，内部通过弱引用避免循环依赖
+        api_key_health_service.set_reset_task(&reset).await;
 
         // 注册需要通过 get_task() 访问的任务实例
         task_instances.insert(TaskType::ApiKeyOAuthTokenRefresh, refresh.clone());

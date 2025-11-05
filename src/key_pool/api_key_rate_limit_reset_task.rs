@@ -1,11 +1,9 @@
 use crate::error::Result;
-use crate::key_pool::types::ApiKeyHealthStatus;
+use crate::key_pool::api_key_health::ApiKeyHealthService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{lerror, linfo};
 use chrono::{DateTime, Utc};
-use entity::user_provider_keys;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration as StdDuration;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -23,28 +21,38 @@ pub struct ScheduleResetCommand {
 
 #[derive(Clone)]
 pub struct ApiKeyRateLimitResetTask {
-    db: Arc<DatabaseConnection>,
+    health_service: Weak<ApiKeyHealthService>,
     command_sender: Arc<RwLock<Option<mpsc::Sender<ScheduleResetCommand>>>>,
     task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 impl ApiKeyRateLimitResetTask {
     #[must_use]
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+    pub fn new(health_service: &Arc<ApiKeyHealthService>) -> Self {
         Self {
-            db,
+            health_service: Arc::downgrade(health_service),
             command_sender: Arc::new(RwLock::new(None)),
             task_handle: Arc::new(RwLock::new(None)),
         }
     }
 
     pub async fn start(&self) -> Result<()> {
+        let health_service = self.health_service.upgrade().ok_or_else(|| {
+            crate::error!(
+                Internal,
+                "ApiKeyHealthService 已被释放，无法启动限流恢复任务"
+            )
+        })?;
         let (command_sender, command_receiver) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
-        // 从数据库恢复未过期的限流任务
-        let pending_resets = self.load_pending_resets_from_db().await?;
+        // 从健康服务获取待恢复的限流任务
+        let pending_resets = health_service.load_pending_resets_from_db().await?;
 
-        let task_handle = tokio::spawn(run(self.db.clone(), command_receiver, pending_resets));
+        let task_handle = tokio::spawn(run(
+            health_service.clone(),
+            command_receiver,
+            pending_resets,
+        ));
         *self.command_sender.write().await = Some(command_sender);
         *self.task_handle.write().await = Some(task_handle);
 
@@ -85,77 +93,7 @@ impl ApiKeyRateLimitResetTask {
         self.command_sender.read().await.clone()
     }
 
-    /// 从数据库加载所有未过期的限流重置任务
-    #[allow(clippy::cognitive_complexity)] // 包含数据恢复逻辑，复杂度合理
-    async fn load_pending_resets_from_db(&self) -> Result<Vec<(i32, chrono::NaiveDateTime)>> {
-        let now = Utc::now().naive_utc();
-
-        let pending_keys = user_provider_keys::Entity::find()
-            .filter(
-                user_provider_keys::Column::HealthStatus
-                    .eq(ApiKeyHealthStatus::RateLimited.to_string()),
-            )
-            .filter(user_provider_keys::Column::RateLimitResetsAt.is_not_null())
-            .all(self.db.as_ref())
-            .await?;
-
-        let mut pending_resets = Vec::new();
-        for key in pending_keys {
-            if let Some(resets_at) = key.rate_limit_resets_at {
-                // 只恢复未过期的任务
-                if resets_at > now {
-                    pending_resets.push((key.id, resets_at));
-                    linfo!(
-                        "system",
-                        LogStage::Startup,
-                        LogComponent::HealthChecker,
-                        "restored_rate_limit_reset",
-                        "Restored pending rate limit reset task",
-                        key_id = key.id,
-                        resets_at = %resets_at
-                    );
-                } else {
-                    // 已过期但状态未更新，立即重置
-                    linfo!(
-                        "system",
-                        LogStage::Startup,
-                        LogComponent::HealthChecker,
-                        "expired_rate_limit_found",
-                        "Found expired rate limit on startup, resetting immediately",
-                        key_id = key.id
-                    );
-                    // 异步重置，不阻塞启动
-                    let db_clone = self.db.clone();
-                    let key_id = key.id;
-                    tokio::spawn(async move {
-                        if let Err(e) = reset_key_status(db_clone.as_ref(), key_id).await {
-                            lerror!(
-                                "system",
-                                LogStage::Startup,
-                                LogComponent::HealthChecker,
-                                "immediate_reset_failed",
-                                "Failed to reset expired key on startup",
-                                key_id = key_id,
-                                error = %e
-                            );
-                        }
-                    });
-                }
-            }
-        }
-
-        linfo!(
-            "system",
-            LogStage::Startup,
-            LogComponent::HealthChecker,
-            "pending_resets_loaded",
-            "Loaded pending rate limit reset tasks from database",
-            count = pending_resets.len()
-        );
-
-        Ok(pending_resets)
-    }
-
+    /// 调度新的限流重置任务
     pub async fn schedule_reset(
         &self,
         key_id: i32,
@@ -173,9 +111,8 @@ impl ApiKeyRateLimitResetTask {
 }
 
 /// 主运行循环：简化版，移除复杂的 `key_map` 管理
-#[allow(clippy::cognitive_complexity)] // 核心调度逻辑，已经是最简化版本
 async fn run(
-    db: Arc<DatabaseConnection>,
+    health_service: Arc<ApiKeyHealthService>,
     mut command_receiver: mpsc::Receiver<ScheduleResetCommand>,
     pending_resets: Vec<(i32, chrono::NaiveDateTime)>,
 ) {
@@ -212,9 +149,9 @@ async fn run(
                 linfo!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "rate_limit_expired", "Rate limit expired for key, attempting reset", key_id = key_id);
 
                 // 异步执行重置，延迟验证：只有当 key 确实处于 rate_limited 状态时才重置
-                let db_clone = db.clone();
+                let health_service = health_service.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = reset_key_status(db_clone.as_ref(), key_id).await {
+                    if let Err(e) = health_service.reset_key_status(key_id).await {
                         lerror!("system", LogStage::HealthCheck, LogComponent::HealthChecker, "key_reset_failed", "Failed to reset key status", key_id = key_id, error = %e);
                     }
                 });
@@ -250,53 +187,4 @@ fn calculate_delay(resets_at: chrono::NaiveDateTime) -> StdDuration {
     } else {
         StdDuration::from_secs(0)
     }
-}
-
-/// 重置密钥状态（带延迟验证）
-async fn reset_key_status(db: &DatabaseConnection, key_id: i32) -> Result<()> {
-    let updated = reset_key_in_db(db, key_id).await?;
-    if updated {
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "key_status_reset",
-            "Key status reset to healthy",
-            key_id = key_id
-        );
-    }
-    Ok(())
-}
-
-/// 数据库中重置密钥状态（延迟验证：只有真正处于 `rate_limited` 状态时才重置）
-async fn reset_key_in_db(db: &DatabaseConnection, key_id: i32) -> Result<bool> {
-    let Some(key_to_update) = user_provider_keys::Entity::find_by_id(key_id)
-        .one(db)
-        .await?
-    else {
-        // 密钥已被删除，静默忽略
-        return Ok(false);
-    };
-
-    // 延迟验证：只有确实处于 rate_limited 状态时才重置
-    if key_to_update.health_status == ApiKeyHealthStatus::RateLimited.to_string() {
-        linfo!(
-            "system",
-            LogStage::HealthCheck,
-            LogComponent::HealthChecker,
-            "resetting_key_status_db",
-            "Resetting key status to healthy in DB.",
-            key_id = key_id
-        );
-        let mut active_model: user_provider_keys::ActiveModel = key_to_update.into();
-        active_model.health_status = Set(ApiKeyHealthStatus::Healthy.to_string());
-        active_model.health_status_detail = Set(None);
-        active_model.rate_limit_resets_at = Set(None);
-        active_model.updated_at = Set(Utc::now().naive_utc());
-        active_model.update(db).await?;
-        return Ok(true);
-    }
-
-    // 已经不是 rate_limited 状态，无需重置（可能已被其他流程处理）
-    Ok(false)
 }

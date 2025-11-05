@@ -93,7 +93,6 @@ impl FromStr for ApiKeyHealthStatus {
     }
 }
 
-
 impl FromStr for SchedulingStrategy {
     type Err = String;
 

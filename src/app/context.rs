@@ -23,7 +23,7 @@ impl AppContext {
     ) -> Result<Arc<Self>> {
         let resources = AppResources::build(config, database)?;
         let services = AppServices::initialize(&resources)?;
-        let tasks = AppTasks::initialize(&resources, &services).await?;
+        let tasks = AppTasks::initialize(&services).await?;
 
         Ok(Arc::new(Self {
             resources,

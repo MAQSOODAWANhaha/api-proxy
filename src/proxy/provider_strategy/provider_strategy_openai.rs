@@ -49,8 +49,8 @@ impl OpenAIStrategy {
         jwt_parser.extract_chatgpt_account_id(access_token).ok()?
     }
 
-    /// 异步处理429错误
-    async fn handle_429_error(&self, ctx: &ProxyContext, body: &[u8]) -> Result<()> {
+    /// 异步处理429限流错误
+    async fn handle_rate_limit(&self, ctx: &ProxyContext, body: &[u8]) -> Result<()> {
         let Some(health_checker) = self.health_checker.as_ref() else {
             return Ok(());
         };
@@ -73,7 +73,7 @@ impl OpenAIStrategy {
                 .map(|seconds| (Utc::now() + chrono::Duration::seconds(seconds)).naive_utc());
             let details = serde_json::to_string(&error_info.error).unwrap_or_default();
             health_checker
-                .mark_key_as_rate_limited(key_id, resets_at, &details)
+                .mark_key_rate_limited(key_id, resets_at, &details)
                 .await?;
         } else {
             lwarn!(
@@ -122,8 +122,11 @@ impl OpenAIStrategy {
 
         // 更新数据库中的健康状态详情
         if let Some(key_id) = ctx.selected_backend.as_ref().map(|k| k.id)
-            && let Some(health_checker) = &self.health_checker {
-            health_checker.update_health_status_detail(key_id, &snapshot).await?;
+            && let Some(health_checker) = &self.health_checker
+        {
+            health_checker
+                .update_health_status_detail(key_id, &snapshot)
+                .await?;
         }
 
         Ok(())
@@ -226,10 +229,27 @@ impl ProviderStrategy for OpenAIStrategy {
         status_code: u16,
         body: &[u8],
     ) -> Result<()> {
-        self.update_health_status_detail(ctx).await?;
-
-        if status_code == 429 {
-            self.handle_429_error(ctx, body).await?;
+        match status_code {
+            200..=299 => {
+                // 成功响应：更新健康状态详情（限流窗口信息）
+                self.update_health_status_detail(ctx).await?;
+            }
+            429 => {
+                // 429 限流错误：处理限流状态
+                self.handle_rate_limit(ctx, body).await?;
+            }
+            _ => {
+                // 其他状态码：暂不处理，直接返回
+                linfo!(
+                    &ctx.request_id,
+                    LogStage::Internal,
+                    LogComponent::OpenAIStrategy,
+                    "unhandled_status_code",
+                    "收到未处理的状态码，暂不处理",
+                    status_code = status_code
+                );
+                return Ok(());
+            }
         }
         Ok(())
     }
