@@ -375,6 +375,69 @@
 
 ---
 
+## 获取密钥使用趋势
+
+### 接口信息
+- **请求路由**: `GET /api/provider-keys/keys/{id}/trends`
+- **请求方法**: GET
+- **作用**: 获取指定提供商密钥在过去30天的每日使用趋势数据。
+
+### 路径参数
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| id | string | 是 | 密钥ID |
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "trends": [
+            {
+                "date": "2025-08-20",
+                "requests": 500,
+                "tokens": 150000,
+                "cost": 15.75
+            },
+            {
+                "date": "2025-08-19",
+                "requests": 450,
+                "tokens": 135000,
+                "cost": 14.20
+            }
+        ],
+        "summary": {
+            "total_requests": 8520,
+            "total_tokens": 1250000,
+            "total_cost": 130.50,
+            "avg_requests_per_day": 284,
+            "avg_tokens_per_day": 41666,
+            "avg_cost_per_day": 4.35
+        }
+    },
+    "message": "操作成功",
+    "timestamp": "2025-08-20T08:00:00.000Z"
+}
+```
+
+### 字段说明
+| 字段名 | 类型 | 描述 |
+|--------|------|------|
+| trends | array | 每日趋势数据列表 |
+| trends.date | string | 日期 (YYYY-MM-DD) |
+| trends.requests | int | 当日请求数 |
+| trends.tokens | int | 当日总Token数 |
+| trends.cost | float | 当日总费用 |
+| summary | object | 过去30天的汇总数据 |
+| summary.total_requests | int | 总请求数 |
+| summary.total_tokens | int | 总Token数 |
+| summary.total_cost | float | 总费用 |
+| summary.avg_requests_per_day | int | 每日平均请求数 |
+| summary.avg_tokens_per_day | int | 每日平均Token数 |
+| summary.avg_cost_per_day | float | 每日平均费用 |
+
+---
+
 ## 执行健康检查
 
 ### 接口信息
@@ -557,3 +620,43 @@
 5. 统计数据可能存在缓存，更新可能有延迟
 6. 密钥的权重用于负载均衡，数值越大优先级越高
 7. 限制配置（RPM/TPM/RPD）用于流量控制，0表示无限制
+
+---
+
+## 手动标记密钥为不健康
+
+### 接口信息
+- **请求路由**: `POST /api/health/mark-unhealthy/{key_id}`
+- **请求方法**: POST
+- **作用**: 手动将指定的提供商密钥标记为不健康状态。
+- **注意**: 此接口的基础路径为 `/api/health`，与其他密钥管理接口不同。
+
+### 路径参数
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| key_id | int | 是 | 提供商密钥ID |
+
+### 请求体
+```json
+{
+  "reason": "Manual intervention due to observed high error rate."
+}
+```
+
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| reason | string | 是 | 标记为不健康的原因 |
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "id": "1",
+        "health_status": "Unhealthy",
+        "updated_at": "2025-08-22T11:00:00Z"
+    },
+    "message": "密钥已成功标记为不健康",
+    "timestamp": "2025-08-22T11:00:00.000Z"
+}
+```

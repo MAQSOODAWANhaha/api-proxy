@@ -6,17 +6,17 @@
 
 ## 基础信息
 
-- **基础路径**: `/api/auth`
+- **基础路径**: `/api/users/auth`
 - **认证方式**: 部分接口需要 JWT Token
 - **响应格式**: JSON
 
 ---
 
-## 1. 用户登录
+## 1. 用户登录 (公开接口)
 
-**POST** `/api/auth/login`
+**POST** `/api/users/auth/login`
 
-使用用户名和密码进行登录，成功后返回 JWT Token。
+使用用户名和密码进行登录，成功后返回 JWT Token。此接口是公开的，不需要认证。
 
 #### 请求体
 
@@ -54,9 +54,9 @@
 
 ---
 
-## 2. 用户登出
+## 2. 用户登出 (需要认证)
 
-**POST** `/api/auth/logout`
+**POST** `/api/users/auth/logout`
 
 用户登出，需要有效的 JWT Token。
 
@@ -76,9 +76,9 @@
 
 ---
 
-## 3. 验证 Token
+## 3. 验证 Token (需要认证)
 
-**GET** `/api/auth/validate`
+**GET** `/api/users/auth/validate`
 
 验证当前请求头中的 JWT Token 是否有效。
 
@@ -120,9 +120,9 @@
 
 ---
 
-## 4. 刷新 Token
+## 4. 刷新 Token (需要认证)
 
-**POST** `/api/auth/refresh`
+**POST** `/api/users/auth/refresh`
 
 使用 `refresh_token` 获取一个新的 `access_token`。
 

@@ -103,7 +103,6 @@ graph TD
 │   ├── auth/                 # 统一认证模块 (API Key, JWT, OAuth2)
 │   ├── key_pool/             # 负载均衡与健康检查
 │   ├── trace/                # 即时追踪写入器
-│   ├── statistics/           # 统一统计服务与成本计算
 │   └── ...
 ├── web/                      # 前端应用 (React + ESBuild + shadcn/ui)
 ├── migration/                # SeaORM 数据库迁移脚本

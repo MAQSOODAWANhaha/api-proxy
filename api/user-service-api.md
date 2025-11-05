@@ -342,7 +342,70 @@
 
 ---
 
-## 8. 重新生成API Key
+## 8. API Key 使用趋势
+
+### 接口信息
+- **请求路由**: `GET /api/user-service/keys/{id}/trends`
+- **请求方法**: GET
+- **作用**: 获取指定API Key在过去30天的每日使用趋势数据。
+
+### 路径参数
+| 参数名 | 类型 | 必填 | 描述 |
+|--------|------|------|------|
+| id | int | 是 | API Key ID |
+
+### 返回值
+```json
+{
+    "success": true,
+    "data": {
+        "trends": [
+            {
+                "date": "2025-08-18",
+                "requests": 150,
+                "tokens": 50000,
+                "cost": 12.50
+            },
+            {
+                "date": "2025-08-17",
+                "requests": 200,
+                "tokens": 65000,
+                "cost": 16.25
+            }
+        ],
+        "summary": {
+            "total_requests": 1250,
+            "total_tokens": 450000,
+            "total_cost": 125.50,
+            "avg_requests_per_day": 41,
+            "avg_tokens_per_day": 15000,
+            "avg_cost_per_day": 4.18
+        }
+    },
+    "message": "操作成功",
+    "timestamp": "2025-08-18T09:00:00.000Z"
+}
+```
+
+### 字段说明
+| 字段名 | 类型 | 描述 |
+|--------|------|------|
+| trends | array | 每日趋势数据列表 |
+| trends.date | string | 日期 (YYYY-MM-DD) |
+| trends.requests | int | 当日请求数 |
+| trends.tokens | int | 当日总Token数 |
+| trends.cost | float | 当日总费用 |
+| summary | object | 过去30天的汇总数据 |
+| summary.total_requests | int | 总请求数 |
+| summary.total_tokens | int | 总Token数 |
+| summary.total_cost | float | 总费用 |
+| summary.avg_requests_per_day | int | 每日平均请求数 |
+| summary.avg_tokens_per_day | int | 每日平均Token数 |
+| summary.avg_cost_per_day | float | 每日平均费用 |
+
+---
+
+## 9. 重新生成API Key
 
 ### 接口信息
 - **请求路由**: `POST /api/user-service/keys/{id}/regenerate`
@@ -374,7 +437,7 @@
 
 ---
 
-## 9. 启用/禁用API Key
+## 10. 启用/禁用API Key
 
 ### 接口信息
 - **请求路由**: `PUT /api/user-service/keys/{id}/status`

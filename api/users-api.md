@@ -412,7 +412,7 @@ interface UserQueryParams {
 
 ### 11. 修改当前用户密码
 
-**PATCH** `/api/users/profile/password`
+**POST** `/api/users/password`
 
 修改当前登录用户的密码。
 
