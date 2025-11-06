@@ -175,16 +175,26 @@ const renderLimitWindow = (
 ) => {
   if (!window) return null
 
-  const usagePercent = Number.isFinite(window.used_percent) ? window.used_percent : 0
+  // 增强数据验证和容错处理，确保进度条始终显示
+  const usagePercent = parseFloat(String(window.used_percent ?? 0)) || 0
   const clampedPercent = Math.max(0, Math.min(usagePercent, 100))
-  const windowDurationText = window.window_seconds ? formatDuration(window.window_seconds) : '未知窗口'
+  // 优化时间窗口描述，特别是针对长时间窗口
+  let windowDurationText = '未知窗口'
+  if (window.window_seconds) {
+    const duration = formatDuration(window.window_seconds)
+    windowDurationText = duration === '-' ? '未知窗口' : duration
+  }
   const remainingSeconds = calcRemainingSeconds(window.resets_at)
-  const remainingLabel =
-    remainingSeconds === null
-      ? '剩余未知'
-      : remainingSeconds <= 0
-        ? '已重置'
-        : `剩余 ${formatDuration(remainingSeconds)}`
+  // 改进剩余时间显示逻辑，确保所有情况下都有合理显示
+  let remainingLabel = '剩余未知'
+  if (remainingSeconds !== null) {
+    if (remainingSeconds <= 0) {
+      remainingLabel = '已重置'
+    } else {
+      const formattedDuration = formatDuration(remainingSeconds)
+      remainingLabel = formattedDuration === '-' ? '剩余未知' : `剩余 ${formattedDuration}`
+    }
+  }
   const { barClass, textClass } = getUsageVisual(usagePercent)
   const shouldHighlightRemaining = remainingSeconds !== null && remainingSeconds <= 10
   const remainingClass = shouldHighlightRemaining ? 'text-red-600 font-semibold' : textClass
@@ -205,11 +215,11 @@ const renderLimitWindow = (
               {windowDurationText}
             </Badge>
 
-            <div className="flex flex-1 items-center gap-2">
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="h-2 w-20 overflow-hidden rounded-full bg-muted flex-shrink-0">
                 <div className={`h-2 ${barClass}`} style={{ width: `${clampedPercent}%` }} />
               </div>
-              <span className={`text-xs font-semibold tabular-nums ${textClass}`}>
+              <span className={`text-xs font-semibold tabular-nums ${textClass} flex-shrink-0`}>
                 {usagePercent.toFixed(1)}%
               </span>
             </div>
