@@ -7,6 +7,7 @@ import React from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useAuthStore } from '../../store/auth'
 import { Menu, PanelsTopLeft, Bell, User, LogOut } from 'lucide-react'
+import userAvatar from '../../assets/image.png'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import {
@@ -129,7 +130,7 @@ const Topbar: React.FC = () => {
             <Button variant="ghost" className="h-9 w-9 rounded-full p-0">
               <Avatar className="h-9 w-9">
                 <AvatarImage
-                  src="https://pub-cdn.sider.ai/u/U024HX2V46R/web-coder/689c58b6f5303283889f5c38/resource/72cd5825-101c-47c5-b053-9bbcec64f97f.jpg"
+                  src={userAvatar}
                   alt="用户头像"
                 />
                 <AvatarFallback>

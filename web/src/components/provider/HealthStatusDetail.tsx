@@ -210,7 +210,7 @@ const renderLimitWindow = (
           <div className="flex items-center gap-2">
             <Badge
               variant="outline"
-              className="border-muted-foreground/30 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              className="border-muted-foreground/30 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground w-16 text-center flex-shrink-0"
             >
               {windowDurationText}
             </Badge>
@@ -224,7 +224,7 @@ const renderLimitWindow = (
               </span>
             </div>
 
-            <span className={`text-xs tabular-nums ${remainingClass}`}>{remainingLabel}</span>
+            <span className={`text-xs tabular-nums ${remainingClass} flex-shrink-0 text-right min-w-16`}>{remainingLabel}</span>
           </div>
 
                   </div>
