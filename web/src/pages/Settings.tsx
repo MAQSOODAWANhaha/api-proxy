@@ -5,47 +5,30 @@
 
 import React, { useState } from 'react'
 import SystemInfo from '@/components/SystemInfo'
-import ModernSelect from '../components/common/ModernSelect'
-import { RefreshCw, Save, Server, Settings, Shield, Zap } from 'lucide-react'
+import { RefreshCw, Save, Shield, Key, Plus, X } from 'lucide-react'
 
 interface SystemSettings {
-  // 基础信息
-  siteName: string
-  language: 'zh' | 'en'
-  timezone: string
-  defaultTheme: 'light' | 'dark' | 'auto'
-  allowUserTheme: boolean
-
   // 安全策略
   sessionTimeout: number
   maxLoginAttempts: number
   enableTwoFactor: boolean
 
-  // API 配额
-  rateLimitPerMinute: number
-  maxRequestSize: number
-
-  // 系统状态
-  maintenanceMode: boolean
+  // 访问控制
+  allowedIps: string[]
+  deniedIps: string[]
 }
 
 const INITIAL_SETTINGS: SystemSettings = {
-  siteName: 'AI Proxy Console',
-  language: 'zh',
-  timezone: 'Asia/Shanghai',
-  defaultTheme: 'light',
-  allowUserTheme: true,
   sessionTimeout: 24,
   maxLoginAttempts: 5,
   enableTwoFactor: false,
-  rateLimitPerMinute: 60,
-  maxRequestSize: 10,
-  maintenanceMode: false,
+  allowedIps: ['127.0.0.1/32', '::1/128'],
+  deniedIps: [],
 }
 
 const SettingsPage: React.FC = () => {
   const [settings, setSettings] = useState<SystemSettings>(INITIAL_SETTINGS)
-  const [activeTab, setActiveTab] = useState<'basic' | 'security' | 'api' | 'system'>('basic')
+  const [activeTab, setActiveTab] = useState<'security' | 'access'>('security')
   const [isSaving, setIsSaving] = useState(false)
 
   const updateSetting = <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) => {
@@ -61,10 +44,8 @@ const SettingsPage: React.FC = () => {
   const handleReset = () => setSettings(INITIAL_SETTINGS)
 
   const tabs = [
-    { id: 'basic', name: '基础信息', icon: Settings },
     { id: 'security', name: '安全策略', icon: Shield },
-    { id: 'api', name: 'API 配额', icon: Zap },
-    { id: 'system', name: '系统状态', icon: Server },
+    { id: 'access', name: '访问控制', icon: Key },
   ] as const
 
   return (
@@ -123,81 +104,6 @@ const SettingsPage: React.FC = () => {
         </div>
 
         <div className="p-6 space-y-6">
-          {activeTab === 'basic' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">站点名称</label>
-                  <input
-                    type="text"
-                    value={settings.siteName}
-                    onChange={e => updateSetting('siteName', e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">界面语言</label>
-                  <ModernSelect
-                    value={settings.language}
-                    onValueChange={value => updateSetting('language', value as SystemSettings['language'])}
-                    options={[
-                      { value: 'zh', label: '中文' },
-                      { value: 'en', label: 'English' },
-                    ]}
-                    placeholder="请选择语言"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">默认主题</label>
-                  <ModernSelect
-                    value={settings.defaultTheme}
-                    onValueChange={value =>
-                      updateSetting('defaultTheme', value as SystemSettings['defaultTheme'])
-                    }
-                    options={[
-                      { value: 'light', label: '浅色' },
-                      { value: 'dark', label: '深色' },
-                      { value: 'auto', label: '跟随系统' },
-                    ]}
-                    placeholder="请选择主题"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">时区</label>
-                  <ModernSelect
-                    value={settings.timezone}
-                    onValueChange={value => updateSetting('timezone', value)}
-                    options={[
-                      { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
-                      { value: 'UTC', label: 'UTC (UTC+0)' },
-                      { value: 'America/New_York', label: 'America/New_York (UTC-5)' },
-                    ]}
-                    placeholder="请选择时区"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg">
-                <div>
-                  <div className="text-sm font-medium text-neutral-900">允许用户自定义主题</div>
-                  <div className="text-xs text-neutral-600">用户可以在个人设置中选择浅色或深色模式</div>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.allowUserTheme}
-                    onChange={e => updateSetting('allowUserTheme', e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-violet-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
-                </label>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'security' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -244,59 +150,171 @@ const SettingsPage: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'api' && (
+          {activeTab === 'access' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">速率限制（次/分钟）</label>
-                  <input
-                    type="number"
-                    min={10}
-                    max={1000}
-                    value={settings.rateLimitPerMinute}
-                    onChange={e => updateSetting('rateLimitPerMinute', Number(e.target.value) || 10)}
-                    className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700 mb-2">最大请求大小（MB）</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={settings.maxRequestSize}
-                    onChange={e => updateSetting('maxRequestSize', Number(e.target.value) || 1)}
-                    className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-                  />
-                </div>
-              </div>
-              <p className="text-xs text-neutral-500">
-                以上参数用于指导后端限流与上传策略，后续在系统设置生效前请同步运营团队。
-              </p>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                <div>
-                  <div className="text-sm font-medium text-yellow-900">维护模式</div>
-                  <div className="text-xs text-yellow-700">
-                    启用后仅管理员可访问控制台，用于迁移或紧急修复
+              {/* 访问控制说明 */}
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <div className="flex items-start gap-3">
+                  <Key size={18} className="text-blue-600 mt-0.5" />
+                  <div>
+                    <div className="text-sm font-medium text-blue-900 mb-1">访问控制策略</div>
+                    <div className="text-xs text-blue-700">
+                      管理端口的IP访问控制列表。允许列表优先于拒绝列表，支持CIDR格式。
+                      只有符合允许列表且不在拒绝列表中的IP地址才能访问管理界面。
+                    </div>
                   </div>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.maintenanceMode}
-                    onChange={e => updateSetting('maintenanceMode', e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-yellow-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-yellow-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-yellow-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-600"></div>
-                </label>
               </div>
+
+              {/* 允许列表 */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <label className="text-sm font-medium text-neutral-900">允许IP列表</label>
+                    <span className="text-xs text-neutral-500">（允许访问管理界面的IP地址）</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {settings.allowedIps.map((ip, index) => (
+                    <div key={`allowed-${index}`} className="flex items-center gap-2">
+                      <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                        <span className="text-sm text-green-800">{ip}</span>
+                        <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded">允许</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newAllowedIps = settings.allowedIps.filter((_, i) => i !== index)
+                          updateSetting('allowedIps', newAllowedIps)
+                        }}
+                        className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                        title="删除"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="输入IP地址或CIDR（如 192.168.1.0/24）"
+                      className="flex-1 px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                      id="allowed-ip-input"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const value = e.currentTarget.value.trim()
+                          if (value && !settings.allowedIps.includes(value)) {
+                            updateSetting('allowedIps', [...settings.allowedIps, value])
+                            e.currentTarget.value = ''
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const input = document.getElementById('allowed-ip-input') as HTMLInputElement
+                        const value = input?.value?.trim()
+                        if (value && !settings.allowedIps.includes(value)) {
+                          updateSetting('allowedIps', [...settings.allowedIps, value])
+                          if (input) input.value = ''
+                        }
+                      }}
+                      className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
+                    >
+                      <Plus size={16} />
+                      添加
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 拒绝列表 */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                    <label className="text-sm font-medium text-neutral-900">拒绝IP列表</label>
+                    <span className="text-xs text-neutral-500">（禁止访问管理界面的IP地址）</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {settings.deniedIps.map((ip, index) => (
+                    <div key={`denied-${index}`} className="flex items-center gap-2">
+                      <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                        <span className="text-sm text-red-800">{ip}</span>
+                        <span className="text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded">拒绝</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newDeniedIps = settings.deniedIps.filter((_, i) => i !== index)
+                          updateSetting('deniedIps', newDeniedIps)
+                        }}
+                        className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                        title="删除"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="输入IP地址或CIDR（如 10.0.0.0/8）"
+                      className="flex-1 px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                      id="denied-ip-input"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const value = e.currentTarget.value.trim()
+                          if (value && !settings.deniedIps.includes(value)) {
+                            updateSetting('deniedIps', [...settings.deniedIps, value])
+                            e.currentTarget.value = ''
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const input = document.getElementById('denied-ip-input') as HTMLInputElement
+                        const value = input?.value?.trim()
+                        if (value && !settings.deniedIps.includes(value)) {
+                          updateSetting('deniedIps', [...settings.deniedIps, value])
+                          if (input) input.value = ''
+                        }
+                      }}
+                      className="flex items-center gap-1 px-3 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
+                    >
+                      <Plus size={16} />
+                      添加
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 常用CIDR示例 */}
+              <div className="bg-neutral-50 p-4 rounded-lg">
+                <div className="text-sm font-medium text-neutral-900 mb-3">常用CIDR示例</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                  <div className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-neutral-700">192.168.1.0/24</span>
+                    <span className="text-neutral-500">私有网络 /24</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-neutral-700">10.0.0.0/8</span>
+                    <span className="text-neutral-500">私有网络 /8</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-neutral-700">172.16.0.0/12</span>
+                    <span className="text-neutral-500">私有网络 /12</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-white rounded border">
+                    <span className="text-neutral-700">127.0.0.1/32</span>
+                    <span className="text-neutral-500">本机回环</span>
+                  </div>
+                </div>
+              </div>
+
               <p className="text-xs text-neutral-500">
-                维护模式仅修改系统状态标记，真正的流量切换仍需配合部署和告警接入。
+                访问控制列表修改后需要重启管理服务才能生效。请确保您没有被锁定在系统之外。
               </p>
             </div>
           )}

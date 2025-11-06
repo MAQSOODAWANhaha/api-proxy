@@ -35,14 +35,6 @@ interface UserProfile {
   monthly_requests: number
 }
 
-/** 用户设置类型 */
-interface UserSettings {
-  emailNotifications: boolean
-  securityAlerts: boolean
-  themePreference: 'light' | 'dark' | 'auto'
-  language: 'zh' | 'en'
-}
-
 /** 页面主组件 */
 const ProfilePage: React.FC = () => {
   const logout = useAuthStore((s) => s.logout)
@@ -51,13 +43,6 @@ const ProfilePage: React.FC = () => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  const [userSettings, setUserSettings] = useState<UserSettings>({
-    emailNotifications: true,
-    securityAlerts: true,
-    themePreference: 'light',
-    language: 'zh'
-  })
 
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -128,14 +113,6 @@ const ProfilePage: React.FC = () => {
     setIsEditing(false)
   }
 
-  // 更新设置
-  const handleSettingChange = (key: keyof UserSettings, value: any) => {
-    setUserSettings(prev => ({
-      ...prev,
-      [key]: value
-    }))
-  }
-
   // 加载状态显示
   if (isLoading) {
     return (
@@ -159,7 +136,7 @@ const ProfilePage: React.FC = () => {
             <div className="text-red-500 mb-2">❌</div>
             <p className="text-sm text-neutral-600 mb-4">{error}</p>
             <button
-              onClick={loadUserProfile}
+              onClick={() => loadUserProfile()}
               className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-medium hover:bg-violet-700"
             >
               重试
@@ -204,7 +181,7 @@ const ProfilePage: React.FC = () => {
                 取消
               </button>
               <button
-                onClick={handleSaveProfile}
+                onClick={() => handleSaveProfile()}
                 className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-violet-700"
                 title="保存"
               >
@@ -313,96 +290,6 @@ const ProfilePage: React.FC = () => {
       </div>
 
 
-      {/* 系统设置 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden mb-6">
-        <div className="px-6 py-4 border-b border-neutral-200">
-          <div className="flex items-center gap-2">
-            <Settings size={16} className="text-neutral-500" />
-            <h3 className="text-sm font-medium text-neutral-900">系统设置</h3>
-          </div>
-        </div>
-        <div className="p-6 space-y-4">
-          {/* 通知设置 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Bell size={16} className="text-neutral-400" />
-              <div>
-                <div className="text-sm font-medium text-neutral-900">邮件通知</div>
-                <div className="text-xs text-neutral-600">接收系统邮件通知</div>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={userSettings.emailNotifications}
-                onChange={(e) => handleSettingChange('emailNotifications', e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-violet-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
-            </label>
-          </div>
-
-          {/* 安全警报 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Shield size={16} className="text-neutral-400" />
-              <div>
-                <div className="text-sm font-medium text-neutral-900">安全警报</div>
-                <div className="text-xs text-neutral-600">账户安全相关警报</div>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={userSettings.securityAlerts}
-                onChange={(e) => handleSettingChange('securityAlerts', e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-violet-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-600"></div>
-            </label>
-          </div>
-
-          {/* 主题设置 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Palette size={16} className="text-neutral-400" />
-              <div>
-                <div className="text-sm font-medium text-neutral-900">主题偏好</div>
-                <div className="text-xs text-neutral-600">选择界面主题</div>
-              </div>
-            </div>
-            <select
-              value={userSettings.themePreference}
-              onChange={(e) => handleSettingChange('themePreference', e.target.value)}
-              className="border border-neutral-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-            >
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-              <option value="auto">跟随系统</option>
-            </select>
-          </div>
-
-          {/* 语言设置 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Settings size={16} className="text-neutral-400" />
-              <div>
-                <div className="text-sm font-medium text-neutral-900">界面语言</div>
-                <div className="text-xs text-neutral-600">选择界面显示语言</div>
-              </div>
-            </div>
-            <select
-              value={userSettings.language}
-              onChange={(e) => handleSettingChange('language', e.target.value)}
-              className="border border-neutral-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-            >
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
       {/* 账户操作 */}
       <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-neutral-200">
@@ -415,7 +302,7 @@ const ProfilePage: React.FC = () => {
               <div className="text-xs text-neutral-600 mt-1">清除本地登录状态并返回登录页面</div>
             </div>
             <button
-              onClick={logout}
+              onClick={() => logout()}
               className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
             >
               退出登录
