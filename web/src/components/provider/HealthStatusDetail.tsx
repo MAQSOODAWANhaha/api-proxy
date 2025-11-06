@@ -6,15 +6,12 @@
  * - 解析和显示 health_status_detail JSON 数据
  * - 支持 OpenAI 限流信息的详细展示
  * - 支持错误信息的展示
- * - 提供折叠/展开功能
  */
 
-import React, { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import React from 'react'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { ChevronDown, ChevronUp, AlertCircle, CheckCircle, Clock, Info } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { AlertCircle, CheckCircle, Clock, Info } from 'lucide-react'
 
 /** OpenAI 限流窗口信息 */
 interface OpenAILimitWindow {
@@ -51,7 +48,7 @@ export interface HealthStatusDetailProps {
   /** 健康状态详情 JSON 字符串 */
   health_status_detail?: string | null
   /** 当前健康状态 */
-  health_status: 'healthy' | 'warning' | 'error' | 'rate_limited' | 'unhealthy'
+  health_status: 'healthy' | 'rate_limited' | 'unhealthy'
 }
 
 /** 格式化时间戳 */
@@ -114,10 +111,8 @@ function getHealthStatusColor(status: string): string {
   switch (status) {
     case 'healthy':
       return 'text-green-600 bg-green-50 border-green-200'
-    case 'warning':
-      return 'text-yellow-600 bg-yellow-50 border-yellow-200'
-    case 'error':
     case 'rate_limited':
+      return 'text-yellow-600 bg-yellow-50 border-yellow-200'
     case 'unhealthy':
       return 'text-red-600 bg-red-50 border-red-200'
     default:
@@ -125,109 +120,143 @@ function getHealthStatusColor(status: string): string {
   }
 }
 
+/** 根据使用率获取配色 */
+function getUsageVisual(percent: number) {
+  if (percent >= 85) {
+    return {
+      barClass: 'bg-red-500',
+      textClass: 'text-red-600'
+    }
+  }
+  if (percent >= 60) {
+    return {
+      barClass: 'bg-yellow-500',
+      textClass: 'text-yellow-600'
+    }
+  }
+  return {
+    barClass: 'bg-green-500',
+    textClass: 'text-green-600'
+  }
+}
+
+/** 计算剩余秒数 */
+function calcRemainingSeconds(resetsAt?: number): number | null {
+  if (!resetsAt) return null
+  const now = Math.floor(Date.now() / 1000)
+  return resetsAt - now
+}
+
+/** 格式化 Tooltip 数值 */
+function formatTooltipValue(value: unknown): string {
+  if (value === null || value === undefined) return '-'
+  if (typeof value === 'number') return value.toString()
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+/** 格式化时间显示 */
+function formatDateTime(value?: string | number | null): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  if (typeof value === 'number') {
+    return formatTimestamp(value)
+  }
+  return formatISOTime(value)
+}
+
 /** 渲染限流窗口信息 */
-const renderLimitWindow = (window: OpenAILimitWindow, title: string) => {
+const renderLimitWindow = (
+  window: OpenAILimitWindow & Record<string, any>,
+  title: string,
+  createdAt?: string | number
+) => {
   if (!window) return null
 
-  // 计算剩余时间（如果有重置时间戳）
-  const getRemainingTime = () => {
-    if (!window.resets_at) return null
+  const usagePercent = Number.isFinite(window.used_percent) ? window.used_percent : 0
+  const clampedPercent = Math.max(0, Math.min(usagePercent, 100))
+  const windowDurationText = window.window_seconds ? formatDuration(window.window_seconds) : '未知窗口'
+  const remainingSeconds = calcRemainingSeconds(window.resets_at)
+  const remainingLabel =
+    remainingSeconds === null
+      ? '剩余未知'
+      : remainingSeconds <= 0
+        ? '已重置'
+        : `剩余 ${formatDuration(remainingSeconds)}`
+  const { barClass, textClass } = getUsageVisual(usagePercent)
+  const shouldHighlightRemaining = remainingSeconds !== null && remainingSeconds <= 10
+  const remainingClass = shouldHighlightRemaining ? 'text-red-600 font-semibold' : textClass
 
-    const now = Math.floor(Date.now() / 1000)
-    const remaining = window.resets_at - now
+  const createdAtText = formatDateTime(createdAt)
 
-    if (remaining <= 0) return '已重置'
-    return formatDuration(remaining)
-  }
-
-  // 获取状态颜色
-  const getUsageColor = (percent: number) => {
-    if (percent >= 90) return 'text-red-600 bg-red-50 border-red-200'
-    if (percent >= 75) return 'text-yellow-600 bg-yellow-50 border-yellow-200'
-    if (percent >= 50) return 'text-blue-600 bg-blue-50 border-blue-200'
-    return 'text-green-600 bg-green-50 border-green-200'
-  }
-
-  const usageColor = getUsageColor(window.used_percent)
-  const remainingTime = getRemainingTime()
+  const extraEntries = Object.entries(window as Record<string, unknown>).filter(
+    ([key]) => !['used_percent', 'window_seconds', 'resets_at'].includes(key)
+  )
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h4 className="font-medium text-sm text-foreground">{title}</h4>
-        <div className={`px-2 py-1 rounded-full text-xs font-medium border ${usageColor}`}>
-          {window.used_percent.toFixed(1)}%
-        </div>
-      </div>
+    <Tooltip key={title}>
+      <TooltipTrigger asChild>
+        <div className="cursor-help rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Badge
+              variant="outline"
+              className="border-muted-foreground/30 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+            >
+              {windowDurationText}
+            </Badge>
 
-      {/* 进度条 */}
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>使用率</span>
-          <span>{window.used_percent.toFixed(1)}%</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div
-            className={`h-2 rounded-full transition-all ${
-              window.used_percent >= 90 ? 'bg-red-500' :
-              window.used_percent >= 75 ? 'bg-yellow-500' :
-              window.used_percent >= 50 ? 'bg-blue-500' : 'bg-green-500'
-            }`}
-            style={{ width: `${Math.min(window.used_percent, 100)}%` }}
-          />
-        </div>
-      </div>
+            <div className="flex flex-1 items-center gap-2">
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                <div className={`h-2 ${barClass}`} style={{ width: `${clampedPercent}%` }} />
+              </div>
+              <span className={`text-xs font-semibold tabular-nums ${textClass}`}>
+                {usagePercent.toFixed(1)}%
+              </span>
+            </div>
 
-      {/* 详细信息网格 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">时间窗口:</span>
-            <span className="font-medium">
-              {window.window_seconds ? formatDuration(window.window_seconds) : '未知'}
-            </span>
+            <span className={`text-xs tabular-nums ${remainingClass}`}>{remainingLabel}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">使用率:</span>
-            <span className="font-medium">{window.used_percent.toFixed(2)}%</span>
-          </div>
-        </div>
 
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">重置时间:</span>
-            <span className="font-medium">
-              {window.resets_at ? formatTimestamp(window.resets_at) : '未知'}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">剩余时间:</span>
-            <span className={`font-medium ${remainingTime === '已重置' ? 'text-green-600' : 'text-orange-600'}`}>
-              {remainingTime || '计算中...'}
-            </span>
-          </div>
+          {(createdAtText || remainingSeconds !== null) && (
+            <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+              <span>{title}</span>
+              {createdAtText && <span>创建 {createdAtText}</span>}
+            </div>
+          )}
         </div>
-      </div>
+      </TooltipTrigger>
 
-      {/* 状态提示 */}
-      {window.used_percent >= 90 && (
-        <div className="flex items-start gap-2 p-2 bg-red-50 rounded border border-red-200">
-          <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-red-700">
-            <strong>警告：</strong>使用率已达到 {window.used_percent.toFixed(1)}%，建议等待窗口重置或降低使用频率。
-          </div>
+      <TooltipContent className="max-w-xs space-y-2">
+        <p className="text-xs font-medium text-foreground">{title}</p>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-relaxed">
+          <span className="text-muted-foreground">时间窗口</span>
+          <span className="text-foreground">{windowDurationText}</span>
+          <span className="text-muted-foreground">使用率</span>
+          <span className="text-foreground">{usagePercent.toFixed(2)}%</span>
+          <span className="text-muted-foreground">重置时间</span>
+          <span className="text-foreground">
+            {window.resets_at ? formatTimestamp(window.resets_at) : '未知'}
+          </span>
+          <span className="text-muted-foreground">剩余时间</span>
+          <span className="text-foreground">{remainingLabel}</span>
+          {createdAtText && (
+            <>
+              <span className="text-muted-foreground">创建时间</span>
+              <span className="text-foreground">{createdAtText}</span>
+            </>
+          )}
+          {extraEntries.map(([key, value]) => (
+            <React.Fragment key={key}>
+              <span className="text-muted-foreground">{key}</span>
+              <span className="text-foreground">{formatTooltipValue(value)}</span>
+            </React.Fragment>
+          ))}
         </div>
-      )}
-
-      {window.used_percent >= 75 && window.used_percent < 90 && (
-        <div className="flex items-start gap-2 p-2 bg-yellow-50 rounded border border-yellow-200">
-          <Info className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-yellow-700">
-            <strong>注意：</strong>使用率较高({window.used_percent.toFixed(1)}%)，请关注使用情况。
-          </div>
-        </div>
-      )}
-    </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -275,8 +304,6 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
   health_status_detail,
   health_status
 }) => {
-  const [isExpanded, setIsExpanded] = useState(false)
-
   // 解析健康状态详情数据
   let detailData: HealthStatusDetail | null = null
   if (health_status_detail) {
@@ -287,136 +314,84 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
     }
   }
 
-  // 没有详细信息时显示简化版本
   if (!detailData) {
     return (
       <div className="flex items-center gap-2">
         <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getHealthStatusColor(health_status)}`}>
           {health_status === 'healthy' && <CheckCircle className="h-3 w-3" />}
-          {(health_status === 'warning' || health_status === 'error') && <AlertCircle className="h-3 w-3" />}
           {health_status === 'rate_limited' && <Clock className="h-3 w-3" />}
+          {health_status === 'unhealthy' && <AlertCircle className="h-3 w-3" />}
           {getStatusText(health_status)}
         </div>
       </div>
     )
   }
 
-  const hasLimitInfo = detailData.data?.primary || detailData.data?.secondary
-  const hasErrorInfo = detailData.data?.error
+  const dataRecord = detailData.data as Record<string, any> | undefined
+  const createdAtRaw = dataRecord?.created_at ?? detailData.updated_at
+  const createdAtText = formatDateTime(createdAtRaw)
 
-  // 根据健康状态决定显示内容
-  const showLimitInfo = health_status === 'healthy' && hasLimitInfo
-  const showErrorInfo = (health_status === 'rate_limited' || health_status === 'error') && hasErrorInfo
-  const showDetails = showLimitInfo || showErrorInfo
+  const primaryWindow = detailData.data?.primary as (OpenAILimitWindow & Record<string, any>) | undefined
+  const secondaryWindow = detailData.data?.secondary as (OpenAILimitWindow & Record<string, any>) | undefined
+
+  const windowSummaries = [
+    primaryWindow ? renderLimitWindow(primaryWindow, '主要窗口', primaryWindow?.created_at ?? createdAtRaw) : null,
+    secondaryWindow ? renderLimitWindow(secondaryWindow, '次要窗口', secondaryWindow?.created_at ?? createdAtRaw) : null
+  ].filter(Boolean) as React.ReactNode[]
+
+  const showErrorInfo = Boolean(detailData.data?.error)
 
   return (
-    <div className="space-y-3">
-      {/* 状态概览 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <TooltipProvider>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
           <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getHealthStatusColor(health_status)}`}>
             {health_status === 'healthy' && <CheckCircle className="h-3 w-3" />}
-            {(health_status === 'warning' || health_status === 'error') && <AlertCircle className="h-3 w-3" />}
             {health_status === 'rate_limited' && <Clock className="h-3 w-3" />}
+            {health_status === 'unhealthy' && <AlertCircle className="h-3 w-3" />}
             {getStatusText(health_status)}
           </div>
 
-          {showDetails && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="h-6 px-2 text-xs"
-            >
-              {isExpanded ? (
-                <>
-                  <ChevronUp className="h-3 w-3 mr-1" />
-                  收起详情
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-3 w-3 mr-1" />
-                  展开详情
-                </>
-              )}
-            </Button>
+          {createdAtText && (
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <Info className="h-3 w-3" />
+              数据更新时间 {createdAtText}
+            </div>
           )}
         </div>
 
-        {detailData.updated_at && (
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            <Info className="h-3 w-3" />
-            更新于 {formatISOTime(detailData.updated_at)}
+        {windowSummaries.length > 0 ? (
+          <div className="space-y-2">{windowSummaries}</div>
+        ) : (
+          <div className="rounded-md border border-dashed border-muted/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            暂无法获取限流窗口信息
+          </div>
+        )}
+
+        {showErrorInfo && detailData.data?.error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+            {renderErrorInfo(detailData.data.error)}
+          </div>
+        )}
+
+        {process.env.NODE_ENV === 'development' && (
+          <div className="rounded-md border border-dashed border-muted/60 bg-muted/20 px-3 py-2">
+            <pre className="text-[10px] leading-4 text-muted-foreground whitespace-pre-wrap break-all">
+              {JSON.stringify(detailData, null, 2)}
+            </pre>
           </div>
         )}
       </div>
-
-      {/* 详细信息 - 根据状态显示不同内容 */}
-      {isExpanded && showDetails && (
-        <Card className="border-muted">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">
-              {health_status === 'healthy' ? '限流窗口信息' : '限流错误详情'}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <ScrollArea className="max-h-96">
-              <div className="space-y-4">
-                {/* 429 错误信息 - 仅在限流/错误状态显示 */}
-                {showErrorInfo && detailData.data?.error && (
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-medium text-red-600">429 限流错误</h3>
-                    {renderErrorInfo(detailData.data.error)}
-                  </div>
-                )}
-
-                {/* 限流窗口信息 - 仅在健康状态显示 */}
-                {showLimitInfo && (
-                  <div className="space-y-4">
-
-                    {/* 主要限流窗口 */}
-                    {detailData.data?.primary && (
-                      <div className="border rounded-lg p-4 bg-blue-50/50">
-                        {renderLimitWindow(detailData.data.primary, '主要限制窗口')}
-                      </div>
-                    )}
-
-                    {/* 次要限流窗口 */}
-                    {detailData.data?.secondary && (
-                      <div className="border rounded-lg p-4 bg-green-50/50">
-                        {renderLimitWindow(detailData.data.secondary, '次要限制窗口')}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 原始数据（调试用） */}
-                {process.env.NODE_ENV === 'development' && (
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-medium text-muted-foreground">原始数据</h3>
-                    <pre className="text-xs bg-muted p-2 rounded overflow-auto">
-                      {JSON.stringify(detailData, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+    </TooltipProvider>
   )
 }
+
 
 /** 获取状态文本 */
 function getStatusText(status: string): string {
   switch (status) {
     case 'healthy':
       return '健康'
-    case 'warning':
-      return '警告'
-    case 'error':
-      return '错误'
     case 'rate_limited':
       return '限流中'
     case 'unhealthy':
