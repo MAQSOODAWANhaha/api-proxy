@@ -91,19 +91,18 @@ function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) return '-'
 
   const days = Math.floor(seconds / 86400)
-  const hours = Math.floor(seconds / 3600)
+  const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = seconds % 60
 
-  if (days > 0) {
-    return `${days}天${hours % 24}小时${minutes}分钟`
-  } else if (hours > 0) {
-    return `${hours}小时${minutes}分钟`
-  } else if (minutes > 0) {
-    return `${minutes}分钟${secs}秒`
-  } else {
-    return `${secs}秒`
-  }
+  // 构建时间单位数组，只包含非零值
+  const timeUnits = []
+  if (days > 0) timeUnits.push(`${days}天`)
+  if (hours > 0) timeUnits.push(`${hours}小时`)
+  if (minutes > 0) timeUnits.push(`${minutes}分钟`)
+  if (secs > 0 || timeUnits.length === 0) timeUnits.push(`${secs}秒`)
+
+  return timeUnits.join('')
 }
 
 /** 获取健康状态颜色 */
@@ -168,11 +167,11 @@ function formatDateTime(value?: string | number | null): string | undefined {
   return formatISOTime(value)
 }
 
+
 /** 渲染限流窗口信息 */
 const renderLimitWindow = (
   window: OpenAILimitWindow & Record<string, any>,
-  title: string,
-  createdAt?: string | number
+  title: string
 ) => {
   if (!window) return null
 
@@ -189,8 +188,6 @@ const renderLimitWindow = (
   const { barClass, textClass } = getUsageVisual(usagePercent)
   const shouldHighlightRemaining = remainingSeconds !== null && remainingSeconds <= 10
   const remainingClass = shouldHighlightRemaining ? 'text-red-600 font-semibold' : textClass
-
-  const createdAtText = formatDateTime(createdAt)
 
   const extraEntries = Object.entries(window as Record<string, unknown>).filter(
     ([key]) => !['used_percent', 'window_seconds', 'resets_at'].includes(key)
@@ -220,17 +217,10 @@ const renderLimitWindow = (
             <span className={`text-xs tabular-nums ${remainingClass}`}>{remainingLabel}</span>
           </div>
 
-          {(createdAtText || remainingSeconds !== null) && (
-            <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
-              <span>{title}</span>
-              {createdAtText && <span>创建 {createdAtText}</span>}
-            </div>
-          )}
-        </div>
+                  </div>
       </TooltipTrigger>
 
-      <TooltipContent className="max-w-xs space-y-2">
-        <p className="text-xs font-medium text-foreground">{title}</p>
+      <TooltipContent className="max-w-xs space-y-2 bg-white/95 dark:bg-gray-900/95 border-gray-200 dark:border-gray-700 shadow-lg">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-relaxed">
           <span className="text-muted-foreground">时间窗口</span>
           <span className="text-foreground">{windowDurationText}</span>
@@ -242,13 +232,7 @@ const renderLimitWindow = (
           </span>
           <span className="text-muted-foreground">剩余时间</span>
           <span className="text-foreground">{remainingLabel}</span>
-          {createdAtText && (
-            <>
-              <span className="text-muted-foreground">创建时间</span>
-              <span className="text-foreground">{createdAtText}</span>
-            </>
-          )}
-          {extraEntries.map(([key, value]) => (
+                    {extraEntries.map(([key, value]) => (
             <React.Fragment key={key}>
               <span className="text-muted-foreground">{key}</span>
               <span className="text-foreground">{formatTooltipValue(value)}</span>
@@ -327,16 +311,16 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
     )
   }
 
-  const dataRecord = detailData.data as Record<string, any> | undefined
-  const createdAtRaw = dataRecord?.created_at ?? detailData.updated_at
-  const createdAtText = formatDateTime(createdAtRaw)
-
   const primaryWindow = detailData.data?.primary as (OpenAILimitWindow & Record<string, any>) | undefined
   const secondaryWindow = detailData.data?.secondary as (OpenAILimitWindow & Record<string, any>) | undefined
 
+  // 恢复数据更新时间显示
+  const createdAtRaw = detailData.data?.created_at ?? detailData.updated_at
+  const createdAtText = formatDateTime(createdAtRaw)
+
   const windowSummaries = [
-    primaryWindow ? renderLimitWindow(primaryWindow, '主要窗口', primaryWindow?.created_at ?? createdAtRaw) : null,
-    secondaryWindow ? renderLimitWindow(secondaryWindow, '次要窗口', secondaryWindow?.created_at ?? createdAtRaw) : null
+    primaryWindow ? renderLimitWindow(primaryWindow, '') : null,
+    secondaryWindow ? renderLimitWindow(secondaryWindow, '') : null
   ].filter(Boolean) as React.ReactNode[]
 
   const showErrorInfo = Boolean(detailData.data?.error)
@@ -344,7 +328,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
   return (
     <TooltipProvider>
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getHealthStatusColor(health_status)}`}>
             {health_status === 'healthy' && <CheckCircle className="h-3 w-3" />}
             {health_status === 'rate_limited' && <Clock className="h-3 w-3" />}
@@ -355,7 +339,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
           {createdAtText && (
             <div className="text-xs text-muted-foreground flex items-center gap-1">
               <Info className="h-3 w-3" />
-              数据更新时间 {createdAtText}
+              更新 {createdAtText}
             </div>
           )}
         </div>
