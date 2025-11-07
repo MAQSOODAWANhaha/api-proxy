@@ -1,7 +1,7 @@
 use crate::app::resources::AppResources;
-use crate::auth::oauth_client::ApiKeyOauthService;
 use crate::auth::{
     ApiKeyAuthenticationService, ApiKeyManager, ApiKeyOAuthRefreshService, ApiKeyOAuthStateService,
+    api_key_oauth_service::ApiKeyOauthService,
     api_key_usage_limit_service::ApiKeyUsageLimitService, jwt::JwtManager,
 };
 use crate::error::{Context, Result};
@@ -51,30 +51,30 @@ impl AppServices {
             database.clone(),
         ));
 
-        let rate_limiter = Arc::new(ApiKeyUsageLimitService::new(cache, database.clone()));
+        let usage_limit = Arc::new(ApiKeyUsageLimitService::new(cache, database.clone()));
 
-        let trace_system = Arc::new(ApiKeyTraceService::new_immediate(database.clone()));
+        let trace = Arc::new(ApiKeyTraceService::new_immediate(database.clone()));
 
-        let api_key_health = Arc::new(ApiKeyHealthService::new(database.clone()));
+        let health = Arc::new(ApiKeyHealthService::new(database.clone()));
 
-        let api_key_scheduler = Arc::new(ApiKeySchedulerService::new(
+        let scheduler = Arc::new(ApiKeySchedulerService::new(
             database.clone(),
-            api_key_health.clone(),
+            health.clone(),
         ));
 
-        let oauth_client = Arc::new(ApiKeyOauthService::new(database));
-        let api_key_oauth_state_service = oauth_client.api_key_oauth_state_service();
-        let api_key_refresh_service = oauth_client.api_key_oauth_refresh_service();
+        let oauth = Arc::new(ApiKeyOauthService::new(database, resources.cache()));
+        let oauth_state = oauth.api_key_oauth_state_service();
+        let refresh = oauth.api_key_oauth_refresh_service();
 
         Ok(Arc::new(Self {
             authentication,
-            usage_limit: rate_limiter,
-            trace: trace_system,
-            oauth: oauth_client,
-            oauth_state: api_key_oauth_state_service,
-            scheduler: api_key_scheduler,
-            refresh: api_key_refresh_service,
-            health: api_key_health,
+            usage_limit,
+            trace,
+            oauth,
+            oauth_state,
+            scheduler,
+            refresh,
+            health,
         }))
     }
 

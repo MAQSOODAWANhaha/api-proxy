@@ -3,7 +3,7 @@
 //! 专门用于解析 `OpenAI` `access_token` 中的用户信息
 //! 从 JWT payload 中提取 `chatgpt_account_id` 等关键信息
 
-use crate::auth::oauth_client::OAuthError;
+use crate::error::auth::OAuthError;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -38,9 +38,9 @@ pub struct OpenAIJWTPayload {
 }
 
 /// JWT 解析器
-pub struct JWTParser;
+pub struct OpenAI;
 
-impl JWTParser {
+impl OpenAI {
     /// 从 `access_token` 中解析 `OpenAI` 用户信息
     pub fn extract_openai_info(
         &self,
@@ -140,14 +140,14 @@ mod tests {
     /// 测试 JWT 解析器创建
     #[test]
     fn test_jwt_parser_creation() {
-        let parser = JWTParser;
+        let parser = OpenAI;
         assert!(!parser.is_openai_token("invalid_token"));
     }
 
     /// 测试无效 token 处理
     #[test]
     fn test_invalid_token_handling() {
-        let parser = JWTParser;
+        let parser = OpenAI;
         let result = parser.extract_chatgpt_account_id("invalid_token");
         assert!(result.is_err());
     }
@@ -155,7 +155,7 @@ mod tests {
     /// 测试空 token 处理
     #[test]
     fn test_empty_token_handling() {
-        let parser = JWTParser;
+        let parser = OpenAI;
         let result = parser.extract_chatgpt_account_id("");
         assert!(result.is_err());
     }
@@ -163,14 +163,14 @@ mod tests {
     /// 测试默认解析器
     #[test]
     fn test_default_parser() {
-        let parser = JWTParser;
+        let parser = OpenAI;
         let result = parser.extract_chatgpt_account_id("invalid_token");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_extract_chatgpt_account_id_success() {
-        let parser = JWTParser;
+        let parser = OpenAI;
 
         let header = json!({
             "alg": "RS256",

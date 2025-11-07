@@ -6,34 +6,39 @@ pub mod api_key_manager;
 pub mod cache_strategy;
 
 pub mod api_key_oauth_refresh_service;
+pub mod api_key_oauth_service;
 pub mod api_key_oauth_state_service;
 pub mod api_key_oauth_token_refresh_task;
 pub mod api_key_usage_limit_service;
 pub mod gemini_code_assist_client;
 pub mod header_parser;
 pub mod jwt;
-pub mod oauth_client;
+pub mod openai;
 pub mod permissions;
+pub mod pkce;
 pub mod service;
 pub mod types;
 pub mod utils;
 
 pub use api_key_manager::ApiKeyManager;
-pub use header_parser::{AuthHeader, AuthHeaderParser};
-pub use jwt::JwtManager;
-// 注意：旧的oauth模块已被oauth_client替代
-// pub use oauth::{CompleteSessionRequest, CreateSessionRequest, OAuthSessionManager, SessionInfo};
+#[allow(deprecated)]
 pub use api_key_oauth_refresh_service::{
     ApiKeyOAuthRefreshResult, ApiKeyOAuthRefreshService, OAuthErrorResponse, TokenExchangeRequest,
     TokenExchangeStats, TokenResponse,
+};
+pub use api_key_oauth_service::{
+    ApiKeyOauthService, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
 pub use api_key_oauth_state_service::{
     ApiKeyOAuthStateService, CleanupReport as OAuthCleanupReport, CreateSessionParams,
     ScheduledTokenRefresh,
 };
 pub use api_key_oauth_token_refresh_task::{ApiKeyOAuthTokenRefreshTask, TaskControl, TaskState};
-pub use oauth_client::OAuthSessionInfo;
+pub use header_parser::{AuthHeader, AuthHeaderParser};
+pub use jwt::JwtManager;
+pub use openai::{OpenAI, OpenAIAuthInfo, OpenAIJWTPayload};
 pub use permissions::UserRole;
+pub use pkce::{PkceChallenge, PkceVerifier};
 pub use service::ApiKeyAuthenticationService;
 pub use types::*;
 pub use utils::AuthUtils;

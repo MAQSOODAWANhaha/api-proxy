@@ -3,12 +3,16 @@
 //! 负责对单个 OAuth 会话执行刷新动作，并维护刷新统计信息。
 //! 不直接访问数据库，也不承担调度与状态管理职责。
 
+use crate::auth::api_key_oauth_service::OAuthTokenResponse;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
-use crate::auth::oauth_client::{ApiKeyProviderConfig, OAuthTokenResponse};
 use crate::auth::types::AuthStatus;
 use crate::error::AuthResult;
 use crate::error::auth::OAuthError;
 use crate::logging::{LogComponent, LogStage};
+use crate::provider::{
+    ApiKeyProviderConfig, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
+    TokenRevokeContext, get_provider_by_name,
+};
 use crate::{ensure, ldebug, lwarn};
 use chrono::{DateTime, Duration, Utc};
 use entity::oauth_client_sessions;
@@ -16,9 +20,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 use tokio::sync::{Mutex, RwLock};
-
-/// `OpenAI` token 端点允许的额外参数白名单
-const OPENAI_TOKEN_PARAM_WHITELIST: &[&str] = &["response_type"];
 
 /// 令牌响应结构（来自OAuth服务器的原始响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,19 +200,15 @@ impl ApiKeyOAuthRefreshService {
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
+        let provider = get_provider_by_name(&session.provider_name)?;
 
-        let mut form_params = HashMap::new();
-        form_params.insert("grant_type".to_string(), "refresh_token".to_string());
-        form_params.insert("client_id".to_string(), config.client_id.clone());
-        form_params.insert("refresh_token".to_string(), refresh_token.to_string());
-
-        if let Some(client_secret) = &config.client_secret {
-            form_params.insert("client_secret".to_string(), client_secret.clone());
-        }
-
-        let token_response = self
-            .send_token_request(&config.token_url, form_params)
-            .await?;
+        let refresh_context = TokenRefreshContext {
+            session,
+            config: &config,
+            refresh_token,
+        };
+        let payload = provider.build_refresh_request(refresh_context);
+        let token_response = self.send_token_request(payload).await?;
 
         let oauth_response = Self::process_token_response(token_response, &session.session_id);
         let expires_at = Self::compute_expires_at(&oauth_response);
@@ -266,6 +263,7 @@ impl ApiKeyOAuthRefreshService {
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
+        let provider = get_provider_by_name(&session.provider_name)?;
 
         let actual_code = authorization_code
             .split('#')
@@ -273,30 +271,13 @@ impl ApiKeyOAuthRefreshService {
             .unwrap_or(authorization_code)
             .to_string();
 
-        let mut form_params = HashMap::new();
-        form_params.insert("grant_type".to_string(), "authorization_code".to_string());
-        form_params.insert("client_id".to_string(), config.client_id.clone());
-        form_params.insert("code".to_string(), actual_code);
-        form_params.insert("redirect_uri".to_string(), config.redirect_uri.clone());
-
-        if let Some(client_secret) = &config.client_secret {
-            form_params.insert("client_secret".to_string(), client_secret.clone());
-        }
-
-        if config.pkce_required {
-            form_params.insert("code_verifier".to_string(), session.code_verifier.clone());
-        }
-
-        Self::add_provider_specific_params(&mut form_params, &session.provider_name, &session);
-        Self::add_extra_params(
-            &mut form_params,
-            &config.extra_params,
-            &session.provider_name,
-        );
-
-        let token_response = self
-            .send_token_request(&config.token_url, form_params)
-            .await?;
+        let exchange_context = TokenExchangeContext {
+            session: &session,
+            config: &config,
+            authorization_code: &actual_code,
+        };
+        let payload = provider.build_token_request(exchange_context);
+        let token_response = self.send_token_request(payload).await?;
 
         let oauth_response = Self::process_token_response(token_response, session_id);
         self.session_manager
@@ -306,60 +287,11 @@ impl ApiKeyOAuthRefreshService {
         Ok(oauth_response)
     }
 
-    fn add_extra_params(
-        form_params: &mut HashMap<String, String>,
-        extra_params: &HashMap<String, String>,
-        provider_name: &str,
-    ) {
-        let base = provider_name.split(':').next().unwrap_or(provider_name);
-        if base == "openai" {
-            // OpenAI token端点只接受标准字段，额外参数直接忽略
-            return;
-        }
-
-        for (key, value) in extra_params {
-            form_params
-                .entry(key.clone())
-                .or_insert_with(|| value.clone());
-        }
-    }
-
-    fn add_provider_specific_params(
-        form_params: &mut HashMap<String, String>,
-        provider_name: &str,
-        session: &oauth_client_sessions::Model,
-    ) {
-        let base = provider_name.split(':').next().unwrap_or(provider_name);
-
-        match base {
-            "google" | "gemini" => {
-                form_params
-                    .entry("access_type".to_string())
-                    .or_insert_with(|| "offline".to_string());
-                form_params
-                    .entry("include_granted_scopes".to_string())
-                    .or_insert_with(|| "true".to_string());
-                form_params
-                    .entry("prompt".to_string())
-                    .or_insert_with(|| "consent".to_string());
-            }
-            "claude" => {
-                form_params
-                    .entry("client_secret".to_string())
-                    .or_insert_with(|| session.code_verifier.clone());
-            }
-            _ => {}
-        }
-    }
-
-    async fn send_token_request(
-        &self,
-        token_url: &str,
-        form_params: HashMap<String, String>,
-    ) -> AuthResult<TokenResponse> {
+    async fn send_token_request(&self, payload: TokenRequestPayload) -> AuthResult<TokenResponse> {
+        let (token_url, form_params) = payload.into_parts();
         let response = self
             .http_client
-            .post(token_url)
+            .post(&token_url)
             .form(&form_params)
             .send()
             .await?;
@@ -420,47 +352,33 @@ impl ApiKeyOAuthRefreshService {
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
-
-        // 解析基础提供商名称
-        let base_provider = if session.provider_name.contains(':') {
-            session
-                .provider_name
-                .split(':')
-                .next()
-                .unwrap_or(&session.provider_name)
-        } else {
-            &session.provider_name
+        let provider = get_provider_by_name(&session.provider_name)?;
+        let revoke_context = TokenRevokeContext {
+            session: &session,
+            config: &config,
+            token,
+            hint: token_type_hint,
+        };
+        let Some(payload) = provider.build_revoke_request(revoke_context) else {
+            ldebug!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::OAuth,
+                "revocation_unsupported",
+                &format!(
+                    "Provider {} does not support token revocation",
+                    session.provider_name
+                )
+            );
+            return Ok(());
         };
 
-        // 构建撤销请求URL（不是所有提供商都支持）
-        let revoke_url = match base_provider {
-            "google" | "gemini" => "https://oauth2.googleapis.com/revoke",
-            "openai" => "https://auth.openai.com/oauth/revoke",
-            _ => {
-                // 对于不支持撤销的提供商，只是在本地标记为失效
-                ldebug!(
-                    "system",
-                    LogStage::Authentication,
-                    LogComponent::OAuth,
-                    "revocation_unsupported",
-                    &format!("Provider {base_provider} does not support token revocation")
-                );
-                return Ok(());
-            }
-        };
-
-        let mut form_params = HashMap::new();
-        form_params.insert("token".to_string(), token.to_string());
-        form_params.insert("client_id".to_string(), config.client_id.clone());
-
-        if let Some(hint) = token_type_hint {
-            form_params.insert("token_type_hint".to_string(), hint.to_string());
-        }
+        let (revoke_url, form_params) = payload.into_parts();
 
         // 发送撤销请求
         let response = self
             .http_client
-            .post(revoke_url)
+            .post(&revoke_url)
             .form(&form_params)
             .send()
             .await?;

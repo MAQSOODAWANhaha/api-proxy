@@ -4,7 +4,9 @@
 //! 负责 Token 刷新策略所需的全部数据库交互。
 
 use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshResult;
-use crate::auth::types::AuthStatus;
+use crate::auth::api_key_oauth_service::{OAuthSessionInfo, OAuthTokenResponse};
+use crate::auth::pkce::PkceParams;
+use crate::auth::types::{AuthStatus, OAuthProviderConfig};
 use crate::error::{AuthResult, Result};
 use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::types::ProviderTypeId;
@@ -23,9 +25,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::oauth_client::{
-    OAuthProviderConfig, OAuthSessionInfo, OAuthTokenResponse, pkce::PkceParams,
-};
 use crate::error::auth::OAuthError;
 
 /// 距离过期多久开始预刷新（默认提前2分钟）

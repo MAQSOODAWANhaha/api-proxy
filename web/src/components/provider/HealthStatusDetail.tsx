@@ -224,7 +224,7 @@ const renderLimitWindow = (
               </span>
             </div>
 
-            <span className={`text-xs tabular-nums ${remainingClass} text-right w-32 justify-self-end`}>{remainingLabel}</span>
+            <span className={`text-xs tabular-nums ${remainingClass} text-right w-32 justify-self-end whitespace-nowrap overflow-hidden`}>{remainingLabel}</span>
           </div>
         </div>
       </TooltipTrigger>
@@ -240,7 +240,7 @@ const renderLimitWindow = (
             {window.resets_at ? formatTimestamp(window.resets_at) : '未知'}
           </span>
           <span className="text-muted-foreground">剩余时间</span>
-          <span className="text-foreground">{remainingLabel}</span>
+          <span className="text-foreground whitespace-nowrap">{remainingLabel}</span>
                     {extraEntries.map(([key, value]) => (
             <React.Fragment key={key}>
               <span className="text-muted-foreground">{key}</span>

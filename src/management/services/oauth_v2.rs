@@ -7,7 +7,7 @@ use std::convert::TryFrom;
 
 use serde::{Deserialize, Serialize};
 
-use crate::auth::oauth_client::{
+use crate::auth::api_key_oauth_service::{
     ApiKeyOauthService, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
 };
 use crate::error::auth::{AuthError, OAuthError};

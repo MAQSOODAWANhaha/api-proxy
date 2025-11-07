@@ -62,6 +62,20 @@ pub struct ApiKeyInfo {
     pub updated_at: DateTime<Utc>,
 }
 
+/// OAuth 提供商配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthProviderConfig {
+    pub provider_name: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub authorize_url: String,
+    pub token_url: String,
+    pub redirect_uri: String,
+    pub scopes: Vec<String>,
+    pub pkce_required: bool,
+    pub extra_params: HashMap<String, String>,
+}
+
 /// JWT 载荷
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {

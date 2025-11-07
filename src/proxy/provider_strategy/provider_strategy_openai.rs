@@ -2,7 +2,7 @@
 //!
 //! 处理OpenAI特有的逻辑，包括429错误处理、JWT解析等
 
-use crate::auth::oauth_client::JWTParser;
+use crate::auth::openai::OpenAI;
 use crate::error::{Context, Result};
 use crate::key_pool::ApiKeyHealthService;
 use crate::logging::{LogComponent, LogStage};
@@ -45,8 +45,8 @@ impl OpenAIStrategy {
 
     /// `从OpenAI` access_token中解析chatgpt-account-id
     fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
-        let jwt_parser = JWTParser;
-        jwt_parser.extract_chatgpt_account_id(access_token).ok()?
+        let parse = OpenAI;
+        parse.extract_chatgpt_account_id(access_token).ok()?
     }
 
     /// 异步处理429限流错误

@@ -17,6 +17,7 @@ pub mod key_pool;
 pub mod logging;
 pub mod management;
 pub mod pricing;
+pub mod provider;
 pub mod proxy;
 pub mod trace;
 pub mod types;
