@@ -17,6 +17,9 @@ use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 use tokio::sync::{Mutex, RwLock};
 
+/// `OpenAI` token 端点允许的额外参数白名单
+const OPENAI_TOKEN_PARAM_WHITELIST: &[&str] = &["response_type"];
+
 /// 令牌响应结构（来自OAuth服务器的原始响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenResponse {
@@ -285,7 +288,11 @@ impl ApiKeyOAuthRefreshService {
         }
 
         Self::add_provider_specific_params(&mut form_params, &session.provider_name, &session);
-        Self::add_extra_params(&mut form_params, &config.extra_params);
+        Self::add_extra_params(
+            &mut form_params,
+            &config.extra_params,
+            &session.provider_name,
+        );
 
         let token_response = self
             .send_token_request(&config.token_url, form_params)
@@ -302,11 +309,22 @@ impl ApiKeyOAuthRefreshService {
     fn add_extra_params(
         form_params: &mut HashMap<String, String>,
         extra_params: &HashMap<String, String>,
+        provider_name: &str,
     ) {
+        let base = provider_name.split(':').next().unwrap_or(provider_name);
+
         for (key, value) in extra_params {
-            form_params
-                .entry(key.clone())
-                .or_insert_with(|| value.clone());
+            let allow_param = if base == "openai" {
+                OPENAI_TOKEN_PARAM_WHITELIST.contains(&key.as_str())
+            } else {
+                true
+            };
+
+            if allow_param {
+                form_params
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
         }
     }
 
