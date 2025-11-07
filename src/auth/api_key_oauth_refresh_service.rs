@@ -312,19 +312,15 @@ impl ApiKeyOAuthRefreshService {
         provider_name: &str,
     ) {
         let base = provider_name.split(':').next().unwrap_or(provider_name);
+        if base == "openai" {
+            // OpenAI token端点只接受标准字段，额外参数直接忽略
+            return;
+        }
 
         for (key, value) in extra_params {
-            let allow_param = if base == "openai" {
-                OPENAI_TOKEN_PARAM_WHITELIST.contains(&key.as_str())
-            } else {
-                true
-            };
-
-            if allow_param {
-                form_params
-                    .entry(key.clone())
-                    .or_insert_with(|| value.clone());
-            }
+            form_params
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
         }
     }
 
