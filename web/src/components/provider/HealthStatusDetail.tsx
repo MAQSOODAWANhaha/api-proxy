@@ -207,10 +207,10 @@ const renderLimitWindow = (
     <Tooltip key={title}>
       <TooltipTrigger asChild>
         <div className="cursor-help rounded-md border border-border/60 bg-muted/40 px-3 py-2">
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-[auto,1fr,auto] items-center gap-3">
             <Badge
               variant="outline"
-              className="border-muted-foreground/30 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground w-16 text-center flex-shrink-0"
+              className="border-muted-foreground/30 bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground w-14 inline-flex items-center justify-center text-center"
             >
               {windowDurationText}
             </Badge>
@@ -224,10 +224,9 @@ const renderLimitWindow = (
               </span>
             </div>
 
-            <span className={`text-xs tabular-nums ${remainingClass} flex-shrink-0 text-right min-w-16`}>{remainingLabel}</span>
+            <span className={`text-xs tabular-nums ${remainingClass} text-right w-32 justify-self-end`}>{remainingLabel}</span>
           </div>
-
-                  </div>
+        </div>
       </TooltipTrigger>
 
       <TooltipContent className="max-w-xs space-y-2 bg-white/95 dark:bg-gray-900/95 border-gray-200 dark:border-gray-700 shadow-lg">
