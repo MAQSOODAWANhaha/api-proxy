@@ -7,7 +7,7 @@
 //! 4. 不同提供商的配置处理
 
 use api_proxy::auth::types::OAuthProviderConfig;
-use api_proxy::provider::{ApiKeyProviderConfig, ProviderConfigBuilder};
+use api_proxy::provider::{ApiKeyProviderConfig, ProviderConfigBuilder, build_authorize_url};
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
@@ -93,8 +93,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth_url_generation_no_duplicate_params() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
         let oauth_config = create_openai_oauth_config();
 
@@ -126,7 +124,7 @@ mod tests {
         };
 
         // 生成授权URL
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
 
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
@@ -193,8 +191,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth_url_generation_with_empty_extra_params() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
 
         // 创建没有额外参数的配置
@@ -210,7 +206,7 @@ mod tests {
             extra_params: HashMap::new(), // 空的额外参数
         };
 
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok());
 
         let url = result.unwrap();
@@ -245,8 +241,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth_url_generation_without_pkce() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
 
         // 创建不需要PKCE的配置
@@ -262,7 +256,7 @@ mod tests {
             extra_params: HashMap::new(),
         };
 
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok());
 
         let url = result.unwrap();
@@ -305,8 +299,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth_url_parameter_precedence() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
 
         // 创建包含response_type的额外参数配置
@@ -326,7 +318,7 @@ mod tests {
             extra_params,
         };
 
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok());
 
         let url = result.unwrap();
@@ -350,8 +342,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth_url_special_characters_in_params() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
 
         // 创建包含特殊字符的参数
@@ -374,15 +364,15 @@ mod tests {
             extra_params,
         };
 
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok());
 
         let url = result.unwrap();
         let parsed_url = Url::parse(&url).unwrap();
         let params: HashMap<String, String> = parsed_url.query_pairs().into_owned().collect();
 
-        // 验证scope被数据库配置覆盖（因为数据库extra_params中不包含scope，所以使用配置中的scopes）
-        assert_eq!(params.get("scope"), Some(&"read".to_string())); // 使用配置中的scope
+        // 验证scope使用extra_params中的值
+        assert_eq!(params.get("scope"), Some(&"email profile".to_string()));
 
         // 验证URL整体有效性
         assert!(url.starts_with("https://example.com/oauth/authorize?"));
@@ -465,8 +455,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_claude_oauth_url_generation() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
         let oauth_config = create_claude_oauth_config();
 
@@ -496,7 +484,7 @@ mod tests {
         };
 
         // 生成授权URL
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
@@ -573,8 +561,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_gemini_oauth_url_generation() {
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
         let oauth_config = create_gemini_oauth_config();
 
@@ -604,7 +590,7 @@ mod tests {
         };
 
         // 生成授权URL
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
@@ -646,7 +632,7 @@ mod tests {
         );
 
         // 验证参数总数
-        let expected_params = 9; // client_id, redirect_uri, state, scope, response_type, access_type, prompt, code_challenge, code_challenge_method
+        let expected_params = 10; // client_id, redirect_uri, state, scope, response_type, access_type, prompt, include_granted_scopes, code_challenge, code_challenge_method
         assert_eq!(
             params.len(),
             expected_params,
@@ -667,8 +653,6 @@ mod tests {
             ("Gemini", create_gemini_oauth_config()),
         ];
 
-        let db = create_test_db().await;
-        let manager = make_manager(db);
         let session = create_test_session();
 
         for (provider_name, oauth_config) in providers {
@@ -698,7 +682,7 @@ mod tests {
                 extra_params,
             };
 
-            let result = manager.build_authorize_url(&config, &session);
+            let result = build_authorize_url(&config, &session);
             assert!(result.is_ok(), "{provider_name} URL生成应该成功");
 
             let url = result.unwrap();

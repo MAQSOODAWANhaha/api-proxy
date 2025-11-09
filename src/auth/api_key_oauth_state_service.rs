@@ -7,7 +7,6 @@ use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshResult;
 use crate::auth::api_key_oauth_service::{OAuthSessionInfo, OAuthTokenResponse};
 use crate::auth::pkce::PkceParams;
 use crate::auth::types::{AuthStatus, OAuthProviderConfig};
-use crate::error::{AuthResult, Result};
 use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::types::ProviderTypeId;
 use crate::{ensure, error};
@@ -25,7 +24,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::error::auth::OAuthError;
+use crate::error::{Result, auth::OAuthError};
 
 /// 距离过期多久开始预刷新（默认提前2分钟）
 pub const REFRESH_LEAD_TIME: Duration = Duration::seconds(120);
@@ -196,7 +195,7 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 根据会话ID获取会话
-    pub async fn get_session(&self, session_id: &str) -> AuthResult<oauth_client_sessions::Model> {
+    pub async fn get_session(&self, session_id: &str) -> Result<oauth_client_sessions::Model> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
@@ -256,7 +255,7 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 判断 OAuth 会话是否仍绑定到用户密钥
-    pub async fn has_oauth_association(&self, user_id: i32, session_id: &str) -> AuthResult<bool> {
+    pub async fn has_oauth_association(&self, user_id: i32, session_id: &str) -> Result<bool> {
         let record = user_provider_keys::Entity::find()
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .filter(user_provider_keys::Column::AuthType.eq("oauth"))
@@ -298,7 +297,7 @@ impl ApiKeyOAuthStateService {
         &self,
         session_id: &str,
         token_response: &OAuthTokenResponse,
-    ) -> AuthResult<()> {
+    ) -> Result<()> {
         let session = self.get_session(session_id).await?;
 
         // 计算令牌过期时间
@@ -665,7 +664,7 @@ impl ApiKeyOAuthStateService {
         name: &str,
         description: Option<&str>,
         _config: &OAuthProviderConfig,
-    ) -> AuthResult<oauth_client_sessions::Model> {
+    ) -> Result<oauth_client_sessions::Model> {
         // 生成PKCE参数
         let pkce = PkceParams::new();
 
@@ -704,7 +703,7 @@ impl ApiKeyOAuthStateService {
         &self,
         params: &CreateSessionParams,
         config: &OAuthProviderConfig,
-    ) -> AuthResult<oauth_client_sessions::Model> {
+    ) -> Result<oauth_client_sessions::Model> {
         self.create_session(
             params.user_id,
             &params.provider_name,
@@ -717,10 +716,7 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 根据状态参数获取会话
-    pub async fn get_session_by_state(
-        &self,
-        state: &str,
-    ) -> AuthResult<oauth_client_sessions::Model> {
+    pub async fn get_session_by_state(&self, state: &str) -> Result<oauth_client_sessions::Model> {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::State.eq(state))
             .one(self.db.as_ref())
@@ -742,7 +738,7 @@ impl ApiKeyOAuthStateService {
         session_id: &str,
         status: AuthStatus,
         error_message: Option<&str>,
-    ) -> AuthResult<()> {
+    ) -> Result<()> {
         let session = self.get_session(session_id).await?;
 
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
@@ -766,7 +762,7 @@ impl ApiKeyOAuthStateService {
         &self,
         session_id: &str,
         _authorization_code: &str,
-    ) -> AuthResult<()> {
+    ) -> Result<()> {
         let session = self.get_session(session_id).await?;
 
         let mut active_model: oauth_client_sessions::ActiveModel = session.into();
@@ -779,7 +775,7 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 获取用户的所有会话
-    pub async fn list_user_sessions(&self, user_id: i32) -> AuthResult<Vec<OAuthSessionInfo>> {
+    pub async fn list_user_sessions(&self, user_id: i32) -> Result<Vec<OAuthSessionInfo>> {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .order_by_desc(oauth_client_sessions::Column::CreatedAt)
@@ -809,7 +805,7 @@ impl ApiKeyOAuthStateService {
         &self,
         user_id: i32,
         provider_name: &str,
-    ) -> AuthResult<Vec<oauth_client_sessions::Model>> {
+    ) -> Result<Vec<oauth_client_sessions::Model>> {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .filter(oauth_client_sessions::Column::ProviderName.eq(provider_name))
@@ -827,7 +823,7 @@ impl ApiKeyOAuthStateService {
         &self,
         user_id: i32,
         provider_type_id: ProviderTypeId,
-    ) -> AuthResult<Vec<oauth_client_sessions::Model>> {
+    ) -> Result<Vec<oauth_client_sessions::Model>> {
         let sessions = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .filter(oauth_client_sessions::Column::ProviderTypeId.eq(provider_type_id))
@@ -846,7 +842,7 @@ impl ApiKeyOAuthStateService {
         user_id: i32,
         provider_name: Option<&str>,
         provider_type_id: Option<ProviderTypeId>,
-    ) -> AuthResult<Vec<oauth_client_sessions::Model>> {
+    ) -> Result<Vec<oauth_client_sessions::Model>> {
         let mut query = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::UserId.eq(user_id))
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
@@ -868,7 +864,7 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 删除会话
-    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> AuthResult<()> {
+    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> Result<()> {
         let session = self.get_session(session_id).await?;
 
         // 验证会话所有权
@@ -885,17 +881,13 @@ impl ApiKeyOAuthStateService {
     }
 
     /// 验证会话访问权限
-    pub async fn validate_session_access(
-        &self,
-        session_id: &str,
-        user_id: i32,
-    ) -> AuthResult<bool> {
+    pub async fn validate_session_access(&self, session_id: &str, user_id: i32) -> Result<bool> {
         let session = self.get_session(session_id).await?;
         Ok(session.user_id == user_id)
     }
 
     /// 获取有效的访问令牌
-    pub async fn get_valid_access_token(&self, session_id: &str) -> AuthResult<Option<String>> {
+    pub async fn get_valid_access_token(&self, session_id: &str) -> Result<Option<String>> {
         let session = self.get_session(session_id).await?;
 
         if session.status != AuthStatus::Authorized.to_string() {
@@ -913,7 +905,7 @@ impl ApiKeyOAuthStateService {
     pub async fn batch_update_sessions(
         &self,
         updates: Vec<(String, AuthStatus, Option<String>)>,
-    ) -> AuthResult<()> {
+    ) -> Result<()> {
         let txn = self.db.begin().await?;
 
         for (session_id, status, error_message) in updates {

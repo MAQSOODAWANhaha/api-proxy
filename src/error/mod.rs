@@ -8,18 +8,6 @@ pub use types::ProxyError;
 /// All functions that can fail should return this type.
 pub type Result<T> = std::result::Result<T, ProxyError>;
 
-// 2. Domain-specific Result aliases for better readability.
-pub type AuthResult<T> = Result<T>;
-pub type ConfigResult<T> = Result<T>;
-pub type DatabaseResult<T> = Result<T>;
-pub type NetworkResult<T> = Result<T>;
-pub type KeyPoolResult<T> = Result<T>;
-
-/// Deprecated alias kept temporarily for incremental migration.
-#[allow(dead_code)]
-#[deprecated(since = "0.1.0", note = "Please migrate to `crate::error::Result`")]
-pub type OldAppResult<T> = Result<T>;
-
 // 3. Module declarations
 pub mod auth;
 pub mod config;

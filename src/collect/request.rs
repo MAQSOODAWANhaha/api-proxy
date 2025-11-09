@@ -2,7 +2,7 @@
 
 use pingora_proxy::Session;
 
-use crate::auth::AuthUtils;
+use crate::auth::utils::AuthUtils;
 use crate::collect::types::RequestDetails;
 use crate::collect::types::RequestStats;
 

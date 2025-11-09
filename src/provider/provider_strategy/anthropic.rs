@@ -1,5 +1,7 @@
+use crate::provider::traits::OauthProvider;
 use crate::provider::{
-    OauthProvider, ProviderType, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
+    ProviderType, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
+    create_token_request, into_token_request,
 };
 
 #[derive(Debug)]
@@ -16,7 +18,7 @@ impl OauthProvider for AnthropicProvider {
             "client_secret".to_string(),
             context.session.code_verifier.clone(),
         );
-        TokenRequestPayload::new(context.config.token_url.clone(), form)
+        into_token_request(create_token_request(context.config.token_url.clone(), form))
     }
 
     fn build_refresh_request(&self, context: TokenRefreshContext<'_>) -> TokenRequestPayload {
@@ -25,6 +27,6 @@ impl OauthProvider for AnthropicProvider {
             "client_secret".to_string(),
             context.session.code_verifier.clone(),
         );
-        TokenRequestPayload::new(context.config.token_url.clone(), form)
+        into_token_request(create_token_request(context.config.token_url.clone(), form))
     }
 }

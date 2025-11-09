@@ -7,9 +7,6 @@ pub use super::database::DatabaseError;
 pub use super::key_pool::KeyPoolError;
 pub use super::network::NetworkError;
 pub use super::provider::ProviderError;
-pub use super::{
-    AuthResult, ConfigResult, Context, DatabaseResult, KeyPoolResult, NetworkResult, ProxyError,
-    Result,
-};
+pub use super::{Context, ProxyError, Result};
 
 pub use crate::{bail, ensure, error};

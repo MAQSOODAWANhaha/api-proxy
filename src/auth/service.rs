@@ -8,12 +8,11 @@ use entity::{users, users::Entity as Users};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 
-use crate::auth::{
-    AuthContext, AuthMethod, AuthResult,
-    api_key_manager::ApiKeyManager,
-    jwt::{JwtManager, TokenPair},
-    permissions::UserRole,
-    types::{Authentication, TokenType, UserInfo},
+use crate::auth::api_key_manager::ApiKeyManager;
+use crate::auth::jwt::{JwtManager, TokenPair};
+use crate::auth::permissions::UserRole;
+use crate::auth::types::{
+    AuthContext, AuthMethod, AuthResult, Authentication, TokenType, UserInfo,
 };
 use crate::error::{ProxyError, Result};
 

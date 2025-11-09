@@ -1,6 +1,7 @@
-use crate::error::{AuthResult, auth::OAuthError};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+
+use crate::error::{Result, auth::OAuthError};
 
 use super::provider_strategy::{
     AnthropicProvider, GeminiProvider, OpenAIProvider, StandardOauthProvider,
@@ -29,7 +30,7 @@ static OAUTH_PROVIDERS: LazyLock<HashMap<ProviderType, Arc<dyn OauthProvider>>> 
 static STANDARD_PROVIDER: LazyLock<Arc<dyn OauthProvider>> =
     LazyLock::new(|| Arc::new(StandardOauthProvider) as Arc<dyn OauthProvider>);
 
-pub fn resolve_oauth_provider(pt: &ProviderType) -> AuthResult<Arc<dyn OauthProvider>> {
+pub fn resolve_oauth_provider(pt: &ProviderType) -> Result<Arc<dyn OauthProvider>> {
     if matches!(pt, ProviderType::Custom(_)) {
         return Ok(STANDARD_PROVIDER.clone());
     }
@@ -42,7 +43,7 @@ pub fn resolve_oauth_provider(pt: &ProviderType) -> AuthResult<Arc<dyn OauthProv
     })
 }
 
-pub fn get_provider_by_name(provider_name: &str) -> AuthResult<Arc<dyn OauthProvider>> {
+pub fn get_provider_by_name(provider_name: &str) -> Result<Arc<dyn OauthProvider>> {
     let provider_type = ProviderType::parse(provider_name)?;
     resolve_oauth_provider(&provider_type)
 }

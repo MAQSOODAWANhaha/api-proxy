@@ -38,7 +38,7 @@ pub trait OauthProvider: Send + Sync + fmt::Debug {
 - 默认实现：授权请求为空；token/refresh/revoke 返回标准 form（或 `None`）。
 
 ## 调用层改造
-- `ApiKeyProviderConfig::build_authorize_url` 创建 `AuthorizationRequest`，交给 provider 的 `build_authorization_request` 后统一编码。
+- `provider::build_authorize_url` 创建 `AuthorizationRequest`，交给 provider 的 `build_authorization_request` 后统一编码。
 - `ApiKeyOAuthRefreshService`：
   - 授权码交换：构造 `TokenExchangeContext`，调用 `build_token_request` 获取 payload 并发送。
   - Token 刷新：同理调用 `build_refresh_request`。

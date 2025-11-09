@@ -6,8 +6,7 @@
 use crate::auth::api_key_oauth_service::OAuthTokenResponse;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::types::AuthStatus;
-use crate::error::AuthResult;
-use crate::error::auth::OAuthError;
+use crate::error::{Result, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::provider::{
     ApiKeyProviderConfig, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
@@ -47,39 +46,6 @@ pub struct TokenExchangeRequest {
     pub authorization_code: String,
     pub code_verifier: String,
     pub redirect_uri: String,
-}
-
-/// Token交换统计信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenExchangeStats {
-    /// 成功交换次数
-    pub successful_exchanges: u64,
-    /// 失败交换次数
-    pub failed_exchanges: u64,
-    /// 刷新令牌次数
-    pub token_refreshes: u64,
-    /// 令牌撤销次数
-    pub token_revocations: u64,
-    /// 平均交换时间（毫秒）
-    pub average_exchange_time_ms: u64,
-    /// 各提供商成功率
-    pub provider_success_rates: HashMap<String, f64>,
-    /// 最后更新时间
-    pub last_updated: chrono::DateTime<chrono::Utc>,
-}
-
-impl Default for TokenExchangeStats {
-    fn default() -> Self {
-        Self {
-            successful_exchanges: 0,
-            failed_exchanges: 0,
-            token_refreshes: 0,
-            token_revocations: 0,
-            average_exchange_time_ms: 0,
-            provider_success_rates: HashMap::new(),
-            last_updated: chrono::Utc::now(),
-        }
-    }
 }
 
 /// OAuth Token 刷新执行器
@@ -128,7 +94,7 @@ impl ApiKeyOAuthRefreshService {
         &self,
         request_id: String,
         session_id: &str,
-    ) -> AuthResult<ApiKeyOAuthRefreshResult> {
+    ) -> Result<ApiKeyOAuthRefreshResult> {
         ldebug!(
             &request_id,
             LogStage::Authentication,
@@ -168,7 +134,7 @@ impl ApiKeyOAuthRefreshService {
     pub async fn refresh_session_by_id(
         &self,
         session_id: &str,
-    ) -> AuthResult<ApiKeyOAuthRefreshResult> {
+    ) -> Result<ApiKeyOAuthRefreshResult> {
         let lock = self.get_refresh_lock(session_id).await;
         let _guard = lock.lock().await;
 
@@ -195,7 +161,7 @@ impl ApiKeyOAuthRefreshService {
         &self,
         session: &oauth_client_sessions::Model,
         refresh_token: &str,
-    ) -> AuthResult<ApiKeyOAuthRefreshResult> {
+    ) -> Result<ApiKeyOAuthRefreshResult> {
         let config = self
             .provider_manager
             .get_config(&session.provider_name)
@@ -229,7 +195,7 @@ impl ApiKeyOAuthRefreshService {
     }
 
     /// 刷新访问令牌，并将最新的令牌结果写回数据库
-    pub async fn refresh_access_token(&self, session_id: &str) -> AuthResult<OAuthTokenResponse> {
+    pub async fn refresh_access_token(&self, session_id: &str) -> Result<OAuthTokenResponse> {
         let result = self.refresh_session_by_id(session_id).await?;
         let token_response = result.token_response.clone();
         self.session_manager
@@ -243,7 +209,7 @@ impl ApiKeyOAuthRefreshService {
         &self,
         session_id: &str,
         authorization_code: &str,
-    ) -> AuthResult<OAuthTokenResponse> {
+    ) -> Result<OAuthTokenResponse> {
         let session = self.session_manager.get_session(session_id).await?;
 
         ensure!(
@@ -287,8 +253,8 @@ impl ApiKeyOAuthRefreshService {
         Ok(oauth_response)
     }
 
-    async fn send_token_request(&self, payload: TokenRequestPayload) -> AuthResult<TokenResponse> {
-        let (token_url, form_params) = payload.into_parts();
+    async fn send_token_request(&self, payload: TokenRequestPayload) -> Result<TokenResponse> {
+        let (token_url, form_params) = payload;
         let response = self
             .http_client
             .post(&token_url)
@@ -345,7 +311,7 @@ impl ApiKeyOAuthRefreshService {
         session_id: &str,
         token: &str,
         token_type_hint: Option<&str>,
-    ) -> AuthResult<()> {
+    ) -> Result<()> {
         // 获取会话信息
         let session = self.session_manager.get_session(session_id).await?;
         let config = self
@@ -373,7 +339,7 @@ impl ApiKeyOAuthRefreshService {
             return Ok(());
         };
 
-        let (revoke_url, form_params) = payload.into_parts();
+        let (revoke_url, form_params) = payload;
 
         // 发送撤销请求
         let response = self

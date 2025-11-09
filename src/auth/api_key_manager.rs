@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
 use crate::auth::types::ApiKeyInfo;
+use crate::auth::utils::AuthUtils;
 use crate::cache::CacheManager;
 use crate::error::{Result, auth::AuthError};
 use entity::user_provider_keys;
@@ -41,7 +42,7 @@ impl ApiKeyManager {
     /// Validate API key
     pub async fn validate_api_key(&self, api_key: &str) -> Result<ApiKeyInfo> {
         // Check API key format
-        if !self.is_valid_api_key_format(api_key) {
+        if !AuthUtils::is_valid_api_key_format(api_key) {
             return Err(AuthError::ApiKeyMalformed.into());
         }
 
@@ -101,16 +102,9 @@ impl ApiKeyManager {
         Ok(api_key_info)
     }
 
-    /// Check if API key format is valid
-    #[must_use]
-    pub fn is_valid_api_key_format(&self, api_key: &str) -> bool {
-        // Basic format check: starts with sk- and at least 20 characters
-        api_key.starts_with("sk-") && api_key.len() >= 20
-    }
-
     /// Sanitize API key for logging（委托统一工具，避免重复实现）
     fn sanitize_api_key(api_key: &str) -> String {
-        crate::auth::AuthUtils::sanitize_api_key(api_key)
+        AuthUtils::sanitize_api_key(api_key)
     }
 
     // ==================== 共享数据库操作方法 ====================
@@ -138,24 +132,11 @@ impl ApiKeyManager {
                 )
             })
     }
-
-    /// 验证API密钥格式（共享方法）
-    #[must_use]
-    pub fn validate_api_key_format(&self, api_key: &str) -> bool {
-        self.is_valid_api_key_format(api_key)
-    }
-
-    /// 管理端完整API密钥验证（保留原有逻辑）
-    ///
-    /// 包含权限检查、速率限制等完整功能
-    pub async fn validate_for_management(&self, api_key: &str) -> Result<ApiKeyInfo> {
-        // 使用原有的validate_api_key方法
-        self.validate_api_key(api_key).await
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::auth::utils::AuthUtils;
 
     #[test]
     fn test_api_key_format_validation() {
@@ -173,19 +154,11 @@ mod tests {
 
     #[test]
     fn test_api_key_sanitization() {
-        // Test sanitization logic
-        fn sanitize_api_key(api_key: &str) -> String {
-            if api_key.len() > 10 {
-                format!("{}***{}", &api_key[..4], &api_key[api_key.len() - 4..])
-            } else {
-                "***".to_string()
-            }
-        }
-
-        let sanitized = sanitize_api_key("sk-1234567890abcdef12345");
+        // 使用统一的 AuthUtils 方法测试
+        let sanitized = AuthUtils::sanitize_api_key("sk-1234567890abcdef12345");
         assert_eq!(sanitized, "sk-1***2345");
 
-        let short_sanitized = sanitize_api_key("short");
+        let short_sanitized = AuthUtils::sanitize_api_key("short");
         assert_eq!(short_sanitized, "***");
     }
 }

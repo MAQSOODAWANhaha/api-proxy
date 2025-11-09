@@ -1,5 +1,7 @@
 use crate::app::service_registry::AppServices;
 use crate::app::task_scheduler::{ScheduledTask, TaskScheduler};
+use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
+use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask;
 use crate::error::Result;
 use crate::key_pool::ApiKeyRateLimitResetTask;
@@ -38,10 +40,8 @@ impl AppTasks {
 
         // 从 services 获取核心服务
         let rate_limiter = services.api_key_rate_limit_service();
-        let api_refresh: Arc<crate::auth::ApiKeyOAuthRefreshService> =
-            services.api_key_refresh_service();
-        let api_oauth_state: Arc<crate::auth::ApiKeyOAuthStateService> =
-            services.api_key_oauth_state_service();
+        let api_refresh: Arc<ApiKeyOAuthRefreshService> = services.api_key_refresh_service();
+        let api_oauth_state: Arc<ApiKeyOAuthStateService> = services.api_key_oauth_state_service();
         let api_key_health_service = services.api_key_health_service();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）

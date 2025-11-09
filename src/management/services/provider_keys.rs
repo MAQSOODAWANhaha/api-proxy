@@ -24,7 +24,8 @@ const OAUTH_AUTH_TYPE: &str = "oauth";
 
 use crate::{
     auth::{
-        ScheduledTokenRefresh, api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
+        api_key_oauth_state_service::ScheduledTokenRefresh,
+        api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
         gemini_code_assist_client::GeminiCodeAssistClient, types::AuthStatus,
     },
     error::{ProxyError, Result, auth::AuthError},

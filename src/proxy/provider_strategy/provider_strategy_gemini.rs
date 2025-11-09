@@ -281,7 +281,7 @@ fn inject_load_code_assist_fields(json_value: &mut serde_json::Value, project_id
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{auth::AuthStatus, proxy::ProxyContext};
+    use crate::{auth::types::AuthStatus, proxy::ProxyContext};
     use entity::user_provider_keys;
     use sea_orm::prelude::DateTime;
 

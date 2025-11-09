@@ -1,69 +1,27 @@
 use crate::auth::types::OAuthProviderConfig;
 use entity::oauth_client_sessions;
-use std::borrow::Cow;
-use std::collections::HashMap;
+/// Token请求的简化表示，直接使用元组
+pub type TokenRequestPayload = (String, std::collections::HashMap<String, String, std::hash::RandomState>);
 
-#[derive(Debug)]
-pub struct AuthorizationRequest<'a> {
-    params: Vec<(Cow<'a, str>, String)>,
+/// 创建Token请求payload的便利函数
+#[must_use]
+pub fn create_token_request<S: std::hash::BuildHasher>(
+    url: impl Into<String>,
+    form: std::collections::HashMap<String, String, S>,
+) -> (String, std::collections::HashMap<String, String, S>) {
+    (url.into(), form)
 }
 
-impl<'a> AuthorizationRequest<'a> {
-    #[must_use]
-    pub const fn new(params: Vec<(Cow<'a, str>, String)>) -> Self {
-        Self { params }
-    }
-
-    #[must_use]
-    pub const fn params(&self) -> &Vec<(Cow<'a, str>, String)> {
-        &self.params
-    }
-
-    #[must_use]
-    pub fn into_params(self) -> Vec<(Cow<'a, str>, String)> {
-        self.params
-    }
-
-    pub fn upsert(&mut self, key: impl Into<Cow<'a, str>>, value: impl Into<String>) {
-        let key_cow = key.into();
-        if let Some(entry) = self
-            .params
-            .iter_mut()
-            .find(|(existing, _)| existing == &key_cow)
-        {
-            entry.1 = value.into();
-        } else {
-            self.params.push((key_cow, value.into()));
-        }
-    }
-
-    pub fn insert_if_absent(&mut self, key: impl Into<Cow<'a, str>>, value: impl Into<String>) {
-        let key_cow = key.into();
-        if !self.params.iter().any(|(existing, _)| existing == &key_cow) {
-            self.params.push((key_cow, value.into()));
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TokenRequestPayload {
-    pub url: String,
-    pub form: HashMap<String, String>,
-}
-
-impl TokenRequestPayload {
-    #[must_use]
-    pub fn new(url: impl Into<String>, form: HashMap<String, String>) -> Self {
-        Self {
-            url: url.into(),
-            form,
-        }
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (String, HashMap<String, String>) {
-        (self.url, self.form)
-    }
+/// 转换为标准 `TokenRequestPayload` 类型
+#[must_use]
+pub fn into_token_request<S: std::hash::BuildHasher>(
+    payload: (String, std::collections::HashMap<String, String, S>)
+) -> TokenRequestPayload {
+    // 转换 HashMap 的 hasher 类型为 RandomState
+    let (url, form) = payload;
+    let random_form: std::collections::HashMap<String, String, std::hash::RandomState> =
+        form.into_iter().collect();
+    (url, random_form)
 }
 
 #[derive(Debug)]
@@ -75,8 +33,8 @@ pub struct TokenExchangeContext<'a> {
 
 impl TokenExchangeContext<'_> {
     #[must_use]
-    pub fn base_form(&self) -> HashMap<String, String> {
-        let mut form = HashMap::new();
+    pub fn base_form(&self) -> std::collections::HashMap<String, String, std::hash::RandomState> {
+        let mut form = std::collections::HashMap::default();
         form.insert("grant_type".to_string(), "authorization_code".to_string());
         form.insert("code".to_string(), self.authorization_code.to_string());
         form.insert("client_id".to_string(), self.config.client_id.clone());
@@ -107,8 +65,8 @@ pub struct TokenRefreshContext<'a> {
 
 impl TokenRefreshContext<'_> {
     #[must_use]
-    pub fn base_form(&self) -> HashMap<String, String> {
-        let mut form = HashMap::new();
+    pub fn base_form(&self) -> std::collections::HashMap<String, String, std::hash::RandomState> {
+        let mut form = std::collections::HashMap::default();
         form.insert("grant_type".to_string(), "refresh_token".to_string());
         form.insert("refresh_token".to_string(), self.refresh_token.to_string());
         form.insert("client_id".to_string(), self.config.client_id.clone());
@@ -131,8 +89,8 @@ pub struct TokenRevokeContext<'a> {
 
 impl TokenRevokeContext<'_> {
     #[must_use]
-    pub fn base_form(&self) -> HashMap<String, String> {
-        let mut form = HashMap::new();
+    pub fn base_form(&self) -> std::collections::HashMap<String, String, std::hash::RandomState> {
+        let mut form = std::collections::HashMap::default();
         form.insert("token".to_string(), self.token.to_string());
         form.insert("client_id".to_string(), self.config.client_id.clone());
 

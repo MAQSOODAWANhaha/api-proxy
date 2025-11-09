@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::provider::{OauthProvider, ProviderType, TokenRequestPayload, TokenRevokeContext};
+use crate::provider::traits::OauthProvider;
+use crate::provider::{
+    ProviderType, TokenRequestPayload, TokenRevokeContext, create_token_request, into_token_request,
+};
 
 #[derive(Debug)]
 pub struct OpenAIProvider;
@@ -23,9 +26,9 @@ impl OauthProvider for OpenAIProvider {
             form.insert("token_type_hint".to_string(), hint.to_string());
         }
 
-        Some(TokenRequestPayload::new(
+        Some(into_token_request(create_token_request(
             "https://auth.openai.com/oauth/revoke",
             form,
-        ))
+        )))
     }
 }

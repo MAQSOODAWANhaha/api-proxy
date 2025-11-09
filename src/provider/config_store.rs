@@ -1,18 +1,14 @@
+use super::types::ProviderType;
 use crate::auth::types::OAuthProviderConfig;
 use crate::cache::CacheManager;
-use crate::error::{AuthResult, ProxyError, auth::OAuthError};
+use crate::error::{ProxyError, Result, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lwarn};
-use entity::{ProviderTypes, oauth_client_sessions, provider_types};
+use entity::{ProviderTypes, provider_types};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use url::Url;
-
-use super::registry::resolve_oauth_provider;
-use super::request::AuthorizationRequest;
-use super::types::ProviderType;
 
 /// `OAuth提供商配置管理器`
 #[derive(Clone)]
@@ -27,7 +23,7 @@ impl ApiKeyProviderConfig {
         Self { db, cache }
     }
 
-    pub async fn get_config(&self, provider_name: &str) -> AuthResult<OAuthProviderConfig> {
+    pub async fn get_config(&self, provider_name: &str) -> Result<OAuthProviderConfig> {
         if let Some(config) = self.read_from_cache(provider_name).await {
             return Ok(config);
         }
@@ -36,7 +32,7 @@ impl ApiKeyProviderConfig {
         Ok(config)
     }
 
-    pub async fn list_active_configs(&self) -> AuthResult<Vec<OAuthProviderConfig>> {
+    pub async fn list_active_configs(&self) -> Result<Vec<OAuthProviderConfig>> {
         let models = ProviderTypes::find()
             .filter(provider_types::Column::IsActive.eq(true))
             .all(self.db.as_ref())
@@ -56,77 +52,7 @@ impl ApiKeyProviderConfig {
         Ok(configs)
     }
 
-    pub fn build_authorize_url(
-        &self,
-        config: &OAuthProviderConfig,
-        session: &oauth_client_sessions::Model,
-    ) -> AuthResult<String> {
-        ldebug!(
-            "system",
-            LogStage::Authentication,
-            LogComponent::OAuth,
-            "build_auth_url",
-            &format!(
-                "🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
-                config.provider_name, session.session_id
-            )
-        );
-
-        let mut url = Url::parse(&config.authorize_url)
-            .map_err(|e| OAuthError::NetworkError(format!("Invalid authorize URL: {e}")))?;
-
-        let scope = config.scopes.join(" ");
-        let mut params = vec![
-            (
-                std::borrow::Cow::Borrowed("client_id"),
-                config.client_id.clone(),
-            ),
-            (
-                std::borrow::Cow::Borrowed("redirect_uri"),
-                config.redirect_uri.clone(),
-            ),
-            (std::borrow::Cow::Borrowed("state"), session.state.clone()),
-            (std::borrow::Cow::Borrowed("scope"), scope),
-        ];
-
-        let response_type = config
-            .extra_params
-            .get("response_type")
-            .map_or("code", String::as_str)
-            .to_string();
-        params.push((std::borrow::Cow::Borrowed("response_type"), response_type));
-
-        if config.pkce_required {
-            params.push((
-                std::borrow::Cow::Borrowed("code_challenge"),
-                session.code_challenge.clone(),
-            ));
-            params.push((
-                std::borrow::Cow::Borrowed("code_challenge_method"),
-                "S256".to_string(),
-            ));
-        }
-
-        let mut request = AuthorizationRequest::new(params);
-        for (key, value) in &config.extra_params {
-            request.upsert(std::borrow::Cow::Owned(key.clone()), value.clone());
-        }
-        let provider_type = ProviderType::parse(
-            config
-                .provider_name
-                .split(':')
-                .next()
-                .unwrap_or(config.provider_name.as_str()),
-        )?;
-        let provider = resolve_oauth_provider(&provider_type)?;
-        provider.build_authorization_request(&mut request, session, config);
-
-        url.query_pairs_mut().extend_pairs(request.into_params());
-
-        Ok(url.to_string())
-    }
-
-    pub async fn reload_cache(&self) -> AuthResult<()> {
+    pub async fn reload_cache(&self) -> Result<()> {
         let configs = self.list_active_configs().await?;
         for config in configs {
             self.cache_config(&config.provider_name, &config).await;
@@ -134,7 +60,7 @@ impl ApiKeyProviderConfig {
         Ok(())
     }
 
-    pub async fn supports_oauth(&self, provider_name: &str) -> AuthResult<bool> {
+    pub async fn supports_oauth(&self, provider_name: &str) -> Result<bool> {
         match self.get_config(provider_name).await {
             Ok(_) => Ok(true),
             Err(err) => match err {
@@ -146,7 +72,7 @@ impl ApiKeyProviderConfig {
         }
     }
 
-    pub async fn fetch_redirect_uri(&self, provider_name: &str) -> AuthResult<String> {
+    pub async fn fetch_redirect_uri(&self, provider_name: &str) -> Result<String> {
         let config = self.get_config(provider_name).await?;
         Ok(config.redirect_uri)
     }
@@ -168,7 +94,7 @@ impl ApiKeyProviderConfig {
         }
     }
 
-    async fn load_config_from_db(&self, provider_name: &str) -> AuthResult<OAuthProviderConfig> {
+    async fn load_config_from_db(&self, provider_name: &str) -> Result<OAuthProviderConfig> {
         let oauth_type = provider_name.split(':').nth(1).unwrap_or("oauth");
         let provider_type = ProviderType::parse(provider_name)?;
         let base_provider = provider_type.db_name();

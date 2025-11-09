@@ -148,6 +148,79 @@ pub struct Authentication {
     pub provider_type_id: ProviderTypeId,
 }
 
+/// 认证方式 - 表示已完成认证的方式（认证结果状态）
+///
+/// 注意：与 `AuthType` 的区别：
+/// - `AuthMethod` 表示请求经过哪种方式完成了认证（结果状态）
+/// - `AuthType` 表示认证策略的具体类型（配置输入）
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AuthMethod {
+    /// 通过API密钥认证
+    ApiKey,
+    /// 通过JWT令牌认证
+    Jwt,
+    /// 通过基础认证（用户名/密码）
+    BasicAuth,
+    /// 内部服务调用认证
+    Internal,
+    /// `通过OAuth流程完成认证`
+    OAuth,
+}
+
+/// `OAuth令牌信息`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenInfo {
+    /// 访问令牌
+    pub access_token: String,
+    /// 刷新令牌（可选）
+    pub refresh_token: Option<String>,
+    /// 令牌类型
+    pub token_type: String,
+    /// 过期时间（秒）
+    pub expires_in: Option<i64>,
+    /// 作用域
+    pub scope: Option<String>,
+}
+
+/// 统一认证结果
+/// 表示用户认证成功后的完整信息，包括用户身份、角色和可选的令牌信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthResult {
+    /// 用户ID
+    pub user_id: i32,
+    /// 用户名
+    pub username: String,
+    /// 是否为管理员
+    pub is_admin: bool,
+    /// 用户角色
+    pub role: crate::auth::permissions::UserRole,
+    /// 认证方式
+    pub auth_method: AuthMethod,
+    /// 原始令牌（脱敏）
+    pub token_preview: String,
+    /// OAuth令牌信息（可选，仅当通过OAuth认证时包含）
+    pub token_info: Option<TokenInfo>,
+    /// 令牌过期时间（可选）
+    pub expires_at: Option<DateTime<Utc>>,
+    /// 会话信息（可选，主要用于OAuth会话）
+    pub session_info: Option<serde_json::Value>,
+}
+
+/// 认证上下文
+#[derive(Debug, Clone, Default)]
+pub struct AuthContext {
+    /// 认证结果
+    pub auth_result: Option<AuthResult>,
+    /// 请求的资源路径
+    pub resource_path: String,
+    /// HTTP 方法
+    pub method: String,
+    /// 客户端 IP
+    pub client_ip: Option<String>,
+    /// 用户代理
+    pub user_agent: Option<String>,
+}
+
 /// 认证令牌类型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenType {
@@ -172,40 +245,6 @@ impl TokenType {
             |token| Some(Self::Bearer(token.to_string())),
         )
     }
-
-    /// 获取令牌的字符串表示
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Bearer(token) | Self::ApiKey(token) => token,
-        }
-    }
-}
-
-/// 速率限制信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimitInfo {
-    /// 限制类型
-    pub limit_type: RateLimitType,
-    /// 限制值
-    pub limit: u32,
-    /// 时间窗口（秒）
-    pub window_seconds: u32,
-    /// 当前使用量
-    pub current_usage: u32,
-    /// 重置时间
-    pub reset_time: DateTime<Utc>,
-}
-
-/// 速率限制类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RateLimitType {
-    /// 请求数限制
-    Requests,
-    /// Token 数限制
-    Tokens,
-    /// 带宽限制
-    Bandwidth,
 }
 
 /// 认证配置（仅包含时效等非敏感信息）
@@ -343,157 +382,6 @@ impl From<&str> for AuthStatus {
     }
 }
 
-/// `OAuth2授权类型`
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OAuth2GrantType {
-    /// 授权码模式
-    AuthorizationCode,
-    /// 客户端凭据模式
-    ClientCredentials,
-    /// 刷新令牌
-    RefreshToken,
-}
-
-impl fmt::Display for OAuth2GrantType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AuthorizationCode => write!(f, "authorization_code"),
-            Self::ClientCredentials => write!(f, "client_credentials"),
-            Self::RefreshToken => write!(f, "refresh_token"),
-        }
-    }
-}
-
-/// PKCE代码挑战方法
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum PkceMethod {
-    /// 纯文本
-    Plain,
-    /// SHA256哈希
-    S256,
-}
-
-impl fmt::Display for PkceMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Plain => write!(f, "plain"),
-            Self::S256 => write!(f, "S256"),
-        }
-    }
-}
-
-/// 认证头格式
-/// 多认证配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MultiAuthConfig {
-    /// 认证类型
-    pub auth_type: AuthType,
-    /// 额外配置（JSON格式）
-    #[serde(default)]
-    pub extra_config: Option<serde_json::Value>,
-}
-
-impl MultiAuthConfig {
-    /// 创建API密钥认证配置
-    #[must_use]
-    pub const fn api_key() -> Self {
-        Self {
-            auth_type: AuthType::ApiKey,
-            extra_config: None,
-        }
-    }
-
-    /// `创建OAuth认证配置`
-    #[must_use]
-    pub fn oauth(client_id: &str, client_secret: &str, auth_url: &str, token_url: &str) -> Self {
-        let mut config = serde_json::Map::new();
-        config.insert(
-            "client_id".to_string(),
-            serde_json::Value::String(client_id.to_string()),
-        );
-        config.insert(
-            "client_secret".to_string(),
-            serde_json::Value::String(client_secret.to_string()),
-        );
-        config.insert(
-            "auth_url".to_string(),
-            serde_json::Value::String(auth_url.to_string()),
-        );
-        config.insert(
-            "token_url".to_string(),
-            serde_json::Value::String(token_url.to_string()),
-        );
-
-        Self {
-            auth_type: AuthType::OAuth,
-            extra_config: Some(serde_json::Value::Object(config)),
-        }
-    }
-}
-
-/// 审计日志条目
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditLogEntry {
-    /// 事件ID
-    pub id: String,
-    /// 用户ID
-    pub user_id: Option<i32>,
-    /// 用户名
-    pub username: Option<String>,
-    /// 事件类型
-    pub event_type: AuditEventType,
-    /// 资源路径
-    pub resource_path: String,
-    /// HTTP 方法
-    pub method: String,
-    /// 客户端 IP
-    pub client_ip: Option<String>,
-    /// 用户代理
-    pub user_agent: Option<String>,
-    /// 事件结果
-    pub result: AuditResult,
-    /// 错误信息
-    pub error_message: Option<String>,
-    /// 附加元数据
-    pub metadata: HashMap<String, serde_json::Value>,
-    /// 时间戳
-    pub timestamp: DateTime<Utc>,
-}
-
-/// 审计事件类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AuditEventType {
-    /// 登录
-    Login,
-    /// 登出
-    Logout,
-    /// API 调用
-    ApiCall,
-    /// 权限检查
-    PermissionCheck,
-    /// 配置更改
-    ConfigChange,
-    /// 用户管理
-    UserManagement,
-    /// 密钥管理
-    KeyManagement,
-}
-
-/// 审计结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AuditResult {
-    /// 成功
-    Success,
-    /// 失败
-    Failure,
-    /// 权限拒绝
-    PermissionDenied,
-    /// 速率限制
-    RateLimited,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,21 +440,5 @@ mod tests {
         assert_eq!(AuthStatus::Expired.to_string(), "expired");
         assert_eq!(AuthStatus::Error.to_string(), "error");
         assert_eq!(AuthStatus::Revoked.to_string(), "revoked");
-    }
-
-    #[test]
-    fn test_multi_auth_config_creation() {
-        let api_config = MultiAuthConfig::api_key();
-        assert_eq!(api_config.auth_type, AuthType::ApiKey);
-        assert_eq!(api_config.extra_config, None);
-
-        let oauth_config = MultiAuthConfig::oauth(
-            "client123",
-            "secret456",
-            "https://auth.example.com",
-            "https://token.example.com",
-        );
-        assert_eq!(oauth_config.auth_type, AuthType::OAuth);
-        assert!(oauth_config.extra_config.is_some());
     }
 }

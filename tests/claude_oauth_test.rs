@@ -3,8 +3,7 @@
 //! 测试Claude `OAuth`配置的scope处理问题
 
 use api_proxy::auth::types::OAuthProviderConfig;
-use api_proxy::cache::CacheManager;
-use api_proxy::provider::ApiKeyProviderConfig;
+use api_proxy::provider::build_authorize_url;
 use entity::provider_types::OAuthConfig;
 use std::collections::HashMap;
 
@@ -12,16 +11,7 @@ use std::collections::HashMap;
 mod tests {
     use super::*;
     use entity::oauth_client_sessions::Model;
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::DatabaseConnection;
     use url::Url;
-
-    /// 创建测试用的数据库连接
-    async fn create_test_db() -> DatabaseConnection {
-        let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
-        Migrator::up(&db, None).await.unwrap();
-        db
-    }
 
     /// 创建测试用的 `OAuth` 会话
     fn create_test_session() -> Model {
@@ -70,9 +60,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_claude_multiple_scopes_url_generation() {
-        let db = create_test_db().await;
-        let cache = std::sync::Arc::new(CacheManager::memory_only());
-        let manager = ApiKeyProviderConfig::new(std::sync::Arc::new(db), cache);
         let session = create_test_session();
         let oauth_config = create_claude_oauth_config();
 
@@ -108,7 +95,7 @@ mod tests {
         println!("🔍 [测试] 配置的scopes: {scopes:?}", scopes = config.scopes);
 
         // 生成授权URL
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok(), "URL生成应该成功: {:?}", result.err());
 
         let url = result.unwrap();
@@ -205,9 +192,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_claude_config_with_url_encoding() {
-        let db = create_test_db().await;
-        let cache = std::sync::Arc::new(CacheManager::memory_only());
-        let manager = ApiKeyProviderConfig::new(std::sync::Arc::new(db), cache);
         let session = create_test_session();
 
         // 创建Claude配置，测试URL编码
@@ -232,7 +216,7 @@ mod tests {
             },
         };
 
-        let result = manager.build_authorize_url(&config, &session);
+        let result = build_authorize_url(&config, &session);
         assert!(result.is_ok());
 
         let url = result.unwrap();

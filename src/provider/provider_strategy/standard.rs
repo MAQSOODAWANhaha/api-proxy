@@ -1,4 +1,5 @@
-use crate::provider::{OauthProvider, ProviderType};
+use crate::provider::ProviderType;
+use crate::provider::traits::OauthProvider;
 
 #[derive(Debug)]
 pub struct StandardOauthProvider;

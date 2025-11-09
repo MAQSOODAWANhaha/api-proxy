@@ -10,7 +10,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::auth::AuthUtils;
+use crate::auth::utils::AuthUtils;
 use crate::management::server::ManagementState;
 
 /// 包含认证用户信息的上下文

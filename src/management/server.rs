@@ -10,11 +10,11 @@
 
 use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
+use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
 use crate::auth::api_key_oauth_service::ApiKeyOauthService;
-use crate::auth::{
-    ApiKeyAuthenticationService, ApiKeyOAuthRefreshService, ApiKeyOAuthStateService,
-    api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
-};
+use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
+use crate::auth::api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask;
+use crate::auth::service::ApiKeyAuthenticationService;
 use crate::config::AppConfig;
 use crate::error::{ProxyError, Result};
 use crate::key_pool::ApiKeySchedulerService;

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
+use crate::provider::traits::OauthProvider;
 use crate::provider::{
-    AuthorizationRequest, OauthProvider, ProviderType, TokenExchangeContext, TokenRefreshContext,
-    TokenRequestPayload, TokenRevokeContext,
+    ProviderType, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
+    TokenRevokeContext, create_token_request, into_token_request,
 };
 
 #[derive(Debug)]
@@ -13,35 +14,41 @@ impl OauthProvider for GeminiProvider {
         ProviderType::Gemini
     }
 
-    fn build_authorization_request(
+    fn build_authorization_url(
         &self,
-        request: &mut AuthorizationRequest<'_>,
+        params: &mut std::collections::HashMap<String, String>,
         _session: &entity::oauth_client_sessions::Model,
         _config: &crate::auth::types::OAuthProviderConfig,
     ) {
-        request.insert_if_absent("access_type", "offline");
-        request.insert_if_absent("include_granted_scopes", "true");
-        request.insert_if_absent("prompt", "consent");
+        params
+            .entry("access_type".to_string())
+            .or_insert_with(|| "offline".to_string());
+        params
+            .entry("include_granted_scopes".to_string())
+            .or_insert_with(|| "true".to_string());
+        params
+            .entry("prompt".to_string())
+            .or_insert_with(|| "consent".to_string());
     }
 
     fn build_token_request(&self, context: TokenExchangeContext<'_>) -> TokenRequestPayload {
         let mut form = context.base_form();
         apply_google_oauth_params(&mut form);
-        TokenRequestPayload::new(context.config.token_url.clone(), form)
+        into_token_request(create_token_request(context.config.token_url.clone(), form))
     }
 
     fn build_refresh_request(&self, context: TokenRefreshContext<'_>) -> TokenRequestPayload {
         let mut form = context.base_form();
         apply_google_oauth_params(&mut form);
-        TokenRequestPayload::new(context.config.token_url.clone(), form)
+        into_token_request(create_token_request(context.config.token_url.clone(), form))
     }
 
     fn build_revoke_request(&self, context: TokenRevokeContext<'_>) -> Option<TokenRequestPayload> {
         let form = context.base_form();
-        Some(TokenRequestPayload::new(
+        Some(into_token_request(create_token_request(
             "https://oauth2.googleapis.com/revoke",
             form,
-        ))
+        )))
     }
 }
 

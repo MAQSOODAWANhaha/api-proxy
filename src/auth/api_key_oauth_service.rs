@@ -4,11 +4,10 @@
 
 use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
-use crate::auth::types::AuthStatus;
-use crate::auth::types::OAuthProviderConfig;
+use crate::auth::types::{AuthStatus, OAuthProviderConfig};
 use crate::cache::CacheManager;
-use crate::error::AuthResult;
-use crate::provider::ApiKeyProviderConfig;
+use crate::error::Result;
+use crate::provider::{ApiKeyProviderConfig, build_authorize_url};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -90,7 +89,7 @@ impl ApiKeyOauthService {
         name: &str,
         description: Option<&str>,
         extra_params: Option<HashMap<String, String>>,
-    ) -> AuthResult<AuthorizeUrlResponse> {
+    ) -> Result<AuthorizeUrlResponse> {
         let mut config = self.config.get_config(provider_name).await?;
         if let Some(user_params) = extra_params {
             for (key, value) in user_params {
@@ -105,7 +104,7 @@ impl ApiKeyOauthService {
             .create_session(user_id, provider_name, None, name, description, &config)
             .await?;
 
-        let authorize_url = self.config.build_authorize_url(&config, &session)?;
+        let authorize_url = build_authorize_url(&config, &session)?;
 
         Ok(AuthorizeUrlResponse {
             authorize_url,
@@ -119,41 +118,37 @@ impl ApiKeyOauthService {
         &self,
         session_id: &str,
         authorization_code: &str,
-    ) -> AuthResult<OAuthTokenResponse> {
+    ) -> Result<OAuthTokenResponse> {
         self.refresh
             .exchange_authorization_code(session_id, authorization_code)
             .await
     }
 
-    pub async fn list_user_sessions(&self, user_id: i32) -> AuthResult<Vec<OAuthSessionInfo>> {
+    pub async fn list_user_sessions(&self, user_id: i32) -> Result<Vec<OAuthSessionInfo>> {
         self.state.list_user_sessions(user_id).await
     }
 
-    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> AuthResult<()> {
+    pub async fn delete_session(&self, session_id: &str, user_id: i32) -> Result<()> {
         self.state.delete_session(session_id, user_id).await
     }
 
-    pub async fn refresh_token(&self, session_id: &str) -> AuthResult<OAuthTokenResponse> {
+    pub async fn refresh_token(&self, session_id: &str) -> Result<OAuthTokenResponse> {
         self.refresh.refresh_access_token(session_id).await
     }
 
-    pub async fn cleanup_expired_sessions(&self) -> AuthResult<u64> {
+    pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
         let now = chrono::Utc::now();
         let report = self.state.prune_stale_sessions(now).await?;
         Ok((report.removed_expired + report.removed_orphaned) as u64)
     }
 
-    pub async fn validate_session_access(
-        &self,
-        session_id: &str,
-        user_id: i32,
-    ) -> AuthResult<bool> {
+    pub async fn validate_session_access(&self, session_id: &str, user_id: i32) -> Result<bool> {
         self.state
             .validate_session_access(session_id, user_id)
             .await
     }
 
-    pub async fn list_providers(&self) -> AuthResult<Vec<OAuthProviderConfig>> {
+    pub async fn list_providers(&self) -> Result<Vec<OAuthProviderConfig>> {
         self.config.list_active_configs().await
     }
 
@@ -161,7 +156,7 @@ impl ApiKeyOauthService {
         &self,
         session_id: &str,
         threshold_seconds: Option<i64>,
-    ) -> AuthResult<bool> {
+    ) -> Result<bool> {
         let session = self.state.get_session(session_id).await?;
         if session.status != AuthStatus::Authorized.to_string() || session.refresh_token.is_none() {
             return Ok(false);

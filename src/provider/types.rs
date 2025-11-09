@@ -1,4 +1,4 @@
-use crate::error::{AuthResult, ProxyError};
+use crate::error::{ProxyError, Result};
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -29,7 +29,7 @@ impl ProviderType {
         input.split(':').next().unwrap_or(input)
     }
 
-    pub fn parse(name: &str) -> AuthResult<Self> {
+    pub fn parse(name: &str) -> Result<Self> {
         let normalized = Self::normalize(name);
         match normalized {
             "openai" | "chatgpt" => Ok(Self::OpenAI),
@@ -43,12 +43,12 @@ impl ProviderType {
 impl FromStr for ProviderType {
     type Err = ProxyError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         Self::parse(s)
     }
 }
 
-pub fn provider_type_from_name(provider_name: &str) -> AuthResult<ProviderType> {
+pub fn provider_type_from_name(provider_name: &str) -> Result<ProviderType> {
     ProviderType::parse(provider_name)
 }
 
