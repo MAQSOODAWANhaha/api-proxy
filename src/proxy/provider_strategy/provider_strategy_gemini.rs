@@ -100,29 +100,6 @@ impl ProviderStrategy for GeminiStrategy {
             );
         }
 
-        // 路径重写：将内部路由转换为 Gemini API 兼容的路径
-        let original_path = upstream_request.uri.path().to_string();
-        let new_path = original_path.replace(
-            "/v1internal:generateContent",
-            "/v1beta/models/gemini-pro:generateContent",
-        );
-
-        if original_path != new_path {
-            let mut parts = upstream_request.uri.clone().into_parts();
-            parts.path_and_query = Some(new_path.parse().unwrap());
-            upstream_request.set_uri(http::Uri::from_parts(parts).unwrap());
-
-            linfo!(
-                &ctx.request_id,
-                LogStage::RequestModify,
-                LogComponent::GeminiStrategy,
-                "rewrite_path",
-                "Request path rewritten for Gemini provider",
-                original_path = original_path,
-                new_path = new_path
-            );
-        }
-
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
         if let Some(backend) = &ctx.selected_backend
             && backend.auth_type.as_str() == "oauth"
