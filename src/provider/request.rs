@@ -1,7 +1,10 @@
 use crate::auth::types::OAuthProviderConfig;
 use entity::oauth_client_sessions;
 /// Token请求的简化表示，直接使用元组
-pub type TokenRequestPayload = (String, std::collections::HashMap<String, String, std::hash::RandomState>);
+pub type TokenRequestPayload = (
+    String,
+    std::collections::HashMap<String, String, std::hash::RandomState>,
+);
 
 /// 创建Token请求payload的便利函数
 #[must_use]
@@ -15,7 +18,7 @@ pub fn create_token_request<S: std::hash::BuildHasher>(
 /// 转换为标准 `TokenRequestPayload` 类型
 #[must_use]
 pub fn into_token_request<S: std::hash::BuildHasher>(
-    payload: (String, std::collections::HashMap<String, String, S>)
+    payload: (String, std::collections::HashMap<String, String, S>),
 ) -> TokenRequestPayload {
     // 转换 HashMap 的 hasher 类型为 RandomState
     let (url, form) = payload;

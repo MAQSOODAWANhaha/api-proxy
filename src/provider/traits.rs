@@ -20,11 +20,17 @@ pub trait OauthProvider: Send + Sync + std::fmt::Debug {
     }
 
     fn build_token_request(&self, context: TokenExchangeContext<'_>) -> TokenRequestPayload {
-        into_token_request(create_token_request(context.config.token_url.clone(), context.base_form()))
+        into_token_request(create_token_request(
+            context.config.token_url.clone(),
+            context.base_form(),
+        ))
     }
 
     fn build_refresh_request(&self, context: TokenRefreshContext<'_>) -> TokenRequestPayload {
-        into_token_request(create_token_request(context.config.token_url.clone(), context.base_form()))
+        into_token_request(create_token_request(
+            context.config.token_url.clone(),
+            context.base_form(),
+        ))
     }
 
     fn build_revoke_request(&self, context: TokenRevokeContext<'_>) -> Option<TokenRequestPayload> {

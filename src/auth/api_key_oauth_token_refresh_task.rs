@@ -344,7 +344,7 @@ impl ApiKeyOAuthTokenRefreshTask {
                 tokio::select! {
                     maybe_expired = queue.next() => {
                         let Some(expired) = maybe_expired else {
-                            break;
+                            continue;
                         };
                         let RefreshQueueItem::Session(session_id) = expired.into_inner();
                         let current_state = { task_state.read().await.clone() };
