@@ -12,6 +12,8 @@ import React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AlertCircle, CheckCircle, Clock, Info } from 'lucide-react'
+import { useTimezoneStore } from '@/store/timezone'
+import { formatUTCtoLocal } from '@/lib/timezone'
 
 /** OpenAI 限流窗口信息 */
 interface OpenAILimitWindow {
@@ -52,8 +54,16 @@ export interface HealthStatusDetailProps {
 }
 
 /** 格式化时间戳 */
-function formatTimestamp(timestamp?: number): string {
+function formatTimestamp(timestamp?: number, timezone?: string): string {
   if (!timestamp) return '-'
+  if (timezone) {
+    try {
+      const isoString = new Date(timestamp * 1000).toISOString()
+      return formatUTCtoLocal(isoString, timezone)
+    } catch (error) {
+      console.warn('按时区格式化时间戳失败，将回退到本地时间显示:', error)
+    }
+  }
   try {
     const date = new Date(timestamp * 1000)
     return date.toLocaleString('zh-CN', {
@@ -70,8 +80,15 @@ function formatTimestamp(timestamp?: number): string {
 }
 
 /** 格式化 ISO 时间字符串 */
-function formatISOTime(isoString?: string): string {
+function formatISOTime(isoString?: string, timezone?: string): string {
   if (!isoString) return '-'
+  if (timezone) {
+    try {
+      return formatUTCtoLocal(isoString, timezone)
+    } catch (error) {
+      console.warn('按时区格式化 ISO 时间失败，将回退到本地时间显示:', error)
+    }
+  }
   try {
     const date = new Date(isoString)
     return date.toLocaleString('zh-CN', {
@@ -159,12 +176,12 @@ function formatTooltipValue(value: unknown): string {
 }
 
 /** 格式化时间显示 */
-function formatDateTime(value?: string | number | null): string | undefined {
+function formatDateTime(value?: string | number | null, timezone?: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined
   if (typeof value === 'number') {
-    return formatTimestamp(value)
+    return formatTimestamp(value, timezone)
   }
-  return formatISOTime(value)
+  return formatISOTime(value, timezone)
 }
 
 
@@ -297,6 +314,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
   health_status_detail,
   health_status
 }) => {
+  const timezone = useTimezoneStore((state) => state.timezone)
   // 解析健康状态详情数据
   let detailData: HealthStatusDetail | null = null
   if (health_status_detail) {
@@ -325,7 +343,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
 
   // 恢复数据更新时间显示
   const createdAtRaw = detailData.data?.created_at ?? detailData.updated_at
-  const createdAtText = formatDateTime(createdAtRaw)
+  const createdAtText = formatDateTime(createdAtRaw, timezone)
 
   const windowSummaries = [
     primaryWindow ? renderLimitWindow(primaryWindow, '') : null,
