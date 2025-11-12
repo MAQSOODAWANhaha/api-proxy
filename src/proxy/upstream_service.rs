@@ -82,7 +82,8 @@ impl UpstreamService {
             options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
             options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
-            options.h2_ping_interval = Some(Duration::from_secs(30));
+            options.idle_timeout = Some(Duration::from_secs(60));
+            options.h2_ping_interval = Some(Duration::from_secs(20));
             options.max_h2_streams = 100;
         }
 
