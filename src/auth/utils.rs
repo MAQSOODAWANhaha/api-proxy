@@ -3,6 +3,7 @@
 //! 提供管理端和代理端共享的认证相关工具函数
 
 use axum::http::HeaderMap;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// 认证工具类 - 提供管理端和代理端共享的基础功能
@@ -182,12 +183,26 @@ impl AuthUtils {
     /// - `input`: 要哈希的字符串
     ///
     /// # 返回
-    /// 十六进制格式的哈希值
+    /// 十六进制格式的哈ashi值
     #[must_use]
     pub fn sha256_hash(input: &str) -> String {
-        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// `哈希用户凭据`
+    ///
+    /// # 参数
+    /// - `username`: 用户名
+    /// - `password`: 密码
+    ///
+    /// # 返回
+    /// 十六进制格式的哈希值
+    #[must_use]
+    pub fn hash_credentials(username: &str, password: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{username}:{password}").as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
@@ -289,6 +304,18 @@ impl AuthUtils {
             format!("{}***{}", &username[..2], &username[username.len() - 2..])
         } else if username.len() > 2 {
             format!("{}***", &username[..1])
+        } else {
+            "***".to_string()
+        }
+    }
+
+    /// Sanitize token for logging
+    #[must_use]
+    pub fn sanitize_token_for_logging(token: &str) -> String {
+        if token.len() > 20 {
+            format!("{}***{}", &token[..8], &token[token.len() - 8..])
+        } else if token.len() > 8 {
+            format!("{}***", &token[..4])
         } else {
             "***".to_string()
         }
@@ -424,5 +451,31 @@ mod tests {
         let empty_headers = HeaderMap::new();
         let no_user_agent = AuthUtils::extract_user_agent(&empty_headers);
         assert_eq!(no_user_agent, None);
+    }
+
+    #[test]
+    fn test_sha256_hash_consistency() {
+        let token = "test_token_123";
+        let hash1 = AuthUtils::sha256_hash(token);
+        let hash2 = AuthUtils::sha256_hash(token);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64); // SHA256 produces a 64-character hex string
+    }
+
+    #[test]
+    fn test_hash_credentials_consistency() {
+        let username = "user";
+        let password = "pass";
+
+        let hash1 = AuthUtils::hash_credentials(username, password);
+        let hash2 = AuthUtils::hash_credentials(username, password);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64);
+
+        // Different credentials should produce different hashes
+        let different_hash = AuthUtils::hash_credentials("other", "pass");
+        assert_ne!(hash1, different_hash);
     }
 }

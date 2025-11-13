@@ -326,24 +326,6 @@ impl Default for CacheStrategyConfig {
     }
 }
 
-/// 哈希工具函数
-#[must_use]
-pub fn hash_token(token: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-/// 哈希用户凭据
-#[must_use]
-pub fn hash_credentials(username: &str, password: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{username}:{password}").as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,31 +360,5 @@ mod tests {
         assert!(AuthCacheKey::JwtBlacklist("hash".to_string()).should_cache());
         assert!(AuthCacheKey::ApiKeyAuth("hash".to_string()).should_cache());
         assert!(AuthCacheKey::BasicFailure("hash".to_string()).should_cache());
-    }
-
-    #[test]
-    fn test_hash_token_consistency() {
-        let token = "test_token_123";
-        let hash1 = hash_token(token);
-        let hash2 = hash_token(token);
-
-        assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 64); // SHA256产生64字符的hex字符串
-    }
-
-    #[test]
-    fn test_hash_credentials_consistency() {
-        let username = "user";
-        let password = "pass";
-
-        let hash1 = hash_credentials(username, password);
-        let hash2 = hash_credentials(username, password);
-
-        assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 64);
-
-        // 不同凭据应该产生不同的哈希
-        let different_hash = hash_credentials("other", "pass");
-        assert_ne!(hash1, different_hash);
     }
 }

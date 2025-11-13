@@ -9,7 +9,7 @@ use crate::lwarn;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 
-use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager, hash_token};
+use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager};
 use crate::auth::types::ApiKeyInfo;
 use crate::auth::utils::AuthUtils;
 use crate::cache::CacheManager;
@@ -47,7 +47,7 @@ impl ApiKeyManager {
         }
 
         // Check cache first
-        let cache_key = AuthCacheKey::ApiKeyAuth(hash_token(api_key));
+        let cache_key = AuthCacheKey::ApiKeyAuth(AuthUtils::sha256_hash(api_key));
         if let Some(cached) = self
             .cache
             .get_cached_auth_result::<ApiKeyInfo>(&cache_key)

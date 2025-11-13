@@ -14,6 +14,7 @@ use crate::auth::permissions::UserRole;
 use crate::auth::types::{
     AuthContext, AuthMethod, AuthResult, Authentication, TokenType, UserInfo,
 };
+use crate::auth::utils::AuthUtils;
 use crate::error::{ProxyError, Result};
 
 /// Authentication service
@@ -65,20 +66,13 @@ impl ApiKeyAuthenticationService {
 
         let user_id = claims.user_id()?;
 
-        // 确定用户角色
-        let role = if claims.is_admin {
-            UserRole::Admin
-        } else {
-            UserRole::RegularUser
-        };
-
         Ok(AuthResult {
             user_id,
             username: claims.username,
             is_admin: claims.is_admin,
-            role,
+            role: get_user_role(claims.is_admin),
             auth_method: AuthMethod::Jwt,
-            token_preview: Self::sanitize_token(token),
+            token_preview: AuthUtils::sanitize_token_for_logging(token),
             token_info: None, // JWT认证不需要OAuth token信息
             expires_at: Some(
                 chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(chrono::Utc::now),
@@ -166,18 +160,11 @@ impl ApiKeyAuthenticationService {
             return Err(invalid_credentials_error());
         }
 
-        // 确定用户角色
-        let role = if user.is_admin {
-            UserRole::Admin
-        } else {
-            UserRole::RegularUser
-        };
-
         let token_pair = self.jwt_manager.generate_token_pair(
             user.id,
             user.username.clone(),
             user.is_admin,
-            role,
+            get_user_role(user.is_admin),
         )?;
 
         // Update last login time
@@ -203,15 +190,11 @@ impl ApiKeyAuthenticationService {
             return Err(invalid_credentials_error());
         }
 
-        // 确定用户角色
-        let role = if user.is_admin {
-            UserRole::Admin
-        } else {
-            UserRole::RegularUser
-        };
-
-        self.jwt_manager
-            .refresh_access_token(refresh_token, role, user.is_admin)
+        self.jwt_manager.refresh_access_token(
+            refresh_token,
+            get_user_role(user.is_admin),
+            user.is_admin,
+        )
     }
 
     /// Get user information by user ID
@@ -222,35 +205,18 @@ impl ApiKeyAuthenticationService {
             .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
 
         if let Some(user) = user {
-            let role = if user.is_admin {
-                UserRole::Admin
-            } else {
-                UserRole::RegularUser
-            };
-
             Ok(Some(UserInfo {
                 id: user.id,
                 username: user.username,
                 email: user.email,
                 is_admin: user.is_admin,
                 is_active: user.is_active,
-                permissions: vec![role], // 简化权限列表
+                permissions: vec![get_user_role(user.is_admin)], // 简化权限列表
                 created_at: user.created_at.and_utc(),
                 last_login: user.last_login.map(|dt| dt.and_utc()),
             }))
         } else {
             Ok(None)
-        }
-    }
-
-    /// Sanitize token for logging
-    fn sanitize_token(token: &str) -> String {
-        if token.len() > 20 {
-            format!("{}***{}", &token[..8], &token[token.len() - 8..])
-        } else if token.len() > 8 {
-            format!("{}***", &token[..4])
-        } else {
-            "***".to_string()
         }
     }
 
@@ -281,29 +247,28 @@ fn invalid_credentials_error() -> ProxyError {
     crate::error!(Authentication, "无效的认证凭据")
 }
 
+/// Determine user role based on admin status
+const fn get_user_role(is_admin: bool) -> UserRole {
+    if is_admin {
+        UserRole::Admin
+    } else {
+        UserRole::RegularUser
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::auth::utils::AuthUtils;
 
     #[test]
     fn test_token_sanitization() {
-        // Test token sanitization logic
-        fn sanitize_token(token: &str) -> String {
-            if token.len() > 20 {
-                format!("{}***{}", &token[..8], &token[token.len() - 8..])
-            } else if token.len() > 8 {
-                format!("{}***", &token[..4])
-            } else {
-                "***".to_string()
-            }
-        }
-
         let long_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ";
-        let sanitized = sanitize_token(long_token);
+        let sanitized = AuthUtils::sanitize_token_for_logging(long_token);
         assert!(sanitized.contains("***"));
         assert!(sanitized.len() < long_token.len());
 
         let short_token = "short";
-        let sanitized_short = sanitize_token(short_token);
+        let sanitized_short = AuthUtils::sanitize_token_for_logging(short_token);
         assert_eq!(sanitized_short, "***");
     }
 }
