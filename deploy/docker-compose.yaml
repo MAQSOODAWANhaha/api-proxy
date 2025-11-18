@@ -22,7 +22,7 @@ services:
     networks:
       - api-proxy-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
