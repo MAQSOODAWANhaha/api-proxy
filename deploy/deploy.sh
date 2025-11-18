@@ -935,7 +935,7 @@ show_status() {
     
     echo ""
     log_info "服务健康状态:"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec proxy curl -f http://localhost:9090/api/health 2>/dev/null && log_success "统一代理服务正常" || log_warning "统一代理服务异常"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec proxy curl -f http://localhost:9090/api/ping 2>/dev/null && log_success "统一代理服务正常" || log_warning "统一代理服务异常"
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" exec caddy wget --quiet --tries=1 --spider http://localhost:2019/config/ 2>/dev/null && log_success "Caddy代理正常" || log_warning "Caddy代理异常"
 }
 
