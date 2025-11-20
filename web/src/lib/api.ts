@@ -33,6 +33,17 @@ export interface RequestConfig {
   params?: Record<string, string>
 }
 
+/**
+ * 公开接口请求配置选项
+ * 用于不需要认证的公开API端点
+ */
+export interface PublicRequestOptions extends Omit<RequestConfig, 'headers'> {
+  /** 自定义请求头，不会自动添加Authorization */
+  headers?: Record<string, string>
+  /** 是否跳过认证，公开接口默认为true */
+  skipAuth?: boolean
+}
+
 // 标准API响应格式（与后端 response.rs 保持一致）
 export interface ApiResponse<T = any> {
   success: boolean
@@ -752,14 +763,14 @@ class ApiClient {
   /**
    * 构建请求头
    */
-  private buildHeaders(customHeaders?: Record<string, string>): Record<string, string> {
+  private buildHeaders(customHeaders?: Record<string, string>, skipAuth: boolean = false): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...customHeaders,
     }
 
-    // 添加认证token
-    if (this.token) {
+    // 添加认证token（除非跳过认证）
+    if (!skipAuth && this.token) {
       headers.Authorization = `Bearer ${this.token}`
     }
 
@@ -786,9 +797,15 @@ class ApiClient {
   }
 
   /**
-   * 通用请求方法
+   * 内部请求处理方法
+   *
+   * @private
    */
-  async request<T = any>(endpoint: string, config: RequestConfig = {}): Promise<ApiResponse<T>> {
+  private async makeRequest<T = any>(
+    endpoint: string,
+    config: RequestConfig,
+    skipAuth: boolean = false
+  ): Promise<ApiResponse<T>> {
     const {
       method = 'GET',
       headers: customHeaders,
@@ -797,7 +814,7 @@ class ApiClient {
     } = config
 
     const url = this.getURL(endpoint, params)
-    const headers = this.buildHeaders(customHeaders)
+    const headers = this.buildHeaders(customHeaders, skipAuth)
 
     const requestConfig: RequestInit = {
       method,
@@ -809,10 +826,11 @@ class ApiClient {
     }
 
     try {
-      console.log(`[API] ${method} ${url}`, body ? { body } : '')
-      
+      const logPrefix = skipAuth ? '[API Public]' : '[API]'
+      console.log(`${logPrefix} ${method} ${url}`, body ? { body } : '')
+
       const response = await fetch(url, requestConfig)
-      
+
       if (!response.ok) {
         // 处理HTTP错误状态码
         const errorText = await response.text()
@@ -822,18 +840,17 @@ class ApiClient {
         } catch {
           errorData = { message: errorText || `HTTP ${response.status}` }
         }
-        
-        console.error(`[API Error] ${method} ${url}:`, errorData)
-        
-        // 处理401未授权错误 - 自动跳转到登录页面
-        if (response.status === 401) {
+
+        console.error(`${logPrefix} Error] ${method} ${url}:`, errorData)
+
+        // 仅对需要认证的接口处理401重定向
+        if (!skipAuth && response.status === 401) {
           console.warn('401 Unauthorized detected, redirecting to login page')
-          // 异步处理401，不阻塞当前响应
           setTimeout(() => {
             handle401Unauthorized()
           }, 100)
         }
-        
+
         return {
           success: false,
           error: {
@@ -844,20 +861,21 @@ class ApiClient {
       }
 
       const data: ApiResponse<T> = await response.json()
-      console.log(`[API Success] ${method} ${url}:`, data)
-      
+      console.log(`${logPrefix} Success] ${method} ${url}:`, data)
+
       return data
     } catch (error) {
-      console.error(`[API Exception] ${method} ${url}:`, error)
-      
-      // 检查是否是由于401引起的fetch异常
-      if (error instanceof Error && error.message.includes('401')) {
+      const logPrefix = skipAuth ? '[API Public]' : '[API]'
+      console.error(`${logPrefix} Exception] ${method} ${url}:`, error)
+
+      // 仅对需要认证的接口处理401异常
+      if (!skipAuth && error instanceof Error && error.message.includes('401')) {
         console.warn('401 error detected in exception, redirecting to login page')
         setTimeout(() => {
           handle401Unauthorized()
         }, 100)
       }
-      
+
       return {
         success: false,
         error: {
@@ -869,10 +887,37 @@ class ApiClient {
   }
 
   /**
+   * 通用请求方法（需要认证）
+   */
+  async request<T = any>(endpoint: string, config: RequestConfig = {}): Promise<ApiResponse<T>> {
+    return this.makeRequest<T>(endpoint, config, false)
+  }
+
+  /**
+   * 公开接口请求方法（不需要认证）
+   *
+   * 用于调用公开的API端点，如统计数据接口
+   *
+   * @param endpoint API端点
+   * @param config 请求配置
+   * @returns API响应
+   */
+  async publicRequest<T = any>(endpoint: string, config: RequestConfig = {}): Promise<ApiResponse<T>> {
+    return this.makeRequest<T>(endpoint, config, true)
+  }
+
+  /**
    * GET请求
    */
   async get<T = any>(endpoint: string, params?: Record<string, string>): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'GET', params })
+  }
+
+  /**
+   * 公开GET请求（不添加认证头）
+   */
+  async publicGet<T = any>(endpoint: string, params?: Record<string, string>): Promise<ApiResponse<T>> {
+    return this.publicRequest<T>(endpoint, { method: 'GET', params })
   }
 
   /**
@@ -939,6 +984,36 @@ class ApiClient {
 
 // 创建API客户端实例
 export const apiClient = new ApiClient(API_BASE_URL)
+
+/**
+ * 创建专门的公开API客户端
+ * 用于调用不需要JWT认证的公开接口
+ *
+ * @param baseURL API基础URL
+ * @returns 配置为公开接口的API客户端实例
+ */
+export function createPublicApiClient(baseURL: string = API_BASE_URL): ApiClient {
+  const client = new ApiClient(baseURL)
+  return {
+    ...client,
+    request: <T = any>(endpoint: string, config: RequestConfig = {}) =>
+      client.publicRequest<T>(endpoint, config),
+    get: <T = any>(endpoint: string, params?: Record<string, string>) =>
+      client.publicGet<T>(endpoint, params),
+    post: <T = any>(endpoint: string, body?: any) =>
+      client.publicRequest<T>(endpoint, { method: 'POST', body }),
+    put: <T = any>(endpoint: string, body?: any) =>
+      client.publicRequest<T>(endpoint, { method: 'PUT', body }),
+    delete: <T = any>(endpoint: string) =>
+      client.publicRequest<T>(endpoint, { method: 'DELETE' }),
+  }
+}
+
+/**
+ * 预配置的公开API客户端实例
+ * 专门用于调用统计接口等公开端点
+ */
+export const publicApiClient = createPublicApiClient(API_BASE_URL)
 
 /**
  * 安全的数值计算和格式化工具函数
