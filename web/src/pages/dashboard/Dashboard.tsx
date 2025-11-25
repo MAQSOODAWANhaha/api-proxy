@@ -18,6 +18,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { Calendar as DatePicker } from '@/components/ui/calendar'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { DateRange } from 'react-day-picker'
 
 /** 指标项接口 */
@@ -443,7 +444,7 @@ const CompactTimeRangeSelector: React.FC<{
   onCustomRangeChange: (range: CustomDateRange) => void
 }> = ({ selectedRange, customRange, onRangeChange, onCustomRangeChange }) => {
   const [showDropdown, setShowDropdown] = useState(false)
-  const [showCustomPicker, setShowCustomPicker] = useState(false)
+  const [customDialogOpen, setCustomDialogOpen] = useState(false)
   const [rangeSelection, setRangeSelection] = useState<DateRange>(() => ({
     from: parseDateString(customRange.startDate),
     to: parseDateString(customRange.endDate),
@@ -451,14 +452,14 @@ const CompactTimeRangeSelector: React.FC<{
   const [tempRange, setTempRange] = useState<CustomDateRange>(customRange)
 
   useEffect(() => {
-    if (!showCustomPicker) {
+    if (!customDialogOpen) {
       setTempRange(customRange)
       setRangeSelection({
         from: parseDateString(customRange.startDate),
         to: parseDateString(customRange.endDate),
       })
     }
-  }, [customRange, showCustomPicker])
+  }, [customRange, customDialogOpen])
 
   const timeRangeOptions = [
     { value: 'today' as TimeRange, label: '今天' },
@@ -486,7 +487,7 @@ const CompactTimeRangeSelector: React.FC<{
   }
 
   const closeCustomPicker = () => {
-    setShowCustomPicker(false)
+    setCustomDialogOpen(false)
   }
 
   const handleCancel = () => {
@@ -533,7 +534,7 @@ const CompactTimeRangeSelector: React.FC<{
                       from: parseDateString(customRange.startDate),
                       to: parseDateString(customRange.endDate),
                     })
-                    setShowCustomPicker(true)
+                    setCustomDialogOpen(true)
                   } else {
                     onRangeChange(option.value)
                     closeCustomPicker()
@@ -551,8 +552,12 @@ const CompactTimeRangeSelector: React.FC<{
         </div>
       )}
 
-      {showCustomPicker && (
-        <div className="absolute right-0 z-20 mt-1 w-[420px] rounded-lg border border-neutral-200 bg-white p-4 shadow-lg">
+      <Dialog open={customDialogOpen} onOpenChange={(open) => setCustomDialogOpen(open)}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>选择自定义时间范围</DialogTitle>
+            <DialogDescription>请选择开始和结束日期后点击确认</DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm text-neutral-600">
               <div>
@@ -597,8 +602,8 @@ const CompactTimeRangeSelector: React.FC<{
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
