@@ -147,9 +147,9 @@ impl ProxyError {
         use super::ErrorCategory;
         match self {
             // Client-side errors (typically 4xx)
-            Self::Authentication(_) | Self::Network(network::NetworkError::RateLimitExceeded) => {
-                ErrorCategory::Client
-            }
+            Self::Authentication(_)
+            | Self::Conversion(_)
+            | Self::Network(network::NetworkError::RateLimitExceeded) => ErrorCategory::Client,
 
             // Server-side errors (typically 5xx)
             _ => ErrorCategory::Server,

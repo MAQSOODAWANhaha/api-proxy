@@ -205,14 +205,14 @@ impl<'a> StatsService<'a> {
     pub async fn overview(&self, params: &StatsOverviewParams) -> Result<Vec<SummaryMetric>> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Authentication,
-            "user_service_key_required"
+            Conversion,
+            "缺少 user_service_key 参数"
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Authentication,
-            "invalid_time_range"
+            Conversion,
+            "时间范围不合法"
         );
 
         let service_ids = self
@@ -236,14 +236,14 @@ impl<'a> StatsService<'a> {
     pub async fn trend(&self, params: &StatsTrendParams) -> Result<Vec<TrendPoint>> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Authentication,
-            "user_service_key_required"
+            Conversion,
+            "缺少 user_service_key 参数"
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Authentication,
-            "invalid_time_range"
+            Conversion,
+            "时间范围不合法"
         );
 
         let service_ids = self
@@ -256,14 +256,14 @@ impl<'a> StatsService<'a> {
     pub async fn model_share(&self, params: &StatsModelShareParams) -> Result<ModelSharePayload> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Authentication,
-            "user_service_key_required"
+            Conversion,
+            "缺少 user_service_key 参数"
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Authentication,
-            "invalid_time_range"
+            Conversion,
+            "时间范围不合法"
         );
 
         let service_ids = self
@@ -284,14 +284,14 @@ impl<'a> StatsService<'a> {
     pub async fn logs(&self, params: &StatsLogsParams) -> Result<LogsPayload> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Authentication,
-            "user_service_key_required"
+            Conversion,
+            "缺少 user_service_key 参数"
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Authentication,
-            "invalid_time_range"
+            Conversion,
+            "时间范围不合法"
         );
 
         let service_ids = self
@@ -315,7 +315,7 @@ impl<'a> StatsService<'a> {
             .map_err(|err| {
                 crate::error!(Database, format!("fetch_user_service_api_failed: {err}"))
             })?
-            .ok_or_else(|| crate::error!(Authentication, "user_service_key_invalid"))?;
+            .ok_or_else(|| crate::error!(Conversion, "用户 API Key 无效或已失效"))?;
 
         if matches!(aggregate, AggregateMode::Aggregate) {
             let ids: Vec<i32> = UserServiceApis::find()
@@ -332,7 +332,7 @@ impl<'a> StatsService<'a> {
                     )
                 })?;
 
-            crate::ensure!(!ids.is_empty(), Authentication, "no_service_keys_for_user");
+            crate::ensure!(!ids.is_empty(), Conversion, "该用户没有可用的服务密钥");
 
             return Ok(ids);
         }
