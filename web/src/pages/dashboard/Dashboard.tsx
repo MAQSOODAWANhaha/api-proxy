@@ -3,7 +3,7 @@
  * 仪表板首页：提供关键指标卡片与简易概览，保证首页不为空白。
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, TrendingUp, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useDashboardCards } from '../../hooks/useDashboardCards'
 import { useModelsRate } from '../../hooks/useModelsRate'
@@ -447,6 +447,13 @@ const CompactTimeRangeSelector: React.FC<{
   const [showCustomPicker, setShowCustomPicker] = useState(false)
   const [startPickerOpen, setStartPickerOpen] = useState(false)
   const [endPickerOpen, setEndPickerOpen] = useState(false)
+  const [tempRange, setTempRange] = useState<CustomDateRange>(customRange)
+
+  useEffect(() => {
+    if (!showCustomPicker) {
+      setTempRange(customRange)
+    }
+  }, [customRange, showCustomPicker])
 
   const timeRangeOptions = [
     { value: 'today' as TimeRange, label: '今天' },
@@ -462,6 +469,63 @@ const CompactTimeRangeSelector: React.FC<{
     }
     return option?.label || '选择时间范围'
   }
+
+  const handleStartSelect = (date?: Date) => {
+    if (!date) return
+    const formatted = formatDateToInputValue(date)
+    setTempRange(prev => {
+      const next: CustomDateRange = {
+        ...prev,
+        startDate: formatted,
+      }
+
+      const currentEnd = parseDateString(prev.endDate)
+      if (!prev.endDate || (currentEnd && currentEnd < date)) {
+        next.endDate = formatted
+      }
+      return next
+    })
+    setStartPickerOpen(false)
+  }
+
+  const handleEndSelect = (date?: Date) => {
+    if (!date) return
+    const formatted = formatDateToInputValue(date)
+    setTempRange(prev => {
+      const next: CustomDateRange = {
+        ...prev,
+        endDate: formatted,
+      }
+
+      const currentStart = parseDateString(prev.startDate)
+      if (!prev.startDate || (currentStart && currentStart > date)) {
+        next.startDate = formatted
+      }
+      return next
+    })
+    setEndPickerOpen(false)
+  }
+
+  const closeCustomPicker = () => {
+    setShowCustomPicker(false)
+    setStartPickerOpen(false)
+    setEndPickerOpen(false)
+  }
+
+  const handleCancel = () => {
+    setTempRange(customRange)
+    closeCustomPicker()
+  }
+
+  const handleConfirm = () => {
+    if (!tempRange.startDate || !tempRange.endDate) {
+      return
+    }
+    onCustomRangeChange(tempRange)
+    closeCustomPicker()
+  }
+
+  const canApply = Boolean(tempRange.startDate && tempRange.endDate)
 
   return (
     <div className="relative">
@@ -483,13 +547,12 @@ const CompactTimeRangeSelector: React.FC<{
                 onClick={() => {
                   onRangeChange(option.value)
                   if (option.value === 'custom') {
+                    setTempRange(customRange)
                     setShowCustomPicker(true)
                     setStartPickerOpen(false)
                     setEndPickerOpen(false)
                   } else {
-                    setShowCustomPicker(false)
-                    setStartPickerOpen(false)
-                    setEndPickerOpen(false)
+                    closeCustomPicker()
                   }
                   setShowDropdown(false)
                 }}
@@ -518,7 +581,7 @@ const CompactTimeRangeSelector: React.FC<{
                   >
                     <span className="flex items-center gap-2">
                       <CalendarIcon size={14} className="text-neutral-400" />
-                      {formatDateDisplayLabel(customRange.startDate)}
+                      {formatDateDisplayLabel(tempRange.startDate)}
                     </span>
                     <ChevronDown size={14} className="text-neutral-400" />
                   </Button>
@@ -526,16 +589,8 @@ const CompactTimeRangeSelector: React.FC<{
                 <PopoverContent className="w-auto p-0" align="end">
                   <DatePicker
                     mode="single"
-                    selected={parseDateString(customRange.startDate)}
-                    onSelect={(date) => {
-                      if (date) {
-                        onCustomRangeChange({
-                          ...customRange,
-                          startDate: formatDateToInputValue(date),
-                        })
-                        setStartPickerOpen(false)
-                      }
-                    }}
+                    selected={parseDateString(tempRange.startDate)}
+                    onSelect={handleStartSelect}
                     initialFocus
                   />
                 </PopoverContent>
@@ -552,7 +607,7 @@ const CompactTimeRangeSelector: React.FC<{
                   >
                     <span className="flex items-center gap-2">
                       <CalendarIcon size={14} className="text-neutral-400" />
-                      {formatDateDisplayLabel(customRange.endDate)}
+                      {formatDateDisplayLabel(tempRange.endDate)}
                     </span>
                     <ChevronDown size={14} className="text-neutral-400" />
                   </Button>
@@ -560,16 +615,8 @@ const CompactTimeRangeSelector: React.FC<{
                 <PopoverContent className="w-auto p-0" align="end">
                   <DatePicker
                     mode="single"
-                    selected={parseDateString(customRange.endDate)}
-                    onSelect={(date) => {
-                      if (date) {
-                        onCustomRangeChange({
-                          ...customRange,
-                          endDate: formatDateToInputValue(date),
-                        })
-                        setEndPickerOpen(false)
-                      }
-                    }}
+                    selected={parseDateString(tempRange.endDate)}
+                    onSelect={handleEndSelect}
                     initialFocus
                   />
                 </PopoverContent>
@@ -577,22 +624,19 @@ const CompactTimeRangeSelector: React.FC<{
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => {
-                  setShowCustomPicker(false)
-                  setStartPickerOpen(false)
-                  setEndPickerOpen(false)
-                }}
+                onClick={handleCancel}
                 className="flex-1 rounded bg-neutral-100 px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-200"
               >
                 取消
               </button>
               <button
-                onClick={() => {
-                  setShowCustomPicker(false)
-                  setStartPickerOpen(false)
-                  setEndPickerOpen(false)
-                }}
-                className="flex-1 rounded bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-700"
+                onClick={handleConfirm}
+                className={`flex-1 rounded px-3 py-2 text-sm text-white transition-colors ${
+                  canApply
+                    ? 'bg-violet-600 hover:bg-violet-700'
+                    : 'bg-neutral-300 cursor-not-allowed'
+                }`}
+                disabled={!canApply}
               >
                 确认
               </button>
