@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react'
-import { Activity, Timer, Coins, CheckCircle2, Calendar, ChevronDown, TrendingUp, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, TrendingUp, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useDashboardCards } from '../../hooks/useDashboardCards'
 import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
@@ -17,6 +17,9 @@ import {
   ChartTooltip,
   type ChartConfig,
 } from '@/components/ui/chart'
+import { Button } from '@/components/ui/button'
+import { Calendar as DatePicker } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 /** 指标项接口 */
 interface StatItem {
@@ -47,6 +50,31 @@ interface ModelUsage {
 interface CustomDateRange {
   startDate: string
   endDate: string
+}
+
+const parseDateString = (value?: string): Date | undefined => {
+  if (!value) return undefined
+  const [year, month, day] = value.split('-').map(Number)
+  if (!year || !month || !day) return undefined
+  return new Date(year, month - 1, day)
+}
+
+const formatDateToInputValue = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const formatDateDisplayLabel = (value?: string): string => {
+  if (!value) return '选择日期'
+  const parsed = parseDateString(value)
+  if (!parsed) return value
+  return parsed.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
 }
 
 /** 趋势图数据点接口 */
@@ -417,6 +445,8 @@ const CompactTimeRangeSelector: React.FC<{
 }> = ({ selectedRange, customRange, onRangeChange, onCustomRangeChange }) => {
   const [showDropdown, setShowDropdown] = useState(false)
   const [showCustomPicker, setShowCustomPicker] = useState(false)
+  const [startPickerOpen, setStartPickerOpen] = useState(false)
+  const [endPickerOpen, setEndPickerOpen] = useState(false)
 
   const timeRangeOptions = [
     { value: 'today' as TimeRange, label: '今天' },
@@ -439,7 +469,7 @@ const CompactTimeRangeSelector: React.FC<{
         onClick={() => setShowDropdown(!showDropdown)}
         className="flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs hover:bg-neutral-50"
       >
-        <Calendar size={12} className="text-neutral-500" />
+        <CalendarIcon size={12} className="text-neutral-500" />
         <span>{getCurrentLabel()}</span>
         <ChevronDown size={10} className="text-neutral-400" />
       </button>
@@ -454,8 +484,12 @@ const CompactTimeRangeSelector: React.FC<{
                   onRangeChange(option.value)
                   if (option.value === 'custom') {
                     setShowCustomPicker(true)
+                    setStartPickerOpen(false)
+                    setEndPickerOpen(false)
                   } else {
                     setShowCustomPicker(false)
+                    setStartPickerOpen(false)
+                    setEndPickerOpen(false)
                   }
                   setShowDropdown(false)
                 }}
@@ -475,31 +509,89 @@ const CompactTimeRangeSelector: React.FC<{
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-1">开始日期</label>
-              <input
-                type="date"
-                value={customRange.startDate}
-                onChange={(e) => onCustomRangeChange({ ...customRange, startDate: e.target.value })}
-                className="w-full rounded border border-neutral-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-              />
+              <Popover open={startPickerOpen} onOpenChange={setStartPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between text-left font-normal text-sm"
+                  >
+                    <span className="flex items-center gap-2">
+                      <CalendarIcon size={14} className="text-neutral-400" />
+                      {formatDateDisplayLabel(customRange.startDate)}
+                    </span>
+                    <ChevronDown size={14} className="text-neutral-400" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="end">
+                  <DatePicker
+                    mode="single"
+                    selected={parseDateString(customRange.startDate)}
+                    onSelect={(date) => {
+                      if (date) {
+                        onCustomRangeChange({
+                          ...customRange,
+                          startDate: formatDateToInputValue(date),
+                        })
+                        setStartPickerOpen(false)
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-1">结束日期</label>
-              <input
-                type="date"
-                value={customRange.endDate}
-                onChange={(e) => onCustomRangeChange({ ...customRange, endDate: e.target.value })}
-                className="w-full rounded border border-neutral-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-              />
+              <Popover open={endPickerOpen} onOpenChange={setEndPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between text-left font-normal text-sm"
+                  >
+                    <span className="flex items-center gap-2">
+                      <CalendarIcon size={14} className="text-neutral-400" />
+                      {formatDateDisplayLabel(customRange.endDate)}
+                    </span>
+                    <ChevronDown size={14} className="text-neutral-400" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="end">
+                  <DatePicker
+                    mode="single"
+                    selected={parseDateString(customRange.endDate)}
+                    onSelect={(date) => {
+                      if (date) {
+                        onCustomRangeChange({
+                          ...customRange,
+                          endDate: formatDateToInputValue(date),
+                        })
+                        setEndPickerOpen(false)
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => setShowCustomPicker(false)}
+                onClick={() => {
+                  setShowCustomPicker(false)
+                  setStartPickerOpen(false)
+                  setEndPickerOpen(false)
+                }}
                 className="flex-1 rounded bg-neutral-100 px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-200"
               >
                 取消
               </button>
               <button
-                onClick={() => setShowCustomPicker(false)}
+                onClick={() => {
+                  setShowCustomPicker(false)
+                  setStartPickerOpen(false)
+                  setEndPickerOpen(false)
+                }}
                 className="flex-1 rounded bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-700"
               >
                 确认
