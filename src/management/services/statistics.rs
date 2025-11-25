@@ -9,7 +9,7 @@ use crate::{
     management::server::ManagementState,
     types::{TimezoneContext, ratio_as_percentage, timezone_utils},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
 use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
@@ -31,8 +31,8 @@ pub struct StatsQuery {
 #[derive(Debug, Deserialize)]
 pub struct TimeRangeQuery {
     pub range: Option<String>,
-    pub start: Option<chrono::NaiveDateTime>,
-    pub end: Option<chrono::NaiveDateTime>,
+    pub start: Option<String>,
+    pub end: Option<String>,
 }
 
 /// 今日仪表板卡片数据（包含增长率）
@@ -717,6 +717,44 @@ fn calculate_growth_rate_f64(current: f64, previous: f64) -> String {
     }
 }
 
+/// 解析自定义时间范围的起始参数，支持完整日期时间与仅日期格式
+fn parse_custom_range_start(value: &str) -> Option<NaiveDateTime> {
+    parse_naive_datetime_with_time(value).or_else(|| parse_whole_day_start(value))
+}
+
+/// 解析自定义时间范围的结束参数，日期格式会自动扩展到次日零点以确保包含整日
+fn parse_custom_range_end(value: &str) -> Option<NaiveDateTime> {
+    parse_naive_datetime_with_time(value).or_else(|| {
+        parse_whole_day_start(value).and_then(|dt| dt.checked_add_signed(Duration::days(1)))
+    })
+}
+
+/// 支持常见格式的日期时间解析
+fn parse_naive_datetime_with_time(value: &str) -> Option<NaiveDateTime> {
+    const FORMATS: &[&str] = &[
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M",
+    ];
+
+    let trimmed = value.trim();
+    for format in FORMATS {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, format) {
+            return Some(dt);
+        }
+    }
+    None
+}
+
+fn parse_whole_day_start(value: &str) -> Option<NaiveDateTime> {
+    let trimmed = value.trim();
+    let date = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").ok()?;
+    date.and_hms_opt(0, 0, 0)
+}
+
 fn parse_time_range(
     query: &TimeRangeQuery,
     timezone: &TimezoneContext,
@@ -727,14 +765,23 @@ fn parse_time_range(
             .ok_or_else(|| conversion_error("Failed to calculate local day bounds")),
         Some("30days") => Ok((now - Duration::days(30), now)),
         Some("custom") => {
-            if let (Some(start_naive), Some(end_naive)) = (&query.start, &query.end) {
-                if start_naive > end_naive {
+            if let (Some(start_raw), Some(end_raw)) = (&query.start, &query.end) {
+                let start_naive = parse_custom_range_start(start_raw)
+                    .ok_or_else(|| conversion_error("Invalid start datetime format"))?;
+                let end_naive = parse_custom_range_end(end_raw)
+                    .ok_or_else(|| conversion_error("Invalid end datetime format"))?;
+
+                if start_naive >= end_naive {
                     Err(conversion_error(
                         "Start datetime must be before end datetime",
                     ))
                 } else {
-                    timezone_utils::convert_range_to_utc(start_naive, end_naive, &timezone.timezone)
-                        .ok_or_else(|| conversion_error("Invalid datetime values"))
+                    timezone_utils::convert_range_to_utc(
+                        &start_naive,
+                        &end_naive,
+                        &timezone.timezone,
+                    )
+                    .ok_or_else(|| conversion_error("Invalid datetime values"))
                 }
             } else {
                 Err(conversion_error(
@@ -759,4 +806,73 @@ fn db_error(message: &str, err: &DbErr) -> ProxyError {
 
 fn conversion_error(message: &str) -> ProxyError {
     crate::error!(Conversion, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use chrono_tz::Asia::Shanghai;
+
+    #[test]
+    fn parse_time_range_supports_date_only_inputs() {
+        let timezone = TimezoneContext { timezone: Shanghai };
+        let query = TimeRangeQuery {
+            range: Some("custom".to_string()),
+            start: Some("2025-11-18".to_string()),
+            end: Some("2025-11-25".to_string()),
+        };
+
+        let (start, end) =
+            parse_time_range(&query, &timezone).expect("custom date range should parse");
+
+        let expected_start_local = NaiveDate::from_ymd_opt(2025, 11, 18)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let expected_end_local = NaiveDate::from_ymd_opt(2025, 11, 26)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let (expected_start, expected_end) = timezone_utils::convert_range_to_utc(
+            &expected_start_local,
+            &expected_end_local,
+            &timezone.timezone,
+        )
+        .unwrap();
+
+        assert_eq!(start, expected_start);
+        assert_eq!(end, expected_end);
+    }
+
+    #[test]
+    fn parse_time_range_supports_full_datetime_inputs() {
+        let timezone = TimezoneContext { timezone: Shanghai };
+        let query = TimeRangeQuery {
+            range: Some("custom".to_string()),
+            start: Some("2025-11-18T08:30:00".to_string()),
+            end: Some("2025-11-25T20:45:00".to_string()),
+        };
+
+        let (start, end) =
+            parse_time_range(&query, &timezone).expect("custom datetime range should parse");
+
+        let expected_start_local = NaiveDate::from_ymd_opt(2025, 11, 18)
+            .unwrap()
+            .and_hms_opt(8, 30, 0)
+            .unwrap();
+        let expected_end_local = NaiveDate::from_ymd_opt(2025, 11, 25)
+            .unwrap()
+            .and_hms_opt(20, 45, 0)
+            .unwrap();
+        let (expected_start, expected_end) = timezone_utils::convert_range_to_utc(
+            &expected_start_local,
+            &expected_end_local,
+            &timezone.timezone,
+        )
+        .unwrap();
+
+        assert_eq!(start, expected_start);
+        assert_eq!(end, expected_end);
+    }
 }
