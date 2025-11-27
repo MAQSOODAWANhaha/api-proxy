@@ -81,10 +81,11 @@ AI代理请求: Client → Pingora(8080) → ClientAuth (AuthService) → RateLi
 ### 错误处理最佳实践（参见 `src/error/`）
 
 - **统一返回类型**：所有可能失败的接口都应返回 `crate::error::Result<T>`。
-- **领域枚举优先**：使用 `error!(Authentication, ...)` 等宏构造错误。
-- **上下文增强**：使用 `Context`/`with_context` trait 补充定位信息。
-- **快速返回**：使用 `ensure!` 和 `bail!` 减少样板代码。
-- **稳定错误码**：在 `ProxyError::error_code`/`status_code` 中维护对外编号与状态码。
+- **Typed Error 优先**：各领域使用 `#[derive(thiserror::Error)]` 构造错误枚举并通过 `#[from]`/`Into<ProxyError>` 与 `ProxyError` 对接；不得重新引入 `ProxyError::internal` 辅助函数，未知异常也先尝试细化为具体领域错误。
+- **上下文增强**：使用 `.context("...")`/`.with_context(|| ...)` 为错误补充“动作说明”，不改变原始语义，最终由 `ProxyError::Context` 包裹。
+- **快速返回**：使用 `ensure!` 和 `bail!` 减少样板代码，保持错误栈整洁。
+- **稳定错误码**：在 `ProxyError::error_code`/`status_code` 中维护对外编号与状态码，新增枚举务必同步。
+- **Internal 最小化**：确实无法分类的异常由 `?` 自动落入 `ProxyError::Internal(anyhow::Error)`，禁止手工拼接字符串或裸 `anyhow!`。
 
 ### 日志记录最佳实践（参见 `src/logging.rs`）
 

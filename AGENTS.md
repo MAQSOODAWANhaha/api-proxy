@@ -34,10 +34,11 @@
 ## 错误处理最佳实践（参见 `src/error/`）
 
 - **统一返回类型**：所有可能失败的接口都应返回 `crate::error::Result<T>`，避免混用 `anyhow::Result` 等其他别名。
-- **领域枚举优先**：在模块内构造错误，请使用 `error!(Authentication, ...)`、`error!(Database, ...)` 等宏，保持错误类型与领域一致，必要时再使用 `ProxyError` 提供的辅助构造函数。
-- **上下文增强**：链式调用中使用 `Context`/`with_context` trait（`src/error/mod.rs`）补充必要的定位信息，确保 `ProxyError` 内含完整原因。
+- **Typed Error 优先**：各领域通过 `#[derive(thiserror::Error)]` 定义错误枚举并实现 `#[from]`，再由 `ProxyError` 统一承载；若依赖第三方错误，优先实现 `From`/`Into<ProxyError>`，不要复活 `ProxyError::internal` 辅助函数。
+- **上下文增强**：使用 `.context("...")` 或 `.with_context(|| ...)`（`anyhow::Context` 风格）只描述“当前动作”，保证原始状态码/错误类型得以保留并被包装成 `ProxyError::Context`。
 - **快速返回**：条件判断失败时使用 `ensure!`，需要立即返回时使用 `bail!`，既减少样板代码，也保证错误栈统一。
 - **稳定错误码**：新增错误变体时记得在 `ProxyError::error_code`/`status_code` 中维护对应的对外编号与状态码，保持 API 行为稳定。
+- **最小化 Internal**：确实无法建模的异常可落到 `ProxyError::Internal(anyhow::Error)`，但必须通过 `?` 自动转换，禁止手工拼字符串。
 
 ## 日志记录最佳实践（参见 `src/logging.rs`）
 

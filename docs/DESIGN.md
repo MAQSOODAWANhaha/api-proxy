@@ -809,7 +809,7 @@ use axum::{
 };
 use hyper::body::Incoming;
 use std::sync::Arc;
-use crate::{AppState, proxy::ProxyContext, error::ProxyError};
+use crate::{AppState, proxy::ProxyContext, error::{Context, ProxyError}};
 
 pub struct ManagementService {
     router: Router,
@@ -838,7 +838,7 @@ impl ManagementService {
         let response = self.router.clone()
             .oneshot(hyper_request)
             .await
-            .map_err(|e| ProxyError::Internal(format!("Axum router error: {}", e)))?;
+            .context("Axum router error")?;
 
         // 将响应写回Session
         self.write_response_to_session(session, response).await?;
@@ -867,7 +867,7 @@ impl ManagementService {
         let body = if matches!(method, Method::POST | Method::PUT | Method::PATCH) {
             let mut body_bytes = Vec::new();
             session.read_request_body(&mut body_bytes).await
-                .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {}", e)))?;
+                .context("Failed to read request body")?;
             Full::new(Bytes::from(body_bytes))
         } else {
             Full::new(Bytes::new())
@@ -881,7 +881,7 @@ impl ManagementService {
         *request.headers_mut().unwrap() = headers;
 
         request.body(body)
-            .map_err(|e| ProxyError::Internal(format!("Failed to build request: {}", e)))
+            .context("Failed to build management request")
     }
 
     async fn write_response_to_session(
@@ -895,21 +895,21 @@ impl ManagementService {
 
         // 设置响应状态
         session.set_response_status(parts.status)
-            .map_err(|e| ProxyError::Internal(format!("Failed to set response status: {}", e)))?;
+            .context("Failed to set response status")?;
 
         // 设置响应头
         for (name, value) in parts.headers.iter() {
             session.insert_header(name.as_str(), value.as_bytes())
-                .map_err(|e| ProxyError::Internal(format!("Failed to set response header: {}", e)))?;
+                .context("Failed to set response header")?;
         }
 
         // 读取并写入响应体
         let body_bytes = body.collect().await
-            .map_err(|e| ProxyError::Internal(format!("Failed to collect response body: {}", e)))?
+            .context("Failed to collect response body")?
             .to_bytes();
 
         session.write_response_body(Some(body_bytes)).await
-            .map_err(|e| ProxyError::Internal(format!("Failed to write response body: {}", e)))?;
+            .context("Failed to write response body")?;
 
         Ok(())
     }
@@ -1037,7 +1037,7 @@ mod static_file_service {
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
 use rustls::{Certificate, PrivateKey, ServerConfig};
-use crate::{AppState, error::ProxyError};
+use crate::{AppState, error::{Context, ProxyError, conversion::ConversionError}};
 
 pub struct TlsManager {
     app_state: Arc<AppState>,
@@ -1081,7 +1081,7 @@ impl TlsManager {
             .filter(Column::ExpiresAt.lt(chrono::Utc::now().naive_utc() + chrono::Duration::days(30)))
             .all(&*self.app_state.db)
             .await
-            .map_err(|e| ProxyError::Internal(format!("Database error: {}", e)))?;
+            .context("查询待续期证书失败")?;
 
         linfo!(
             "tls",
@@ -1141,25 +1141,25 @@ impl TlsManager {
 
         // 创建ACME账户
         let directory = Directory::from_url(DirectoryUrl::LetsEncrypt)
-            .map_err(|e| ProxyError::Internal(format!("Failed to create ACME directory: {}", e)))?;
+            .context("Failed to create ACME directory")?;
 
         let account = Account::create(&directory, &self.config.acme_email, create_p256_key()?)
-            .map_err(|e| ProxyError::Internal(format!("Failed to create ACME account: {}", e)))?;
+            .context("Failed to create ACME account")?;
 
         // 创建证书签名请求
         let private_key = create_p256_key()?;
         let csr = Csr::new(&private_key, &[cert.domain.clone()])
-            .map_err(|e| ProxyError::Internal(format!("Failed to create CSR: {}", e)))?;
+            .context("Failed to create CSR")?;
 
         // 申请证书
         let order = account.new_order(&cert.domain, &[])
-            .map_err(|e| ProxyError::Internal(format!("Failed to create ACME order: {}", e)))?;
+            .context("Failed to create ACME order")?;
 
         let order = order.confirm_validations()
-            .map_err(|e| ProxyError::Internal(format!("Failed to confirm ACME validations: {}", e)))?;
+            .context("Failed to confirm ACME validations")?;
 
         let cert_chain = order.download_cert()
-            .map_err(|e| ProxyError::Internal(format!("Failed to download certificate: {}", e)))?;
+            .context("Failed to download certificate")?;
 
         // 解析证书获取过期时间
         let expires_at = self.parse_cert_expiry(&cert_chain.certificate())?;
@@ -1174,7 +1174,7 @@ impl TlsManager {
         cert_model.updated_at = Set(chrono::Utc::now().naive_utc());
 
         cert_model.update(&*self.app_state.db).await
-            .map_err(|e| ProxyError::Internal(format!("Failed to update certificate: {}", e)))?;
+            .context("Failed to update certificate")?;
 
         linfo!(
             "tls",
@@ -1201,10 +1201,10 @@ impl TlsManager {
         params.distinguished_name.push(DnType::CommonName, cert.domain.clone());
 
         let certificate = Certificate::from_params(params)
-            .map_err(|e| ProxyError::Internal(format!("Failed to generate certificate: {}", e)))?;
+            .context("Failed to generate certificate")?;
 
         let cert_pem = certificate.serialize_pem()
-            .map_err(|e| ProxyError::Internal(format!("Failed to serialize certificate: {}", e)))?;
+            .context("Failed to serialize certificate")?;
 
         let key_pem = certificate.serialize_private_key_pem();
 
@@ -1220,7 +1220,7 @@ impl TlsManager {
         cert_model.updated_at = Set(chrono::Utc::now().naive_utc());
 
         cert_model.update(&*self.app_state.db).await
-            .map_err(|e| ProxyError::Internal(format!("Failed to update certificate: {}", e)))?;
+            .context("Failed to update certificate")?;
 
         tracing::info!(
             domain = %cert.domain,
@@ -1236,16 +1236,18 @@ impl TlsManager {
         use x509_parser::{certificate::X509Certificate, pem::parse_x509_pem};
 
         let pem = parse_x509_pem(cert_pem.as_bytes())
-            .map_err(|e| ProxyError::Internal(format!("Failed to parse PEM: {:?}", e)))?;
+            .map_err(|e| ConversionError::message(format!("Failed to parse PEM: {e:?}")))?;
 
         let cert = X509Certificate::from_der(pem.1.contents.as_slice())
-            .map_err(|e| ProxyError::Internal(format!("Failed to parse certificate: {:?}", e)))?;
+            .map_err(|e| ConversionError::message(format!("Failed to parse certificate: {e:?}")))?;
 
         let not_after = cert.1.validity().not_after;
         let timestamp = not_after.timestamp();
 
-        Ok(chrono::NaiveDateTime::from_timestamp(timestamp, 0)
-            .ok_or_else(|| ProxyError::Internal("Invalid certificate expiry time".into()))?)
+        let expires_at = chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
+            .ok_or_else(|| ConversionError::message("Invalid certificate expiry time"))?;
+
+        Ok(expires_at)
     }
 }
 
