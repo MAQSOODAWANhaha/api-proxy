@@ -3,7 +3,7 @@
 //! 实现Google Gemini Code Assist API的调用逻辑
 //! `支持loadCodeAssist和onboardUser接口，用于自动获取project_id`
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, ProxyError, Result};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use reqwest::Client;
@@ -207,11 +207,11 @@ impl GeminiCodeAssistClient {
 
                     // 检查是否可重试的错误类型
                     let should_retry = match &e {
-                        ProxyError::Provider { message, .. } => {
+                        ProxyError::Provider(err) => {
                             // 检查错误消息中是否包含可重试的状态码
                             [408, 429, 500, 502, 503, 504]
                                 .iter()
-                                .any(|&code| message.contains(&code.to_string()))
+                                .any(|&code| err.to_string().contains(&code.to_string()))
                         }
                         ProxyError::Network(
                             crate::error::network::NetworkError::ConnectionTimeout(_)
@@ -250,10 +250,11 @@ impl GeminiCodeAssistClient {
         // 所有尝试都失败了，返回最后一个错误
         last_error.map_or_else(
             || {
-                Err(crate::error!(
-                    Provider,
-                    message = format!("{operation}所有重试尝试都失败了"),
-                    provider = "GeminiCodeAssist"
+                Err(ProxyError::Provider(
+                    crate::error::provider::ProviderError::General {
+                        message: format!("{operation}所有重试尝试都失败了"),
+                        provider: "GeminiCodeAssist".to_string(),
+                    },
                 ))
             },
             Err,
@@ -280,14 +281,7 @@ impl GeminiCodeAssistClient {
                 project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
             request_body.insert(
                 "metadata".to_string(),
-                serde_json::to_value(metadata).map_err(|e| {
-                    crate::error!(
-                        Provider,
-                        message = format!("Failed to serialize client metadata: {e}"),
-                        provider = "GeminiCodeAssist",
-                        source = e
-                    )
-                })?,
+                serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
             );
 
             // 如果有project_id，添加到请求中
@@ -323,14 +317,8 @@ impl GeminiCodeAssistClient {
             );
 
             // 打印请求参数
-            let request_json = serde_json::to_string(&request_body).map_err(|e| {
-                crate::error!(
-                    Provider,
-                    message = format!("Failed to serialize request body: {e}"),
-                    provider = "GeminiCodeAssist",
-                    source = e
-                )
-            })?;
+            let request_json = serde_json::to_string(&request_body)
+                .context("Failed to serialize loadCodeAssist request body")?;
             linfo!(
                 "system",
                 LogStage::ExternalApi,
@@ -366,10 +354,11 @@ impl GeminiCodeAssistClient {
                     "load_code_assist_fail",
                     &format!("loadCodeAssist API失败: status={status}, response={error_text}")
                 );
-                return Err(crate::error!(
-                    Provider,
-                    message = format!("loadCodeAssist API failed: {status} - {error_text}"),
-                    provider = "GeminiCodeAssist"
+                return Err(ProxyError::Provider(
+                    crate::error::provider::ProviderError::General {
+                        message: format!("loadCodeAssist API failed: {status} - {error_text}"),
+                        provider: "GeminiCodeAssist".to_string(),
+                    },
                 ));
             }
 
@@ -383,14 +372,7 @@ impl GeminiCodeAssistClient {
             );
 
             let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body)
-                .map_err(|e| {
-                    crate::error!(
-                        Provider,
-                        message = format!("Failed to parse loadCodeAssist response: {e}"),
-                        provider = "GeminiCodeAssist",
-                        source = e
-                    )
-                })?;
+                .context("Failed to parse loadCodeAssist response")?;
 
             let tier_id = Self::get_tier_id_from_load_response(&response_data);
             linfo!(
@@ -449,14 +431,7 @@ impl GeminiCodeAssistClient {
                 project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
             request_body.insert(
                 "metadata".to_string(),
-                serde_json::to_value(metadata).map_err(|e| {
-                    crate::error!(
-                        Provider,
-                        message = format!("Failed to serialize client metadata: {e}"),
-                        provider = "GeminiCodeAssist",
-                        source = e
-                    )
-                })?,
+                serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
             );
 
             ldebug!(
@@ -477,14 +452,8 @@ impl GeminiCodeAssistClient {
             );
 
             // 打印请求参数
-            let request_json = serde_json::to_string(&request_body).map_err(|e| {
-                crate::error!(
-                    Provider,
-                    message = format!("Failed to serialize request body: {e}"),
-                    provider = "GeminiCodeAssist",
-                    source = e
-                )
-            })?;
+            let request_json = serde_json::to_string(&request_body)
+                .context("Failed to serialize onboardUser request body")?;
             linfo!(
                 "system",
                 LogStage::ExternalApi,
@@ -520,10 +489,11 @@ impl GeminiCodeAssistClient {
                     "onboard_user_fail",
                     &format!("onboardUser API失败: status={status}, response={error_text}")
                 );
-                return Err(crate::error!(
-                    Provider,
-                    message = format!("onboardUser API failed: {status} - {error_text}"),
-                    provider = "GeminiCodeAssist"
+                return Err(ProxyError::Provider(
+                    crate::error::provider::ProviderError::General {
+                        message: format!("onboardUser API failed: {status} - {error_text}"),
+                        provider: "GeminiCodeAssist".to_string(),
+                    },
                 ));
             }
 
@@ -536,15 +506,8 @@ impl GeminiCodeAssistClient {
                 &format!("onboardUser响应体: {response_body}")
             );
 
-            let response_data: OnboardUserResponse =
-                serde_json::from_str(&response_body).map_err(|e| {
-                    crate::error!(
-                        Provider,
-                        message = format!("Failed to parse onboardUser response: {e}"),
-                        provider = "GeminiCodeAssist",
-                        source = e
-                    )
-                })?;
+            let response_data: OnboardUserResponse = serde_json::from_str(&response_body)
+                .context("Failed to parse onboardUser response")?;
 
             linfo!(
                 "system",
@@ -635,11 +598,12 @@ impl GeminiCodeAssistClient {
         }
 
         // 所有重试都失败了，返回最后一个错误
-        Err(crate::error!(
-            Provider,
-            message = last_error
-                .unwrap_or_else(|| "onboardUser重试失败，但没有具体的错误信息".to_string()),
-            provider = "GeminiCodeAssist"
+        Err(ProxyError::Provider(
+            crate::error::provider::ProviderError::General {
+                message: last_error
+                    .unwrap_or_else(|| "onboardUser重试失败，但没有具体的错误信息".to_string()),
+                provider: "GeminiCodeAssist".to_string(),
+            },
         ))
     }
 

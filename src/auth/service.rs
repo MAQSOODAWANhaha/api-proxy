@@ -15,7 +15,7 @@ use crate::auth::types::{
     AuthContext, AuthMethod, AuthResult, Authentication, TokenType, UserInfo,
 };
 use crate::auth::utils::AuthUtils;
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, ProxyError, Result, auth::AuthError};
 
 /// Authentication service
 pub struct ApiKeyAuthenticationService {
@@ -116,7 +116,7 @@ impl ApiKeyAuthenticationService {
             .filter(entity::user_service_apis::Column::IsActive.eq(true))
             .one(&*self.db)
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .context("Failed to fetch user_service_api by api_key")?
             .ok_or_else(invalid_credentials_error)?;
 
         // 检查API密钥是否过期
@@ -148,13 +148,17 @@ impl ApiKeyAuthenticationService {
             .filter(users::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
+            .context("Failed to fetch user by username")?;
 
         let user = user.ok_or_else(invalid_credentials_error)?;
 
         // Verify password
-        let password_valid = verify(password, &user.password_hash)
-            .map_err(|e| crate::error!(Internal, "Password verification error", e))?;
+        let password_valid = match verify(password, &user.password_hash) {
+            Ok(valid) => valid,
+            Err(e) => {
+                return Err(AuthError::Message(format!("Password verification error: {e}")).into());
+            }
+        };
 
         if !password_valid {
             return Err(invalid_credentials_error());
@@ -183,7 +187,7 @@ impl ApiKeyAuthenticationService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .context("Failed to fetch user by id")?
             .ok_or_else(invalid_credentials_error)?;
 
         if !user.is_active {
@@ -202,7 +206,7 @@ impl ApiKeyAuthenticationService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
+            .context("Failed to fetch user info")?;
 
         if let Some(user) = user {
             Ok(Some(UserInfo {
@@ -228,7 +232,7 @@ impl ApiKeyAuthenticationService {
         let user = Users::find_by_id(user_id)
             .one(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?
+            .context("Failed to fetch user for last login update")?
             .ok_or_else(invalid_credentials_error)?;
 
         // Update last login time
@@ -237,14 +241,14 @@ impl ApiKeyAuthenticationService {
 
         user.update(self.db.as_ref())
             .await
-            .map_err(|e| crate::error!(Database, format!("Database error: {}", e)))?;
+            .context("Failed to update last login")?;
 
         Ok(())
     }
 }
 
 fn invalid_credentials_error() -> ProxyError {
-    crate::error!(Authentication, "无效的认证凭据")
+    crate::error::auth::AuthError::Message("无效的认证凭据".to_string()).into()
 }
 
 /// Determine user role based on admin status

@@ -4,7 +4,7 @@ use crate::{
     config::{AppConfig, ConfigManager},
     error::{Context, Result},
     linfo,
-    logging::{LogComponent, LogStage},
+    logging::{LogComponent, LogStage, log_proxy_error},
     management::server::{ManagementConfig, ManagementServer, ManagementState},
     pricing::PricingCalculatorService,
     proxy::{
@@ -299,31 +299,35 @@ fn load_config() -> Result<Arc<AppConfig>> {
 async fn init_database(config: &AppConfig) -> Result<Arc<DatabaseConnection>> {
     let db = crate::database::init_database(&config.database.url)
         .await
-        .map_err(|e| {
-            lerror!(
+        .inspect_err(|err| {
+            log_proxy_error(
                 "system",
                 LogStage::Startup,
                 LogComponent::ServerSetup,
                 "init_db_fail",
-                &format!("❌ Database connection failed: {e:?}")
+                "❌ 数据库连接失败",
+                err,
+                &[],
             );
-            e
         })?;
     Ok(Arc::new(db))
 }
 
 /// 运行数据库迁移
 async fn run_migrations(db: &DatabaseConnection) -> Result<()> {
-    crate::database::run_migrations(db).await.map_err(|e| {
-        lerror!(
-            "system",
-            LogStage::Startup,
-            LogComponent::ServerSetup,
-            "run_migrations_fail",
-            &format!("❌ Database migration failed: {e:?}")
-        );
-        e
-    })?;
+    crate::database::run_migrations(db)
+        .await
+        .inspect_err(|err| {
+            log_proxy_error(
+                "system",
+                LogStage::Startup,
+                LogComponent::ServerSetup,
+                "run_migrations_fail",
+                "❌ 数据库迁移失败",
+                err,
+                &[],
+            );
+        })?;
     Ok(())
 }
 
@@ -331,15 +335,16 @@ async fn run_migrations(db: &DatabaseConnection) -> Result<()> {
 async fn ensure_pricing_data(db: &DatabaseConnection) -> Result<()> {
     crate::database::ensure_model_pricing_data(db)
         .await
-        .map_err(|e| {
-            lerror!(
+        .inspect_err(|err| {
+            log_proxy_error(
                 "system",
                 LogStage::Startup,
                 LogComponent::ServerSetup,
                 "ensure_data_fail",
-                &format!("❌ Failed to ensure model pricing data: {e:?}")
+                "❌ 模型定价数据校验失败",
+                err,
+                &[],
             );
-            e
         })
 }
 

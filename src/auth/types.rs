@@ -131,9 +131,13 @@ impl JwtClaims {
 
     /// 获取用户ID
     pub fn user_id(&self) -> crate::error::Result<i32> {
-        self.sub
-            .parse()
-            .map_err(|err| crate::error!(Authentication, format!("JWT sub 字段解析失败: {}", err)))
+        match self.sub.parse::<i32>() {
+            Ok(id) => Ok(id),
+            Err(err) => Err(crate::error::auth::AuthError::Message(format!(
+                "JWT sub 字段解析失败: {err}"
+            ))
+            .into()),
+        }
     }
 }
 
@@ -272,21 +276,19 @@ impl Default for AuthConfig {
 impl AuthConfig {
     /// 从环境变量注入 JWT 密钥
     pub fn load_jwt_secret_from_env(&mut self) -> crate::error::Result<()> {
-        let jwt_secret = std::env::var("JWT_SECRET").map_err(|_| {
-            crate::error!(
-                Config,
-                "JWT_SECRET environment variable is required for authentication"
+        let Ok(jwt_secret) = std::env::var("JWT_SECRET") else {
+            return Err(crate::error::auth::AuthError::Message(
+                "JWT_SECRET environment variable is required for authentication".to_string(),
             )
-        })?;
+            .into());
+        };
 
         if jwt_secret.len() < 32 {
-            return Err(crate::error!(
-                Config,
-                format!(
-                    "JWT_SECRET must be at least 32 characters, got {}",
-                    jwt_secret.len()
-                )
-            ));
+            return Err(crate::error::auth::AuthError::Message(format!(
+                "JWT_SECRET must be at least 32 characters, got {}",
+                jwt_secret.len()
+            ))
+            .into());
         }
 
         self.jwt_secret = jwt_secret;

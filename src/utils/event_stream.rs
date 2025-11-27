@@ -108,8 +108,12 @@ impl EventStreamData {
             if line_bytes.ends_with(b"\r") {
                 line_bytes.truncate(line_bytes.len() - 1);
             }
-            let line = String::from_utf8(line_bytes.to_vec())
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let line = match String::from_utf8(line_bytes.to_vec()) {
+                Ok(text) => text,
+                Err(err) => {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+                }
+            };
             Ok(Some(line))
         } else {
             Ok(None)
@@ -136,8 +140,12 @@ impl Decoder for EventStreamData {
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
         if !src.is_empty() {
-            let mut last = String::from_utf8(src.split_to(src.len()).to_vec())
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let mut last = match String::from_utf8(src.split_to(src.len()).to_vec()) {
+                Ok(text) => text,
+                Err(err) => {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+                }
+            };
             if last.ends_with('\n') {
                 last.pop();
             }

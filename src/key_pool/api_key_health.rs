@@ -141,7 +141,11 @@ impl ApiKeyHealthService {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(self.db.as_ref())
                 .await?
-                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
+                .ok_or_else(|| {
+                    crate::error::database::DatabaseError::NotFound(format!(
+                        "API密钥不存在: {key_id}"
+                    ))
+                })?
                 .into();
 
         let detail = serde_json::json!({
@@ -182,7 +186,11 @@ impl ApiKeyHealthService {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(self.db.as_ref())
                 .await?
-                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
+                .ok_or_else(|| {
+                    crate::error::database::DatabaseError::NotFound(format!(
+                        "API密钥不存在: {key_id}"
+                    ))
+                })?
                 .into();
 
         model.health_status = Set(ApiKeyHealthStatus::RateLimited.to_string());
@@ -259,7 +267,11 @@ impl ApiKeyHealthService {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(self.db.as_ref())
                 .await?
-                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
+                .ok_or_else(|| {
+                    crate::error::database::DatabaseError::NotFound(format!(
+                        "API密钥不存在: {key_id}"
+                    ))
+                })?
                 .into();
 
         model.health_status = Set(ApiKeyHealthStatus::Healthy.to_string());
@@ -293,7 +305,11 @@ impl ApiKeyHealthService {
             user_provider_keys::Entity::find_by_id(key_id)
                 .one(self.db.as_ref())
                 .await?
-                .ok_or_else(|| crate::error!(Database, format!("API密钥不存在: {key_id}")))?
+                .ok_or_else(|| {
+                    crate::error::database::DatabaseError::NotFound(format!(
+                        "API密钥不存在: {key_id}"
+                    ))
+                })?
                 .into();
 
         // 构造健康状态详情JSON

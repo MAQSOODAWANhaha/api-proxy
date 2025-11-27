@@ -28,7 +28,8 @@ use crate::{
         api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask,
         gemini_code_assist_client::GeminiCodeAssistClient, types::AuthStatus,
     },
-    error::{ProxyError, Result, auth::AuthError},
+    ensure_context,
+    error::{Context, ProxyError, Result, auth::AuthError, management::ManagementError},
     key_pool::types::ApiKeyHealthStatus,
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
@@ -226,16 +227,11 @@ impl<'a> ProviderKeyService<'a> {
         let limit = query.limit.unwrap_or(10).max(1);
         let offset = (page - 1) * limit;
 
-        let total = select.clone().count(self.db()).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "count_fail",
-                &format!("Failed to count provider keys: {err}")
-            );
-            crate::error!(Database, format!("Failed to count provider keys: {err}"))
-        })?;
+        let total = select
+            .clone()
+            .count(self.db())
+            .await
+            .context("Failed to count provider keys")?;
 
         let provider_keys = select
             .find_also_related(ProviderType)
@@ -244,16 +240,7 @@ impl<'a> ProviderKeyService<'a> {
             .order_by_desc(user_provider_keys::Column::CreatedAt)
             .all(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_fail",
-                    &format!("Failed to fetch provider keys: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch provider keys: {err}"))
-            })?;
+            .context("Failed to fetch provider keys")?;
 
         let provider_key_ids: Vec<i32> = provider_keys.iter().map(|(pk, _)| pk.id).collect();
         let usage_stats =
@@ -334,16 +321,7 @@ impl<'a> ProviderKeyService<'a> {
         let provider_name = ProviderType::find_by_id(payload.provider_type_id)
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_provider_type_fail",
-                    &format!("Failed to fetch provider type: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch provider type: {err}"))
-            })?
+            .context("Failed to fetch provider type")?
             .map_or_else(|| "Unknown".to_string(), |provider| provider.display_name);
 
         let mut message = "创建成功".to_string();
@@ -506,16 +484,10 @@ impl<'a> ProviderKeyService<'a> {
             };
 
         let active_model: user_provider_keys::ActiveModel = existing_key.into();
-        active_model.delete(self.db()).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "delete_key_fail",
-                &format!("Failed to delete provider key: {err}")
-            );
-            crate::error!(Database, format!("Failed to delete provider key: {err}"))
-        })?;
+        active_model
+            .delete(self.db())
+            .await
+            .context("Failed to delete provider key")?;
 
         if let (Some(session_id), Some(task)) = (session_to_remove.as_ref(), refresh_task)
             && let Err(err) = task.remove_session(session_id.as_str()).await
@@ -570,16 +542,7 @@ impl<'a> ProviderKeyService<'a> {
             timezone_context,
         )
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "fetch_trends_fail",
-                &format!("Failed to fetch provider key trends: {err}")
-            );
-            crate::error!(Database, format!("Failed to fetch trends data: {err}"))
-        })?;
+        .context("Failed to fetch trends data")?;
 
         let usage_series: Vec<i64> = trends.points.iter().map(|point| point.requests).collect();
         let cost_series: Vec<f64> = trends.points.iter().map(|point| point.cost).collect();
@@ -624,50 +587,20 @@ impl<'a> ProviderKeyService<'a> {
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .count(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "count_total_keys_fail",
-                    &format!("Failed to count total keys: {err}")
-                );
-                crate::error!(Database, format!("Failed to count total keys: {err}"))
-            })?;
+            .context("Failed to count total keys")?;
 
         let active_keys = UserProviderKey::find()
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .count(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "count_active_keys_fail",
-                    &format!("Failed to count active keys: {err}")
-                );
-                crate::error!(Database, format!("Failed to count active keys: {err}"))
-            })?;
+            .context("Failed to count active keys")?;
 
         let user_provider_key_ids: Vec<i32> = UserProviderKey::find()
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .all(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_user_keys_fail",
-                    &format!("Failed to fetch user provider keys: {err}")
-                );
-                crate::error!(
-                    Database,
-                    format!("Failed to fetch user provider keys: {err}")
-                )
-            })?
+            .context("Failed to fetch user provider keys")?
             .into_iter()
             .map(|k| k.id)
             .collect();
@@ -687,16 +620,7 @@ impl<'a> ProviderKeyService<'a> {
                     let cost_sum: f64 = records.iter().filter_map(|record| record.cost).sum();
                     (usage_count, cost_sum)
                 })
-                .map_err(|err| {
-                    lerror!(
-                        "system",
-                        LogStage::Db,
-                        LogComponent::Database,
-                        "fetch_tracing_fail",
-                        &format!("Failed to fetch proxy tracing records: {err}")
-                    );
-                    crate::error!(Database, format!("Failed to fetch usage statistics: {err}"))
-                })?
+                .context("Failed to fetch usage statistics")?
         };
 
         let data = json!({
@@ -734,16 +658,7 @@ impl<'a> ProviderKeyService<'a> {
             .order_by_desc(user_provider_keys::Column::CreatedAt)
             .all(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_simple_keys_fail",
-                    &format!("Failed to fetch simple provider keys: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch provider keys: {err}"))
-            })?;
+            .context("Failed to fetch simple provider keys")?;
 
         let provider_keys_list = provider_keys
             .into_iter()
@@ -784,16 +699,7 @@ impl<'a> ProviderKeyService<'a> {
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "find_key_fail",
-                    &format!("Failed to find provider key: {err}")
-                );
-                crate::error!(Database, format!("Failed to find provider key: {err}"))
-            })?
+            .context("Failed to find provider key")?
             .ok_or_else(|| {
                 ProxyError::Authentication(AuthError::Message(format!(
                     "ProviderKey not found: {key_id}"
@@ -861,16 +767,7 @@ impl<'a> ProviderKeyService<'a> {
             timezone_context,
         )
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "fetch_provider_key_trends_fail",
-                &format!("Failed to fetch provider key trends: {err}")
-            );
-            crate::error!(Database, format!("Failed to fetch trends data: {err}"))
-        })?;
+        .context("Failed to fetch provider key trends")?;
 
         let trend_points = trends.points.clone();
         let data = json!({
@@ -900,16 +797,7 @@ impl<'a> ProviderKeyService<'a> {
             .filter(user_service_apis::Column::UserId.eq(user_id))
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_service_api_fail",
-                    &format!("Failed to fetch user service api: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch user service api: {err}"))
-            })?
+            .context("Failed to fetch user service api")?
             .ok_or_else(|| {
                 ProxyError::Authentication(AuthError::Message(format!(
                     "UserServiceApi not found: {api_id}"
@@ -931,16 +819,7 @@ impl<'a> ProviderKeyService<'a> {
             timezone_context,
         )
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "fetch_service_api_trends_fail",
-                &format!("Failed to fetch user service api trends: {err}")
-            );
-            crate::error!(Database, format!("Failed to fetch trends data: {err}"))
-        })?;
+        .context("Failed to fetch user service api trends")?;
 
         let trend_points = trends.points.clone();
         let data = json!({
@@ -967,16 +846,7 @@ impl<'a> ProviderKeyService<'a> {
             .filter(user_provider_keys::Column::UserId.eq(user_id))
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "find_key_fail",
-                    &format!("Failed to find provider key: {err}")
-                );
-                crate::error!(Database, format!("Failed to find provider key: {err}"))
-            })?
+            .context("Failed to find provider key")?
             .ok_or_else(|| {
                 ProxyError::Authentication(AuthError::Message(format!(
                     "ProviderKey not found: {key_id}"
@@ -998,19 +868,7 @@ impl<'a> ProviderKeyService<'a> {
             .find_also_related(ProviderType)
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_key_with_provider_fail",
-                    &format!("Failed to fetch provider key detail: {err}")
-                );
-                crate::error!(
-                    Database,
-                    format!("Failed to fetch provider key detail: {err}")
-                )
-            })?
+            .context("Failed to fetch provider key detail")?
             .ok_or_else(|| {
                 ProxyError::Authentication(AuthError::Message(format!(
                     "ProviderKey not found: {key_id}"
@@ -1036,16 +894,7 @@ impl<'a> ProviderKeyService<'a> {
             .filter(user_provider_keys::Column::Id.ne(key_id))
             .one(self.db())
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "check_duplicate_fail",
-                    &format!("Failed to check duplicate name: {err}")
-                );
-                crate::error!(Database, format!("Failed to check duplicate name: {err}"))
-            })?;
+            .context("Failed to check duplicate name")?;
 
         if duplicate.is_some() {
             return Err(ProxyError::Authentication(AuthError::Message(format!(
@@ -1095,16 +944,10 @@ impl<'a> ProviderKeyService<'a> {
         active_model.project_id = Set(payload.project_id.clone());
         active_model.updated_at = Set(Utc::now().naive_utc());
 
-        active_model.update(self.db()).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "update_key_fail",
-                &format!("Failed to update provider key: {err}")
-            );
-            crate::error!(Database, format!("Failed to update provider key: {err}"))
-        })
+        active_model
+            .update(self.db())
+            .await
+            .context("Failed to update provider key")
     }
 
     async fn enqueue_pending_schedule(
@@ -1124,17 +967,11 @@ impl<'a> ProviderKeyService<'a> {
             return Ok(());
         };
 
-        if let Err(err) = task.enqueue_schedule(schedule).await {
-            lerror!(
-                "system",
-                LogStage::Scheduling,
-                LogComponent::OAuth,
-                "enqueue_schedule_update_fail",
-                &format!("Failed to enqueue OAuth refresh schedule during update: {err}"),
-                user_id = user_id,
-                key_id = key_id,
-            );
-
+        if let Err(err) = task
+            .enqueue_schedule(schedule)
+            .await
+            .context("Failed to enqueue OAuth refresh schedule during update")
+        {
             let revert_model: user_provider_keys::ActiveModel = original_key.into();
             if let Err(revert_err) = revert_model.update(self.db()).await {
                 lerror!(
@@ -1661,10 +1498,10 @@ async fn ensure_unique_provider_key(
                 "check_exist_fail",
                 &format!("Failed to check existing provider key: {err}")
             );
-            Err(crate::error!(
-                Database,
-                format!("Failed to check existing provider key: {err}")
+            Err(crate::error::database::DatabaseError::Connection(format!(
+                "Failed to check existing provider key: {err}"
             ))
+            .into())
         }
         _ => Ok(()),
     }
@@ -1710,10 +1547,10 @@ async fn validate_oauth_session_for_creation(
                         "check_session_usage_fail",
                         &format!("Failed to check OAuth session usage: {err}")
                     );
-                    Err(crate::error!(
-                        Database,
-                        format!("Failed to check OAuth session usage: {err}")
+                    Err(crate::error::database::DatabaseError::Connection(format!(
+                        "Failed to check OAuth session usage: {err}"
                     ))
+                    .into())
                 }
                 _ => Ok(()),
             }
@@ -1729,10 +1566,10 @@ async fn validate_oauth_session_for_creation(
                 "validate_session_fail",
                 &format!("Failed to validate OAuth session: {err}")
             );
-            Err(crate::error!(
-                Database,
-                format!("Failed to validate OAuth session: {err}")
+            Err(crate::error::database::DatabaseError::Connection(format!(
+                "Failed to validate OAuth session: {err}"
             ))
+            .into())
         }
     }
 }
@@ -1757,18 +1594,10 @@ async fn validate_oauth_session_for_update(
         .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
         .one(db)
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::OAuth,
-                "validate_session_fail",
-                &format!("Failed to validate OAuth session: {err}")
-            );
-            crate::error!(Database, format!("Failed to validate OAuth session: {err}"))
-        })?;
+        .context("Failed to validate OAuth session")?
+        .is_some();
 
-    if session_exists.is_none() {
+    if !session_exists {
         return Err(ProxyError::Authentication(AuthError::Message(
             "指定的OAuth会话不存在或未完成授权 (field: api_key)".to_string(),
         )));
@@ -1781,19 +1610,7 @@ async fn validate_oauth_session_for_update(
         .filter(user_provider_keys::Column::Id.ne(key_id))
         .one(db)
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::OAuth,
-                "check_session_usage_fail",
-                &format!("Failed to check OAuth session usage: {err}")
-            );
-            crate::error!(
-                Database,
-                format!("Failed to check OAuth session usage: {err}")
-            )
-        })?;
+        .context("Failed to check OAuth session usage")?;
 
     if existing_usage.is_some() {
         return Err(ProxyError::Authentication(AuthError::Message(
@@ -1861,18 +1678,23 @@ async fn is_gemini_oauth_flow(
     let provider = ProviderType::find_by_id(payload.provider_type_id)
         .one(db)
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "gemini_provider_query_fail",
-                &format!("Failed to query provider type for Gemini validation: {err}"),
-            );
-            crate::error!(Database, format!("Failed to query provider type: {err}"))
-        })?;
+        .context("Failed to query provider type for Gemini validation")?;
 
     Ok(matches!(provider.map(|p| p.name), Some(name) if name == GEMINI_PROVIDER_NAME))
+}
+
+async fn validate_oauth_session(
+    db: &DatabaseConnection,
+    session_id: &str,
+    user_id: i32,
+) -> Result<Option<oauth_client_sessions::Model>> {
+    OAuthSession::find()
+        .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
+        .filter(oauth_client_sessions::Column::UserId.eq(user_id))
+        .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
+        .one(db)
+        .await
+        .context("Failed to validate OAuth session")
 }
 
 async fn fetch_authorized_session(
@@ -1886,19 +1708,7 @@ async fn fetch_authorized_session(
         .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
         .one(db)
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "gemini_session_query_fail",
-                &format!(
-                    "Gemini OAuth: Failed to query OAuth session while validating project_id: {err}"
-                ),
-                user_id = user_id,
-            );
-            crate::error!(Database, format!("Failed to validate OAuth session: {err}"))
-        })
+        .context("Failed to fetch authorized OAuth session")
 }
 
 fn log_missing_session_id(user_id: i32) {
@@ -2070,16 +1880,10 @@ async fn insert_provider_key_record(
         ..Default::default()
     };
 
-    new_provider_key.insert(db).await.map_err(|err| {
-        lerror!(
-            "system",
-            LogStage::Db,
-            LogComponent::Database,
-            "create_key_fail",
-            &format!("Failed to create provider key: {err}")
-        );
-        crate::error!(Database, format!("Failed to create provider key: {err}"))
-    })
+    new_provider_key
+        .insert(db)
+        .await
+        .context("Failed to create provider key")
 }
 
 async fn enqueue_oauth_schedule(
@@ -2232,22 +2036,28 @@ async fn get_access_token_for_key(
     let key_record = UserProviderKey::find_by_id(key_id)
         .one(db)
         .await
-        .map_err(|err| crate::error!(Database, format!("查询key记录失败: {err}")))?
-        .ok_or_else(|| {
-            ProxyError::internal(format!("未找到key记录: key_id={key_id}, user_id={user_id}"))
+        .context("Failed to fetch key record")?
+        .ok_or_else(|| ManagementError::ProviderKeyNotFound {
+            key_id,
+            user_id: user_id.to_string(),
         })?;
 
-    if key_record.auth_type != OAUTH_AUTH_TYPE {
-        return Err(ProxyError::internal(format!(
-            "key不是OAuth类型: auth_type={}",
-            key_record.auth_type
-        )));
-    }
+    ensure_context!(
+        key_record.auth_type == OAUTH_AUTH_TYPE,
+        ManagementError::InvalidKeyAuthType {
+            key_id,
+            expected: OAUTH_AUTH_TYPE.to_string(),
+            actual: key_record.auth_type.clone(),
+        },
+        format!("自动获取 project_id 前校验 key 类型失败: key_id={key_id}, user_id={user_id}")
+    );
 
     let session_id = key_record.api_key;
-    if session_id.is_empty() {
-        return Err(ProxyError::internal("OAuth key的session_id为空"));
-    }
+    ensure_context!(
+        !session_id.is_empty(),
+        ManagementError::MissingOAuthSessionId { key_id },
+        format!("自动获取 project_id 时检测到 session_id 为空: key_id={key_id}")
+    );
 
     let oauth_session = OAuthSession::find()
         .filter(oauth_client_sessions::Column::SessionId.eq(&session_id))
@@ -2255,17 +2065,18 @@ async fn get_access_token_for_key(
         .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
         .one(db)
         .await
-        .map_err(|err| crate::error!(Database, format!("查询OAuth会话失败: {err}")))?
-        .ok_or_else(|| {
-            ProxyError::internal(format!(
-                "未找到授权的OAuth会话: session_id={session_id}, user_id={user_id}"
-            ))
+        .context("Failed to fetch OAuth session")?
+        .ok_or_else(|| ManagementError::OAuthSessionNotFound {
+            session_id: session_id.clone(),
+            user_id: user_id.to_string(),
         })?;
 
     let access_token = oauth_session
         .access_token
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| ProxyError::internal("OAuth会话中没有access_token"))?;
+        .ok_or_else(|| ManagementError::OAuthSessionTokenMissing {
+            session_id: session_id.clone(),
+        })?;
 
     ldebug!(
         "system",

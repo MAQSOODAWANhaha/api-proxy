@@ -2,7 +2,7 @@
 //!
 //! 负责修改从上游返回的响应头，例如添加CORS头、移除敏感信息等。
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
@@ -74,35 +74,41 @@ impl ResponseTransformService {
             .get("access-control-allow-origin")
             .is_none()
         {
-            upstream_response
-                .insert_header("access-control-allow-origin", "*")
-                .map_err(|e| ProxyError::internal_with_source("Failed to set CORS header", e))?;
+            Self::set_header(upstream_response, "access-control-allow-origin", "*")?;
         }
         if upstream_response
             .headers
             .get("access-control-allow-methods")
             .is_none()
         {
-            upstream_response
-                .insert_header(
-                    "access-control-allow-methods",
-                    "GET, POST, PUT, DELETE, OPTIONS",
-                )
-                .map_err(|e| ProxyError::internal_with_source("Failed to set CORS header", e))?;
+            Self::set_header(
+                upstream_response,
+                "access-control-allow-methods",
+                "GET, POST, PUT, DELETE, OPTIONS",
+            )?;
         }
         if upstream_response
             .headers
             .get("access-control-allow-headers")
             .is_none()
         {
-            upstream_response
-                .insert_header(
-                    "access-control-allow-headers",
-                    "Content-Type, Authorization",
-                )
-                .map_err(|e| ProxyError::internal_with_source("Failed to set CORS header", e))?;
+            Self::set_header(
+                upstream_response,
+                "access-control-allow-headers",
+                "Content-Type, Authorization",
+            )?;
         }
         Ok(())
+    }
+
+    fn set_header(
+        upstream_response: &mut ResponseHeader,
+        key: &'static str,
+        value: &'static str,
+    ) -> Result<()> {
+        upstream_response
+            .insert_header(key, value)
+            .context("Failed to set CORS header")
     }
 
     /// 清理敏感或不必要的响应头

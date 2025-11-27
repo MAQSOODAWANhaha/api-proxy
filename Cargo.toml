@@ -66,6 +66,7 @@ pingora-core = {version = "0.6.0",features = ["openssl"]}
 pingora-proxy = "0.6.0"
 pingora-load-balancing = "0.6.0"
 pingora-http = "0.6.0"
+pingora-error = "0.6.0"
 axum = "0.8.4"
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 sea-orm-migration = "1"
@@ -142,6 +143,7 @@ pingora-core = { workspace = true }
 pingora-proxy = { workspace = true }
 pingora-load-balancing = { workspace = true }
 pingora-http = { workspace = true }
+pingora-error = { workspace = true }
 axum = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }

@@ -16,7 +16,7 @@ use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask;
 use crate::auth::service::ApiKeyAuthenticationService;
 use crate::config::AppConfig;
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result, management::ManagementError};
 use crate::key_pool::ApiKeySchedulerService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{linfo, lwarn};
@@ -123,8 +123,8 @@ impl ManagementState {
         let oauth_token_refresh_task = context
             .tasks()
             .get_task::<ApiKeyOAuthTokenRefreshTask>(TaskType::ApiKeyOAuthTokenRefresh)
-            .ok_or_else(|| {
-                ProxyError::internal("oauth_token_refresh task not registered in AppTasks")
+            .ok_or(ManagementError::MissingTask {
+                task: "ApiKeyOAuthTokenRefresh",
             })?;
 
         let services = ManagementServices {
@@ -370,12 +370,9 @@ impl ManagementServer {
     /// 启动服务器
     pub async fn serve(self) -> Result<()> {
         let bind_address = self.config.bind_address.clone();
-        let ip = bind_address.parse::<std::net::IpAddr>().map_err(|e| {
-            crate::error!(
-                Config,
-                format!("Invalid management bind address '{bind_address}': {e}")
-            )
-        })?;
+        let ip = bind_address
+            .parse::<std::net::IpAddr>()
+            .with_context(|| format!("管理服务器绑定地址无效: {bind_address}"))?;
         let addr = SocketAddr::new(ip, self.config.port);
 
         linfo!(
@@ -388,13 +385,18 @@ impl ManagementServer {
 
         let listener = TcpListener::bind(&addr).await?;
 
-        axum::serve(
+        if let Err(err) = axum::serve(
             listener,
             self.router
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
-        .map_err(|e| crate::error!(Network, format!("Management server error: {e}")))?;
+        {
+            return Err(crate::error::network::NetworkError::BadGateway(format!(
+                "Management server error: {err}"
+            ))
+            .into());
+        }
 
         Ok(())
     }

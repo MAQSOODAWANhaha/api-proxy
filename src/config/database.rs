@@ -1,6 +1,6 @@
 //! # 数据库配置
 
-use crate::error::Result;
+use crate::error::{Context, Result};
 use crate::{
     linfo,
     logging::{LogComponent, LogStage},
@@ -44,12 +44,8 @@ impl DatabaseConfig {
             if let Some(parent) = db_path.parent()
                 && !parent.exists()
             {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    crate::error!(
-                        Config,
-                        format!("无法创建数据库目录: {}: {}", parent.display(), e)
-                    )
-                })?;
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("无法创建数据库目录: {}", parent.display()))?;
 
                 linfo!(
                     "system",

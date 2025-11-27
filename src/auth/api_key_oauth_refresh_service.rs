@@ -6,7 +6,7 @@
 use crate::auth::api_key_oauth_service::OAuthTokenResponse;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::types::AuthStatus;
-use crate::error::{Result, auth::OAuthError};
+use crate::error::{Context, ProxyError, Result, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::provider::{
     ApiKeyProviderConfig, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
@@ -141,17 +141,15 @@ impl ApiKeyOAuthRefreshService {
         let session = self.session_manager.get_session(session_id).await?;
         ensure!(
             session.status == AuthStatus::Authorized.to_string(),
-            Authentication,
-            format!("OAuth session {session_id} is not authorized")
+            crate::error::auth::AuthError::Message(format!(
+                "OAuth session {session_id} is not authorized"
+            ))
         );
 
         let refresh_token = session.refresh_token.as_ref().ok_or_else(|| {
-            crate::error!(
-                Authentication,
-                OAuth(OAuthError::TokenExchangeFailed(
-                    "Refresh token missing for session".to_string()
-                ))
-            )
+            ProxyError::from(OAuthError::TokenExchangeFailed(
+                "Refresh token missing for session".to_string(),
+            ))
         })?;
 
         self.refresh_with_session(&session, refresh_token).await
@@ -214,15 +212,15 @@ impl ApiKeyOAuthRefreshService {
 
         ensure!(
             session.status == AuthStatus::Pending.to_string(),
-            Authentication,
-            format!("Session {session_id} is not in pending state")
+            crate::error::auth::AuthError::Message(format!(
+                "Session {session_id} is not in pending state"
+            ))
         );
 
         if session.is_expired() {
-            crate::bail!(
-                Authentication,
-                OAuth(OAuthError::SessionExpired(session_id.to_string()))
-            );
+            return Err(ProxyError::from(OAuthError::SessionExpired(
+                session_id.to_string(),
+            )));
         }
 
         let config = self
@@ -264,23 +262,17 @@ impl ApiKeyOAuthRefreshService {
 
         let status = response.status();
         if status.is_success() {
-            return response.json::<TokenResponse>().await.map_err(|e| {
-                crate::error!(
-                    Authentication,
-                    OAuth(OAuthError::TokenExchangeFailed(format!(
-                        "Failed to parse token response: {e}"
-                    )))
-                )
-            });
+            let token_response = response
+                .json::<TokenResponse>()
+                .await
+                .context("Failed to parse token response")?;
+            return Ok(token_response);
         }
 
         let error_body = response.text().await.unwrap_or_default();
-        Err(crate::error!(
-            Authentication,
-            OAuth(OAuthError::TokenExchangeFailed(format!(
-                "Token request failed: {status} - {error_body}"
-            )))
-        ))
+        Err(ProxyError::from(OAuthError::TokenExchangeFailed(format!(
+            "Token request failed: {status} - {error_body}"
+        ))))
     }
 
     fn process_token_response(response: TokenResponse, session_id: &str) -> OAuthTokenResponse {
@@ -349,13 +341,10 @@ impl ApiKeyOAuthRefreshService {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(crate::error!(
-                Authentication,
-                OAuth(OAuthError::TokenExchangeFailed(format!(
-                    "Token revocation failed: {}",
-                    response.status()
-                )))
-            ));
+            return Err(ProxyError::from(OAuthError::TokenExchangeFailed(format!(
+                "Token revocation failed: {}",
+                response.status()
+            ))));
         }
 
         Ok(())

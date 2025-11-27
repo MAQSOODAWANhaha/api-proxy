@@ -1,6 +1,5 @@
 //! API密钥健康检查相关处理器
 
-use crate::error::ProxyError;
 use crate::management::{response, server::ManagementState};
 use crate::{
     lerror,
@@ -24,10 +23,7 @@ pub async fn mark_key_unhealthy(
                 "mark_key_unhealthy_fail",
                 &format!("Failed to mark key {key_id} as unhealthy: {err}")
             );
-            response::app_error(ProxyError::internal_with_source(
-                format!("Failed to mark key {key_id} as unhealthy"),
-                err,
-            ))
+            response::app_error(err)
         }
     }
 }

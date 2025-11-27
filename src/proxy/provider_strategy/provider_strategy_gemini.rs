@@ -4,7 +4,7 @@
 //! 实际的路径/JSON 注入逻辑仍留在 RequestHandler，后续再迁移。
 
 use super::ProviderStrategy;
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result};
 use crate::proxy::ProxyContext;
 use crate::{
     ldebug, linfo,
@@ -83,12 +83,9 @@ impl ProviderStrategy for GeminiStrategy {
     ) -> Result<()> {
         // 设置正确的Host头 - 复用 select_upstream_host 的逻辑
         if let Ok(Some(host)) = self.select_upstream_host(ctx).await {
-            if let Err(e) = upstream_request.insert_header("host", &host) {
-                return Err(ProxyError::internal_with_source(
-                    "Failed to set host header for Gemini",
-                    e,
-                ));
-            }
+            upstream_request
+                .insert_header("host", &host)
+                .context("Failed to set host header for Gemini")?;
 
             linfo!(
                 &ctx.request_id,

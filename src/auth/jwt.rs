@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::permissions::UserRole;
 use crate::auth::types::{AuthConfig, JwtClaims};
-use crate::error::Result;
+use crate::error::{Result, auth::AuthError};
 
 /// JWT token manager
 pub struct JwtManager {
@@ -67,8 +67,12 @@ impl JwtManager {
 
         let header = Header::new(Algorithm::HS256);
 
-        encode(&header, &claims, &self.encoding_key)
-            .map_err(|e| crate::error!(Internal, "Token generation failed", e))
+        match encode(&header, &claims, &self.encoding_key) {
+            Ok(token) => Ok(token),
+            Err(e) => {
+                Err(AuthError::Message(format!("Failed to generate access token: {e}")).into())
+            }
+        }
     }
 
     /// Generate refresh token
@@ -83,25 +87,39 @@ impl JwtManager {
 
         let header = Header::new(Algorithm::HS256);
 
-        encode(&header, &claims, &self.encoding_key)
-            .map_err(|e| crate::error!(Internal, "Token generation failed", e))
+        match encode(&header, &claims, &self.encoding_key) {
+            Ok(token) => Ok(token),
+            Err(e) => {
+                Err(AuthError::Message(format!("Failed to generate refresh token: {e}")).into())
+            }
+        }
     }
 
     /// Validate and parse token
     pub fn validate_token(&self, token: &str) -> Result<JwtClaims> {
-        let token_data: TokenData<JwtClaims> = decode(token, &self.decoding_key, &self.validation)
-            .map_err(|e| match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
-                    crate::error!(Authentication, "认证令牌已过期")
+        use jsonwebtoken::errors::ErrorKind;
+
+        let token_data: TokenData<JwtClaims> =
+            match decode(token, &self.decoding_key, &self.validation) {
+                Ok(data) => data,
+                Err(e) => {
+                    let auth_err = match e.kind() {
+                        ErrorKind::ExpiredSignature => {
+                            AuthError::Message("认证令牌已过期".to_string())
+                        }
+                        _ => AuthError::Message(format!("Token validation failed: {e}")),
+                    };
+                    return Err(auth_err.into());
                 }
-                _ => crate::error!(Authentication, format!("Token validation failed: {e}")),
-            })?;
+            };
 
         let claims = token_data.claims;
 
         // Additional check for token expiration
         if claims.is_expired() {
-            crate::bail!(Authentication, "认证令牌已过期");
+            crate::bail!(crate::error::auth::AuthError::Message(
+                "认证令牌已过期".to_string()
+            ));
         }
 
         Ok(claims)
@@ -161,7 +179,7 @@ impl JwtManager {
             // Return JTI for blacklist storage
             Ok(claims.jti)
         } else {
-            Err(crate::error!(Authentication, "认证令牌格式无效"))
+            Err(crate::error::auth::AuthError::Message("认证令牌格式无效".to_string()).into())
         }
     }
 

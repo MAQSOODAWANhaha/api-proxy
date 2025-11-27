@@ -1,5 +1,5 @@
 use crate::auth::types::OAuthProviderConfig;
-use crate::error::Result;
+use crate::error::{Context, Result};
 use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
 use entity::oauth_client_sessions;
@@ -26,7 +26,7 @@ pub fn build_authorize_url(
     );
 
     let mut url = Url::parse(&config.authorize_url)
-        .map_err(|e| crate::error!(Network, format!("Invalid authorize URL: {e}")))?;
+        .with_context(|| format!("Invalid authorize URL: {}", config.authorize_url))?;
 
     let scope = config.scopes.join(" ");
     let mut params = HashMap::new();

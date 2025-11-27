@@ -3,7 +3,7 @@
 //! 提供统一的缓存接口，支持内存缓存和 Redis 缓存
 
 use crate::config::{CacheConfig, CacheType, RedisConfig};
-use crate::error::{Context, Result};
+use crate::error::{Context, Result, cache::CacheError};
 use crate::{
     linfo,
     logging::{LogComponent, LogStage},
@@ -375,9 +375,11 @@ impl CacheProvider for RedisCache {
 
     async fn expire(&self, key: &str, ttl: Duration) -> Result<()> {
         let mut conn = self.connection().await?;
-        // Redis 的 EXPIRE 命令期望 i64 类型，这里转换是安全的
-        let expire_seconds = i64::try_from(ttl.as_secs())
-            .map_err(|_| crate::error!(Internal, "TTL 转换失败，超出 i64 范围"))?;
+        // Redis 的 EXPIRE 命令期望 i64，这里先确保 TTL 没有溢出
+        let ttl_seconds = ttl.as_secs();
+        let Ok(expire_seconds) = i64::try_from(ttl_seconds) else {
+            return Err(CacheError::invalid_ttl("TTL 转换失败，超出 i64 范围").into());
+        };
         let _: bool = conn
             .expire(key, expire_seconds)
             .await
@@ -534,7 +536,7 @@ impl CacheManager {
                 let redis_config = config
                     .redis
                     .as_ref()
-                    .ok_or_else(|| crate::error!(Internal, "Redis 缓存未提供配置"))?;
+                    .ok_or_else(|| CacheError::config("Redis 缓存未提供配置"))?;
                 linfo!(
                     "system",
                     LogStage::Cache,

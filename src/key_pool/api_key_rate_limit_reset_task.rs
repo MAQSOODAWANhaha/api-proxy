@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Result, key_pool::KeyPoolError};
 use crate::key_pool::api_key_health::ApiKeyHealthService;
 use crate::logging::{LogComponent, LogStage};
 use crate::{lerror, linfo};
@@ -37,12 +37,10 @@ impl ApiKeyRateLimitResetTask {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let health_service = self.health_service.upgrade().ok_or_else(|| {
-            crate::error!(
-                Internal,
-                "ApiKeyHealthService 已被释放，无法启动限流恢复任务"
-            )
-        })?;
+        let health_service = self
+            .health_service
+            .upgrade()
+            .ok_or(KeyPoolError::HealthServiceUnavailable)?;
         let (command_sender, command_receiver) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
         // 从健康服务获取待恢复的限流任务
@@ -100,12 +98,15 @@ impl ApiKeyRateLimitResetTask {
         resets_at: chrono::NaiveDateTime,
     ) -> Result<()> {
         if let Some(sender) = self.command_sender.read().await.as_ref() {
-            sender
+            match sender
                 .send(ScheduleResetCommand { key_id, resets_at })
                 .await
-                .map_err(|e| crate::error!(Internal, "Failed to send schedule reset command", e))
+            {
+                Ok(()) => Ok(()),
+                Err(_) => Err(crate::error::key_pool::KeyPoolError::ResetTaskInactive.into()),
+            }
         } else {
-            Err(crate::error!(Internal, "Rate limit reset task not running"))
+            Err(crate::error::key_pool::KeyPoolError::ResetTaskInactive.into())
         }
     }
 }

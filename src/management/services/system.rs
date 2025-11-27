@@ -13,7 +13,7 @@ use serde::Serialize;
 use sysinfo::{Disks, System};
 use tokio::task;
 
-use crate::error::Result;
+use crate::error::{Result, management::ManagementError};
 use crate::logging::{LogComponent, LogStage};
 use crate::lwarn;
 use crate::management::server::ManagementState;
@@ -108,7 +108,7 @@ pub fn build_system_info(state: &ManagementState) -> SystemInfo {
 
 /// 收集系统运行指标。
 pub async fn collect_system_metrics() -> Result<SystemMetrics> {
-    task::spawn_blocking(|| {
+    let metrics = match task::spawn_blocking(|| {
         let mut sys = get_sys().lock().expect("system info mutex poisoned");
         sys.refresh_cpu_all();
         sys.refresh_memory();
@@ -156,16 +156,21 @@ pub async fn collect_system_metrics() -> Result<SystemMetrics> {
         }
     })
     .await
-    .map_err(|err| {
-        lwarn!(
-            "system",
-            LogStage::Internal,
-            LogComponent::Main,
-            "system_metrics_collect_join_fail",
-            &format!("Failed to join system metrics task: {err}")
-        );
-        crate::error!(Internal, "Failed to collect system metrics")
-    })
+    {
+        Ok(metrics) => metrics,
+        Err(err) => {
+            lwarn!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Main,
+                "system_metrics_collect_join_fail",
+                &format!("Failed to join system metrics task: {err}")
+            );
+            return Err(ManagementError::MetricsUnavailable.into());
+        }
+    };
+
+    Ok(metrics)
 }
 
 /// 构建管理根信息。

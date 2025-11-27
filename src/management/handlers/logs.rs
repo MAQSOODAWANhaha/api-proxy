@@ -71,10 +71,10 @@ pub async fn get_trace_detail(
     let service = LogsService::new(&state);
     match service.trace_detail(id, &timezone_context).await {
         Ok(Some(trace)) => response::success(trace),
-        Ok(None) => response::app_error(crate::error!(
-            Database,
-            format!("ProxyTrace not found: {id}")
-        )),
+        Ok(None) => response::app_error(
+            crate::error::database::DatabaseError::NotFound(format!("Trace not found: {id}"))
+                .into(),
+        ),
         Err(err) => {
             err.log();
             lerror!(

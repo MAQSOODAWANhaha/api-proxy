@@ -5,10 +5,8 @@
 use chrono_tz::Tz;
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Context, Result};
 use crate::key_pool::types::SchedulingStrategy;
-use crate::lerror;
-use crate::logging::{LogComponent, LogStage};
 use crate::management::server::ManagementState;
 use crate::types::timezone_utils;
 
@@ -48,16 +46,7 @@ pub async fn list_active_types(
         .order_by_asc(provider_types::Column::Id)
         .all(state.database.as_ref())
         .await
-        .map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "fetch_provider_types_fail",
-                &format!("Failed to fetch provider types: {err}")
-            );
-            crate::error!(Database, format!("Failed to fetch provider types: {err}"))
-        })?;
+        .context("Failed to fetch provider types")?;
 
     Ok(rows
         .into_iter()

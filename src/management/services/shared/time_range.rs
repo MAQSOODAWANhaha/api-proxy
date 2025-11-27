@@ -3,9 +3,9 @@ use std::ops::Range;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use chrono_tz::Tz;
 
+use crate::ensure;
 use crate::error::Result;
 use crate::types::timezone_utils;
-use crate::{ensure, error};
 
 /// 通用时间范围
 #[derive(Debug, Clone)]
@@ -47,39 +47,43 @@ pub fn resolve_range(
         Some("today") => {
             let (start, end) =
                 timezone_utils::local_day_bounds(&now, timezone).ok_or_else(|| {
-                    error!(
-                        Conversion,
-                        "Failed to resolve local day bounds for timezone {}", timezone
-                    )
+                    crate::error::conversion::ConversionError::Message(format!(
+                        "Failed to resolve local day bounds for timezone {timezone}"
+                    ))
                 })?;
             Ok(TimeRangeBounds::new(start, end))
         }
         Some("custom") => {
             let (start, end) = match (start, end) {
-                (Some(start), Some(end)) => {
-                    timezone_utils::convert_range_to_utc(&start, &end, timezone)
-                        .ok_or_else(|| error!(Conversion, "Invalid custom datetime range"))?
-                }
+                (Some(start), Some(end)) => timezone_utils::convert_range_to_utc(
+                    &start, &end, timezone,
+                )
+                .ok_or_else(|| {
+                    crate::error::conversion::ConversionError::Message(
+                        "Invalid custom datetime range".to_string(),
+                    )
+                })?,
                 _ => {
-                    return Err(error!(
-                        Conversion,
-                        "Custom range requires both start and end datetime"
-                    ));
+                    return Err(crate::error::conversion::ConversionError::Message(
+                        "Custom range requires both start and end datetime".to_string(),
+                    )
+                    .into());
                 }
             };
             ensure!(
                 start < end,
-                Conversion,
-                "Start datetime must be earlier than end datetime"
+                crate::error::conversion::ConversionError::Message(
+                    "Start datetime must be earlier than end datetime".to_string()
+                )
             );
             Ok(TimeRangeBounds::new(start, end))
         }
         Some(keyword) => parse_duration_keyword(keyword).map_or_else(
             || {
-                Err(error!(
-                    Conversion,
-                    "Unsupported time range keyword: {}", keyword
+                Err(crate::error::conversion::ConversionError::Message(format!(
+                    "Unsupported time range keyword: {keyword}"
                 ))
+                .into())
             },
             |duration| Ok(TimeRangeBounds::new(now - duration, now)),
         ),

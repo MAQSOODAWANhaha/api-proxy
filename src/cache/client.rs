@@ -10,7 +10,7 @@ use crate::{
 use redis::{AsyncCommands, Client, aio::ConnectionManager};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Context, Result};
+use crate::error::{Context, Result, cache::CacheError};
 
 /// Redis 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,14 +358,15 @@ impl CacheClient {
             );
             Ok(())
         } else {
+            let message = format!("Redis ping 响应异常: {response}");
             lerror!(
                 "system",
                 LogStage::Cache,
                 LogComponent::Cache,
                 "ping_fail",
-                &format!("Redis ping 响应异常: {response}")
+                &message
             );
-            Err(crate::error!(Internal, "Redis 连接测试失败"))
+            Err(CacheError::unexpected_response(message).into())
         }
     }
 

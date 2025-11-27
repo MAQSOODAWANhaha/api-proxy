@@ -3,7 +3,7 @@
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
 use crate::error::ProxyError;
-use crate::logging::{LogComponent, LogStage};
+use crate::logging::{ErrorLogField, LogComponent, LogStage, log_proxy_error};
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -11,7 +11,7 @@ use pingora_core::prelude::*;
 use pingora_core::{Error as PingoraError, ErrorType};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Instant;
@@ -93,6 +93,66 @@ impl ProxyService {
         }
     }
 
+    fn configure_timeouts_and_strategy(&self, session: &mut Session, ctx: &mut ProxyContext) {
+        if let (Some(user_api), Some(provider_type)) =
+            (ctx.user_service_api.as_ref(), ctx.provider_type.as_ref())
+        {
+            let timeout = user_api
+                .timeout_seconds
+                .or(provider_type.timeout_seconds)
+                .unwrap_or(120)
+                .max(120);
+
+            ctx.timeout_seconds = Some(timeout);
+
+            let timeout_u64 = u64::try_from(timeout).unwrap_or(120);
+            let timeout_duration = std::time::Duration::from_secs(timeout_u64 * 2);
+            session.set_read_timeout(Some(timeout_duration));
+            session.set_write_timeout(Some(timeout_duration));
+
+            if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
+            {
+                ctx.strategy = provider_strategy::make_strategy(
+                    name,
+                    Some(
+                        self.state
+                            .key_scheduler_service
+                            .api_key_health_service()
+                            .clone(),
+                    ),
+                );
+            }
+        }
+    }
+
+    async fn collect_request_metadata(&self, session: &Session, ctx: &mut ProxyContext) {
+        let req_stats = self.state.collect_service.collect_request_stats(session);
+        ctx.request_details = self
+            .state
+            .collect_service
+            .collect_request_details(session, &req_stats);
+
+        if let Some(user_api) = &ctx.user_service_api {
+            let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
+            let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
+            let _ = self
+                .state
+                .trace_manager
+                .start_trace(
+                    &ctx.request_id,
+                    user_api.id,
+                    Some(user_api.user_id),
+                    provider_type_id,
+                    user_provider_key_id,
+                    req_stats.method.as_str(),
+                    Some(req_stats.path.clone()),
+                    Some(req_stats.client_ip.clone()),
+                    req_stats.user_agent.clone(),
+                )
+                .await;
+        }
+    }
+
     async fn send_auth_error_response(
         &self,
         session: &mut Session,
@@ -159,9 +219,23 @@ impl ProxyHttp for ProxyService {
         );
 
         if session.req_header().method == "OPTIONS" {
-            return Err(
-                ProxyError::internal("CORS preflight request should not be proxied").into(),
+            let mut resp = ResponseHeader::build(204, Some(4))
+                .map_err(|err| PingoraError::explain(ErrorType::InternalError, err.to_string()))?;
+            let _ = resp.insert_header("access-control-allow-origin", "*");
+            let _ = resp.insert_header(
+                "access-control-allow-methods",
+                "GET, POST, PUT, DELETE, OPTIONS",
             );
+            let _ = resp.insert_header(
+                "access-control-allow-headers",
+                "Content-Type, Authorization",
+            );
+            session.write_response_header(Box::new(resp), false).await?;
+            session.write_response_body(None, true).await?;
+            return Err(PingoraError::explain(
+                ErrorType::HTTPStatus(204),
+                "Preflight handled by proxy".to_string(),
+            ));
         }
 
         // 1. 执行完整的认证和授权流程
@@ -171,13 +245,17 @@ impl ProxyHttp for ProxyService {
             .authenticate_and_authorize(session, ctx)
             .await
         {
-            lerror!(
+            log_proxy_error(
                 &ctx.request_id,
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "auth_fail",
                 "认证授权失败",
-                error = %e
+                &e,
+                &[
+                    ErrorLogField::new("path", json!(session.req_header().uri.path())),
+                    ErrorLogField::new("method", json!(session.req_header().method.as_str())),
+                ],
             );
             if let Some(status) = self
                 .send_auth_error_response(session, &ctx.request_id, &e)
@@ -201,65 +279,8 @@ impl ProxyHttp for ProxyService {
             user_service_api_id = ctx.user_service_api.as_ref().map(|u| u.id)
         );
 
-        // 2. 设置超时和ProviderStrategy
-        if let (Some(user_api), Some(provider_type)) =
-            (ctx.user_service_api.as_ref(), ctx.provider_type.as_ref())
-        {
-            // 获取超时配置，确保为正数，默认120秒
-            let timeout = user_api
-                .timeout_seconds
-                .or(provider_type.timeout_seconds)
-                .unwrap_or(120)
-                .max(120); // 确保至少120秒，避免负数或0
-
-            ctx.timeout_seconds = Some(timeout);
-
-            // 设置读写超时为配置超时的2倍
-            let timeout_u64 = u64::try_from(timeout).unwrap_or(120);
-            let timeout_duration = std::time::Duration::from_secs(timeout_u64 * 2);
-            session.set_read_timeout(Some(timeout_duration));
-            session.set_write_timeout(Some(timeout_duration));
-
-            if let Some(name) = provider_strategy::ProviderRegistry::match_name(&provider_type.name)
-            {
-                ctx.strategy = provider_strategy::make_strategy(
-                    name,
-                    Some(
-                        self.state
-                            .key_scheduler_service
-                            .api_key_health_service()
-                            .clone(),
-                    ),
-                );
-            }
-        }
-
-        // 3. 收集请求统计信息并启动追踪
-        let req_stats = self.state.collect_service.collect_request_stats(session);
-        ctx.request_details = self
-            .state
-            .collect_service
-            .collect_request_details(session, &req_stats);
-
-        if let Some(user_api) = &ctx.user_service_api {
-            let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
-            let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
-            let _ = self
-                .state
-                .trace_manager
-                .start_trace(
-                    &ctx.request_id,
-                    user_api.id,
-                    Some(user_api.user_id),
-                    provider_type_id,
-                    user_provider_key_id,
-                    req_stats.method.as_str(),
-                    Some(req_stats.path.clone()),
-                    Some(req_stats.client_ip.clone()),
-                    req_stats.user_agent.clone(),
-                )
-                .await;
-        }
+        self.configure_timeouts_and_strategy(session, ctx);
+        self.collect_request_metadata(session, ctx).await;
 
         Ok(())
     }

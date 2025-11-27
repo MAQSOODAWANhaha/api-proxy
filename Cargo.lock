@@ -180,6 +180,7 @@ dependencies = [
  "num_cpus",
  "oauth2",
  "pingora-core",
+ "pingora-error",
  "pingora-http",
  "pingora-load-balancing",
  "pingora-proxy",

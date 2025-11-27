@@ -205,14 +205,14 @@ impl<'a> StatsService<'a> {
     pub async fn overview(&self, params: &StatsOverviewParams) -> Result<Vec<SummaryMetric>> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Conversion,
-            "缺少 user_service_key 参数"
+            crate::error::conversion::ConversionError::Message(
+                "缺少 user_service_key 参数".to_string()
+            )
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Conversion,
-            "时间范围不合法"
+            crate::error::conversion::ConversionError::Message("时间范围不合法".to_string())
         );
 
         let service_ids = self
@@ -236,14 +236,14 @@ impl<'a> StatsService<'a> {
     pub async fn trend(&self, params: &StatsTrendParams) -> Result<Vec<TrendPoint>> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Conversion,
-            "缺少 user_service_key 参数"
+            crate::error::conversion::ConversionError::Message(
+                "缺少 user_service_key 参数".to_string()
+            )
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Conversion,
-            "时间范围不合法"
+            crate::error::conversion::ConversionError::Message("时间范围不合法".to_string())
         );
 
         let service_ids = self
@@ -256,14 +256,14 @@ impl<'a> StatsService<'a> {
     pub async fn model_share(&self, params: &StatsModelShareParams) -> Result<ModelSharePayload> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Conversion,
-            "缺少 user_service_key 参数"
+            crate::error::conversion::ConversionError::Message(
+                "缺少 user_service_key 参数".to_string()
+            )
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Conversion,
-            "时间范围不合法"
+            crate::error::conversion::ConversionError::Message("时间范围不合法".to_string())
         );
 
         let service_ids = self
@@ -284,14 +284,14 @@ impl<'a> StatsService<'a> {
     pub async fn logs(&self, params: &StatsLogsParams) -> Result<LogsPayload> {
         crate::ensure!(
             !params.user_service_key.trim().is_empty(),
-            Conversion,
-            "缺少 user_service_key 参数"
+            crate::error::conversion::ConversionError::Message(
+                "缺少 user_service_key 参数".to_string()
+            )
         );
 
         crate::ensure!(
             params.range.start < params.range.end,
-            Conversion,
-            "时间范围不合法"
+            crate::error::conversion::ConversionError::Message("时间范围不合法".to_string())
         );
 
         let service_ids = self
@@ -311,11 +311,12 @@ impl<'a> StatsService<'a> {
         let service = UserServiceApis::find()
             .filter(user_service_apis::Column::ApiKey.eq(key))
             .one(self.db)
-            .await
-            .map_err(|err| {
-                crate::error!(Database, format!("fetch_user_service_api_failed: {err}"))
-            })?
-            .ok_or_else(|| crate::error!(Conversion, "用户 API Key 无效或已失效"))?;
+            .await?
+            .ok_or_else(|| {
+                crate::error::conversion::ConversionError::Message(
+                    "用户 API Key 无效或已失效".to_string(),
+                )
+            })?;
 
         if matches!(aggregate, AggregateMode::Aggregate) {
             let ids: Vec<i32> = UserServiceApis::find()
@@ -324,15 +325,14 @@ impl<'a> StatsService<'a> {
                 .filter(user_service_apis::Column::UserId.eq(service.user_id))
                 .into_tuple()
                 .all(self.db)
-                .await
-                .map_err(|err| {
-                    crate::error!(
-                        Database,
-                        format!("fetch_aggregate_user_service_ids_failed: {err}")
-                    )
-                })?;
+                .await?;
 
-            crate::ensure!(!ids.is_empty(), Conversion, "该用户没有可用的服务密钥");
+            crate::ensure!(
+                !ids.is_empty(),
+                crate::error::conversion::ConversionError::Message(
+                    "该用户没有可用的服务密钥".to_string()
+                )
+            );
 
             return Ok(ids);
         }
@@ -384,11 +384,7 @@ impl<'a> StatsService<'a> {
             .filter(proxy_tracing::Column::CreatedAt.gte(range.start.naive_utc()))
             .filter(proxy_tracing::Column::CreatedAt.lt(range.end.naive_utc()));
 
-        let row = select
-            .into_model::<Row>()
-            .one(self.db)
-            .await
-            .map_err(|err| crate::error!(Database, format!("aggregate_stats_failed: {err}")))?;
+        let row = select.into_model::<Row>().one(self.db).await?;
 
         let (requests, tokens, cost) =
             row.map_or((None, None, None), |r| (r.requests, r.tokens, r.cost));
@@ -424,11 +420,7 @@ impl<'a> StatsService<'a> {
             .group_by(Expr::cust(bucket_expr))
             .order_by(Expr::cust(bucket_expr), Order::Asc);
 
-        let rows = select
-            .into_model::<TrendRow>()
-            .all(self.db)
-            .await
-            .map_err(|err| crate::error!(Database, format!("trend_query_failed: {err}")))?;
+        let rows = select.into_model::<TrendRow>().all(self.db).await?;
 
         Ok(rows
             .into_iter()
@@ -484,11 +476,8 @@ impl<'a> StatsService<'a> {
             .group_by(Expr::cust("COALESCE(model_used, 'unknown')"))
             .order_by(Expr::cust("requests"), Order::Desc);
 
-        select
-            .into_model::<ModelShareRow>()
-            .all(self.db)
-            .await
-            .map_err(|err| crate::error!(Database, format!("model_share_query_failed: {err}")))
+        let rows = select.into_model::<ModelShareRow>().all(self.db).await?;
+        Ok(rows)
     }
 
     async fn fetch_logs(
@@ -523,15 +512,11 @@ impl<'a> StatsService<'a> {
             .order_by_desc(proxy_tracing::Column::CreatedAt)
             .paginate(self.db, u64::from(page_size));
 
-        let total = paginator
-            .num_items()
-            .await
-            .map_err(|err| crate::error!(Database, format!("logs_count_failed: {err}")))?;
+        let total = paginator.num_items().await?;
 
         let records = paginator
             .fetch_page(u64::from(page.saturating_sub(1)))
-            .await
-            .map_err(|err| crate::error!(Database, format!("logs_fetch_failed: {err}")))?;
+            .await?;
 
         let items = records
             .into_iter()

@@ -10,7 +10,7 @@ use crate::auth::api_key_oauth_refresh_service::{
     ApiKeyOAuthRefreshResult, ApiKeyOAuthRefreshService,
 };
 use crate::auth::api_key_oauth_state_service::{ApiKeyOAuthStateService, ScheduledTokenRefresh};
-use crate::error::Result;
+use crate::error::{Context, ProxyError, Result, auth::AuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use chrono::{DateTime, Duration, Utc};
@@ -93,6 +93,12 @@ enum RefreshCommand {
     Remove(String),
 }
 
+impl From<mpsc::error::SendError<RefreshCommand>> for ProxyError {
+    fn from(error: mpsc::error::SendError<RefreshCommand>) -> Self {
+        AuthError::Message(format!("Refresh command channel send failed: {error}")).into()
+    }
+}
+
 impl ApiKeyOAuthTokenRefreshTask {
     /// `创建新的OAuth` Token刷新后台任务
     #[must_use]
@@ -117,7 +123,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::Running) {
-            crate::bail!(Internal, "Task is already running");
+            crate::bail!("Task is already running");
         }
 
         // 启动前执行一次全局扫描
@@ -164,7 +170,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::NotStarted | TaskState::Stopped) {
-            crate::bail!(Internal, "Task is not running");
+            crate::bail!("Task is not running");
         }
 
         // 发送停止信号
@@ -195,7 +201,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Running) {
-            crate::bail!(Internal, "Task is not running");
+            crate::bail!("Task is not running");
         }
 
         *state = TaskState::Paused;
@@ -217,7 +223,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Paused) {
-            crate::bail!(Internal, "Task is not paused");
+            crate::bail!("Task is not paused");
         }
 
         *state = TaskState::Running;
@@ -258,16 +264,15 @@ impl ApiKeyOAuthTokenRefreshTask {
     pub async fn enqueue_schedule(&self, schedule: ScheduledTokenRefresh) -> Result<()> {
         let sender = {
             let guard = self.command_sender.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| crate::error!(Internal, "Refresh task is not running"))?
+            guard.as_ref().cloned().ok_or_else(|| {
+                crate::error::auth::AuthError::Message("Refresh task is not running".to_string())
+            })?
         };
 
         sender
             .send(RefreshCommand::Add(schedule))
             .await
-            .map_err(|e| crate::error!(Internal, "Failed to enqueue refresh schedule", e))
+            .context("Failed to enqueue refresh schedule")
     }
 
     /// 注册会话刷新（计算计划并入队）
@@ -286,16 +291,15 @@ impl ApiKeyOAuthTokenRefreshTask {
             .await?;
         let sender = {
             let guard = self.command_sender.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| crate::error!(Internal, "Refresh task is not running"))?
+            guard.as_ref().cloned().ok_or_else(|| {
+                crate::error::auth::AuthError::Message("Refresh task is not running".to_string())
+            })?
         };
 
         sender
             .send(RefreshCommand::Remove(session_id.to_string()))
             .await
-            .map_err(|e| crate::error!(Internal, "Failed to remove refresh schedule", e))
+            .context("Failed to remove refresh schedule")
     }
 
     /// 获取任务状态

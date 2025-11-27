@@ -13,7 +13,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::{ProxyError, Result},
+    error::{Context, ProxyError, Result},
     lerror,
     logging::{LogComponent, LogStage},
     management::middleware::auth::AuthContext,
@@ -226,14 +226,14 @@ impl<'a> UsersService<'a> {
         let total = count_select
             .count(self.db())
             .await
-            .map_err(|err| db_error("Failed to count users", err))?;
+            .context("Failed to count users")?;
 
         let users = select
             .offset(params.offset())
             .limit(params.limit)
             .all(self.db())
             .await
-            .map_err(|err| db_error("Failed to fetch users", err))?;
+            .context("Failed to fetch users")?;
 
         let responses = self.build_user_responses(users, timezone).await;
         let pagination = build_page(total, params).into();
@@ -359,7 +359,7 @@ impl<'a> UsersService<'a> {
         let insert_result = Users::insert(user_model)
             .exec(self.db())
             .await
-            .map_err(|err| db_error("Failed to create user", err))?;
+            .context("Failed to create user")?;
 
         let created_user = self.fetch_user(insert_result.last_insert_id).await?;
         let stats = self.get_user_statistics(created_user.id).await;
@@ -441,7 +441,7 @@ impl<'a> UsersService<'a> {
         let updated_user = active_model
             .update(self.db())
             .await
-            .map_err(|err| db_error("Failed to update user profile", err))?;
+            .context("Failed to update user profile")?;
 
         let stats = self.get_user_statistics(updated_user.id).await;
         let monthly = self.get_user_monthly_requests(updated_user.id).await;
@@ -499,10 +499,7 @@ impl<'a> UsersService<'a> {
                     "verify_password_fail",
                     &format!("Failed to verify current password: {err}")
                 );
-                return Err(ProxyError::internal_with_source(
-                    "Failed to verify current password",
-                    err,
-                ));
+                return Err(business_error("Failed to verify current password"));
             }
         }
 
@@ -514,7 +511,7 @@ impl<'a> UsersService<'a> {
         active_model
             .update(self.db())
             .await
-            .map_err(|err| db_error("Failed to change password", err))?;
+            .context("Failed to change password")?;
 
         Ok(ServiceResponse::with_message((), "密码修改成功"))
     }
@@ -568,7 +565,7 @@ impl<'a> UsersService<'a> {
         let updated_user = active_model
             .update(self.db())
             .await
-            .map_err(|err| db_error("Failed to update user", err))?;
+            .context("Failed to update user")?;
 
         let stats = self.get_user_statistics(updated_user.id).await;
         let response =
@@ -594,7 +591,7 @@ impl<'a> UsersService<'a> {
         Users::delete_by_id(user_id)
             .exec(self.db())
             .await
-            .map_err(|err| db_error("删除用户失败", err))?;
+            .context("Failed to delete user")?;
 
         Ok(ServiceResponse::with_message((), "用户删除成功"))
     }
@@ -617,7 +614,7 @@ impl<'a> UsersService<'a> {
             .filter(users::Column::Id.is_in(request.ids.clone()))
             .exec(self.db())
             .await
-            .map_err(|err| db_error("批量删除用户失败", err))?;
+            .context("Failed to batch delete users")?;
 
         Ok(ServiceResponse::with_message(
             (),
@@ -642,7 +639,7 @@ impl<'a> UsersService<'a> {
         let updated_user = active_model
             .update(self.db())
             .await
-            .map_err(|err| db_error("更新用户状态失败", err))?;
+            .context("Failed to toggle user status")?;
 
         let stats = self.get_user_statistics(updated_user.id).await;
         let response =
@@ -670,7 +667,7 @@ impl<'a> UsersService<'a> {
         active_model
             .update(self.db())
             .await
-            .map_err(|err| db_error("重置密码失败", err))?;
+            .context("Failed to reset password")?;
 
         Ok(ServiceResponse::with_message((), "密码重置成功"))
     }
@@ -679,7 +676,7 @@ impl<'a> UsersService<'a> {
         Users::find_by_id(user_id)
             .one(self.db())
             .await
-            .map_err(|err| db_error("获取用户失败", err))?
+            .context("Failed to fetch user")?
             .ok_or_else(|| business_error(format!("User not found: {user_id}")))
     }
 
@@ -707,7 +704,7 @@ impl<'a> UsersService<'a> {
         if let Some(existing) = query
             .one(self.db())
             .await
-            .map_err(|err| db_error("Failed to check existing user", err))?
+            .context("Failed to check existing user")?
         {
             if existing.username == username {
                 return Err(business_error(format!("username conflict: {username}")));
@@ -773,8 +770,19 @@ fn generate_avatar_url(email: &str) -> String {
 }
 
 fn hash_password(password: &str) -> Result<String> {
-    hash(password, DEFAULT_COST)
-        .map_err(|err| ProxyError::internal_with_source("密码加密失败", err))
+    match hash(password, DEFAULT_COST) {
+        Ok(hashed) => Ok(hashed),
+        Err(err) => {
+            lerror!(
+                "system",
+                LogStage::Internal,
+                LogComponent::Auth,
+                "password_hash_fail",
+                &format!("Failed to hash password: {err}")
+            );
+            Err(business_error("密码加密失败"))
+        }
+    }
 }
 
 fn ensure_admin(auth: &AuthContext) -> Result<()> {
@@ -837,21 +845,14 @@ fn ensure_password_strength(password: &str) -> Result<()> {
     }
 }
 
-fn db_error(message: &str, err: impl std::fmt::Display) -> ProxyError {
-    lerror!(
-        "system",
-        LogStage::Db,
-        LogComponent::Database,
-        "users_service_db_error",
-        &format!("{message}: {err}")
-    );
-    crate::error!(Database, format!("{message}: {err}"))
-}
-
 fn business_error(message: impl Into<String>) -> ProxyError {
-    crate::error!(Authentication, message)
+    crate::error::auth::AuthError::Message(message.into()).into()
 }
 
 fn permission_error(message: impl Into<String>) -> ProxyError {
-    crate::error!(Authentication, message)
+    crate::error::auth::AuthError::PermissionDenied {
+        required: message.into(),
+        actual: "none".to_string(),
+    }
+    .into()
 }

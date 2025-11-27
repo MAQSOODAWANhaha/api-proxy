@@ -5,7 +5,10 @@
 //! - 数据库查询日志格式化
 //! - 日志系统初始化和配置
 
-use crate::proxy::ProxyContext;
+use crate::{
+    error::{ErrorCategory, ProxyError},
+    proxy::ProxyContext,
+};
 use flate2::read::GzDecoder;
 use pingora_core::{Error, ErrorType};
 use pingora_http::ResponseHeader;
@@ -15,6 +18,20 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::Read;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+/// 附加错误日志字段的结构体
+#[derive(Debug, Clone)]
+pub struct ErrorLogField<'a> {
+    pub key: &'a str,
+    pub value: serde_json::Value,
+}
+
+impl<'a> ErrorLogField<'a> {
+    #[must_use]
+    pub const fn new(key: &'a str, value: serde_json::Value) -> Self {
+        Self { key, value }
+    }
+}
 
 // ================ Proxy 模块业务日志工具 ================
 
@@ -229,6 +246,69 @@ macro_rules! lerror {
             message = %$description,
         )
     };
+}
+
+/// 统一记录 `ProxyError` 的辅助函数，确保必备字段齐全。
+pub fn log_proxy_error(
+    request_id: &str,
+    stage: LogStage,
+    component: LogComponent,
+    operation: &str,
+    message: &str,
+    error: &ProxyError,
+    extra_fields: &[ErrorLogField<'_>],
+) {
+    error.log();
+
+    let mut extra_map = serde_json::Map::new();
+    for field in extra_fields {
+        extra_map.insert(field.key.to_string(), field.value.clone());
+    }
+    let extra_repr = if extra_map.is_empty() {
+        "{}".to_string()
+    } else {
+        serde_json::Value::Object(extra_map).to_string()
+    };
+
+    let status_code = error.status_code().as_u16();
+    let error_code = error.error_code();
+    let error_message = error.to_string();
+    let category = error.category();
+    let category_str = match category {
+        ErrorCategory::Client => "client",
+        ErrorCategory::Server => "server",
+    };
+
+    match category {
+        ErrorCategory::Client => {
+            lwarn!(
+                request_id,
+                stage,
+                component,
+                operation,
+                message,
+                error_code = %error_code,
+                error_message = %error_message,
+                status_code = status_code,
+                error_category = %category_str,
+                extra = %extra_repr
+            );
+        }
+        ErrorCategory::Server => {
+            lerror!(
+                request_id,
+                stage,
+                component,
+                operation,
+                message,
+                error_code = %error_code,
+                error_message = %error_message,
+                status_code = status_code,
+                error_category = %category_str,
+                extra = %extra_repr
+            );
+        }
+    }
 }
 
 /// 格式化请求头为人类可读的字符串（带脱敏处理）

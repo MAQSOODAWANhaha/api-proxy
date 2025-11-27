@@ -3,8 +3,8 @@
 //! 将原先 handler 中的复杂查询逻辑集中在服务层，便于复用与测试。
 
 use crate::{
-    error::{ProxyError, Result},
-    lerror, linfo,
+    error::{Context, Result},
+    linfo,
     logging::{LogComponent, LogStage},
     management::{middleware::auth::AuthContext, server::ManagementState},
     types::{ConvertToUtc, ProviderTypeId, TimezoneContext, timezone_utils},
@@ -15,7 +15,7 @@ use entity::{
     user_provider_keys, user_service_apis,
 };
 use sea_orm::{
-    ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, Select,
 };
 use serde::{Deserialize, Serialize};
@@ -237,19 +237,22 @@ impl<'a> LogsService<'a> {
     }
 
     async fn calculate_dashboard_stats(&self) -> Result<LogsDashboardStatsResponse> {
-        let total_requests = ProxyTracing::find()
-            .count(self.db())
-            .await
-            .map_err(|err| db_error("统计总请求数失败", &err))?;
+        let total_requests = i64::try_from(
+            ProxyTracing::find()
+                .count(self.db())
+                .await
+                .context("Failed to count total requests")?,
+        )
+        .unwrap_or(0);
 
-        let total_requests = i64::try_from(total_requests).unwrap_or(0);
-
-        let successful_requests = ProxyTracing::find()
-            .filter(proxy_tracing::Column::IsSuccess.eq(true))
-            .count(self.db())
-            .await
-            .map_err(|err| db_error("统计成功请求数失败", &err))?;
-        let successful_requests = i64::try_from(successful_requests).unwrap_or(0);
+        let successful_requests = i64::try_from(
+            ProxyTracing::find()
+                .filter(proxy_tracing::Column::IsSuccess.eq(true))
+                .count(self.db())
+                .await
+                .context("Failed to count successful requests")?,
+        )
+        .unwrap_or(0);
 
         let failed_requests = total_requests.saturating_sub(successful_requests);
         let success_rate = if total_requests > 0 {
@@ -266,7 +269,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<Option<i64>>()
             .one(self.db())
             .await
-            .map_err(|err| db_error("统计总 Token 数失败", &err))?
+            .context("Failed to count total tokens")?
             .flatten()
             .unwrap_or(0);
 
@@ -276,7 +279,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<Option<f64>>()
             .one(self.db())
             .await
-            .map_err(|err| db_error("统计总费用失败", &err))?
+            .context("Failed to count total cost")?
             .flatten()
             .unwrap_or(0.0);
 
@@ -288,7 +291,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<(Option<i64>, i64)>()
             .one(self.db())
             .await
-            .map_err(|err| db_error("统计平均响应时间失败", &err))?;
+            .context("Failed to count average response time")?;
 
         let avg_response_time = match duration_result {
             Some((Some(total_duration), count)) if count > 0 => total_duration / count,
@@ -424,7 +427,9 @@ impl<'a> LogsService<'a> {
             .filter(user_service_apis::Column::Name.like(&pattern))
             .all(self.db())
             .await
-            .map_err(|err| db_error("查询用户服务 API 名称失败", &err))?
+            .context(format!(
+                "Failed to query user service API names matching '{name}'"
+            ))?
             .into_iter()
             .map(|api| api.id)
             .collect();
@@ -455,7 +460,9 @@ impl<'a> LogsService<'a> {
             .filter(user_provider_keys::Column::Name.like(&pattern))
             .all(self.db())
             .await
-            .map_err(|err| db_error("查询用户密钥名称失败", &err))?
+            .context(format!(
+                "Failed to query user provider key names matching '{name}'"
+            ))?
             .into_iter()
             .map(|key| key.id)
             .collect();
@@ -471,7 +478,7 @@ impl<'a> LogsService<'a> {
         select
             .count(self.db())
             .await
-            .map_err(|err| db_error("统计日志总数失败", &err))
+            .context("Failed to count total traces")
     }
 
     async fn load_trace_records(
@@ -486,7 +493,7 @@ impl<'a> LogsService<'a> {
             .find_with_related(ProviderTypes)
             .all(self.db())
             .await
-            .map_err(|err| db_error("查询日志列表失败", &err))?;
+            .context("Failed to query trace list")?;
 
         Ok(records
             .into_iter()
@@ -516,7 +523,7 @@ impl<'a> LogsService<'a> {
                 .filter(user_service_apis::Column::Id.is_in(ids))
                 .all(self.db())
                 .await
-                .map_err(|err| db_error("批量查询用户服务 API 名称失败", &err))?
+                .context("Failed to batch query user service API names")?
                 .into_iter()
                 .filter_map(|model| model.name.map(|name| (model.id, name)))
                 .collect()
@@ -530,7 +537,7 @@ impl<'a> LogsService<'a> {
                 .filter(user_provider_keys::Column::Id.is_in(ids))
                 .all(self.db())
                 .await
-                .map_err(|err| db_error("批量查询用户密钥名称失败", &err))?
+                .context("Failed to batch query user provider key names")?
                 .into_iter()
                 .map(|model| (model.id, model.name))
                 .collect()
@@ -548,7 +555,7 @@ impl<'a> LogsService<'a> {
             .count(self.db())
             .await
             .map(|count| i64::try_from(count).unwrap_or(0))
-            .map_err(|err| db_error("统计总请求数失败", &err))
+            .context("Failed to count total requests since start time")
     }
 
     async fn model_distribution(
@@ -568,7 +575,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<(Option<String>, i64, Option<i64>, Option<f64>)>()
             .all(self.db())
             .await
-            .map_err(|err| db_error("统计模型分布失败", &err))?;
+            .context("Failed to fetch model distribution statistics")?;
 
         Ok(stats
             .into_iter()
@@ -594,7 +601,7 @@ impl<'a> LogsService<'a> {
             .find_with_related(ProviderTypes)
             .all(self.db())
             .await
-            .map_err(|err| db_error("统计服务商分布失败", &err))?;
+            .context("Failed to fetch provider distribution statistics")?;
 
         let mut provider_map: HashMap<String, (i64, i64, i64)> = HashMap::new();
         for (trace, providers) in stats {
@@ -641,7 +648,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<(Option<i32>, i64)>()
             .all(self.db())
             .await
-            .map_err(|err| db_error("统计状态码分布失败", &err))?;
+            .context("Failed to fetch status code distribution statistics")?;
 
         Ok(stats
             .into_iter()
@@ -666,7 +673,7 @@ impl<'a> LogsService<'a> {
             .count(self.db())
             .await
             .map(|count| i64::try_from(count).unwrap_or(0))
-            .map_err(|err| db_error("统计成功请求数失败", &err))?;
+            .context("Failed to count successful requests for time series")?;
 
         let failed_requests = ProxyTracing::find()
             .filter(proxy_tracing::Column::CreatedAt.gte(start_time))
@@ -674,7 +681,7 @@ impl<'a> LogsService<'a> {
             .count(self.db())
             .await
             .map(|count| i64::try_from(count).unwrap_or(0))
-            .map_err(|err| db_error("统计失败请求数失败", &err))?;
+            .context("Failed to count failed requests for time series")?;
 
         let total_tokens = ProxyTracing::find()
             .filter(proxy_tracing::Column::CreatedAt.gte(start_time))
@@ -683,7 +690,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<Option<i64>>()
             .one(self.db())
             .await
-            .map_err(|err| db_error("统计 Token 使用量失败", &err))?
+            .context("Failed to count total tokens for time series")?
             .flatten()
             .unwrap_or(0);
 
@@ -694,7 +701,7 @@ impl<'a> LogsService<'a> {
             .into_tuple::<Option<f64>>()
             .one(self.db())
             .await
-            .map_err(|err| db_error("统计费用失败", &err))?
+            .context("Failed to count total cost for time series")?
             .flatten()
             .unwrap_or(0.0);
 
@@ -708,7 +715,7 @@ impl<'a> LogsService<'a> {
                 .into_tuple::<(Option<i64>, i64)>()
                 .one(self.db())
                 .await
-                .map_err(|err| db_error("统计平均响应时间失败", &err))?;
+                .context("Failed to count average response time for time series")?;
 
             match duration_result {
                 Some((Some(total_duration), count)) if count > 0 => total_duration / count,
@@ -736,7 +743,7 @@ impl<'a> LogsService<'a> {
             .find_with_related(ProviderTypes)
             .all(self.db())
             .await
-            .map_err(|err| db_error("查询日志详情失败", &err))?;
+            .context("Failed to query trace details")?;
 
         if let Some((trace_model, provider_types)) = trace_with_relations.into_iter().next() {
             let provider_name = provider_types.first().map(|pt| pt.display_name.clone());
@@ -746,7 +753,7 @@ impl<'a> LogsService<'a> {
                 UserProviderKeys::find_by_id(provider_key_id)
                     .one(self.db())
                     .await
-                    .map_err(|err| db_error("查询用户密钥详情失败", &err))?
+                    .context("Failed to query user provider key details")?
                     .map(|pk| pk.name)
             } else {
                 None
@@ -756,7 +763,7 @@ impl<'a> LogsService<'a> {
                 UserServiceApis::find_by_id(trace_model.user_service_api_id)
                     .one(self.db())
                     .await
-                    .map_err(|err| db_error("查询用户服务 API 详情失败", &err))?
+                    .context("Failed to query user service API details")?
                     .and_then(|api| api.name);
 
             Ok(Some(ProxyTraceEntry {
@@ -830,17 +837,6 @@ impl<'a> LogsService<'a> {
             status_distribution,
         })
     }
-}
-
-fn db_error(message: &str, err: &DbErr) -> ProxyError {
-    lerror!(
-        "system",
-        LogStage::Db,
-        LogComponent::Database,
-        "logs_service_db_error",
-        &format!("{message}: {err}")
-    );
-    crate::error!(Database, format!("{message}: {err}"))
 }
 
 fn resolve_start_time(time_range: &str, now: DateTime<Utc>) -> DateTime<Utc> {

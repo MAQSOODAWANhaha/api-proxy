@@ -92,40 +92,44 @@ pub async fn write_json_error(
     status: u16,
     payload: Value,
 ) -> PingoraResult<()> {
-    let body = serde_json::to_vec(&payload).map_err(|err| {
-        PingoraError::explain(
-            ErrorType::InternalError,
-            format!("Failed to serialize error payload: {err}"),
-        )
-    })?;
-
-    let mut resp = ResponseHeader::build(status, Some(4)).map_err(|err| {
-        PingoraError::explain(
-            ErrorType::InternalError,
-            format!("Failed to build error response header: {err}"),
-        )
-    })?;
-
-    resp.insert_header("content-type", "application/json; charset=utf-8")
-        .map_err(|err| {
-            PingoraError::explain(
+    let body = match serde_json::to_vec(&payload) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return Err(PingoraError::explain(
                 ErrorType::InternalError,
-                format!("Failed to set content-type header: {err}"),
-            )
-        })?;
-    resp.insert_header("cache-control", "private, no-store")
-        .map_err(|err| {
-            PingoraError::explain(
+                format!("Failed to serialize error payload: {err}"),
+            ));
+        }
+    };
+
+    let mut resp = match ResponseHeader::build(status, Some(4)) {
+        Ok(header) => header,
+        Err(err) => {
+            return Err(PingoraError::explain(
                 ErrorType::InternalError,
-                format!("Failed to set cache-control header: {err}"),
-            )
-        })?;
-    resp.set_content_length(body.len()).map_err(|err| {
-        PingoraError::explain(
+                format!("Failed to build error response header: {err}"),
+            ));
+        }
+    };
+
+    if let Err(err) = resp.insert_header("content-type", "application/json; charset=utf-8") {
+        return Err(PingoraError::explain(
+            ErrorType::InternalError,
+            format!("Failed to set content-type header: {err}"),
+        ));
+    }
+    if let Err(err) = resp.insert_header("cache-control", "private, no-store") {
+        return Err(PingoraError::explain(
+            ErrorType::InternalError,
+            format!("Failed to set cache-control header: {err}"),
+        ));
+    }
+    if let Err(err) = resp.set_content_length(body.len()) {
+        return Err(PingoraError::explain(
             ErrorType::InternalError,
             format!("Failed to set content-length: {err}"),
-        )
-    })?;
+        ));
+    }
 
     session.write_response_header(Box::new(resp), false).await?;
     session

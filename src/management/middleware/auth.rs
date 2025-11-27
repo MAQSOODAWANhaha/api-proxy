@@ -46,9 +46,9 @@ pub async fn auth(
     match state.auth_service().jwt_manager.validate_token(&token) {
         Ok(claims) => {
             // Token有效，将用户信息注入到请求扩展中
-            let user_id = claims
-                .user_id()
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let Ok(user_id) = claims.user_id().inspect_err(crate::error::ProxyError::log) else {
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            };
             let auth_context = Arc::new(AuthContext {
                 user_id,
                 is_admin: claims.is_admin,

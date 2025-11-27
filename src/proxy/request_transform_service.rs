@@ -2,7 +2,7 @@
 //!
 //! 负责在请求发往上游前对其进行修改，包括注入认证头、改写路径/请求体、清理代理痕迹等。
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result, auth::AuthError};
 use crate::linfo;
 use crate::logging::{self, LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
@@ -71,7 +71,9 @@ impl RequestTransformService {
         let credential = ctx
             .resolved_credential
             .as_ref()
-            .ok_or_else(|| ProxyError::internal("Resolved credential not set"))?;
+            .ok_or(AuthError::NotAuthenticated)?;
+
+        Self::clear_auth_headers(upstream_request);
 
         Self::clear_auth_headers(upstream_request);
 
@@ -83,17 +85,15 @@ impl RequestTransformService {
                 );
 
                 for (name, value) in auth_headers {
-                    upstream_request.insert_header(name, &value).map_err(|e| {
-                        ProxyError::internal_with_source("Failed to set auth header", e)
-                    })?;
+                    upstream_request
+                        .insert_header(name, &value)
+                        .context("Failed to set auth header")?;
                 }
             }
             ResolvedCredential::OAuthAccessToken(token) => {
                 upstream_request
                     .insert_header("Authorization", format!("Bearer {token}"))
-                    .map_err(|e| {
-                        ProxyError::internal_with_source("Failed to set OAuth header", e)
-                    })?;
+                    .context("Failed to set OAuth header")?;
             }
         }
 

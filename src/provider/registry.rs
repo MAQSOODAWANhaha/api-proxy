@@ -35,12 +35,10 @@ pub fn resolve_oauth_provider(pt: &ProviderType) -> Result<Arc<dyn OauthProvider
         return Ok(STANDARD_PROVIDER.clone());
     }
 
-    OAUTH_PROVIDERS.get(pt).cloned().ok_or_else(|| {
-        crate::error!(
-            Authentication,
-            OAuth(OAuthError::ProviderNotFound(pt.as_str().to_string()))
-        )
-    })
+    OAUTH_PROVIDERS
+        .get(pt)
+        .cloned()
+        .ok_or_else(|| OAuthError::ProviderNotFound(pt.as_str().to_string()).into())
 }
 
 pub fn get_provider_by_name(provider_name: &str) -> Result<Arc<dyn OauthProvider>> {

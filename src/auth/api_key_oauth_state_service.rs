@@ -9,7 +9,7 @@ use crate::auth::pkce::PkceParams;
 use crate::auth::types::{AuthStatus, OAuthProviderConfig};
 use crate::key_pool::types::ApiKeyHealthStatus;
 use crate::types::ProviderTypeId;
-use crate::{ensure, error};
+use crate::{ensure, error::ProxyError};
 use chrono::{DateTime, Duration, Utc};
 use entity::{OAuthClientSessions, oauth_client_sessions, user_provider_keys};
 use sea_orm::{
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::error::{Result, auth::OAuthError};
+use crate::error::{Context, Result, auth::OAuthError};
 
 /// 距离过期多久开始预刷新（默认提前2分钟）
 pub const REFRESH_LEAD_TIME: Duration = Duration::seconds(120);
@@ -152,28 +152,26 @@ impl ApiKeyOAuthStateService {
         now: DateTime<Utc>,
     ) -> Result<ScheduledTokenRefresh> {
         let session = self.fetch_session(session_id).await?.ok_or_else(|| {
-            error!(
-                Authentication,
-                format!("OAuth session not found: {session_id}")
-            )
+            crate::error::auth::AuthError::Message(format!("OAuth session not found: {session_id}"))
         })?;
 
         ensure!(
             session.status == AuthStatus::Authorized.to_string(),
-            Authentication,
-            format!("OAuth session {session_id} is not authorized")
+            crate::error::auth::AuthError::Message(format!(
+                "OAuth session {session_id} is not authorized"
+            ))
         );
         ensure!(
             session.access_token.is_some() && session.refresh_token.is_some(),
-            Authentication,
-            format!("OAuth session {session_id} is missing refresh credentials")
+            crate::error::auth::AuthError::Message(format!(
+                "OAuth session {session_id} is missing refresh credentials"
+            ))
         );
 
         let mut schedule = self.build_session_schedule(&session).ok_or_else(|| {
-            error!(
-                Internal,
-                format!("Unable to build refresh schedule for {session_id}")
-            )
+            crate::error::auth::AuthError::Message(format!(
+                "OAuth session {session_id} cannot build refresh schedule"
+            ))
         })?;
 
         let refresh_state = self.load_refresh_state(session_id).await?;
@@ -202,12 +200,9 @@ impl ApiKeyOAuthStateService {
             .await?;
 
         session.ok_or_else(|| {
-            crate::error!(
-                Authentication,
-                OAuth(OAuthError::InvalidSession(format!(
-                    "Session {session_id} not found"
-                )))
-            )
+            ProxyError::from(OAuthError::InvalidSession(format!(
+                "Session {session_id} not found"
+            )))
         })
     }
 
@@ -220,7 +215,7 @@ impl ApiKeyOAuthStateService {
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| error!(Database, Query(e)))
+            .context("Failed to fetch OAuth session by id")
     }
 
     async fn find_provider_key(
@@ -232,7 +227,7 @@ impl ApiKeyOAuthStateService {
             .filter(user_provider_keys::Column::ApiKey.eq(session_id))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| error!(Database, Query(e)))
+            .context("Failed to fetch provider key by session_id")
     }
 
     pub async fn refresh_target_exists(&self, session_id: &str) -> Result<bool> {
@@ -262,7 +257,7 @@ impl ApiKeyOAuthStateService {
             .filter(user_provider_keys::Column::ApiKey.eq(session_id))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| OAuthError::DatabaseError(format!("验证会话关联失败: {e}")))?;
+            .context("Failed to verify OAuth association")?;
 
         Ok(record.is_some())
     }
@@ -276,7 +271,9 @@ impl ApiKeyOAuthStateService {
             .into_tuple::<String>()
             .all(&*self.db)
             .await
-            .map_err(|e| error!(Database, Query(e)))?;
+            .context("Failed to list linked OAuth sessions")?
+            .into_iter()
+            .collect();
 
         if linked_session_ids.is_empty() {
             return Ok(Vec::new());
@@ -289,7 +286,7 @@ impl ApiKeyOAuthStateService {
             .filter(oauth_client_sessions::Column::SessionId.is_in(linked_session_ids))
             .all(&*self.db)
             .await
-            .map_err(|e| error!(Database, Query(e)))
+            .context("Failed to list authorized OAuth sessions")
     }
 
     /// 使用令牌信息更新会话
@@ -593,7 +590,7 @@ impl ApiKeyOAuthStateService {
                 .filter(oauth_client_sessions::Column::CreatedAt.lt(pending_cutoff.naive_utc()))
                 .exec(&*self.db)
                 .await
-                .map_err(|e| error!(Database, Query(e)))?
+                .context("Failed to delete pending OAuth sessions")?
                 .rows_affected;
             usize::try_from(rows).map_or(usize::MAX, |value| value)
         };
@@ -604,7 +601,7 @@ impl ApiKeyOAuthStateService {
                 .filter(oauth_client_sessions::Column::UpdatedAt.lt(expired_cutoff.naive_utc()))
                 .exec(&*self.db)
                 .await
-                .map_err(|e| error!(Database, Query(e)))?
+                .context("Failed to delete expired OAuth sessions")?
                 .rows_affected;
             usize::try_from(rows).map_or(usize::MAX, |value| value)
         };
@@ -616,7 +613,7 @@ impl ApiKeyOAuthStateService {
             .into_tuple::<String>()
             .all(&*self.db)
             .await
-            .map_err(|e| error!(Database, Query(e)))?
+            .context("Failed to fetch linked OAuth session ids")?
             .into_iter()
             .collect();
 
@@ -624,7 +621,7 @@ impl ApiKeyOAuthStateService {
             .filter(oauth_client_sessions::Column::Status.eq(AuthStatus::Authorized.to_string()))
             .all(&*self.db)
             .await
-            .map_err(|e| error!(Database, Query(e)))?;
+            .context("Failed to fetch authorized OAuth sessions")?;
 
         let orphan_ids: Vec<String> = orphan_sessions
             .into_iter()
@@ -639,7 +636,7 @@ impl ApiKeyOAuthStateService {
                 .filter(oauth_client_sessions::Column::SessionId.is_in(orphan_ids))
                 .exec(&*self.db)
                 .await
-                .map_err(|e| error!(Database, Query(e)))?
+                .context("Failed to delete orphan OAuth sessions")?
                 .rows_affected;
             usize::try_from(rows).map_or(usize::MAX, |value| value)
         };
@@ -723,12 +720,9 @@ impl ApiKeyOAuthStateService {
             .await?;
 
         session.ok_or_else(|| {
-            crate::error!(
-                Authentication,
-                OAuth(OAuthError::InvalidSession(format!(
-                    "Session with state {state} not found"
-                )))
-            )
+            ProxyError::from(OAuthError::InvalidSession(format!(
+                "Session with state {state} not found"
+            )))
         })
     }
 

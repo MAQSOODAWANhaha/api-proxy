@@ -13,7 +13,7 @@ use crate::auth::cache_strategy::{AuthCacheKey, UnifiedAuthCacheManager};
 use crate::auth::types::ApiKeyInfo;
 use crate::auth::utils::AuthUtils;
 use crate::cache::CacheManager;
-use crate::error::{Result, auth::AuthError};
+use crate::error::{Context, Result, auth::AuthError};
 use entity::user_provider_keys;
 
 /// API key manager
@@ -116,21 +116,13 @@ impl ApiKeyManager {
         &self,
         api_key: &str,
     ) -> Result<Option<user_provider_keys::Model>> {
+        let sanitized = Self::sanitize_api_key(api_key);
         user_provider_keys::Entity::find()
             .filter(user_provider_keys::Column::ApiKey.eq(api_key))
             .filter(user_provider_keys::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await
-            .map_err(|e| {
-                crate::error!(
-                    Internal,
-                    format!(
-                        "Database error when fetching API key {}",
-                        Self::sanitize_api_key(api_key)
-                    ),
-                    e
-                )
-            })
+            .context(format!("Database error when fetching API key {sanitized}"))
     }
 }
 

@@ -9,8 +9,9 @@ use crate::auth::{
 };
 use crate::cache::CacheManager;
 use crate::error::{
-    ProxyError, Result,
-    auth::{AuthError, UsageLimitInfo, UsageLimitKind},
+    Context, ProxyError, Result,
+    auth::{AuthError, OAuthError, UsageLimitInfo, UsageLimitKind},
+    config::ConfigError,
 };
 use crate::key_pool::{ApiKeySchedulerService, SelectionContext};
 use crate::logging::{LogComponent, LogStage};
@@ -162,17 +163,13 @@ impl AuthenticationService {
                 if let Some((key, value)) = param_pair.split_once('=') {
                     match key {
                         "key" | "access_token" | "api_key" | "apikey" => {
+                            let decoded = urlencoding::decode(value).map_err(|err| {
+                                AuthError::Message(format!(
+                                    "Failed to decode query parameter '{key}': {err}"
+                                ))
+                            })?;
                             return Ok(Authorization {
-                                auth_value: urlencoding::decode(value)
-                                    .map_err(|e| {
-                                        crate::error!(
-                                            Authentication,
-                                            "Failed to decode query parameter '{}': {}",
-                                            key,
-                                            e
-                                        )
-                                    })?
-                                    .to_string(),
+                                auth_value: decoded.to_string(),
                                 source: AuthSource::Query,
                                 location: key.to_string(),
                             });
@@ -212,10 +209,7 @@ impl AuthenticationService {
             }
         }
 
-        Err(crate::error!(
-            Authentication,
-            "No authentication information found"
-        ))
+        Err(AuthError::ApiKeyMissing.into())
     }
 
     /// 2. 检查所有限制 (Redis for freq, DB for usage)
@@ -227,7 +221,9 @@ impl AuthenticationService {
         if let Some(expires_at) = &user_api.expires_at
             && chrono::Utc::now().naive_utc() > *expires_at
         {
-            return Err(crate::error!(Authentication, "该 API Key 已过期"));
+            return Err(
+                crate::error::auth::AuthError::Message("该 API Key 已过期".to_string()).into(),
+            );
         }
 
         let endpoint_key = format!("service_api:{}", user_api.id);
@@ -387,8 +383,11 @@ impl AuthenticationService {
         }
         let provider_type = ProviderTypes::find_by_id(provider_type_id)
             .one(&*self.db)
-            .await?
-            .ok_or_else(|| ProxyError::internal("Provider type not found"))?;
+            .await
+            .context("Failed to fetch provider type")?
+            .ok_or_else(|| {
+                ConfigError::Load(format!("Provider type not found: {provider_type_id}"))
+            })?;
         let _ = self
             .cache
             .provider()
@@ -443,10 +442,11 @@ impl AuthenticationService {
                     .await?;
                 Ok(ResolvedCredential::OAuthAccessToken(token))
             }
-            _ => Err(ProxyError::internal(format!(
+            _ => Err(AuthError::Message(format!(
                 "Unsupported auth type: {}",
                 selected_backend.auth_type
-            ))),
+            ))
+            .into()),
         }
     }
 
@@ -459,25 +459,25 @@ impl AuthenticationService {
         let session = OAuthClientSessions::find()
             .filter(oauth_client_sessions::Column::SessionId.eq(session_id))
             .one(self.db.as_ref())
-            .await?
-            .ok_or_else(|| {
-                crate::error!(
-                    Authentication,
-                    format!("OAuth session not found: {}", session_id)
-                )
-            })?;
+            .await
+            .context(format!("Failed to fetch OAuth session '{session_id}'"))?
+            .ok_or_else(|| OAuthError::InvalidSession(session_id.to_string()))?;
         if session.status != AuthStatus::Authorized.to_string() {
-            return Err(crate::error!(
-                Authentication,
-                format!("OAuth session {} is not authorized", session_id)
-            ));
+            return Err(AuthError::Message(format!(
+                "OAuth session {session_id} is not authorized"
+            ))
+            .into());
         }
-        let token = session
-            .access_token
-            .clone()
-            .ok_or_else(|| crate::error!(Authentication, "OAuth session has no access_token"))?;
+        let token = session.access_token.clone().ok_or_else(|| {
+            crate::error::ProxyError::from(crate::error::auth::AuthError::Message(
+                "OAuth session has no access_token".to_string(),
+            ))
+        })?;
         if session.expires_at <= chrono::Utc::now().naive_utc() {
-            return Err(crate::error!(Authentication, "OAuth access token expired"));
+            return Err(crate::error::auth::AuthError::Message(
+                "OAuth access token expired".to_string(),
+            )
+            .into());
         }
         Ok(token)
     }

@@ -12,7 +12,7 @@ use axum::response::Json;
 use serde::{Deserialize, Serialize};
 
 fn business_error(message: impl Into<String>) -> ProxyError {
-    crate::error!(Authentication, message)
+    crate::error::auth::AuthError::Message(message.into()).into()
 }
 
 /// 登录请求

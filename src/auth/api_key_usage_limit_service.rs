@@ -7,6 +7,7 @@ use crate::cache::{CacheManager, keys::CacheKeyBuilder};
 use crate::error::{
     ProxyError, Result,
     auth::{AuthError, UsageLimitInfo, UsageLimitKind},
+    conversion::ConversionError,
 };
 use entity::{proxy_tracing, user_service_apis};
 use sea_orm::prelude::Decimal;
@@ -367,10 +368,10 @@ impl ApiKeyUsageLimitService {
     }
 
     fn decimal_to_f64(value: Decimal) -> Result<f64> {
-        value
-            .to_string()
-            .parse::<f64>()
-            .map_err(|_| crate::error!(Internal, "Invalid decimal value for cost limit"))
+        value.to_string().parse::<f64>().map_or_else(
+            |_| Err(ConversionError::message("Invalid decimal value for cost limit").into()),
+            Ok,
+        )
     }
 
     #[allow(clippy::cast_precision_loss)]

@@ -2,7 +2,7 @@
 //!
 //! 基于 Pingora 实现的高性能 AI 代理服务器
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Result, network::NetworkError};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::state::ProxyState;
@@ -55,8 +55,15 @@ impl PingoraProxyServer {
     #[allow(clippy::cognitive_complexity)]
     pub async fn start(self) -> Result<()> {
         let opt = Self::create_pingora_options();
-        let mut server = Server::new(Some(opt))
-            .map_err(|e| ProxyError::internal_with_source("Failed to create Pingora server", e))?;
+        let mut server = match Server::new(Some(opt)) {
+            Ok(server) => server,
+            Err(err) => {
+                return Err(NetworkError::BadGateway(format!(
+                    "Failed to create Pingora server: {err}"
+                ))
+                .into());
+            }
+        };
 
         linfo!(
             "system",
@@ -67,8 +74,15 @@ impl PingoraProxyServer {
         );
         server.bootstrap();
 
-        let proxy_service = crate::proxy::service::ProxyService::new(self.state.clone())
-            .map_err(|e| ProxyError::internal_with_source("Failed to create proxy service", e))?;
+        let proxy_service = match crate::proxy::service::ProxyService::new(self.state.clone()) {
+            Ok(service) => service,
+            Err(err) => {
+                return Err(NetworkError::BadGateway(format!(
+                    "Failed to create proxy service: {err}"
+                ))
+                .into());
+            }
+        };
 
         let mut http_service = http_proxy_service(&server.configuration, proxy_service);
 
@@ -90,8 +104,11 @@ impl PingoraProxyServer {
             server.run_forever();
         });
 
-        handle
-            .await
-            .map_err(|e| ProxyError::internal_with_source("Pingora server task failed", e))?
+        match handle.await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                Err(NetworkError::BadGateway(format!("Pingora server task failed: {err}")).into())
+            }
+        }
     }
 }

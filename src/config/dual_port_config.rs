@@ -2,6 +2,8 @@
 //!
 //! 仅保留核心必需的配置字段
 
+use crate::ensure;
+use crate::error::{self, Context};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -111,46 +113,44 @@ impl Default for AccessControlConfig {
 
 impl ListenerConfig {
     /// 获取绑定地址
-    pub fn bind_address(&self) -> std::io::Result<SocketAddr> {
+    pub fn bind_address(&self) -> error::Result<SocketAddr> {
         let addr = format!("{}:{}", self.host, self.port);
-        addr.parse().map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("Invalid address '{addr}': {e}"),
-            )
-        })
+        addr.parse()
+            .with_context(|| format!("监听地址解析失败: {addr}"))
     }
 }
 
 impl DualPortServerConfig {
     /// 验证配置的有效性
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> error::Result<()> {
         // 检查端口冲突 - 简化版（仅检查HTTP端口）
         // 管理和代理服务现在始终启用
         let mgmt_port = self.management.http.port;
         let proxy_port = self.proxy.http.port;
 
-        if mgmt_port == proxy_port {
-            return Err(format!(
+        ensure!(
+            mgmt_port != proxy_port,
+            error::config::ConfigError::Load(format!(
                 "Management port ({mgmt_port}) conflicts with proxy port ({proxy_port})"
-            ));
-        }
+            ))
+        );
 
         // 检查工作线程数
-        if self.workers == 0 {
-            return Err("Worker count must be greater than 0".to_string());
-        }
+        ensure!(
+            self.workers > 0,
+            error::config::ConfigError::Load("Worker count must be greater than 0".to_string())
+        );
 
         // 验证监听配置 - 简化版（仅验证HTTP）
         self.management
             .http
             .bind_address()
-            .map_err(|e| format!("Invalid management HTTP address: {e}"))?;
+            .context("管理 HTTP 监听地址无效")?;
 
         self.proxy
             .http
             .bind_address()
-            .map_err(|e| format!("Invalid proxy HTTP address: {e}"))?;
+            .context("代理 HTTP 监听地址无效")?;
 
         Ok(())
     }

@@ -2,6 +2,9 @@
 //!
 //! 数据库连接和迁移管理
 
+use crate::ensure;
+use crate::error::config::ConfigError;
+use crate::error::{self, Context, ProxyError};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use entity::{model_pricing, model_pricing_tiers, provider_types};
@@ -17,7 +20,7 @@ use std::time::Duration;
 
 /// 初始化数据库连接
 #[allow(clippy::cognitive_complexity)]
-pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbErr> {
+pub async fn init_database(database_url: &str) -> error::Result<DatabaseConnection> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -59,13 +62,8 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                     "create_db_dir",
                     &format!("创建数据库目录: {}", parent_dir.display())
                 );
-                std::fs::create_dir_all(parent_dir).map_err(|e| {
-                    DbErr::Custom(format!(
-                        "无法创建数据库目录 {}: {}",
-                        parent_dir.display(),
-                        e
-                    ))
-                })?;
+                std::fs::create_dir_all(parent_dir)
+                    .with_context(|| format!("无法创建数据库目录 {}", parent_dir.display()))?;
                 linfo!(
                     "system",
                     LogStage::Startup,
@@ -93,13 +91,8 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
                 "create_db_file",
                 &format!("创建数据库文件: {}", db_file_path.display())
             );
-            std::fs::File::create(db_file_path).map_err(|e| {
-                DbErr::Custom(format!(
-                    "无法创建数据库文件 {}: {}",
-                    db_file_path.display(),
-                    e
-                ))
-            })?;
+            std::fs::File::create(db_file_path)
+                .with_context(|| format!("无法创建数据库文件 {}", db_file_path.display()))?;
             linfo!(
                 "system",
                 LogStage::Startup,
@@ -110,7 +103,9 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
         }
     }
 
-    let db = Database::connect(database_url).await?;
+    let db = Database::connect(database_url)
+        .await
+        .context("数据库连接失败")?;
 
     linfo!(
         "system",
@@ -123,7 +118,7 @@ pub async fn init_database(database_url: &str) -> Result<DatabaseConnection, DbE
 }
 
 /// 运行数据库迁移
-pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn run_migrations(db: &DatabaseConnection) -> error::Result<()> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -151,13 +146,13 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
                 "migration_fail",
                 &format!("数据库迁移失败: {e}")
             );
-            Err(e)
+            Err(e).context("数据库迁移执行失败")
         }
     }
 }
 
 /// 检查数据库状态
-pub async fn check_database_status(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn check_database_status(db: &DatabaseConnection) -> std::result::Result<(), DbErr> {
     linfo!(
         "system",
         LogStage::Startup,
@@ -258,7 +253,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> crate::error:
             let pricing_count = model_pricing::Entity::find()
                 .count(db)
                 .await
-                .map_err(|err| crate::error!(Database, format!("查询模型定价数据失败: {err}")))?;
+                .context("Failed to count model pricing data")?;
             if pricing_count > 0 {
                 lerror!(
                     "system",
@@ -292,12 +287,12 @@ pub async fn force_initialize_model_pricing_data(
     model_pricing_tiers::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| crate::error!(Database, format!("清理定价层级数据失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     model_pricing::Entity::delete_many()
         .exec(db)
         .await
-        .map_err(|e| crate::error!(Database, format!("清理模型定价数据失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     // 重新初始化
     initialize_model_pricing_from_json(db).await?;
@@ -358,7 +353,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::e
                         LogStage::Startup,
                         LogComponent::Database,
                         "insert_model_pricing_fail",
-                        &format!("插入模型 {} 失败: {}", model.name, e)
+                        &format!("插入模型 {} 失败: {:?}", model.name, e)
                     );
                 }
             }
@@ -436,7 +431,7 @@ async fn initialize_model_pricing_from_remote_or_local(
     let txn = db
         .begin()
         .await
-        .map_err(|e| crate::error!(Database, format!("开启事务失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut tiers_written = 0usize;
@@ -449,7 +444,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                 .filter(model_pricing::Column::ModelName.eq(&model.name))
                 .one(&txn)
                 .await
-                .map_err(|e| crate::error!(Database, format!("查询现有定价记录失败: {e}")))?;
+                .context("Failed to clean pricing tiers data")?;
 
             if let Some(existing_model) = existing {
                 // 更新基础字段
@@ -460,14 +455,14 @@ async fn initialize_model_pricing_from_remote_or_local(
                 model_pricing::Entity::update(am)
                     .exec(&txn)
                     .await
-                    .map_err(|e| crate::error!(Database, format!("更新模型定价失败: {e}")))?;
+                    .context("Failed to clean pricing tiers data")?;
 
                 // 替换 tiers
                 model_pricing_tiers::Entity::delete_many()
                     .filter(model_pricing_tiers::Column::ModelPricingId.eq(id))
                     .exec(&txn)
                     .await
-                    .map_err(|e| crate::error!(Database, format!("清理旧定价层级失败: {e}")))?;
+                    .context("Failed to clean pricing tiers data")?;
 
                 let pricing_tiers = parse_pricing_tiers(&model.price_info);
                 for tier in pricing_tiers {
@@ -482,7 +477,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                     model_pricing_tiers::Entity::insert(tier_model)
                         .exec(&txn)
                         .await
-                        .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
+                        .context("Failed to clean pricing tiers data")?;
                     tiers_written += 1;
                 }
                 updated += 1;
@@ -508,7 +503,7 @@ async fn initialize_model_pricing_from_remote_or_local(
 
     txn.commit()
         .await
-        .map_err(|e| crate::error!(Database, format!("提交模型定价事务失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     linfo!(
         "system",
@@ -551,15 +546,16 @@ async fn fetch_remote_json() -> crate::error::Result<HashMap<String, ModelPriceI
 
     let url = REMOTE_URL
         .parse::<reqwest::Url>()
-        .map_err(|e| crate::error!(Config, format!("远程URL非法: {e}")))?;
-    if url.scheme() != "https" {
-        return Err(crate::error!(Config, "仅允许HTTPS的远程URL"));
-    }
+        .with_context(|| format!("解析远程模型定价 URL 失败: {REMOTE_URL}"))?;
+    ensure!(
+        url.scheme() == "https",
+        ConfigError::Load("仅允许HTTPS的远程URL".to_string())
+    );
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(5000))
         .build()
-        .map_err(|e| crate::error!(Config, format!("创建HTTP客户端失败: {e}")))?;
+        .context("构建远程定价 HTTP 客户端失败")?;
 
     let resp = client
         .get(url)
@@ -569,48 +565,37 @@ async fn fetch_remote_json() -> crate::error::Result<HashMap<String, ModelPriceI
         )
         .send()
         .await
-        .map_err(|e| crate::error!(Config, format!("请求远程模型定价失败: {e}")))?;
+        .context("发送远程定价请求失败")?;
 
-    if !resp.status().is_success() {
-        return Err(crate::error!(
-            Config,
-            "远程定价响应非成功状态: {}",
-            resp.status()
-        ));
-    }
+    ensure!(
+        resp.status().is_success(),
+        ConfigError::Load(format!("远程定价响应非成功状态: {}", resp.status()))
+    );
 
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| crate::error!(Config, format!("读取远程响应失败: {e}")))?;
+    let text = resp.text().await.context("读取远程定价响应失败")?;
 
     serde_json::from_str::<HashMap<String, ModelPriceInfo>>(&text)
-        .map_err(|e| crate::error!(Config, format!("解析远程JSON失败: {e}")))
+        .context("解析远程模型定价 JSON 失败")
 }
 /// 加载并解析JSON文件
 async fn load_json_data() -> crate::error::Result<HashMap<String, ModelPriceInfo>> {
     let json_path = std::env::current_dir()
-        .map_err(|e| crate::error!(Config, format!("获取当前目录失败: {e}")))?
+        .context("获取当前工作目录失败")?
         .join("config")
         .join("model_prices_and_context_window.json");
 
     if !json_path.exists() {
-        return Err(crate::error!(
-            Config,
+        return Err(ProxyError::from(ConfigError::Load(format!(
             "JSON文件不存在: {}",
             json_path.display()
-        ));
+        ))));
     }
 
-    let json_content = tokio::fs::read_to_string(&json_path).await.map_err(|e| {
-        crate::error!(
-            Config,
-            format!("读取JSON文件失败 {}: {}", json_path.display(), e)
-        )
-    })?;
+    let json_content = tokio::fs::read_to_string(&json_path)
+        .await
+        .with_context(|| format!("读取本地模型定价 JSON 失败: {}", json_path.display()))?;
 
-    serde_json::from_str(&json_content)
-        .map_err(|e| crate::error!(Config, format!("解析JSON失败: {e}")))
+    serde_json::from_str(&json_content).context("解析本地模型定价 JSON 失败")
 }
 
 /// 完全数据驱动的模型过滤
@@ -743,7 +728,7 @@ async fn get_provider_mappings(
         .filter(provider_types::Column::IsActive.eq(true))
         .all(db)
         .await
-        .map_err(|e| crate::error!(Database, format!("查询provider类型失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     // 构建映射关系
     let mut mappings = HashMap::new();
@@ -805,7 +790,7 @@ async fn insert_model_with_pricing(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(db)
         .await
-        .map_err(|e| crate::error!(Database, format!("插入模型定价记录失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -836,7 +821,7 @@ async fn insert_model_with_pricing(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(db)
             .await
-            .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
+            .context("Failed to clean pricing tiers data")?;
     }
 
     Ok(())
@@ -870,7 +855,7 @@ async fn insert_model_with_pricing_txn(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(txn)
         .await
-        .map_err(|e| crate::error!(Database, format!("插入模型定价记录失败: {e}")))?;
+        .context("Failed to clean pricing tiers data")?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -888,7 +873,7 @@ async fn insert_model_with_pricing_txn(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(txn)
             .await
-            .map_err(|e| crate::error!(Database, format!("插入定价层级失败: {e}")))?;
+            .context("Failed to clean pricing tiers data")?;
     }
 
     Ok(())

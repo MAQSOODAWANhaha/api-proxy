@@ -2,10 +2,8 @@
 //!
 //! 封装 OAuth v2 客户端相关的业务逻辑，供 handler 复用。
 
-use std::collections::HashMap;
-use std::convert::TryFrom;
-
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::auth::api_key_oauth_service::{
     ApiKeyOauthService, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
@@ -16,7 +14,8 @@ use crate::logging::{LogComponent, LogStage};
 use crate::management::server::ManagementState;
 use crate::types::TimezoneContext;
 use crate::types::timezone_utils;
-use crate::{ensure, error, lerror, linfo};
+use crate::{ensure, lerror, linfo};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// OAuth v2授权请求
@@ -103,10 +102,9 @@ impl<'a> OAuthV2Service<'a> {
             Ok(resp) => Ok(resp),
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::ProviderNotFound(
                 provider,
-            )))) => Err(error!(
-                Authentication,
-                format!("Unsupported OAuth provider: {provider}")
-            )),
+            )))) => {
+                Err(AuthError::Message(format!("Unsupported OAuth provider: {provider}")).into())
+            }
             Err(err) => {
                 lerror!(
                     "system",
@@ -137,8 +135,9 @@ impl<'a> OAuthV2Service<'a> {
 
         ensure!(
             has_access,
-            Authentication,
-            "Session not found or access denied"
+            crate::error::auth::AuthError::Message(
+                "Session not found or access denied".to_string()
+            )
         );
 
         linfo!(
@@ -164,20 +163,14 @@ impl<'a> OAuthV2Service<'a> {
         {
             Ok(resp) => Ok(resp),
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::InvalidSession(_)))) => {
-                Err(error!(
-                    Authentication,
-                    format!("Session not found: {}", request.session_id)
-                ))
+                Err(AuthError::Message(format!("Session not found: {}", request.session_id)).into())
             }
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::SessionExpired(_)))) => {
-                Err(error!(Authentication, "Session expired"))
+                Err(AuthError::Message("Session expired".to_string()).into())
             }
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::TokenExchangeFailed(
                 msg,
-            )))) => Err(error!(
-                Authentication,
-                format!("Token exchange failed: {msg}")
-            )),
+            )))) => Err(AuthError::Message(format!("Token exchange failed: {msg}")).into()),
             Err(err) => {
                 lerror!(
                     "system",
@@ -213,10 +206,7 @@ impl<'a> OAuthV2Service<'a> {
         match client.delete_session(session_id, user_id).await {
             Ok(()) => Ok(()),
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::InvalidSession(_)))) => {
-                Err(error!(
-                    Authentication,
-                    format!("Session not found: {session_id}")
-                ))
+                Err(AuthError::Message(format!("Session not found: {session_id}")).into())
             }
             Err(err) => {
                 lerror!(
@@ -245,24 +235,19 @@ impl<'a> OAuthV2Service<'a> {
 
         ensure!(
             has_access,
-            Authentication,
-            "Session not found or access denied"
+            crate::error::auth::AuthError::Message(
+                "Session not found or access denied".to_string()
+            )
         );
 
         match client.refresh_token(session_id).await {
             Ok(resp) => Ok(resp),
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::InvalidSession(_)))) => {
-                Err(error!(
-                    Authentication,
-                    format!("Session not found: {session_id}")
-                ))
+                Err(AuthError::Message(format!("Session not found: {session_id}")).into())
             }
             Err(ProxyError::Authentication(AuthError::OAuth(OAuthError::TokenExchangeFailed(
                 msg,
-            )))) => Err(error!(
-                Authentication,
-                format!("Token refresh failed: {msg}")
-            )),
+            )))) => Err(AuthError::Message(format!("Token refresh failed: {msg}")).into()),
             Err(err) => {
                 lerror!(
                     "system",
@@ -279,12 +264,12 @@ impl<'a> OAuthV2Service<'a> {
     /// 清理过期会话
     pub async fn cleanup_expired_sessions(&self) -> Result<i64> {
         let count = self.client().cleanup_expired_sessions().await?;
-        let count_i64 = i64::try_from(count).map_err(|_| {
-            error!(
-                Conversion,
-                format!("cleanup_expired_sessions overflow: {}", count)
+        let Ok(count_i64) = i64::try_from(count) else {
+            return Err(crate::error::conversion::ConversionError::Message(
+                "Cleanup expired sessions overflow".to_string(),
             )
-        })?;
+            .into());
+        };
         Ok(count_i64)
     }
 

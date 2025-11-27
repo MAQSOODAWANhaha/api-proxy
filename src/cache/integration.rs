@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::{client::CacheClient, keys::CacheKey, strategies::CacheStrategies};
-use crate::error::{Context, Result};
+use crate::error::{Context, Result, cache::CacheError};
 use crate::types::ProviderTypeId;
 use entity::{ProviderTypes, UserServiceApis, provider_types, user_service_apis};
 
@@ -67,16 +67,13 @@ impl CacheFacade {
     /// 从应用配置创建缓存管理器
     pub async fn from_config(cache_config: &CacheConfig) -> Result<Self> {
         if !matches!(cache_config.cache_type, CacheType::Redis) {
-            return Err(crate::error!(
-                Internal,
-                "CacheFacade 仅在 cache_type 为 redis 时可用"
-            ));
+            return Err(CacheError::config("CacheFacade 仅可用于 Redis 类型缓存").into());
         }
 
         let redis_config = cache_config
             .redis
             .as_ref()
-            .ok_or_else(|| crate::error!(Internal, "Redis 缓存配置缺失"))?;
+            .ok_or_else(|| CacheError::config("Redis 缓存配置缺失"))?;
         // 转换配置格式
         let client_redis_config = super::client::RedisConfig {
             host: redis_config.host.clone(),
@@ -315,7 +312,7 @@ impl CacheFacade {
             .filter(provider_types::Column::IsActive.eq(true))
             .all(db)
             .await
-            .map_err(|e| crate::error!(Database, format!("查询提供商类型失败: {e}")))?;
+            .context("查询提供商类型失败")?;
 
         let mut cached_count = 0;
 
@@ -386,7 +383,7 @@ impl CacheFacade {
             // TODO: 可以考虑从proxy_tracing表查询最近使用的API ID列表
             .all(db)
             .await
-            .map_err(|e| crate::error!(Database, format!("查询用户API配置失败: {e}")))?;
+            .context("查询用户API配置失败")?;
 
         let mut cached_count = 0;
 

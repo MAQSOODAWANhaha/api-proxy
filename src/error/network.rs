@@ -2,30 +2,30 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
-    #[error("网络请求失败: {0}")]
+    #[error("Network request failed: {0}")]
     Reqwest(#[from] reqwest::Error),
 
-    #[error("上游服务不可达: {0}")]
+    #[error("Upstream unreachable: {0}")]
     UpstreamUnreachable(String),
 
-    #[error("速率超限")]
+    #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
-    #[error("网关错误: {0}")]
+    #[error("Bad gateway: {0}")]
     BadGateway(String),
 
-    #[error("上游服务未找到: {0}")]
+    #[error("Upstream not found: {0}")]
     UpstreamNotFound(String),
 
-    #[error("上游服务不可用: {0}")]
+    #[error("Upstream not available: {0}")]
     UpstreamNotAvailable(String),
 
-    #[error("连接超时: {0}")]
+    #[error("Connection timeout: {0}")]
     ConnectionTimeout(String),
 
-    #[error("读取超时: {0}")]
+    #[error("Read timeout: {0}")]
     ReadTimeout(String),
 
-    #[error("写入超时: {0}")]
+    #[error("Write timeout: {0}")]
     WriteTimeout(String),
 }

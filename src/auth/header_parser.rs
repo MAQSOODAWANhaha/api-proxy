@@ -112,10 +112,14 @@ impl AuthHeaderParser {
         formats_json: &str,
         api_key: &str,
     ) -> Result<Vec<AuthHeader>, AuthParseError> {
-        // 尝试解析为JSON数组
-        let formats: Vec<String> = serde_json::from_str(formats_json).map_err(|_| {
-            AuthParseError::InvalidFormat(format!("Invalid JSON array: {formats_json}"))
-        })?;
+        let formats: Vec<String> = match serde_json::from_str(formats_json) {
+            Ok(items) => items,
+            Err(_) => {
+                return Err(AuthParseError::InvalidFormat(format!(
+                    "Invalid JSON array: {formats_json}"
+                )));
+            }
+        };
 
         let mut headers = Vec::new();
         for format in formats {
@@ -137,10 +141,14 @@ impl AuthHeaderParser {
     pub fn extract_header_names_from_array(
         formats_json: &str,
     ) -> Result<Vec<String>, AuthParseError> {
-        // 尝试解析为JSON数组
-        let formats: Vec<String> = serde_json::from_str(formats_json).map_err(|_| {
-            AuthParseError::InvalidFormat(format!("Invalid JSON array: {formats_json}"))
-        })?;
+        let formats: Vec<String> = match serde_json::from_str(formats_json) {
+            Ok(items) => items,
+            Err(_) => {
+                return Err(AuthParseError::InvalidFormat(format!(
+                    "Invalid JSON array: {formats_json}"
+                )));
+            }
+        };
 
         let mut header_names = Vec::new();
         for format in formats {

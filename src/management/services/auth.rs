@@ -8,7 +8,7 @@ use crate::{
         permissions::UserRole,
         types::{JwtClaims, UserInfo as AuthUserInfo},
     },
-    error::{ProxyError, Result},
+    error::{Context, ProxyError, Result},
     ldebug, lerror, linfo,
     logging::{LogComponent, LogStage},
     lwarn,
@@ -58,7 +58,8 @@ impl<'a> AuthManagementService<'a> {
             .auth_service()
             .login(username, password)
             .await
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lwarn!(
                     "system",
                     LogStage::Authentication,
@@ -66,15 +67,16 @@ impl<'a> AuthManagementService<'a> {
                     "login_fail",
                     &format!("Login failed for user {username}: {err}")
                 );
-                err
-            })?;
+            })
+            .context("管理端用户登录失败")?;
 
         let claims = self
             .state
             .auth_service()
             .jwt_manager
             .validate_token(&token_pair.access_token)
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lerror!(
                     "system",
                     LogStage::Authentication,
@@ -82,26 +84,30 @@ impl<'a> AuthManagementService<'a> {
                     "token_validation_fail",
                     &format!("Generated access token failed validation for user {username}: {err}")
                 );
-                err
-            })?;
+            })
+            .context("管理端登录后校验 access token 失败")?;
 
-        let user_id = claims.user_id().map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "parse_user_id_fail",
-                &format!("Failed to parse user id from access token: {err}")
-            );
-            err
-        })?;
+        let user_id = claims
+            .user_id()
+            .inspect_err(|err| {
+                err.log();
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "parse_user_id_fail",
+                    &format!("Failed to parse user id from access token: {err}")
+                );
+            })
+            .context("解析 access token 中的用户ID失败")?;
 
         let auth_user = self
             .state
             .auth_service()
             .get_user_info(user_id)
             .await
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lerror!(
                     "system",
                     LogStage::Authentication,
@@ -109,8 +115,8 @@ impl<'a> AuthManagementService<'a> {
                     "load_user_info_fail",
                     &format!("Failed to load user info for {user_id}: {err}")
                 );
-                err
-            })?
+            })
+            .context("加载登录用户信息失败")?
             .ok_or_else(|| {
                 lerror!(
                     "system",
@@ -157,11 +163,10 @@ impl<'a> AuthManagementService<'a> {
     }
 
     fn decode_token(&self, token: &str) -> Option<JwtClaims> {
-        self.state
-            .auth_service()
-            .jwt_manager
-            .validate_token(token)
-            .map_err(|err| {
+        match self.state.auth_service().jwt_manager.validate_token(token) {
+            Ok(claims) => Some(claims),
+            Err(err) => {
+                err.log();
                 ldebug!(
                     "system",
                     LogStage::Authentication,
@@ -169,15 +174,16 @@ impl<'a> AuthManagementService<'a> {
                     "token_validation_fail",
                     &format!("Token validation failed: {err}")
                 );
-                err
-            })
-            .ok()
+                None
+            }
+        }
     }
 
     fn extract_user_id(claims: &JwtClaims) -> Option<i32> {
-        claims
-            .user_id()
-            .map_err(|err| {
+        match claims.user_id() {
+            Ok(id) => Some(id),
+            Err(err) => {
+                err.log();
                 lwarn!(
                     "system",
                     LogStage::Authentication,
@@ -185,9 +191,9 @@ impl<'a> AuthManagementService<'a> {
                     "parse_user_id_fail",
                     &format!("Failed to parse user id from token: {err}")
                 );
-                err
-            })
-            .ok()
+                None
+            }
+        }
     }
 
     async fn load_user_info(&self, user_id: i32) -> Result<Option<AuthUserInfo>> {
@@ -204,6 +210,7 @@ impl<'a> AuthManagementService<'a> {
                 Ok(None)
             }
             Err(err) => {
+                err.log();
                 lerror!(
                     "system",
                     LogStage::Db,
@@ -223,7 +230,8 @@ impl<'a> AuthManagementService<'a> {
             .auth_service()
             .jwt_manager
             .validate_token(refresh_token)
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lwarn!(
                     "system",
                     LogStage::Authentication,
@@ -231,26 +239,30 @@ impl<'a> AuthManagementService<'a> {
                     "refresh_token_invalid",
                     &format!("Invalid refresh token: {err}")
                 );
-                err
-            })?;
+            })
+            .context("刷新 token 无效")?;
 
-        let user_id = refresh_claims.user_id().map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::Auth,
-                "refresh_token_user_id_parse_fail",
-                &format!("Failed to parse user id from refresh token: {err}")
-            );
-            err
-        })?;
+        let user_id = refresh_claims
+            .user_id()
+            .inspect_err(|err| {
+                err.log();
+                lerror!(
+                    "system",
+                    LogStage::Authentication,
+                    LogComponent::Auth,
+                    "refresh_token_user_id_parse_fail",
+                    &format!("Failed to parse user id from refresh token: {err}")
+                );
+            })
+            .context("解析刷新 token 中的用户ID失败")?;
 
         let auth_user = self
             .state
             .auth_service()
             .get_user_info(user_id)
             .await
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lerror!(
                     "system",
                     LogStage::Authentication,
@@ -258,8 +270,8 @@ impl<'a> AuthManagementService<'a> {
                     "refresh_token_user_info_fail",
                     &format!("Failed to load user info for {user_id}: {err}")
                 );
-                err
-            })?
+            })
+            .context("刷新 token 加载用户信息失败")?
             .ok_or_else(|| {
                 lwarn!(
                     "system",
@@ -287,7 +299,8 @@ impl<'a> AuthManagementService<'a> {
                 auth_user.is_admin,
                 role,
             )
-            .map_err(|err| {
+            .inspect_err(|err| {
+                err.log();
                 lerror!(
                     "system",
                     LogStage::Authentication,
@@ -295,8 +308,8 @@ impl<'a> AuthManagementService<'a> {
                     "refresh_token_generation_fail",
                     &format!("Failed to generate new access token: {err}")
                 );
-                err
-            })?;
+            })
+            .context("刷新 token 生成新的 access token 失败")?;
 
         linfo!(
             "system",
@@ -343,5 +356,5 @@ const fn invalid_validation_result() -> ValidateTokenOutput {
 }
 
 fn business_error(message: impl Into<String>) -> ProxyError {
-    crate::error!(Authentication, message.into())
+    crate::error::auth::AuthError::Message(message.into()).into()
 }

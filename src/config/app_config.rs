@@ -2,6 +2,8 @@
 
 use super::dual_port_config::DualPortServerConfig;
 use crate::auth::types::AuthConfig;
+use crate::ensure;
+use crate::error::{self, Context};
 use serde::{Deserialize, Serialize};
 
 /// 应用主配置结构
@@ -137,49 +139,63 @@ impl AppConfig {
     // 原因：不再支持HTTPS配置
 
     /// 验证配置的有效性
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> error::Result<()> {
         // 验证双端口配置 - 必须提供
         let dual_port = self.dual_port.as_ref().ok_or_else(|| {
-            "dual_port configuration must be provided (single-port mode is no longer supported)"
-                .to_string()
+            error::config::ConfigError::Load(
+                "dual_port configuration must be provided (single-port mode is no longer supported)"
+                    .to_string(),
+            )
         })?;
 
         // 验证双端口配置
-        dual_port.validate()?;
+        dual_port.validate().context("双端口配置校验失败")?;
 
         // 验证数据库配置
-        if self.database.url.is_empty() {
-            return Err("Database URL cannot be empty".to_string());
-        }
-        if self.database.max_connections == 0 {
-            return Err("Database max_connections must be greater than 0".to_string());
-        }
+        ensure!(
+            !self.database.url.is_empty(),
+            error::config::ConfigError::Load("Database URL cannot be empty".to_string())
+        );
+        ensure!(
+            self.database.max_connections > 0,
+            error::config::ConfigError::Load(
+                "Database max_connections must be greater than 0".to_string()
+            )
+        );
 
         match self.cache.cache_type {
             CacheType::Memory => {
-                if self.cache.redis.is_some() {
-                    return Err("cache.redis 配置仅在 cache_type = \"redis\" 时可用".to_string());
-                }
+                ensure!(
+                    self.cache.redis.is_none(),
+                    error::config::ConfigError::Load(
+                        "cache.redis 配置仅在 cache_type = \"redis\" 时可用".to_string()
+                    )
+                );
             }
             CacheType::Redis => {
-                let redis = self
-                    .cache
-                    .redis
-                    .as_ref()
-                    .ok_or_else(|| "Redis cache configuration must be provided".to_string())?;
+                let redis = self.cache.redis.as_ref().ok_or_else(|| {
+                    error::config::ConfigError::Load(
+                        "Redis cache configuration must be provided".to_string(),
+                    )
+                })?;
 
-                if redis.url.is_empty() {
-                    return Err("Redis URL cannot be empty".to_string());
-                }
+                ensure!(
+                    !redis.url.is_empty(),
+                    error::config::ConfigError::Load("Redis URL cannot be empty".to_string())
+                );
             }
         }
 
-        if self.auth.jwt_expires_in <= 0 {
-            return Err("auth.jwt_expires_in 必须为正数".to_string());
-        }
-        if self.auth.refresh_expires_in <= self.auth.jwt_expires_in {
-            return Err("auth.refresh_expires_in 必须大于 jwt_expires_in".to_string());
-        }
+        ensure!(
+            self.auth.jwt_expires_in > 0,
+            error::config::ConfigError::Load("auth.jwt_expires_in 必须为正数".to_string())
+        );
+        ensure!(
+            self.auth.refresh_expires_in > self.auth.jwt_expires_in,
+            error::config::ConfigError::Load(
+                "auth.refresh_expires_in 必须大于 jwt_expires_in".to_string()
+            )
+        );
 
         Ok(())
     }

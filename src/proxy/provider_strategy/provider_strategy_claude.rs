@@ -3,7 +3,7 @@
 //! 处理 Claude API 特有的逻辑，包括 client ID 替换以保护隐私
 
 use super::ProviderStrategy;
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result, config::ConfigError};
 use crate::key_pool::ApiKeyHealthService;
 use crate::proxy::ProxyContext;
 use crate::{
@@ -81,17 +81,15 @@ impl ProviderStrategy for ClaudeStrategy {
         let host = if let Some(provider) = &ctx.provider_type {
             provider.base_url.clone()
         } else {
-            return Err(ProxyError::internal(
-                "No provider configuration found for Claude",
-            ));
+            return Err(ConfigError::Load(
+                "No provider configuration found for Claude".to_string(),
+            )
+            .into());
         };
 
-        if let Err(e) = upstream_request.insert_header("host", &host) {
-            return Err(ProxyError::internal_with_source(
-                "Failed to set host header for Claude",
-                e,
-            ));
-        }
+        upstream_request
+            .insert_header("host", &host)
+            .context("Failed to set host header for Claude")?;
 
         // 检测是否为需要修改 body 的请求
         let path = session.req_header().uri.path();

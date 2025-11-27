@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    error::Result,
+    error::{ProxyError, Result},
     lerror, linfo,
     logging::{LogComponent, LogStage},
     management::{
@@ -173,6 +173,13 @@ pub async fn get_stats_overview(
                 count = summary.len()
             );
             response::success(OverviewResponse { summary })
+        }
+        Err(ProxyError::Authentication(crate::error::auth::AuthError::Message(msg)))
+            if msg.contains("invalid_time_range") =>
+        {
+            response::app_error(ProxyError::from(crate::error::auth::AuthError::Message(
+                "Invalid time range".to_string(),
+            )))
         }
         Err(err) => {
             err.log();
@@ -371,8 +378,7 @@ fn resolve_range(
 ) -> Result<Range<DateTime<Utc>>> {
     crate::ensure!(
         !user_service_key.trim().is_empty(),
-        Authentication,
-        "user_service_key_required"
+        crate::error::auth::AuthError::Message("user_service_key_required".to_string())
     );
 
     let end = to.unwrap_or_else(Utc::now);
@@ -394,7 +400,10 @@ fn resolve_range(
         )
     });
 
-    crate::ensure!(start < end, Authentication, "invalid_time_range");
+    crate::ensure!(
+        start < end,
+        crate::error::auth::AuthError::Message("invalid_time_range".to_string())
+    );
 
     Ok(Range { start, end })
 }
@@ -410,10 +419,10 @@ fn parse_timeframe(value: Option<&str>) -> Result<Option<Duration>> {
         "90d" => Duration::days(90),
         "1d" => Duration::days(1),
         _ => {
-            return Err(crate::error!(
-                Authentication,
-                format!("invalid_timeframe_value: {text}")
-            ));
+            return Err(crate::error::auth::AuthError::Message(format!(
+                "invalid_timeframe_value: {text}"
+            ))
+            .into());
         }
     };
 

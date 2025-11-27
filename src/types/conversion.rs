@@ -38,7 +38,10 @@ pub fn request_count_from_i64(
     if value < 0 {
         return Err(ConversionError::NegativeValue { field, value });
     }
-    u64::try_from(value).map_err(|_| ConversionError::Overflow { field })
+    let Ok(converted) = u64::try_from(value) else {
+        return Err(ConversionError::Overflow { field });
+    };
+    Ok(converted)
 }
 
 pub fn token_count_from_i64(

@@ -8,7 +8,7 @@ use crate::collect::types::CollectedMetrics;
 use crate::logging::{LogComponent, LogStage, log_proxy_failure_details};
 use crate::proxy::ProxyContext;
 use crate::trace::immediate::{CompleteTraceParams, ImmediateProxyTracer, StartTraceParams};
-use crate::{error::ProxyError, error::Result, linfo, lwarn};
+use crate::{error::Context, error::Result, linfo, lwarn};
 use flate2::read::GzDecoder;
 use pingora_core::Error as PingoraError;
 use serde_json::json;
@@ -62,17 +62,21 @@ impl TraceManager {
             user_agent,
         };
 
-        tracer.start_trace(params).await.map_err(|e| {
-            lwarn!(
-                request_id,
-                LogStage::Error,
-                LogComponent::Tracing,
-                "trace_start_failed",
-                "即时追踪启动失败",
-                error = format!("{:?}", e)
-            );
-            ProxyError::internal_with_source("Failed to start trace", e)
-        })
+        tracer
+            .start_trace(params)
+            .await
+            .inspect_err(|err| {
+                err.log();
+                lwarn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::Tracing,
+                    "trace_start_failed",
+                    "即时追踪启动失败",
+                    error = format!("{:?}", err)
+                );
+            })
+            .context("Failed to start trace")
     }
 
     /// 更新模型信息（在解析完成后调用）
@@ -216,17 +220,18 @@ impl TraceManager {
         tracer
             .complete_trace_with_stats(&metrics.request_id, params)
             .await
-            .map_err(|e| {
+            .inspect_err(|err| {
+                err.log();
                 lwarn!(
                     &metrics.request_id,
                     LogStage::Error,
                     LogComponent::Tracing,
                     "success_trace_complete_failed",
                     "成功请求追踪完成失败",
-                    error = format!("{:?}", e)
+                    error = format!("{:?}", err)
                 );
-                ProxyError::internal_with_source("Failed to complete trace", e)
             })
+            .context("Failed to complete trace")
     }
 
     async fn update_rate_limits(&self, metrics: &CollectedMetrics, ctx: &ProxyContext) {

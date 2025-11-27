@@ -98,16 +98,27 @@ impl OpenAI {
             return Err(OAuthError::InvalidToken("JWT payload 段为空".to_string()));
         }
 
-        URL_SAFE_NO_PAD
-            .decode(header_segment)
-            .map_err(|e| OAuthError::InvalidToken(format!("JWT header Base64 解析失败: {e}")))?;
+        if let Err(e) = URL_SAFE_NO_PAD.decode(header_segment) {
+            return Err(OAuthError::InvalidToken(format!(
+                "JWT header Base64 解析失败: {e}"
+            )));
+        }
 
-        let decoded_payload = URL_SAFE_NO_PAD
-            .decode(payload_segment)
-            .map_err(|e| OAuthError::InvalidToken(format!("JWT payload Base64 解析失败: {e}")))?;
+        let decoded_payload = match URL_SAFE_NO_PAD.decode(payload_segment) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return Err(OAuthError::InvalidToken(format!(
+                    "JWT payload Base64 解析失败: {e}"
+                )));
+            }
+        };
 
-        serde_json::from_slice::<OpenAIJWTPayload>(&decoded_payload)
-            .map_err(|e| OAuthError::InvalidToken(format!("JWT payload JSON 解析失败: {e}")))
+        match serde_json::from_slice::<OpenAIJWTPayload>(&decoded_payload) {
+            Ok(payload) => Ok(payload),
+            Err(e) => Err(OAuthError::InvalidToken(format!(
+                "JWT payload JSON 解析失败: {e}"
+            ))),
+        }
     }
 
     /// 从 `access_token` 中提取 `chatgpt_account_id`

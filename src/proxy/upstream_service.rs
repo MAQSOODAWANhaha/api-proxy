@@ -2,7 +2,7 @@
 //!
 //! 负责所有与上游节点（Peer）相关的逻辑，包括根据服务商策略选择地址和配置连接参数。
 
-use crate::error::{ProxyError, Result};
+use crate::error::{Result, config::ConfigError};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
@@ -29,7 +29,7 @@ impl UpstreamService {
         let provider_type = ctx
             .provider_type
             .as_ref()
-            .ok_or_else(|| ProxyError::internal("Provider type not set in context"))?;
+            .ok_or_else(|| ConfigError::Load("Provider type not set in context".to_string()))?;
 
         // 优先由 ProviderStrategy 决定上游地址
         let upstream_addr = if let Some(strategy) = &ctx.strategy {

@@ -6,7 +6,7 @@ use super::algorithms::{ApiKeySelectionResult, ApiKeySelector, SelectionContext}
 use super::api_key_health::ApiKeyHealthService;
 use super::types::{ApiKeyHealthStatus, SchedulingStrategy};
 use crate::auth::types::AuthStatus;
-use crate::error::{ProxyError, Result};
+use crate::error::{Context, Result, key_pool::KeyPoolError};
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, linfo};
 use entity::user_provider_keys;
@@ -281,7 +281,7 @@ impl ApiKeySchedulerService {
             .order_by_asc(entity::user_provider_keys::Column::Id)
             .all(&*self.db)
             .await
-            .map_err(|_| ProxyError::internal("Database error when loading API keys"))?;
+            .with_context(|| "数据库查询 API Key 列表失败".to_string())?;
 
         ldebug!(
             &context.request_id,
@@ -305,16 +305,18 @@ impl ApiKeySchedulerService {
                 .filter_map(|id| id.as_i64().and_then(|i| i32::try_from(i).ok()))
                 .collect::<Vec<_>>(),
             _ => {
-                return Err(ProxyError::internal(
-                    "Invalid user_provider_keys_ids format",
-                ));
+                return Err(KeyPoolError::InvalidProviderKeysFormat {
+                    service_api_id: service_api.id,
+                }
+                .into());
             }
         };
 
         if ids.is_empty() {
-            return Err(ProxyError::internal(
-                "No provider keys configured in service API",
-            ));
+            return Err(KeyPoolError::NoProviderKeysConfigured {
+                service_api_id: service_api.id,
+            }
+            .into());
         }
 
         ldebug!(
@@ -345,12 +347,13 @@ impl ApiKeySchedulerService {
         );
 
         if filtered.is_empty() {
-            Err(ProxyError::internal(
-                "No active provider keys found for configured IDs",
-            ))
-        } else {
-            Ok(filtered)
+            return Err(KeyPoolError::NoActiveProviderKeys {
+                service_api_id: context.user_service_api_id,
+            }
+            .into());
         }
+
+        Ok(filtered)
     }
 
     fn resolve_strategy(service_api: &entity::user_service_apis::Model) -> SchedulingStrategy {
@@ -388,7 +391,7 @@ impl ApiKeySchedulerService {
         self.api_key_health_service
             .mark_key_unhealthy(key_id, reason)
             .await
-            .map_err(|e| ProxyError::internal_with_source("Failed to mark key unhealthy", e))
+            .context("标记 API key 不健康失败")
     }
 }
 

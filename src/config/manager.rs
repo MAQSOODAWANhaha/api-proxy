@@ -2,6 +2,7 @@
 //!
 //! 提供统一的配置加载入口：从配置文件加载结构化配置，从环境变量加载敏感信息。
 
+use crate::error::Context;
 use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, linfo};
 use std::env;
@@ -70,29 +71,19 @@ impl ConfigManager {
     /// 加载配置文件
     fn load_config_file(path: &Path) -> crate::error::Result<AppConfig> {
         if !path.exists() {
-            return Err(crate::error!(
-                Config,
-                format!("配置文件不存在: {}", path.display())
+            return Err(crate::error::ProxyError::from(
+                crate::error::config::ConfigError::Load(format!(
+                    "配置文件不存在: {}",
+                    path.display()
+                )),
             ));
         }
 
-        let config_content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error!(
-                Config,
-                format!("读取配置文件失败: {}: {}", path.display(), e)
-            )
-        })?;
+        let config_content = std::fs::read_to_string(path)
+            .with_context(|| format!("读取配置文件失败: {}", path.display()))?;
 
-        let config: AppConfig = toml::from_str(&config_content).map_err(|e| {
-            crate::error!(
-                Config,
-                format!(
-                    "TOML解析失败 - 配置文件: {}, 详细错误: {}",
-                    path.display(),
-                    e
-                )
-            )
-        })?;
+        let config: AppConfig = toml::from_str(&config_content)
+            .with_context(|| format!("TOML解析失败 - 配置文件: {}", path.display()))?;
 
         super::validate_config(&config)?;
 

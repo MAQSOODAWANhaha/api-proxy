@@ -19,9 +19,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    error::{ProxyError, Result},
-    lerror,
-    logging::{LogComponent, LogStage},
+    error::{Context, ProxyError, Result},
     management::response::Pagination,
     management::server::ManagementState,
     types::{ProviderTypeId, timezone_utils},
@@ -229,16 +227,7 @@ impl<'a> ServiceApiService<'a> {
             .filter(proxy_tracing::Column::UserId.eq(user_id))
             .count(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "count_user_requests_fail",
-                    &format!("Failed to count user requests: {err}")
-                );
-                crate::error!(Database, format!("Failed to count user requests: {err}"))
-            })?;
+            .context("Failed to count user requests")?;
 
         Ok(UserServiceCardsResponse {
             total_api_keys: to_i32(total_api_keys),
@@ -276,19 +265,11 @@ impl<'a> ServiceApiService<'a> {
             selector = selector.filter(user_service_apis::Column::IsActive.eq(is_active));
         }
 
-        let total = selector.clone().count(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "count_service_apis_fail",
-                &format!("Failed to count user service APIs: {err}")
-            );
-            crate::error!(
-                Database,
-                format!("Failed to count user service APIs: {err}")
-            )
-        })?;
+        let total = selector
+            .clone()
+            .count(self.db)
+            .await
+            .context("Failed to count user service APIs")?;
 
         let rows = selector
             .find_also_related(ProviderTypes)
@@ -296,19 +277,7 @@ impl<'a> ServiceApiService<'a> {
             .limit(pagination_params.limit)
             .all(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_service_apis_fail",
-                    &format!("Failed to fetch user service APIs: {err}")
-                );
-                crate::error!(
-                    Database,
-                    format!("Failed to fetch user service APIs: {err}")
-                )
-            })?;
+            .context("Failed to fetch user service APIs")?;
 
         let mut service_api_keys = Vec::with_capacity(rows.len());
         for (api, provider_type) in rows {
@@ -344,19 +313,7 @@ impl<'a> ServiceApiService<'a> {
         let now = Utc::now().naive_utc();
 
         let user_provider_keys_ids = serde_json::to_value(&request.user_provider_keys_ids)
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Internal,
-                    LogComponent::Database,
-                    "serialize_ids_fail",
-                    &format!("Failed to serialize user_provider_keys_ids: {err}")
-                );
-                crate::error!(
-                    Internal,
-                    format!("Failed to serialize user provider key ids: {err}")
-                )
-            })?;
+            .context("Failed to serialize user provider key ids")?;
 
         let model = user_service_apis::ActiveModel {
             user_id: Set(user_id),
@@ -379,16 +336,10 @@ impl<'a> ServiceApiService<'a> {
             ..Default::default()
         };
 
-        let inserted = model.insert(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "insert_service_api_fail",
-                &format!("Failed to insert user service API: {err}")
-            );
-            crate::error!(Database, format!("Failed to create API Key: {err}"))
-        })?;
+        let inserted = model
+            .insert(self.db)
+            .await
+            .context("Failed to insert user service API")?;
 
         Ok(CreateUserServiceKeyResponse {
             id: inserted.id,
@@ -414,16 +365,7 @@ impl<'a> ServiceApiService<'a> {
         let provider = ProviderTypes::find_by_id(api.provider_type_id)
             .one(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "query_provider_type_fail",
-                    &format!("Failed to fetch provider type: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch provider type: {err}"))
-            })?
+            .context("Failed to fetch provider type")?
             .ok_or_else(|| {
                 business_error(format!("Provider type not found: {}", api.provider_type_id))
             })?;
@@ -497,16 +439,10 @@ impl<'a> ServiceApiService<'a> {
         model.max_cost_per_day = Set(request.max_cost_per_day);
         model.expires_at = Set(expires_at);
 
-        let updated = model.update(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "update_service_api_fail",
-                &format!("Failed to update user service API: {err}")
-            );
-            crate::error!(Database, format!("Failed to update API Key: {err}"))
-        })?;
+        let updated = model
+            .update(self.db)
+            .await
+            .context("Failed to update user service API")?;
 
         Ok(UpdateUserServiceKeyResponse {
             id: updated.id,
@@ -525,19 +461,10 @@ impl<'a> ServiceApiService<'a> {
         let result = UserServiceApis::delete_by_id(api_id)
             .exec(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "delete_service_api_fail",
-                    &format!("Failed to delete user service API: {err}")
-                );
-                crate::error!(Database, format!("Failed to delete API Key: {err}"))
-            })?;
+            .context("Failed to delete user service API")?;
 
         if result.rows_affected == 0 {
-            return Err(ProxyError::internal("Failed to delete API Key"));
+            return Err(business_error("API Key 已不存在或删除失败"));
         }
 
         Ok(())
@@ -561,16 +488,7 @@ impl<'a> ServiceApiService<'a> {
             .filter(proxy_tracing::Column::CreatedAt.lt(range.end.naive_utc()))
             .all(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Tracing,
-                    "fetch_tracings_fail",
-                    &format!("Failed to fetch proxy tracings: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch usage statistics: {err}"))
-            })?;
+            .context("Failed to fetch proxy tracings for usage statistics")?;
 
         let total_requests = u64::try_from(tracings.len()).unwrap_or(0);
         let successful_requests =
@@ -649,16 +567,10 @@ impl<'a> ServiceApiService<'a> {
             ..Default::default()
         };
 
-        let updated = model.update(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "regenerate_key_fail",
-                &format!("Failed to regenerate API key: {err}")
-            );
-            crate::error!(Database, format!("Failed to regenerate API key: {err}"))
-        })?;
+        let updated = model
+            .update(self.db)
+            .await
+            .context("Failed to regenerate API key")?;
 
         Ok(RegenerateUserServiceKeyResponse {
             id: updated.id,
@@ -685,16 +597,10 @@ impl<'a> ServiceApiService<'a> {
             ..Default::default()
         };
 
-        let updated = model.update(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "update_key_status_fail",
-                &format!("Failed to update API key status: {err}")
-            );
-            crate::error!(Database, format!("Failed to update API key status: {err}"))
-        })?;
+        let updated = model
+            .update(self.db)
+            .await
+            .context("Failed to update API key status")?;
 
         Ok(UpdateUserServiceKeyStatusResponse {
             id: updated.id,
@@ -714,16 +620,7 @@ impl<'a> ServiceApiService<'a> {
             .filter(proxy_tracing::Column::UserServiceApiId.eq(api.id))
             .all(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Tracing,
-                    "fetch_tracings_fail",
-                    &format!("Failed to fetch proxy tracings: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch proxy tracings: {err}"))
-            })?;
+            .context("Failed to fetch proxy tracings")?;
 
         let success_count =
             u64::try_from(tracings.iter().filter(|t| t.is_success).count()).unwrap_or(0);
@@ -744,19 +641,7 @@ impl<'a> ServiceApiService<'a> {
             .order_by(proxy_tracing::Column::CreatedAt, Order::Desc)
             .one(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Tracing,
-                    "fetch_last_trace_fail",
-                    &format!("Failed to fetch last proxy tracing: {err}")
-                );
-                crate::error!(
-                    Database,
-                    format!("Failed to fetch last proxy tracing: {err}")
-                )
-            })?
+            .context("Failed to fetch last proxy tracing")?
             .map(|tracing| {
                 let utc_dt = DateTime::<Utc>::from_naive_utc_and_offset(tracing.created_at, Utc);
                 timezone_utils::format_utc_for_response(&utc_dt, timezone)
@@ -805,19 +690,10 @@ impl<'a> ServiceApiService<'a> {
         if let Some(active) = is_active {
             query = query.filter(user_service_apis::Column::IsActive.eq(active));
         }
-        query.count(self.db).await.map_err(|err| {
-            lerror!(
-                "system",
-                LogStage::Db,
-                LogComponent::Database,
-                "count_service_apis_fail",
-                &format!("Failed to count user service APIs: {err}")
-            );
-            crate::error!(
-                Database,
-                format!("Failed to count user service APIs: {err}")
-            )
-        })
+        query
+            .count(self.db)
+            .await
+            .context("Failed to count user service APIs")
     }
 
     async fn find_user_api(&self, api_id: i32, user_id: i32) -> Result<user_service_apis::Model> {
@@ -825,22 +701,13 @@ impl<'a> ServiceApiService<'a> {
             .filter(user_service_apis::Column::UserId.eq(user_id))
             .one(self.db)
             .await
-            .map_err(|err| {
-                lerror!(
-                    "system",
-                    LogStage::Db,
-                    LogComponent::Database,
-                    "fetch_service_apis_fail",
-                    &format!("Failed to fetch user service API: {err}")
-                );
-                crate::error!(Database, format!("Failed to fetch user service API: {err}"))
-            })?
+            .context("Failed to fetch user service API")?
             .ok_or_else(|| business_error(format!("API Key not found: {api_id}")))
     }
 }
 
 fn business_error(message: impl Into<String>) -> ProxyError {
-    crate::error!(Authentication, message.into())
+    crate::error::auth::AuthError::Message(message.into()).into()
 }
 
 fn ensure_positive(id: i32) -> Result<()> {
@@ -863,9 +730,14 @@ fn parse_optional_rfc3339(value: Option<&str>) -> Result<Option<NaiveDateTime>> 
 }
 
 fn parse_rfc3339(value: &str) -> Result<NaiveDateTime> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.naive_utc())
-        .map_err(|_| business_error("过期时间格式错误，请使用ISO 8601格式"))
+    chrono::DateTime::parse_from_rfc3339(value).map_or_else(
+        |_| {
+            Err(business_error(
+                "Expiration time format error, please use ISO 8601 format",
+            ))
+        },
+        |dt| Ok(dt.naive_utc()),
+    )
 }
 
 fn format_naive_utc(naive: &NaiveDateTime, timezone: Tz) -> String {
@@ -877,11 +749,9 @@ fn resolve_usage_range(query: &UsageStatsQuery, timezone: Tz) -> Result<Range<Da
     let now = Utc::now();
     let (today_start, today_end) =
         timezone_utils::local_day_bounds(&now, &timezone).ok_or_else(|| {
-            crate::error!(
-                Conversion,
-                "Failed to calculate local day bounds for timezone {}",
-                timezone
-            )
+            business_error(format!(
+                "Failed to calculate local day bounds for timezone {timezone}"
+            ))
         })?;
 
     let (start, end) = match query.time_range.as_deref() {
@@ -890,10 +760,12 @@ fn resolve_usage_range(query: &UsageStatsQuery, timezone: Tz) -> Result<Range<Da
         Some("30days" | _) => (today_end - Duration::days(30), today_end),
         None => {
             if let (Some(start_str), Some(end_str)) = (&query.start_date, &query.end_date) {
-                let start_date = NaiveDate::parse_from_str(start_str, "%Y-%m-%d")
-                    .map_err(|_| business_error("Invalid start date format"))?;
-                let end_date = NaiveDate::parse_from_str(end_str, "%Y-%m-%d")
-                    .map_err(|_| business_error("Invalid end date format"))?;
+                let Ok(start_date) = NaiveDate::parse_from_str(start_str, "%Y-%m-%d") else {
+                    return Err(business_error("Invalid start date format"));
+                };
+                let Ok(end_date) = NaiveDate::parse_from_str(end_str, "%Y-%m-%d") else {
+                    return Err(business_error("Invalid end date format"));
+                };
                 if start_date > end_date {
                     (today_end - Duration::days(30), today_end)
                 } else {

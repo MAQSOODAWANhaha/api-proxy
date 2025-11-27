@@ -48,10 +48,9 @@ impl TokenMapping {
     /// `从JSON配置解析Token映射`
     pub fn from_json(config: &Value) -> Result<Self> {
         let mapping_type = config.get("type").and_then(Value::as_str).ok_or_else(|| {
-            crate::error!(
-                Conversion,
-                "Invalid token mappings configuration: missing or invalid 'type' field"
-            )
+            crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                "Invalid token mappings configuration: missing or invalid 'type' field".to_string(),
+            ))
         })?;
 
         match mapping_type {
@@ -60,9 +59,10 @@ impl TokenMapping {
             "default" => Self::parse_default_mapping(config),
             "conditional" => Self::parse_conditional_mapping(config),
             "fallback" => Self::parse_fallback_mapping(config),
-            _ => Err(crate::error!(
-                Conversion,
-                format!("Unknown mapping type: {mapping_type}")
+            _ => Err(crate::error::ProxyError::from(
+                crate::error::conversion::ConversionError::Message(format!(
+                    "Unknown mapping type: {mapping_type}"
+                )),
             )),
         }
     }
@@ -91,7 +91,9 @@ impl TokenMapping {
 
     fn parse_default_mapping(config: &Value) -> Result<Self> {
         let value = config.get("value").cloned().ok_or_else(|| {
-            crate::error!(Conversion, "Missing 'value' field for default mapping")
+            crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                "Missing 'value' field for default mapping".to_string(),
+            ))
         })?;
 
         Ok(Self::Default {
@@ -112,10 +114,9 @@ impl TokenMapping {
             "Missing 'true_value' field for conditional mapping",
         )?;
         let false_value = config.get("false_value").cloned().ok_or_else(|| {
-            crate::error!(
-                Conversion,
-                "Missing 'false_value' field for conditional mapping"
-            )
+            crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                "Missing 'false_value' field for conditional mapping".to_string(),
+            ))
         })?;
 
         Ok(Self::Conditional {
@@ -131,10 +132,9 @@ impl TokenMapping {
             .get("paths")
             .and_then(Value::as_array)
             .ok_or_else(|| {
-                crate::error!(
-                    Conversion,
-                    "Missing or invalid 'paths' field for fallback mapping"
-                )
+                crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                    "Missing or invalid 'paths' field for fallback mapping".to_string(),
+                ))
             })?;
 
         let mut collected_paths = Vec::new();
@@ -160,10 +160,11 @@ impl TokenMapping {
     }
 
     fn require_string<'a>(config: &'a Value, field: &str, err: &str) -> Result<&'a str> {
-        config
-            .get(field)
-            .and_then(Value::as_str)
-            .ok_or_else(|| crate::error!(Conversion, err.to_string()))
+        config.get(field).and_then(Value::as_str).ok_or_else(|| {
+            crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                err.to_string(),
+            ))
+        })
     }
 }
 
@@ -177,15 +178,23 @@ pub struct TokenMappingConfig {
 impl TokenMappingConfig {
     /// `从token_mappings_json解析配置`
     pub fn from_json(json_str: &str) -> Result<Self> {
-        let config_value: Value = serde_json::from_str(json_str)
-            .map_err(|e| crate::error!(Conversion, format!("Invalid token mappings JSON: {e}")))?;
+        let config_value: Value = match serde_json::from_str(json_str) {
+            Ok(value) => value,
+            Err(e) => {
+                return Err(crate::error::conversion::ConversionError::Message(format!(
+                    "Invalid token mappings JSON: {e}"
+                ))
+                .into());
+            }
+        };
         let mut token_mappings = HashMap::new();
 
         // 解析每个token字段映射
-        for (field_name, mapping_config) in config_value
-            .as_object()
-            .ok_or_else(|| crate::error!(Conversion, "Invalid token mappings JSON format"))?
-        {
+        for (field_name, mapping_config) in config_value.as_object().ok_or_else(|| {
+            crate::error::ProxyError::from(crate::error::conversion::ConversionError::Message(
+                "Invalid token mappings JSON format".to_string(),
+            ))
+        })? {
             let mapping = TokenMapping::from_json(mapping_config)?;
             token_mappings.insert(field_name.clone(), mapping);
         }
@@ -410,8 +419,15 @@ enum ModelRule {
 
 impl ModelExtractor {
     pub fn from_json_config(json_str: &str) -> Result<Self> {
-        let v: Value = serde_json::from_str(json_str)
-            .map_err(|e| crate::error!(Conversion, format!("Invalid token mappings JSON: {e}")))?;
+        let v: Value = match serde_json::from_str(json_str) {
+            Ok(value) => value,
+            Err(e) => {
+                return Err(crate::error::conversion::ConversionError::Message(format!(
+                    "Invalid token mappings JSON: {e}"
+                ))
+                .into());
+            }
+        };
         let mut rules = Vec::new();
         if let Some(arr) = v.get("extraction_rules").and_then(|x| x.as_array()) {
             for item in arr {

@@ -3,15 +3,13 @@
 //! 聚合统计相关的查询逻辑，供 handler 调用复用。
 
 use crate::{
-    error::{ProxyError, Result},
-    lerror,
-    logging::{LogComponent, LogStage},
+    error::{Context, ProxyError, Result},
     management::server::ManagementState,
     types::{TimezoneContext, ratio_as_percentage, timezone_utils},
 };
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing};
-use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -236,7 +234,8 @@ impl<'a> StatisticsService<'a> {
         query: &TimeRangeQuery,
         timezone: &TimezoneContext,
     ) -> Result<ModelsRateResponse> {
-        let (start_time, end_time) = parse_time_range(query, timezone)?;
+        let (start_time, end_time) = parse_time_range(query, timezone)
+            .context("Failed to parse time range for models statistics")?;
 
         let traces = self
             .fetch_success_traces(user_id, start_time, end_time)
@@ -264,7 +263,8 @@ impl<'a> StatisticsService<'a> {
         query: &TimeRangeQuery,
         timezone: &TimezoneContext,
     ) -> Result<ModelsStatisticsResponse> {
-        let (start_time, end_time) = parse_time_range(query, timezone)?;
+        let (start_time, end_time) = parse_time_range(query, timezone)
+            .context("Failed to parse time range for models statistics")?;
 
         let traces = ProxyTracing::find()
             .filter(proxy_tracing::Column::CreatedAt.gte(start_time.naive_utc()))
@@ -273,7 +273,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::IsSuccess.eq(true))
             .all(self.db())
             .await
-            .map_err(|err| db_error("Failed to fetch traces for models statistics", &err))?;
+            .context("Failed to fetch traces for models statistics")?;
 
         let total_requests = traces
             .iter()
@@ -335,7 +335,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::UserId.eq(user_id))
             .all(self.db())
             .await
-            .map_err(|err| db_error("Failed to fetch traces for tokens trend", &err))?;
+            .context("Failed to fetch traces for tokens trend")?;
 
         let mut daily_stats: HashMap<String, (i64, i64, i64, i64, f64)> = HashMap::new();
         for trace in &traces {
@@ -421,12 +421,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::UserId.eq(user_id))
             .all(self.db())
             .await
-            .map_err(|err| {
-                db_error(
-                    "Failed to fetch traces for user API keys request trend",
-                    &err,
-                )
-            })?;
+            .context("Failed to fetch traces for user API keys request trend")?;
 
         let mut daily_requests: HashMap<String, i64> = HashMap::new();
         for trace in &traces {
@@ -502,9 +497,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::UserId.eq(user_id))
             .all(self.db())
             .await
-            .map_err(|err| {
-                db_error("Failed to fetch traces for user API keys token trend", &err)
-            })?;
+            .context("Failed to fetch traces for user API keys token trend")?;
 
         let mut daily_tokens: HashMap<String, i64> = HashMap::new();
         for trace in &traces {
@@ -571,7 +564,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::IsSuccess.eq(true))
             .all(self.db())
             .await
-            .map_err(|err| db_error("Failed to fetch traces for models rate", &err))
+            .context("Failed to fetch traces for models rate")
     }
 
     async fn fetch_traces(
@@ -586,7 +579,7 @@ impl<'a> StatisticsService<'a> {
             .filter(proxy_tracing::Column::UserId.eq(user_id))
             .all(self.db())
             .await
-            .map_err(|err| db_error("Failed to fetch traces for range", &err))
+            .context("Failed to fetch traces for range")
     }
 }
 
@@ -793,19 +786,8 @@ fn parse_time_range(
     }
 }
 
-fn db_error(message: &str, err: &DbErr) -> ProxyError {
-    lerror!(
-        "system",
-        LogStage::Db,
-        LogComponent::Database,
-        "statistics_service_db_error",
-        &format!("{message}: {err}")
-    );
-    crate::error!(Database, format!("{message}: {err}"))
-}
-
 fn conversion_error(message: &str) -> ProxyError {
-    crate::error!(Conversion, message)
+    crate::error::conversion::ConversionError::Message(message.to_string()).into()
 }
 
 #[cfg(test)]
