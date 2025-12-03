@@ -64,7 +64,6 @@ moka = { version = "0.12", features = ["future"] }
 # 核心依赖 - Pingora 和 Web 框架（使用最新版本）
 pingora-core = {version = "0.6.0",features = ["openssl"]}
 pingora-proxy = "0.6.0"
-pingora-load-balancing = "0.6.0"
 pingora-http = "0.6.0"
 pingora-error = "0.6.0"
 axum = "0.8.4"
@@ -80,7 +79,6 @@ regex = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"] }
-oauth2 = "5"
 bytes = "1"
 bcrypt = "0.17.1"
 tower = "0.5"
@@ -88,12 +86,10 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 num_cpus = "1"
 sysinfo = "0.37"
 ipnetwork = "0.21.1"
-serde_with = { version = "3", features = ["chrono"] }
 urlencoding = "2"
 
 # 统一依赖版本，减少版本冲突
 ahash = "0.8"
-async-channel = "2.5"
 bitflags = "2.9"
 hashbrown = "0.16"
 indexmap = "2.11"
@@ -101,19 +97,14 @@ rand = "0.8"
 getrandom = "0.3"
 thiserror = "2.0"
 http = "1.0"
-heck = "0.5"
 strsim = "0.11"
-syn = "2.0"
-darling = "0.21"
 event-listener = "5.4"
 foldhash = "0.2"
 
 
 # dev-dependencies
 tokio-test = "0.4"
-rstest = "0.26.1"
 serial_test = "3"
-pretty_assertions = "1"
 
 [dependencies]
 # 工作空间内依赖
@@ -141,7 +132,6 @@ moka = { workspace = true }
 # 核心依赖 - Pingora 和 Web 框架（使用最新版本）
 pingora-core = { workspace = true }
 pingora-proxy = { workspace = true }
-pingora-load-balancing = { workspace = true }
 pingora-http = { workspace = true }
 pingora-error = { workspace = true }
 axum = { workspace = true }
@@ -158,7 +148,6 @@ regex = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 jsonwebtoken = { workspace = true }
-oauth2 = { workspace = true }
 bytes = { workspace = true }
 bcrypt = { workspace = true }
 tower = { workspace = true }
@@ -166,12 +155,10 @@ tower-http = { workspace = true }
 num_cpus = { workspace = true }
 sysinfo = { workspace = true }
 ipnetwork = { workspace = true }
-serde_with = { workspace = true }
 urlencoding = { workspace = true }
 
 # 统一依赖版本，减少版本冲突
 ahash = { workspace = true }
-async-channel = { workspace = true }
 bitflags = { workspace = true }
 hashbrown = { workspace = true }
 indexmap = { workspace = true }
@@ -179,10 +166,7 @@ rand = { workspace = true }
 getrandom = { workspace = true }
 thiserror = { workspace = true }
 http = { workspace = true }
-heck = { workspace = true }
 strsim = { workspace = true }
-syn = { workspace = true }
-darling = { workspace = true }
 event-listener = { workspace = true }
 foldhash = { workspace = true }
 
@@ -191,18 +175,11 @@ foldhash = { workspace = true }
 
 # 测试框架依赖（条件编译）
 tempfile = { version = "3", optional = true }
-mockall = { version = "0.13.1", optional = true }
-wiremock = { version = "0.6", optional = true }
 
 [dev-dependencies]
 # 测试框架依赖
 tokio-test = { workspace = true }
-rstest = { workspace = true }
-mockall = { version = "0.13.1" }
-wiremock = { version = "0.6" }
 serial_test = { workspace = true }
-# 测试工具
-pretty_assertions = { workspace = true }
 # Note: reqwest 和 env_logger 已在主依赖中定义，无需重复
 
 
