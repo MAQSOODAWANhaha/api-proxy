@@ -9,6 +9,7 @@ use crate::auth::{
 use crate::error::{Context, Result};
 use crate::key_pool::{ApiKeyHealthService, ApiKeySchedulerService};
 use crate::trace::ApiKeyTraceService;
+use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// 业务服务集合:封装身份、限流、追踪等核心服务实例
@@ -22,6 +23,7 @@ use std::sync::Arc;
 /// - **代理端 (Proxy)**：使用 API Key 进行服务认证，不涉及 JWT
 /// - `ApiKeyAuthenticationService` 被两端共享，但代理端仅使用其 API Key 验证功能
 pub struct AppServices {
+    database: Arc<DatabaseConnection>,
     authentication: Arc<ApiKeyAuthenticationService>,
     usage_limit: Arc<ApiKeyUsageLimitService>,
     trace: Arc<ApiKeyTraceService>,
@@ -64,11 +66,12 @@ impl AppServices {
             health.clone(),
         ));
 
-        let oauth = Arc::new(ApiKeyOauthService::new(database, resources.cache()));
+        let oauth = Arc::new(ApiKeyOauthService::new(database.clone(), resources.cache()));
         let oauth_state = oauth.api_key_oauth_state_service();
         let refresh = oauth.api_key_oauth_refresh_service();
 
         Ok(Arc::new(Self {
+            database,
             authentication,
             usage_limit,
             trace,
@@ -78,6 +81,11 @@ impl AppServices {
             refresh,
             health,
         }))
+    }
+
+    #[must_use]
+    pub fn database(&self) -> Arc<DatabaseConnection> {
+        Arc::clone(&self.database)
     }
 
     #[must_use]

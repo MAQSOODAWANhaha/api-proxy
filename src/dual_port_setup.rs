@@ -331,29 +331,11 @@ async fn run_migrations(db: &DatabaseConnection) -> Result<()> {
     Ok(())
 }
 
-/// 确保模型定价数据完整
-async fn ensure_pricing_data(db: &DatabaseConnection) -> Result<()> {
-    crate::database::ensure_model_pricing_data(db)
-        .await
-        .inspect_err(|err| {
-            log_proxy_error(
-                "system",
-                LogStage::Startup,
-                LogComponent::ServerSetup,
-                "ensure_data_fail",
-                "❌ 模型定价数据校验失败",
-                err,
-                &[],
-            );
-        })
-}
-
 /// 加载配置并初始化数据库
 async fn setup_database() -> Result<(Arc<AppConfig>, Arc<DatabaseConnection>)> {
     let config = load_config()?;
     let db = init_database(&config).await?;
     run_migrations(&db).await?;
-    ensure_pricing_data(&db).await?;
 
     linfo!(
         "system",

@@ -9,14 +9,19 @@ use crate::logging::{LogComponent, LogStage};
 use crate::{ldebug, lerror, linfo, lwarn};
 use entity::{model_pricing, model_pricing_tiers, provider_types};
 use sea_orm::{
-    ColumnTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
-    PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio::time;
 
 /// 初始化数据库连接
 #[allow(clippy::cognitive_complexity)]
@@ -36,7 +41,7 @@ pub async fn init_database(database_url: &str) -> error::Result<DatabaseConnecti
         )
     );
 
-    // 对于SQLite数据库，确保数据库文件的目录和文件存在
+    // 对于SQLite数据库，确保数据库文件的目录和文件存在（使用异步IO避免阻塞运行时）
     if database_url.starts_with("sqlite:") {
         let db_path = database_url
             .strip_prefix("sqlite://")
@@ -44,38 +49,22 @@ pub async fn init_database(database_url: &str) -> error::Result<DatabaseConnecti
             .unwrap_or(database_url);
         let db_file_path = Path::new(db_path);
 
-        // 确保父目录存在
         if let Some(parent_dir) = db_file_path.parent() {
-            if parent_dir.exists() {
-                ldebug!(
-                    "system",
-                    LogStage::Startup,
-                    LogComponent::Database,
-                    "db_dir_exists",
-                    &format!("数据库目录已存在: {}", parent_dir.display())
-                );
-            } else {
-                ldebug!(
-                    "system",
-                    LogStage::Startup,
-                    LogComponent::Database,
-                    "create_db_dir",
-                    &format!("创建数据库目录: {}", parent_dir.display())
-                );
-                std::fs::create_dir_all(parent_dir)
-                    .with_context(|| format!("无法创建数据库目录 {}", parent_dir.display()))?;
-                linfo!(
-                    "system",
-                    LogStage::Startup,
-                    LogComponent::Database,
-                    "create_db_dir_ok",
-                    &format!("数据库目录创建成功: {}", parent_dir.display())
-                );
-            }
+            ldebug!(
+                "system",
+                LogStage::Startup,
+                LogComponent::Database,
+                "prepare_db_dir",
+                &format!("确保数据库目录存在: {}", parent_dir.display())
+            );
+
+            fs::create_dir_all(parent_dir)
+                .await
+                .with_context(|| format!("无法创建数据库目录 {}", parent_dir.display()))?;
         }
 
-        // 确保数据库文件存在（如果不存在则创建空文件）
-        if db_file_path.exists() {
+        let db_file_exists = fs::metadata(db_file_path).await.is_ok();
+        if db_file_exists {
             ldebug!(
                 "system",
                 LogStage::Startup,
@@ -91,7 +80,8 @@ pub async fn init_database(database_url: &str) -> error::Result<DatabaseConnecti
                 "create_db_file",
                 &format!("创建数据库文件: {}", db_file_path.display())
             );
-            std::fs::File::create(db_file_path)
+            fs::File::create(db_file_path)
+                .await
                 .with_context(|| format!("无法创建数据库文件 {}", db_file_path.display()))?;
             linfo!(
                 "system",
@@ -283,19 +273,21 @@ pub async fn force_initialize_model_pricing_data(
         "🔄 强制重新初始化模型定价数据..."
     );
 
-    // 清理现有数据
+    let txn = db.begin().await.context("开启模型定价重置事务失败")?;
+
     model_pricing_tiers::Entity::delete_many()
-        .exec(db)
+        .exec(&txn)
         .await
-        .context("Failed to clean pricing tiers data")?;
+        .context("清理模型定价层级失败")?;
 
     model_pricing::Entity::delete_many()
-        .exec(db)
+        .exec(&txn)
         .await
-        .context("Failed to clean pricing tiers data")?;
+        .context("清理模型定价表失败")?;
 
-    // 重新初始化
-    initialize_model_pricing_from_json(db).await?;
+    initialize_model_pricing_from_json_txn(&txn).await?;
+
+    txn.commit().await.context("提交模型定价重置事务失败")?;
 
     Ok(())
 }
@@ -311,6 +303,18 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::e
         "📂 从JSON文件读取模型定价数据..."
     );
 
+    let txn = db.begin().await.context("开启 JSON 初始化事务失败")?;
+
+    initialize_model_pricing_from_json_txn(&txn).await?;
+
+    txn.commit().await.context("提交 JSON 初始化事务失败")
+}
+
+/// JSON 初始化的事务实现，保证清理后写入的原子性
+#[allow(clippy::cognitive_complexity)]
+async fn initialize_model_pricing_from_json_txn(
+    txn: &DatabaseTransaction,
+) -> crate::error::Result<()> {
     // 1. 读取并解析JSON文件
     let json_data = load_json_data().await?;
     linfo!(
@@ -332,7 +336,7 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::e
     );
 
     // 3. 动态获取所需的provider映射
-    let provider_mappings = get_provider_mappings(db, &filtered_models).await?;
+    let provider_mappings = get_provider_mappings(txn, &filtered_models).await?;
     linfo!(
         "system",
         LogStage::Startup,
@@ -341,11 +345,11 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::e
         &format!("🗺️  构建了 {} 个provider映射", provider_mappings.len())
     );
 
-    // 4. 批量插入模型定价数据
+    // 4. 批量插入模型定价数据（单事务，失败整体回滚）
     let mut success_count = 0;
     for model in filtered_models {
         if let Some(&provider_id) = provider_mappings.get(&model.provider_name) {
-            match insert_model_with_pricing(db, &model, provider_id).await {
+            match insert_model_with_pricing(txn, &model, provider_id).await {
                 Ok(()) => success_count += 1,
                 Err(e) => {
                     lerror!(
@@ -355,19 +359,9 @@ async fn initialize_model_pricing_from_json(db: &DatabaseConnection) -> crate::e
                         "insert_model_pricing_fail",
                         &format!("插入模型 {} 失败: {:?}", model.name, e)
                     );
+                    return Err(e);
                 }
             }
-        } else {
-            lwarn!(
-                "system",
-                LogStage::Startup,
-                LogComponent::Database,
-                "skip_model_no_provider",
-                &format!(
-                    "⚠️  跳过模型: {} - provider '{}' 在数据库中不存在",
-                    model.name, model.provider_name
-                )
-            );
         }
     }
 
@@ -428,10 +422,7 @@ async fn initialize_model_pricing_from_remote_or_local(
     );
 
     // 事务内增量 upsert
-    let txn = db
-        .begin()
-        .await
-        .context("Failed to clean pricing tiers data")?;
+    let txn = db.begin().await.context("开启模型定价增量事务失败")?;
     let mut inserted = 0usize;
     let mut updated = 0usize;
     let mut tiers_written = 0usize;
@@ -444,7 +435,7 @@ async fn initialize_model_pricing_from_remote_or_local(
                 .filter(model_pricing::Column::ModelName.eq(&model.name))
                 .one(&txn)
                 .await
-                .context("Failed to clean pricing tiers data")?;
+                .context("查询现有模型定价记录失败")?;
 
             if let Some(existing_model) = existing {
                 // 更新基础字段
@@ -455,14 +446,14 @@ async fn initialize_model_pricing_from_remote_or_local(
                 model_pricing::Entity::update(am)
                     .exec(&txn)
                     .await
-                    .context("Failed to clean pricing tiers data")?;
+                    .context("更新模型定价记录失败")?;
 
                 // 替换 tiers
                 model_pricing_tiers::Entity::delete_many()
                     .filter(model_pricing_tiers::Column::ModelPricingId.eq(id))
                     .exec(&txn)
                     .await
-                    .context("Failed to clean pricing tiers data")?;
+                    .context("删除旧定价层级失败")?;
 
                 let pricing_tiers = parse_pricing_tiers(&model.price_info);
                 for tier in pricing_tiers {
@@ -477,13 +468,13 @@ async fn initialize_model_pricing_from_remote_or_local(
                     model_pricing_tiers::Entity::insert(tier_model)
                         .exec(&txn)
                         .await
-                        .context("Failed to clean pricing tiers data")?;
+                        .context("插入模型定价层级失败")?;
                     tiers_written += 1;
                 }
                 updated += 1;
             } else {
                 // 新增
-                insert_model_with_pricing_txn(&txn, &model, provider_id).await?;
+                insert_model_with_pricing(&txn, &model, provider_id).await?;
                 let tiers = parse_pricing_tiers(&model.price_info);
                 tiers_written += tiers.len();
                 inserted += 1;
@@ -501,9 +492,7 @@ async fn initialize_model_pricing_from_remote_or_local(
         }
     }
 
-    txn.commit()
-        .await
-        .context("Failed to clean pricing tiers data")?;
+    txn.commit().await.context("提交模型定价增量事务失败")?;
 
     linfo!(
         "system",
@@ -707,8 +696,8 @@ fn normalize_model_name(model_name: &str, litellm_provider: &str) -> String {
 /// 动态获取provider映射关系
 /// 从数据库查询所有活跃的provider，构建name -> id映射
 #[allow(clippy::cognitive_complexity)]
-async fn get_provider_mappings(
-    db: &DatabaseConnection,
+async fn get_provider_mappings<C: ConnectionTrait>(
+    db: &C,
     models: &[FilteredModel],
 ) -> crate::error::Result<HashMap<String, i32>> {
     // 提取所有需要的provider名称
@@ -728,7 +717,7 @@ async fn get_provider_mappings(
         .filter(provider_types::Column::IsActive.eq(true))
         .all(db)
         .await
-        .context("Failed to clean pricing tiers data")?;
+        .context("查询活跃 provider 失败")?;
 
     // 构建映射关系
     let mut mappings = HashMap::new();
@@ -746,8 +735,10 @@ async fn get_provider_mappings(
     }
 
     // 检查是否有缺失的provider
+    let mut missing = Vec::new();
     for required in &required_providers {
         if !mappings.contains_key(required) {
+            missing.push(required.clone());
             lwarn!(
                 "system",
                 LogStage::Startup,
@@ -758,15 +749,23 @@ async fn get_provider_mappings(
         }
     }
 
+    ensure!(
+        missing.is_empty(),
+        ConfigError::Load(format!("数据库缺少必要的 provider: {}", missing.join(", ")))
+    );
+
     Ok(mappings)
 }
 
 /// 插入单个模型及其定价数据
-async fn insert_model_with_pricing(
-    db: &DatabaseConnection,
+async fn insert_model_with_pricing<C>(
+    db: &C,
     model: &FilteredModel,
     provider_id: i32,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<()>
+where
+    C: ConnectionTrait,
+{
     linfo!(
         "system",
         LogStage::Startup,
@@ -790,7 +789,7 @@ async fn insert_model_with_pricing(
     let pricing_result = model_pricing::Entity::insert(pricing_model)
         .exec(db)
         .await
-        .context("Failed to clean pricing tiers data")?;
+        .context("插入模型定价记录失败")?;
 
     let model_pricing_id = pricing_result.last_insert_id;
 
@@ -821,59 +820,7 @@ async fn insert_model_with_pricing(
         model_pricing_tiers::Entity::insert(tier_model)
             .exec(db)
             .await
-            .context("Failed to clean pricing tiers data")?;
-    }
-
-    Ok(())
-}
-
-/// 事务版本：插入单个模型及其定价数据
-async fn insert_model_with_pricing_txn(
-    txn: &DatabaseTransaction,
-    model: &FilteredModel,
-    provider_id: i32,
-) -> crate::error::Result<()> {
-    linfo!(
-        "system",
-        LogStage::Startup,
-        LogComponent::Database,
-        "insert_model_pricing",
-        &format!(
-            "💰 插入模型定价: {} (provider_id: {})",
-            model.name, provider_id
-        )
-    );
-
-    let pricing_model = model_pricing::ActiveModel {
-        provider_type_id: Set(provider_id),
-        model_name: Set(model.name.clone()),
-        description: Set(Some(model.description.clone())),
-        cost_currency: Set("USD".to_string()),
-        ..Default::default()
-    };
-
-    let pricing_result = model_pricing::Entity::insert(pricing_model)
-        .exec(txn)
-        .await
-        .context("Failed to clean pricing tiers data")?;
-
-    let model_pricing_id = pricing_result.last_insert_id;
-
-    let pricing_tiers = parse_pricing_tiers(&model.price_info);
-    for tier in pricing_tiers {
-        let tier_model = model_pricing_tiers::ActiveModel {
-            model_pricing_id: Set(model_pricing_id),
-            token_type: Set(tier.token_type),
-            min_tokens: Set(tier.min_tokens),
-            max_tokens: Set(tier.max_tokens),
-            price_per_token: Set(tier.price_per_token),
-            ..Default::default()
-        };
-
-        model_pricing_tiers::Entity::insert(tier_model)
-            .exec(txn)
-            .await
-            .context("Failed to clean pricing tiers data")?;
+            .context("插入模型定价层级失败")?;
     }
 
     Ok(())
@@ -985,4 +932,72 @@ fn parse_pricing_tiers(price_info: &ModelPriceInfo) -> Vec<PricingTier> {
     }
 
     tiers
+}
+
+/// 模型定价每日刷新后台任务
+#[derive(Clone)]
+pub struct ModelPricingRefreshTask {
+    db: Arc<DatabaseConnection>,
+    handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+}
+
+impl ModelPricingRefreshTask {
+    #[must_use]
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+        Self {
+            db,
+            handle: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// 启动每日刷新任务（立即跑一次，然后每24小时运行）
+    pub async fn start(&self) -> crate::error::Result<()> {
+        if self.handle.read().await.is_some() {
+            return Ok(());
+        }
+
+        // 同步执行首次刷新，失败则阻断启动
+        ensure_model_pricing_data(&self.db).await?;
+
+        let db = self.db.clone();
+        let handle = tokio::spawn(async move {
+            let mut ticker = time::interval(Duration::from_secs(24 * 60 * 60));
+            // 跳过 interval 的即时首 tick，首次刷新已同步完成
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                if let Err(err) = ensure_model_pricing_data(&db).await {
+                    lerror!(
+                        "system",
+                        LogStage::BackgroundTask,
+                        LogComponent::Database,
+                        "pricing_refresh_failed",
+                        "定时刷新模型定价失败",
+                        error = %err
+                    );
+                } else {
+                    linfo!(
+                        "system",
+                        LogStage::BackgroundTask,
+                        LogComponent::Database,
+                        "pricing_refresh_ok",
+                        "定时刷新模型定价完成"
+                    );
+                }
+            }
+        });
+
+        *self.handle.write().await = Some(handle);
+        Ok(())
+    }
+
+    /// 停止任务
+    pub async fn stop(&self) {
+        let handle = { self.handle.write().await.take() };
+
+        if let Some(handle) = handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
 }

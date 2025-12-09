@@ -3,6 +3,7 @@ use crate::app::task_scheduler::{ScheduledTask, TaskScheduler};
 use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::api_key_oauth_token_refresh_task::ApiKeyOAuthTokenRefreshTask;
+use crate::database::ModelPricingRefreshTask;
 use crate::error::Result;
 use crate::key_pool::ApiKeyRateLimitResetTask;
 use std::any::Any;
@@ -18,6 +19,8 @@ pub enum TaskType {
     ApiKeyRateLimitReset,
     /// OAuth Token 刷新
     ApiKeyOAuthTokenRefresh,
+    /// 模型定价每日刷新
+    ModelPricingRefresh,
 }
 
 /// 后台任务集合：调度器及任务实例统一管理
@@ -43,6 +46,7 @@ impl AppTasks {
         let api_refresh: Arc<ApiKeyOAuthRefreshService> = services.api_key_refresh_service();
         let api_oauth_state: Arc<ApiKeyOAuthStateService> = services.api_key_oauth_state_service();
         let api_key_health_service = services.api_key_health_service();
+        let database = services.database();
 
         // 在 AppTasks 中创建任务实例（Task 依赖 Service）
         let refresh = Arc::new(ApiKeyOAuthTokenRefreshTask::new(
@@ -50,6 +54,7 @@ impl AppTasks {
             api_oauth_state.clone(),
         ));
         let reset = Arc::new(ApiKeyRateLimitResetTask::new(&api_key_health_service));
+        let pricing_refresh = Arc::new(ModelPricingRefreshTask::new(database));
 
         // 将恢复任务注册到健康服务，内部通过弱引用避免循环依赖
         api_key_health_service.set_reset_task(&reset).await;
@@ -57,6 +62,7 @@ impl AppTasks {
         // 注册需要通过 get_task() 访问的任务实例
         task_instances.insert(TaskType::ApiKeyOAuthTokenRefresh, refresh.clone());
         task_instances.insert(TaskType::ApiKeyRateLimitReset, reset.clone());
+        task_instances.insert(TaskType::ModelPricingRefresh, pricing_refresh.clone());
 
         // 注册任务到调度器
         scheduler
@@ -97,6 +103,22 @@ impl AppTasks {
                     .on_stop(move || {
                         let task = refresh.clone();
                         async move { task.stop().await }
+                    })
+                    .build(),
+                ScheduledTask::builder(TaskType::ModelPricingRefresh)
+                    .on_start({
+                        let task = pricing_refresh.clone();
+                        move || {
+                            let task = task.clone();
+                            async move { task.start().await }
+                        }
+                    })
+                    .on_stop(move || {
+                        let task = pricing_refresh.clone();
+                        async move {
+                            task.stop().await;
+                            Ok(())
+                        }
                     })
                     .build(),
             ])
