@@ -55,6 +55,9 @@ appendonly.aof
 /frontend/node_modules/
 /frontend/.env.local
 
+# TypeScript 增量编译缓存
+*.tsbuildinfo
+
 # 文档生成
 /target/doc/
 /target/criterion/
@@ -67,3 +70,4 @@ appendonly.aof
 .promptx/resource/project.registry.json
 .specify/
 .claude/
+web/tsconfig.tsbuildinfo
