@@ -150,7 +150,7 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
 
       setTrendLoading(true)
       try {
-        const response = await api.providerKeys.getKeyTrends(item.id, { days: 30 })
+        const response = await api.providerKeys.getTrends(item.id, { days: 30 })
         if (response.success && response.data?.trend_data) {
           // 转换后端数据为前端需要的格式
           const formattedData = response.data.trend_data.map((point: any) => ({

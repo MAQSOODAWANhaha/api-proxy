@@ -4,7 +4,7 @@
  * 展示如何正确使用不同类型的API客户端
  */
 
-import { apiClient, publicApiClient } from './api'
+import { api, publicApiClient } from './api'
 import { statsApi } from './stats'
 
 /**
@@ -14,13 +14,13 @@ import { statsApi } from './stats'
 export async function exampleProtectedApi() {
   try {
     // 获取用户档案（需要认证）
-    const profileResponse = await apiClient.users.getProfile()
+    const profileResponse = await api.users.getProfile()
     if (profileResponse.success) {
       console.log('用户档案:', profileResponse.data)
     }
 
     // 获取API密钥列表（需要认证）
-    const keysResponse = await apiClient.userService.getKeys()
+    const keysResponse = await api.userService.getKeys()
     if (keysResponse.success) {
       console.log('API密钥列表:', keysResponse.data)
     }

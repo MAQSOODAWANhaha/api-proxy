@@ -102,19 +102,20 @@ const UsersPage: React.FC = () => {
       const response = await userApi.getUsers(params)
       
       if (response.success) {
-        setUsers(response.data)
-        setTotalPages(response.pagination.pages)
-        setTotalUsers(response.pagination.total)
+        const usersList = response.data?.users || []
+        setUsers(usersList)
+        setTotalPages(response.pagination?.pages || 0)
+        setTotalUsers(response.pagination?.total || usersList.length)
         
         // 计算统计数据
         const allUsersResponse = await userApi.getUsers({ limit: 1000 }) // 获取所有用户用于统计
         if (allUsersResponse.success) {
-          const allUsers = allUsersResponse.data
+          const allUsers = allUsersResponse.data?.users || []
           setStats({
             total: allUsers.length,
-            active: allUsers.filter(user => user.is_active).length,
-            admin: allUsers.filter(user => user.is_admin).length,
-            inactive: allUsers.filter(user => !user.is_active).length,
+            active: allUsers.filter((user) => user.is_active).length,
+            admin: allUsers.filter((user) => user.is_admin).length,
+            inactive: allUsers.filter((user) => !user.is_active).length,
           })
         }
       }

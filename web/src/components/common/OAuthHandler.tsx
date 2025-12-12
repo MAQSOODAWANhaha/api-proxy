@@ -212,7 +212,7 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
           </Badge>
         )
       
-      case 'waiting':
+      case 'waiting_code':
         return (
           <Badge variant="secondary" className="flex items-center gap-1">
             <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />

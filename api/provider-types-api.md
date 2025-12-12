@@ -20,7 +20,8 @@
 ### 筛选参数
 | 参数名 | 类型 | 必填 | 描述 | 默认值 |
 |--------|------|------|------|--------|
-| is_active | bool | 否 | 仅返回启用的服务商类型 | true |
+| is_active | bool | 否 | 仅返回启用/禁用的服务商类型（未传默认仅启用） | true |
+| include_inactive | bool | 否 | 为 true 时返回全部服务商类型（包含禁用），忽略 is_active | false |
 
 ### 返回值
 ```json
@@ -95,12 +96,17 @@
 | base_url | string | 服务商基础URL |
 | api_format | string | API格式（例如：openai） |
 | default_model | string | 默认模型 |
+| max_tokens | int | 单次请求最大Token数 |
+| rate_limit | int | 速率限制（请求/分钟） |
+| timeout_seconds | int | 上游请求超时时间（秒） |
+| health_check_path | string | 健康检查路径 |
 | description | string | 服务商描述信息 |
 | is_active | bool | 是否启用 |
 | supported_models | array[string] | 支持的模型列表 |
 | supported_auth_types | array[string] | 支持的认证类型列表 |
 | auth_configs | object | 各认证类型的配置信息 |
 | created_at | string | 创建时间（ISO 8601格式） |
+| updated_at | string | 更新时间（ISO 8601格式） |
 
 ### 支持的认证类型
 | 类型 | 描述 |

@@ -9,12 +9,20 @@ const SystemInfo = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchMetrics = async () => {
-    const response = await api.system.getMetrics();
-    if (response.success) {
-      setMetrics(response.data);
-      setLastUpdated(new Date());
+    try {
+      const response = await api.system.getMetrics();
+      if (response.success && response.data) {
+        setMetrics(response.data);
+        setLastUpdated(new Date());
+      } else {
+        setMetrics(null);
+      }
+    } catch (error) {
+      console.error('获取系统监控信息失败:', error);
+      setMetrics(null);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {

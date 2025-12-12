@@ -59,12 +59,12 @@ const testCases = [
       },
       updated_at: new Date().toISOString()
     }),
-    health_status: "error" as const
+    health_status: "unhealthy" as const
   },
   {
     name: "警告状态 - 无详细信息",
     health_status_detail: null,
-    health_status: "warning" as const
+    health_status: "unhealthy" as const
   }
 ]
 

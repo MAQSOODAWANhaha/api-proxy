@@ -21,11 +21,16 @@ pub struct ProviderTypeItem {
     pub base_url: String,
     pub api_format: String,
     pub default_model: Option<String>,
+    pub max_tokens: Option<i32>,
+    pub rate_limit: Option<i32>,
+    pub timeout_seconds: Option<i32>,
+    pub health_check_path: Option<String>,
     pub is_active: bool,
     pub supported_models: Vec<String>,
     pub supported_auth_types: Vec<String>,
     pub auth_configs: Option<serde_json::Value>,
     pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,9 +46,24 @@ pub async fn list_active_types(
     state: &ManagementState,
     timezone: &Tz,
 ) -> Result<Vec<ProviderTypeItem>> {
-    let rows = ProviderTypes::find()
-        .filter(provider_types::Column::IsActive.eq(true))
-        .order_by_asc(provider_types::Column::Id)
+    list_types(state, timezone, Some(true)).await
+}
+
+/// 列出提供商类型。
+///
+/// - `is_active` 为 Some(true/false) 时按状态过滤
+/// - `is_active` 为 None 时返回全部
+pub async fn list_types(
+    state: &ManagementState,
+    timezone: &Tz,
+    is_active: Option<bool>,
+) -> Result<Vec<ProviderTypeItem>> {
+    let mut query = ProviderTypes::find().order_by_asc(provider_types::Column::Id);
+    if let Some(active) = is_active {
+        query = query.filter(provider_types::Column::IsActive.eq(active));
+    }
+
+    let rows = query
         .all(state.database.as_ref())
         .await
         .context("Failed to fetch provider types")?;
@@ -58,7 +78,8 @@ pub async fn list_active_types(
             let auth_configs = provider
                 .auth_configs_json
                 .as_ref()
-                .and_then(|config_json| serde_json::from_str(config_json).ok());
+                .and_then(|config_json| serde_json::from_str::<serde_json::Value>(config_json).ok())
+                .map(|value| sanitize_auth_configs(&value));
 
             ProviderTypeItem {
                 id: provider.id,
@@ -67,6 +88,10 @@ pub async fn list_active_types(
                 base_url: provider.base_url,
                 api_format: provider.api_format,
                 default_model: provider.default_model,
+                max_tokens: provider.max_tokens,
+                rate_limit: provider.rate_limit,
+                timeout_seconds: provider.timeout_seconds,
+                health_check_path: provider.health_check_path,
                 is_active: provider.is_active,
                 supported_models: Vec::new(),
                 supported_auth_types,
@@ -75,9 +100,27 @@ pub async fn list_active_types(
                     &provider.created_at,
                     timezone,
                 ),
+                updated_at: timezone_utils::format_naive_utc_for_response(
+                    &provider.updated_at,
+                    timezone,
+                ),
             }
         })
         .collect())
+}
+
+/// 脱敏认证配置中的敏感字段（如 `client_secret`）
+fn sanitize_auth_configs(value: &serde_json::Value) -> serde_json::Value {
+    let mut sanitized = value.clone();
+    if let serde_json::Value::Object(ref mut map) = sanitized {
+        for (_auth_type, cfg) in map.iter_mut() {
+            if let serde_json::Value::Object(cfg_map) = cfg {
+                cfg_map.remove("client_secret");
+                cfg_map.remove("secret");
+            }
+        }
+    }
+    sanitized
 }
 
 /// 获取调度策略枚举。

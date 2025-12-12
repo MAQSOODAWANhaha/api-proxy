@@ -44,6 +44,18 @@ export interface PublicRequestOptions extends Omit<RequestConfig, 'headers'> {
   skipAuth?: boolean
 }
 
+/**
+ * 公开 API 客户端接口
+ * 仅暴露不需要 JWT 的基础请求方法
+ */
+export interface PublicApiClient {
+  request<T = any>(endpoint: string, config?: RequestConfig): Promise<ApiResponse<T>>
+  get<T = any>(endpoint: string, params?: Record<string, string>): Promise<ApiResponse<T>>
+  post<T = any>(endpoint: string, body?: any): Promise<ApiResponse<T>>
+  put<T = any>(endpoint: string, body?: any): Promise<ApiResponse<T>>
+  delete<T = any>(endpoint: string): Promise<ApiResponse<T>>
+}
+
 // 标准API响应格式（与后端 response.rs 保持一致）
 export interface ApiResponse<T = any> {
   success: boolean
@@ -158,6 +170,9 @@ export interface OAuthRefreshResponse {
   expires_at: string
 }
 
+// API Key 健康状态（与后端保持一致）
+export type ApiKeyHealthStatus = 'healthy' | 'rate_limited' | 'unhealthy'
+
 // Provider Types相关类型定义
 export interface AuthConfig {
   authorize_url?: string
@@ -174,11 +189,16 @@ export interface ProviderType {
   base_url?: string
   api_format?: string
   default_model?: string
+  max_tokens?: number
+  rate_limit?: number
+  timeout_seconds?: number
+  health_check_path?: string
   is_active: boolean
   supported_models?: string[]
   supported_auth_types: string[]
   auth_configs?: Record<string, AuthConfig>
   created_at: string
+  updated_at?: string
 }
 
 export interface ProviderTypesResponse {
@@ -291,11 +311,11 @@ export interface ProviderKey {
   }
   status: {
     is_active: boolean
-    health_status: string
+    health_status: ApiKeyHealthStatus
   }
   created_at: string
   updated_at: string
-  health_status: 'healthy' | 'warning' | 'error'
+  health_status: ApiKeyHealthStatus
   health_status_detail?: string
 }
 
@@ -401,7 +421,7 @@ export interface ProviderKeyStatsResponse {
 
 export interface HealthCheckResponse {
   id: string
-  health_status: 'healthy' | 'warning' | 'error'
+  health_status: ApiKeyHealthStatus
   check_time: string
   response_time: number
   details: {
@@ -992,7 +1012,7 @@ export const apiClient = new ApiClient(API_BASE_URL)
  * @param baseURL API基础URL
  * @returns 配置为公开接口的API客户端实例
  */
-export function createPublicApiClient(baseURL: string = API_BASE_URL): ApiClient {
+export function createPublicApiClient(baseURL: string = API_BASE_URL): PublicApiClient {
   const client = new ApiClient(baseURL)
   return {
     ...client,
@@ -1475,10 +1495,14 @@ export const api = {
      */
     async getProviderTypes(params?: {
       is_active?: boolean
+      include_inactive?: boolean
     }): Promise<ApiResponse<ProviderTypesResponse>> {
       try {
         const queryParams: Record<string, string> = {}
         if (params?.is_active !== undefined) queryParams.is_active = params.is_active.toString()
+        if (params?.include_inactive !== undefined) {
+          queryParams.include_inactive = params.include_inactive.toString()
+        }
 
         return await apiClient.get<ProviderTypesResponse>('/provider-types/providers', queryParams)
       } catch (error) {

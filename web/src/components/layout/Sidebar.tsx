@@ -15,6 +15,7 @@ import {
   KeyRound,
   KeySquare,
   FileText,
+  Building2,
   Users as UsersIcon,
   Settings as SettingsIcon,
 } from 'lucide-react'
@@ -140,6 +141,7 @@ const Sidebar: React.FC = () => {
       { key: 'dashboard', label: '仪表板', path: '/dashboard', icon: <LayoutDashboard size={18} /> },
       { key: 'user-keys', label: '用户API Keys', path: '/api/user-keys', icon: <KeyRound size={18} /> },
       { key: 'provider-keys', label: '账号API Keys', path: '/api/provider-keys', icon: <KeySquare size={18} /> },
+      { key: 'providers', label: '服务商', path: '/providers', icon: <Building2 size={18} /> },
       { key: 'logs', label: '请求记录', path: '/logs', icon: <FileText size={18} /> },
       { key: 'users', label: '用户管理', path: '/users', icon: <UsersIcon size={18} /> },
       { key: 'settings', label: '系统设置', path: '/settings', icon: <SettingsIcon size={18} /> },
