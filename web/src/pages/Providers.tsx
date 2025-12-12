@@ -122,7 +122,7 @@ const ProvidersPage: React.FC = () => {
   }
 
   return (
-    <div className="w-full space-y-4">
+    <div className="w-full">
       {/* 页面头部 */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -143,7 +143,7 @@ const ProvidersPage: React.FC = () => {
       </div>
 
       {/* 统计卡 */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
         <StatCard
           icon={<Building2 size={18} />}
           value={stats.total.toString()}
@@ -165,7 +165,7 @@ const ProvidersPage: React.FC = () => {
       </div>
 
       {/* 搜索与筛选 */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 mb-4">
         <div className="relative flex-1 max-w-md">
           <Search
             className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
@@ -180,16 +180,18 @@ const ProvidersPage: React.FC = () => {
           />
         </div>
 
-        <FilterSelect
-          value={statusFilter}
-          onValueChange={(value) => setStatusFilter(value as StatusFilter)}
-          options={[
-            { value: 'all', label: '全部状态' },
-            { value: 'active', label: '启用' },
-            { value: 'inactive', label: '禁用' },
-          ]}
-          placeholder="全部状态"
-        />
+        <div className="flex items-center gap-4">
+          <FilterSelect
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+            options={[
+              { value: 'all', label: '全部状态' },
+              { value: 'active', label: '启用' },
+              { value: 'inactive', label: '禁用' },
+            ]}
+            placeholder="全部状态"
+          />
+        </div>
       </div>
 
       {/* 数据表格 */}
