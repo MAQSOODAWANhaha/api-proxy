@@ -20,15 +20,6 @@ import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import { api, ProviderType } from '../lib/api'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from '@/components/ui/table'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -131,19 +122,24 @@ const ProvidersPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-4">
-      {/* 页面标题与刷新 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-neutral-900">服务商 Providers</h1>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchProviders}
-          disabled={loading}
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          <span className="ml-2">刷新</span>
-        </Button>
+    <div className="w-full space-y-4">
+      {/* 页面头部 */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-medium text-neutral-800">服务商 Providers</h2>
+          <p className="text-sm text-neutral-600 mt-1">查看系统内置的AI服务商类型与状态</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={fetchProviders}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
+            title="刷新数据"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* 统计卡 */}
@@ -197,7 +193,7 @@ const ProvidersPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RefreshCw className="animate-spin text-neutral-400" size={24} />
@@ -212,61 +208,61 @@ const ProvidersPage: React.FC = () => {
             )}
 
             <div className="overflow-x-auto">
-              <Table className="min-w-[980px]">
-                <TableHeader className="bg-muted/40">
-                  <TableRow>
-                    <TableHead className="min-w-[180px]">服务商</TableHead>
-                    <TableHead className="min-w-[220px]">Base URL</TableHead>
-                    <TableHead className="min-w-[120px]">API 格式</TableHead>
-                    <TableHead className="min-w-[160px]">默认模型</TableHead>
-                    <TableHead className="min-w-[180px]">认证方式</TableHead>
-                    <TableHead className="min-w-[200px]">限制</TableHead>
-                    <TableHead className="min-w-[100px]">状态</TableHead>
-                    <TableHead className="min-w-[160px]">创建时间</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="w-full text-sm min-w-[980px]">
+                <thead className="bg-neutral-50 text-neutral-600">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium min-w-[180px]">服务商</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[220px]">Base URL</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[120px]">API 格式</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[160px]">默认模型</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[180px]">认证方式</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[200px]">限制</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[100px]">状态</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[160px]">创建时间</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-200">
                   {filteredProviders.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell className="font-medium text-foreground">
+                    <tr key={p.id} className="text-neutral-800 hover:bg-neutral-50">
+                      <td className="px-4 py-3 font-medium text-foreground">
                         <div className="flex flex-col">
                           <span>{p.display_name}</span>
                           <span className="text-xs text-muted-foreground">{p.name}</span>
                         </div>
-                      </TableCell>
+                      </td>
 
-                      <TableCell>
+                      <td className="px-4 py-3">
                         {p.base_url ? (
                           <div className="flex items-center gap-2">
                             <code className="rounded bg-muted px-2 py-0.5 text-xs text-foreground/80">
                               {p.base_url}
                             </code>
-                            <Button
-                              variant="ghost"
-                              size="icon"
+                            <button
                               onClick={() => handleCopy(p.base_url || '', 'Base URL')}
+                              className="text-neutral-500 hover:text-neutral-700"
+                              title="复制 Base URL"
                             >
-                              <Copy size={14} className="text-neutral-500" />
-                            </Button>
+                              <Copy size={14} />
+                            </button>
                           </div>
                         ) : (
                           <span className="text-foreground/60">-</span>
                         )}
-                      </TableCell>
+                      </td>
 
-                      <TableCell>
+                      <td className="px-4 py-3">
                         {p.api_format ? (
                           <Badge variant="secondary">{p.api_format}</Badge>
                         ) : (
                           <span className="text-foreground/60">-</span>
                         )}
-                      </TableCell>
+                      </td>
 
-                      <TableCell className="text-foreground/80">
+                      <td className="px-4 py-3 text-foreground/80">
                         {p.default_model || '-'}
-                      </TableCell>
+                      </td>
 
-                      <TableCell>
+                      <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
                           {(p.supported_auth_types || []).length > 0 ? (
                             p.supported_auth_types.map((t) => (
@@ -282,17 +278,17 @@ const ProvidersPage: React.FC = () => {
                             <span className="text-foreground/60">-</span>
                           )}
                         </div>
-                      </TableCell>
+                      </td>
 
-                      <TableCell className="text-foreground/70">
+                      <td className="px-4 py-3 text-foreground/70">
                         <div className="flex flex-col gap-0.5 text-xs">
                           <span>MaxTokens: {p.max_tokens ?? '-'}</span>
                           <span>RateLimit: {p.rate_limit ?? '-'} /min</span>
                           <span>Timeout: {p.timeout_seconds ?? '-'}s</span>
                         </div>
-                      </TableCell>
+                      </td>
 
-                      <TableCell>
+                      <td className="px-4 py-3">
                         {p.is_active ? (
                           <Badge
                             variant="outline"
@@ -308,23 +304,23 @@ const ProvidersPage: React.FC = () => {
                             禁用
                           </Badge>
                         )}
-                      </TableCell>
+                      </td>
 
-                      <TableCell className="text-foreground/70">
+                      <td className="px-4 py-3 text-foreground/70">
                         {formatDate(p.created_at)}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ))}
 
                   {filteredProviders.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={8} className="py-10 text-center text-neutral-500">
+                    <tr>
+                      <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
                         暂无匹配的服务商数据
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   )}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
           </>
         )}
@@ -334,4 +330,3 @@ const ProvidersPage: React.FC = () => {
 }
 
 export default ProvidersPage
-
