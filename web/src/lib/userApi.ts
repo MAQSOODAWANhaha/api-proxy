@@ -20,6 +20,14 @@ export interface User {
   total_tokens: number;
 }
 
+// 用户统计数据（用户管理页顶部统计卡片）
+export interface UsersStats {
+  total: number;
+  active: number;
+  admin: number;
+  inactive: number;
+}
+
 // 用户查询参数
 export interface UserQueryParams {
   page?: number;
@@ -51,8 +59,23 @@ export interface UpdateUserRequest {
 // 用户API接口
 export const userApi = {
   // 获取用户列表
-  async getUsers(params: UserQueryParams = {}): Promise<ApiResponse<{ users: User[] }>> {
-    return apiClient.get('/users', params as Record<string, any>);
+  async getUsers(params: UserQueryParams = {}): Promise<ApiResponse<User[]>> {
+    const raw = await apiClient.get<User[] | { users: User[] }>(
+      '/users',
+      params as Record<string, any>,
+    );
+
+    if (!raw.success) {
+      return raw as ApiResponse<User[]>;
+    }
+
+    const users = Array.isArray(raw.data) ? raw.data : raw.data?.users ?? [];
+    return { ...raw, data: users };
+  },
+
+  // 获取用户统计（避免通过 limit=1000 拉全量列表）
+  async getUsersStats(): Promise<ApiResponse<UsersStats>> {
+    return apiClient.get('/users/stats');
   },
 
   // 获取单个用户

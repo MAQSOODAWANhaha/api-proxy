@@ -144,6 +144,15 @@ pub struct UserProfileResponse {
     pub monthly_requests: i64,
 }
 
+/// 用户统计（用于管理端页面顶部统计卡片）
+#[derive(Debug, Serialize)]
+pub struct UsersStatsResponse {
+    pub total: u64,
+    pub active: u64,
+    pub admin: u64,
+    pub inactive: u64,
+}
+
 #[derive(Debug)]
 pub struct ListUsersResult {
     pub users: Vec<UserResponse>,
@@ -186,6 +195,53 @@ impl<'a> UsersService<'a> {
         }
 
         self.list_admin_users(timezone, query).await
+    }
+
+    /// 获取用户统计信息
+    ///
+    /// - 管理员：返回全量用户统计
+    /// - 非管理员：仅返回当前用户的“视图内统计”（总数=1）
+    pub async fn stats(&self, auth: &AuthContext) -> Result<UsersStatsResponse> {
+        if !auth.is_admin {
+            let user = self.fetch_user(auth.user_id).await?;
+            let total = 1_u64;
+            let active = u64::from(user.is_active);
+            let inactive = u64::from(!user.is_active);
+            let admin = u64::from(user.is_admin);
+            return Ok(UsersStatsResponse {
+                total,
+                active,
+                admin,
+                inactive,
+            });
+        }
+
+        let total = Users::find()
+            .count(self.db())
+            .await
+            .context("Failed to count users")?;
+        let active = Users::find()
+            .filter(users::Column::IsActive.eq(true))
+            .count(self.db())
+            .await
+            .context("Failed to count active users")?;
+        let inactive = Users::find()
+            .filter(users::Column::IsActive.eq(false))
+            .count(self.db())
+            .await
+            .context("Failed to count inactive users")?;
+        let admin = Users::find()
+            .filter(users::Column::IsAdmin.eq(true))
+            .count(self.db())
+            .await
+            .context("Failed to count admin users")?;
+
+        Ok(UsersStatsResponse {
+            total,
+            active,
+            admin,
+            inactive,
+        })
     }
 
     async fn list_single_user(

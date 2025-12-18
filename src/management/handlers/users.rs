@@ -13,6 +13,21 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::response::Json;
 use std::sync::Arc;
 
+/// 获取用户统计信息（用于管理端统计卡片）
+pub async fn get_user_stats(
+    State(state): State<ManagementState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
+) -> axum::response::Response {
+    let service = UsersService::new(&state);
+    match service.stats(auth_context.as_ref()).await {
+        Ok(user_stats) => response::success(user_stats),
+        Err(err) => {
+            err.log();
+            response::app_error(err)
+        }
+    }
+}
+
 pub async fn list_users(
     State(state): State<ManagementState>,
     Query(query): Query<UserQuery>,

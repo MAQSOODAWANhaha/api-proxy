@@ -150,6 +150,10 @@ fn user_routes() -> Router<ManagementState> {
     Router::new()
         // 用户CRUD基础接口
         .route("/", get(crate::management::handlers::users::list_users))
+        .route(
+            "/stats",
+            get(crate::management::handlers::users::get_user_stats),
+        )
         .route("/", post(crate::management::handlers::users::create_user))
         .route(
             "/",

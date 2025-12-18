@@ -70,6 +70,27 @@ interface UserQueryParams {
 
 ## API 接口
 
+### 0. 获取用户统计
+
+**GET** `/api/users/stats`
+
+获取用户统计数据，用于管理端「用户管理」页面顶部统计卡片展示。
+
+#### 响应示例
+```json
+{
+  "success": true,
+  "data": {
+    "total": 25,
+    "active": 20,
+    "admin": 2,
+    "inactive": 5
+  },
+  "message": "操作成功",
+  "timestamp": "2025-12-18T01:12:27.555971976Z"
+}
+```
+
 ### 1. 获取用户列表
 
 **GET** `/api/users`

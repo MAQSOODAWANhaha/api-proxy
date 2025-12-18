@@ -74,6 +74,20 @@ const UsersPage: React.FC = () => {
   const [selectedUsers, setSelectedUsers] = useState<number[]>([])
   const [dialogType, setDialogType] = useState<DialogType>(null)
 
+  // 加载统计数据（避免分页/筛选时重复请求）
+  const loadStats = useCallback(async () => {
+    try {
+      const statsResponse = await userApi.getUsersStats()
+      if (statsResponse.success && statsResponse.data) {
+        setStats(statsResponse.data)
+      } else if (!statsResponse.success) {
+        setError(statsResponse.error?.message || statsResponse.message || '加载用户统计失败')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载用户统计失败')
+    }
+  }, [])
+
   // 加载用户数据
   const loadUsers = useCallback(async () => {
     try {
@@ -102,22 +116,12 @@ const UsersPage: React.FC = () => {
       const response = await userApi.getUsers(params)
       
       if (response.success) {
-        const usersList = response.data?.users || []
+        const usersList = response.data ?? []
         setUsers(usersList)
         setTotalPages(response.pagination?.pages || 0)
         setTotalUsers(response.pagination?.total || usersList.length)
-        
-        // 计算统计数据
-        const allUsersResponse = await userApi.getUsers({ limit: 1000 }) // 获取所有用户用于统计
-        if (allUsersResponse.success) {
-          const allUsers = allUsersResponse.data?.users || []
-          setStats({
-            total: allUsers.length,
-            active: allUsers.filter((user) => user.is_active).length,
-            admin: allUsers.filter((user) => user.is_admin).length,
-            inactive: allUsers.filter((user) => !user.is_active).length,
-          })
-        }
+      } else {
+        setError(response.error?.message || response.message || '加载用户数据失败')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载用户数据失败')
@@ -131,6 +135,11 @@ const UsersPage: React.FC = () => {
   useEffect(() => {
     loadUsers()
   }, [loadUsers])
+
+  // 初始加载统计数据
+  useEffect(() => {
+    loadStats()
+  }, [loadStats])
 
   // 重置页码当过滤条件改变时
   useEffect(() => {
@@ -197,7 +206,7 @@ const UsersPage: React.FC = () => {
     try {
       const response = await userApi.toggleUserStatus(user.id)
       if (response.success) {
-        await loadUsers() // 重新加载数据
+        await Promise.all([loadUsers(), loadStats()]) // 重新加载数据与统计
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '切换用户状态失败')
@@ -213,7 +222,7 @@ const UsersPage: React.FC = () => {
       if (response.success) {
         setDialogType(null)
         setSelectedUser(null)
-        await loadUsers()
+        await Promise.all([loadUsers(), loadStats()])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除用户失败')
@@ -229,7 +238,7 @@ const UsersPage: React.FC = () => {
       if (response.success) {
         setDialogType(null)
         setSelectedUsers([])
-        await loadUsers()
+        await Promise.all([loadUsers(), loadStats()])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '批量删除用户失败')
@@ -242,7 +251,7 @@ const UsersPage: React.FC = () => {
       const response = await userApi.createUser(userData)
       if (response.success) {
         setDialogType(null)
-        await loadUsers()
+        await Promise.all([loadUsers(), loadStats()])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建用户失败')
@@ -258,7 +267,7 @@ const UsersPage: React.FC = () => {
       if (response.success) {
         setDialogType(null)
         setSelectedUser(null)
-        await loadUsers()
+        await Promise.all([loadUsers(), loadStats()])
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新用户失败')
