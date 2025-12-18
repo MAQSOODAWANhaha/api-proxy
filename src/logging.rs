@@ -1180,9 +1180,9 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         },
     );
 
-    // === 请求体 schema + 预览（value 截断） ===
+    // === 请求体预览（完整结构，value 截断） ===
     let request_body_bytes = ctx.request_body.as_ref();
-    let request_body_log = build_body_schema_and_preview(request_body_bytes, VALUE_TRUNCATE_LEN);
+    let request_body_preview = build_body_preview(request_body_bytes, VALUE_TRUNCATE_LEN);
 
     // === 响应头（采集到的最终版本） ===
     let mut response_headers_map = BTreeMap::new();
@@ -1195,9 +1195,9 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
     let response_headers_json =
         serde_json::to_string(&response_headers_map).unwrap_or_else(|_| "{}".to_string());
 
-    // === 响应体 schema + 预览（value 截断） ===
+    // === 响应体预览（完整结构，value 截断） ===
     let response_body_bytes = ctx.response_body.as_ref();
-    let response_body_log = build_body_schema_and_preview(response_body_bytes, VALUE_TRUNCATE_LEN);
+    let response_body_preview = build_body_preview(response_body_bytes, VALUE_TRUNCATE_LEN);
 
     let upstream_uri = ctx
         .upstream_request_uri
@@ -1216,8 +1216,7 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         upstream_uri = %upstream_uri,
         method = %ctx.request_details.method,
         request_headers = %request_headers_json,
-        request_body_schema = %request_body_log.schema,
-        request_body_preview = %request_body_log.preview
+        request_body_preview = %request_body_preview
     );
 
     linfo!(
@@ -1231,8 +1230,7 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         provider_type_id = user_api.provider_type_id,
         status_code = status_code,
         response_headers = %response_headers_json,
-        response_body_schema = %response_body_log.schema,
-        response_body_preview = %response_body_log.preview
+        response_body_preview = %response_body_preview
     );
 }
 
@@ -1264,46 +1262,12 @@ fn filter_request_field(json_str: &str) -> String {
     )
 }
 
-struct BodySchemaAndPreview {
-    schema: String,
-    preview: String,
-}
-
 /// 截断字符串并返回（截断后的字符串, 是否发生截断）
 fn truncate_string_value(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {
         return s.to_string();
     }
     s.chars().take(max_len).collect()
-}
-
-/// 构建 JSON 的“结构 schema”（树形结构，完整保留 key/数组结构）
-///
-/// 约定：
-/// - leaf 节点用字符串标记类型：`"null"|"bool"|"number"|"string"`
-/// - 复合类型保持原结构：object/array
-fn build_json_schema_tree(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Null => serde_json::Value::String("null".to_string()),
-        serde_json::Value::Bool(_) => serde_json::Value::String("bool".to_string()),
-        serde_json::Value::Number(_) => serde_json::Value::String("number".to_string()),
-        serde_json::Value::String(_) => serde_json::Value::String("string".to_string()),
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(build_json_schema_tree).collect())
-        }
-        serde_json::Value::Object(map) => {
-            let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
-            keys.sort_unstable();
-            let mut out = serde_json::Map::new();
-            for key in keys {
-                let Some(child) = map.get(key) else {
-                    continue;
-                };
-                out.insert(key.to_string(), build_json_schema_tree(child));
-            }
-            serde_json::Value::Object(out)
-        }
-    }
 }
 
 /// 生成 JSON 预览：完整保留结构，仅截断字符串 value（长度 1024）
@@ -1340,12 +1304,9 @@ fn build_json_preview_full(value: &serde_json::Value, max_string_len: usize) -> 
     }
 }
 
-fn build_body_schema_and_preview(body: &[u8], value_truncate_len: usize) -> BodySchemaAndPreview {
+fn build_body_preview(body: &[u8], value_truncate_len: usize) -> String {
     if body.is_empty() {
-        return BodySchemaAndPreview {
-            schema: r#"{"format":"empty"}"#.to_string(),
-            preview: r#"{"format":"empty"}"#.to_string(),
-        };
+        return r#"{"format":"empty"}"#.to_string();
     }
 
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
@@ -1353,24 +1314,12 @@ fn build_body_schema_and_preview(body: &[u8], value_truncate_len: usize) -> Body
         let mut chars = body_lossy.chars();
         let preview = chars.by_ref().take(value_truncate_len).collect::<String>();
         let _preview_truncated = chars.next().is_some();
-        return BodySchemaAndPreview {
-            schema: r#"{"format":"non_json"}"#.to_string(),
-            preview: serde_json::to_string(
-                &serde_json::json!({ "format": "non_json", "preview": preview }),
-            )
-            .unwrap_or_else(|_| r#"{"format":"non_json"}"#.to_string()),
-        };
+        return serde_json::to_string(
+            &serde_json::json!({ "format": "non_json", "preview": preview }),
+        )
+        .unwrap_or_else(|_| r#"{"format":"non_json"}"#.to_string());
     };
 
-    let schema_value = serde_json::json!({
-        "format": "tree",
-        "schema": build_json_schema_tree(&value),
-    });
-    let schema =
-        serde_json::to_string(&schema_value).unwrap_or_else(|_| r#"{"format":"tree"}"#.to_string());
-
     let preview_value = build_json_preview_full(&value, value_truncate_len);
-    let preview = serde_json::to_string(&preview_value).unwrap_or_else(|_| "{}".to_string());
-
-    BodySchemaAndPreview { schema, preview }
+    serde_json::to_string(&preview_value).unwrap_or_else(|_| "{}".to_string())
 }
