@@ -187,12 +187,7 @@ export interface ProviderType {
   name: string
   display_name: string
   base_url?: string
-  api_format?: string
-  default_model?: string
-  max_tokens?: number
-  rate_limit?: number
   timeout_seconds?: number
-  health_check_path?: string
   is_active: boolean
   supported_models?: string[]
   supported_auth_types: string[]

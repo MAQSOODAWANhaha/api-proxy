@@ -50,7 +50,6 @@ async fn seed_provider_type(db: &Arc<sea_orm::DatabaseConnection>) -> ProviderTy
         name: Set("trace_provider".to_string()),
         display_name: Set("Trace Provider".to_string()),
         base_url: Set("https://api.trace.test".to_string()),
-        api_format: Set("openai".to_string()),
         is_active: Set(true),
         supported_auth_types: Set("[\"api_key\"]".to_string()),
         created_at: Set(Utc::now().naive_utc()),

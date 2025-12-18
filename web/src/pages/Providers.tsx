@@ -210,15 +210,13 @@ const ProvidersPage: React.FC = () => {
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[980px]">
+              <table className="w-full text-sm min-w-[780px]">
                 <thead className="bg-neutral-50 text-neutral-600">
                   <tr>
                     <th className="px-4 py-3 text-left font-medium min-w-[180px]">服务商</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[220px]">Base URL</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[120px]">API 格式</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[160px]">默认模型</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[180px]">认证方式</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[200px]">限制</th>
+                    <th className="px-4 py-3 text-left font-medium min-w-[120px]">超时</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[100px]">状态</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[160px]">创建时间</th>
                   </tr>
@@ -253,18 +251,6 @@ const ProvidersPage: React.FC = () => {
                       </td>
 
                       <td className="px-4 py-3">
-                        {p.api_format ? (
-                          <Badge variant="secondary">{p.api_format}</Badge>
-                        ) : (
-                          <span className="text-foreground/60">-</span>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3 text-foreground/80">
-                        {p.default_model || '-'}
-                      </td>
-
-                      <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
                           {(p.supported_auth_types || []).length > 0 ? (
                             p.supported_auth_types.map((t) => (
@@ -283,11 +269,7 @@ const ProvidersPage: React.FC = () => {
                       </td>
 
                       <td className="px-4 py-3 text-foreground/70">
-                        <div className="flex flex-col gap-0.5 text-xs">
-                          <span>MaxTokens: {p.max_tokens ?? '-'}</span>
-                          <span>RateLimit: {p.rate_limit ?? '-'} /min</span>
-                          <span>Timeout: {p.timeout_seconds ?? '-'}s</span>
-                        </div>
+                        {p.timeout_seconds ?? '-'}s
                       </td>
 
                       <td className="px-4 py-3">
@@ -316,7 +298,7 @@ const ProvidersPage: React.FC = () => {
 
                   {filteredProviders.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                      <td colSpan={6} className="px-4 py-10 text-center text-neutral-500">
                         暂无匹配的服务商数据
                       </td>
                     </tr>

@@ -24,12 +24,7 @@ pub struct ProviderConfig {
     pub name: String,
     pub display_name: String,
     pub base_url: String,
-    pub api_format: String,
-    pub default_model: Option<String>,
-    pub max_tokens: Option<i32>,
-    pub rate_limit: Option<i32>,
     pub timeout_seconds: i32,
-    pub health_check_path: Option<String>,
     pub config_json: Option<String>,
 }
 
@@ -326,12 +321,7 @@ impl CacheFacade {
                 name: provider.name.clone(),
                 display_name: provider.display_name,
                 base_url: provider.base_url,
-                api_format: provider.api_format,
-                default_model: provider.default_model,
-                max_tokens: provider.max_tokens,
-                rate_limit: provider.rate_limit,
                 timeout_seconds: provider.timeout_seconds.unwrap_or(30),
-                health_check_path: provider.health_check_path,
                 config_json: provider.config_json,
             };
 
