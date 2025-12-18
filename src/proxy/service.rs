@@ -97,11 +97,7 @@ impl ProxyService {
         if let (Some(user_api), Some(provider_type)) =
             (ctx.user_service_api.as_ref(), ctx.provider_type.as_ref())
         {
-            let timeout = user_api
-                .timeout_seconds
-                .or(provider_type.timeout_seconds)
-                .unwrap_or(120)
-                .max(120);
+            let timeout = user_api.timeout_seconds.unwrap_or(120).max(120);
 
             ctx.timeout_seconds = Some(timeout);
 

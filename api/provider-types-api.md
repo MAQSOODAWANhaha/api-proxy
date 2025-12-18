@@ -34,7 +34,6 @@
                 "name": "openai",
                 "display_name": "OpenAI",
                 "base_url": "api.openai.com",
-                "timeout_seconds": 30,
                 "is_active": true,
                 "supported_models": [],
                 "supported_auth_types": ["api_key"],
@@ -49,7 +48,6 @@
                 "name": "gemini",
                 "display_name": "Google Gemini",
                 "base_url": "cloudcode-pa.googleapis.com",
-                "timeout_seconds": 30,
                 "is_active": true,
                 "supported_models": [],
                 "supported_auth_types": ["api_key", "oauth"],
@@ -69,7 +67,6 @@
                 "name": "claude",
                 "display_name": "Anthropic Claude",
                 "base_url": "api.anthropic.com",
-                "timeout_seconds": 30,
                 "is_active": true,
                 "supported_models": [],
                 "supported_auth_types": ["api_key", "oauth"],
@@ -100,7 +97,6 @@
 | name | string | 服务商内部标识名称 |
 | display_name | string | 服务商显示名称（用于前端显示） |
 | base_url | string | 服务商基础URL |
-| timeout_seconds | int | 上游请求超时时间（秒） |
 | is_active | bool | 是否启用 |
 | supported_models | array[string] | 支持的模型列表（目前返回空数组，后续可扩展） |
 | supported_auth_types | array[string] | 支持的认证类型列表 |

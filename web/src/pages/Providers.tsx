@@ -216,7 +216,6 @@ const ProvidersPage: React.FC = () => {
                     <th className="px-4 py-3 text-left font-medium min-w-[180px]">服务商</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[220px]">Base URL</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[180px]">认证方式</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[120px]">超时</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[100px]">状态</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[160px]">创建时间</th>
                   </tr>
@@ -268,10 +267,6 @@ const ProvidersPage: React.FC = () => {
                         </div>
                       </td>
 
-                      <td className="px-4 py-3 text-foreground/70">
-                        {p.timeout_seconds ?? '-'}s
-                      </td>
-
                       <td className="px-4 py-3">
                         {p.is_active ? (
                           <Badge
@@ -298,7 +293,7 @@ const ProvidersPage: React.FC = () => {
 
                   {filteredProviders.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center text-neutral-500">
+                      <td colSpan={5} className="px-4 py-10 text-center text-neutral-500">
                         暂无匹配的服务商数据
                       </td>
                     </tr>

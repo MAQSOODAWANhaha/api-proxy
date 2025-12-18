@@ -189,7 +189,6 @@ mod tests {
             name: "anthropic".to_string(),
             display_name: "Anthropic Claude".to_string(),
             base_url: "api.anthropic.com".to_string(),
-            timeout_seconds: Some(30),
             is_active: true,
             config_json: Some(r#"{"request_stage":{"required_headers":{"anthropic-version":"2023-06-01"}},"response_stage":{}}"#.to_string()),
             token_mappings_json: Some(r#"{"tokens_prompt":{"type":"direct","path":"usage.input_tokens","fallback":{"type":"direct","path":"usage.prompt_tokens"}},"tokens_completion":{"type":"direct","path":"usage.output_tokens","fallback":{"type":"direct","path":"usage.completion_tokens"}},"tokens_total":{"type":"expression","formula":"usage.total_tokens","fallback":{"type":"expression","formula":"usage.input_tokens + usage.output_tokens"}},"cache_create_tokens":{"type":"direct","path":"usage.cache_creation_input_tokens","fallback":{"type":"direct","path":"usage.prompt_tokens_details.cached_tokens"}},"cache_read_tokens":{"type":"direct","path":"usage.cache_read_input_tokens","fallback":{"type":"direct","path":"usage.cached_tokens"}}}"#.to_string()),

@@ -24,7 +24,6 @@ pub struct ProviderConfig {
     pub name: String,
     pub display_name: String,
     pub base_url: String,
-    pub timeout_seconds: i32,
     pub config_json: Option<String>,
 }
 
@@ -321,7 +320,6 @@ impl CacheFacade {
                 name: provider.name.clone(),
                 display_name: provider.display_name,
                 base_url: provider.base_url,
-                timeout_seconds: provider.timeout_seconds.unwrap_or(30),
                 config_json: provider.config_json,
             };
 

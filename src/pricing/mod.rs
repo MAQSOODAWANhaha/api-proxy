@@ -401,7 +401,6 @@ mod tests {
             display_name: Set("OpenAI Test 1".to_string()),
             base_url: Set("https://api.openai.com".to_string()),
             is_active: Set(true),
-            timeout_seconds: Set(Some(30)),
             created_at: Set(Utc::now().naive_utc()),
             updated_at: Set(Utc::now().naive_utc()),
             ..Default::default()
@@ -513,7 +512,6 @@ mod tests {
             display_name: Set("OpenAI Test 2".to_string()),
             base_url: Set("https://api.openai.com".to_string()),
             is_active: Set(true),
-            timeout_seconds: Set(Some(30)),
             created_at: Set(Utc::now().naive_utc()),
             updated_at: Set(Utc::now().naive_utc()),
             ..Default::default()

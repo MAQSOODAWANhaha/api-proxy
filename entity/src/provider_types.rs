@@ -15,7 +15,6 @@ pub struct Model {
     pub name: String,
     pub display_name: String,
     pub base_url: String,
-    pub timeout_seconds: Option<i32>,
     pub is_active: bool,
     pub config_json: Option<String>,           // JSON 字符串
     pub token_mappings_json: Option<String>,   // Token字段映射配置
@@ -221,7 +220,6 @@ impl Default for Model {
             name: "unknown".to_string(),
             display_name: "Unknown Provider".to_string(),
             base_url: "".to_string(),
-            timeout_seconds: None,
             is_active: false,
             config_json: None,
             token_mappings_json: None,

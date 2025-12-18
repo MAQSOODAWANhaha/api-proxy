@@ -187,7 +187,6 @@ export interface ProviderType {
   name: string
   display_name: string
   base_url?: string
-  timeout_seconds?: number
   is_active: boolean
   supported_models?: string[]
   supported_auth_types: string[]
