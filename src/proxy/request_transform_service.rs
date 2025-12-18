@@ -4,7 +4,7 @@
 
 use crate::error::{Context, Result, auth::AuthError};
 use crate::linfo;
-use crate::logging::{self, LogComponent, LogStage};
+use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
@@ -56,7 +56,6 @@ impl RequestTransformService {
             "request_transformed",
             "上游请求转换完成",
             method = upstream_request.method.to_string(),
-            request_headers = logging::headers_json_string_request(upstream_request),
             uri = upstream_request.uri.to_string()
         );
 

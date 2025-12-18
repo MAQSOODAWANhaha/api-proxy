@@ -10,6 +10,7 @@ use std::time::Instant;
 use crate::collect::types::TokenUsageMetrics;
 use crate::collect::types::{RequestDetails, ResponseDetails};
 use entity::{provider_types, user_provider_keys, user_service_apis};
+use std::collections::BTreeMap;
 
 /// 解析后的最终上游凭证
 #[derive(Debug, Clone)]
@@ -59,6 +60,12 @@ pub struct ProxyContext {
     pub provider_type: Option<provider_types::Model>,
     /// 选定的服务商策略
     pub strategy: Option<Arc<dyn ProviderStrategy>>,
+
+    // === 日志模式相关字段（仅在 user_service_api.log_mode=true 时填充） ===
+    /// 最终上游请求头（包含注入/清理后的结果）
+    pub upstream_request_headers: Option<BTreeMap<String, String>>,
+    /// 最终上游请求 URI（可能被策略改写）
+    pub upstream_request_uri: Option<String>,
 }
 
 impl Default for ProxyContext {
@@ -82,6 +89,8 @@ impl Default for ProxyContext {
             selected_backend: None,
             provider_type: None,
             strategy: None,
+            upstream_request_headers: None,
+            upstream_request_uri: None,
         }
     }
 }

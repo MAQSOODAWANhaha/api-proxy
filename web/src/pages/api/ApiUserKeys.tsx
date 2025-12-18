@@ -189,6 +189,7 @@ const ApiUserKeysPage: React.FC = () => {
         description: newKey.description,
         provider_type_id: newKey.provider_type_id,
         user_provider_keys_ids: newKey.user_provider_keys_ids || [],
+        log_mode: newKey.log_mode,
         scheduling_strategy: newKey.scheduling_strategy,
         retry_count: newKey.retry_count,
         timeout_seconds: newKey.timeout_seconds,
@@ -220,6 +221,7 @@ const ApiUserKeysPage: React.FC = () => {
         name: updatedKey.name,
         description: updatedKey.description,
         user_provider_keys_ids: updatedKey.user_provider_keys_ids,
+        log_mode: updatedKey.log_mode,
         scheduling_strategy: updatedKey.scheduling_strategy,
         retry_count: updatedKey.retry_count,
         timeout_seconds: updatedKey.timeout_seconds,
@@ -467,6 +469,7 @@ const ApiUserKeysPage: React.FC = () => {
                   <th className="px-4 py-3 text-left font-medium">API Key</th>
                   <th className="px-4 py-3 text-left font-medium">使用情况</th>
                   <th className="px-4 py-3 text-left font-medium">状态</th>
+                  <th className="px-4 py-3 text-left font-medium">日志</th>
                   <th className="px-4 py-3 text-left font-medium">最后使用</th>
                   <th className="px-4 py-3 text-left font-medium">操作</th>
                 </tr>
@@ -566,6 +569,17 @@ const ApiUserKeysPage: React.FC = () => {
                         }`}
                       >
                         {item.is_active ? "启用" : "停用"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          item.log_mode
+                            ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200"
+                            : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
+                        }`}
+                      >
+                        {item.log_mode ? "开启" : "关闭"}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-xs text-neutral-600">
@@ -786,6 +800,7 @@ const AddDialog: React.FC<{
     max_cost_per_day: 100.0,
     expires_at: "" as string | null,
     is_active: true,
+    log_mode: false,
   });
 
   // 弹窗独有的状态管理
@@ -1327,6 +1342,31 @@ const AddDialog: React.FC<{
           </button>
           <span className="text-sm text-neutral-600">
             {formData.is_active ? "启用" : "停用"}
+          </span>
+        </div>
+
+        {/* 日志模式 */}
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-neutral-700">
+            日志模式
+          </label>
+          <button
+            type="button"
+            onClick={() =>
+              setFormData({ ...formData, log_mode: !formData.log_mode })
+            }
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              formData.log_mode ? "bg-violet-600" : "bg-neutral-200"
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                formData.log_mode ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+          <span className="text-sm text-neutral-600">
+            {formData.log_mode ? "开启" : "关闭"}
           </span>
         </div>
 
@@ -1912,6 +1952,31 @@ const EditDialog: React.FC<{
             </button>
             <span className="text-sm text-neutral-600">
               {formData.is_active ? "启用" : "停用"}
+            </span>
+          </div>
+
+          {/* 日志模式 */}
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-neutral-700">
+              日志模式
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                setFormData({ ...formData, log_mode: !formData.log_mode })
+              }
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                formData.log_mode ? "bg-violet-600" : "bg-neutral-200"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  formData.log_mode ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+            <span className="text-sm text-neutral-600">
+              {formData.log_mode ? "开启" : "关闭"}
             </span>
           </div>
 

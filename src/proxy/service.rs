@@ -3,7 +3,7 @@
 //! 实现了 Pingora 的 `ProxyHttp` trait，作为核心编排器，调用各个专有服务来处理请求。
 
 use crate::error::ProxyError;
-use crate::logging::{ErrorLogField, LogComponent, LogStage, log_proxy_error};
+use crate::logging::{self, ErrorLogField, LogComponent, LogStage, log_proxy_error};
 use crate::{ldebug, lerror, linfo, lwarn};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -304,6 +304,16 @@ impl ProxyHttp for ProxyService {
             .req_transform_service
             .filter_request(session, upstream_request, ctx)
             .await?;
+
+        if ctx
+            .user_service_api
+            .as_ref()
+            .is_some_and(|api| api.log_mode)
+        {
+            ctx.upstream_request_headers =
+                Some(logging::headers_json_map_request(upstream_request));
+            ctx.upstream_request_uri = Some(upstream_request.uri.to_string());
+        }
         Ok(())
     }
 
@@ -531,6 +541,9 @@ impl ProxyHttp for ProxyService {
                 .record_failure(Some(&metrics), status_code, e, ctx)
                 .await;
         }
+
+        // 根据 user_service_api.log_mode 输出完整请求/响应日志（包含 body schema，内容可截断）
+        logging::log_user_service_api_log_mode(ctx, status_code);
 
         linfo!(
             &ctx.request_id,

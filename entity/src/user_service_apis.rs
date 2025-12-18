@@ -27,6 +27,8 @@ pub struct Model {
     pub max_requests_per_day: Option<i32>,
     pub max_tokens_per_day: Option<i64>,
     pub max_cost_per_day: Option<Decimal>,
+    /// 是否开启日志模式（记录完整请求/响应内容到服务日志）
+    pub log_mode: bool,
     pub expires_at: Option<DateTime>,
     pub is_active: bool,
     pub created_at: DateTime,

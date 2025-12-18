@@ -511,6 +511,7 @@ export interface UserServiceApiKey {
     last_used_at: string | null
   }
   is_active: boolean
+  log_mode: boolean
   last_used_at: string | null
   created_at: string
   expires_at?: string | null
@@ -531,6 +532,7 @@ export interface CreateUserServiceApiKeyRequest {
   description?: string
   provider_type_id: number
   user_provider_keys_ids: number[]
+  log_mode?: boolean
   scheduling_strategy?: string
   retry_count?: number
   timeout_seconds?: number
@@ -560,6 +562,7 @@ export interface UserServiceApiKeyDetail {
   provider: string
   api_key: string
   user_provider_keys_ids: number[]
+  log_mode: boolean
   scheduling_strategy: string
   retry_count: number
   timeout_seconds: number
@@ -577,6 +580,7 @@ export interface UpdateUserServiceApiKeyRequest {
   name?: string
   description?: string
   user_provider_keys_ids?: number[]
+  log_mode?: boolean
   scheduling_strategy?: string
   retry_count?: number
   timeout_seconds?: number

@@ -8,7 +8,7 @@ use crate::error::{Context, Result};
 use crate::proxy::ProxyContext;
 use crate::{
     ldebug, linfo,
-    logging::{self, LogComponent, LogStage},
+    logging::{LogComponent, LogStage},
 };
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
@@ -93,7 +93,8 @@ impl ProviderStrategy for GeminiStrategy {
                 LogComponent::GeminiStrategy,
                 "set_host_header",
                 "Set correct Host header for Gemini provider",
-                request_headers = logging::headers_json_string_request(upstream_request)
+                host = %host,
+                uri = %upstream_request.uri
             );
         }
 

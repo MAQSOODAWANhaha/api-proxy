@@ -48,6 +48,8 @@ pub struct CreateUserServiceKeyRequest {
     pub description: Option<String>,
     pub provider_type_id: ProviderTypeId,
     pub user_provider_keys_ids: Vec<i32>,
+    /// 是否开启日志模式（记录完整请求/响应内容到服务日志）
+    pub log_mode: Option<bool>,
     pub scheduling_strategy: Option<String>,
     pub retry_count: Option<i32>,
     pub timeout_seconds: Option<i32>,
@@ -65,6 +67,8 @@ pub struct UpdateUserServiceKeyRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub user_provider_keys_ids: Option<Vec<i32>>,
+    /// 是否开启日志模式（记录完整请求/响应内容到服务日志）
+    pub log_mode: Option<bool>,
     pub scheduling_strategy: Option<String>,
     pub retry_count: Option<i32>,
     pub timeout_seconds: Option<i32>,
@@ -108,6 +112,7 @@ pub struct UserServiceKeyResponse {
     pub api_key: String,
     pub usage: Option<Value>,
     pub is_active: bool,
+    pub log_mode: bool,
     pub last_used_at: Option<String>,
     pub created_at: String,
     pub expires_at: Option<String>,
@@ -146,6 +151,7 @@ pub struct UserServiceKeyDetailResponse {
     pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
     pub expires_at: Option<String>,
     pub is_active: bool,
+    pub log_mode: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -322,6 +328,7 @@ impl<'a> ServiceApiService<'a> {
             name: Set(Some(request.name.clone())),
             description: Set(request.description.clone()),
             user_provider_keys_ids: Set(user_provider_keys_ids),
+            log_mode: Set(request.log_mode.unwrap_or(false)),
             scheduling_strategy: Set(request.scheduling_strategy.clone()),
             retry_count: Set(request.retry_count),
             timeout_seconds: Set(request.timeout_seconds),
@@ -391,6 +398,7 @@ impl<'a> ServiceApiService<'a> {
             max_cost_per_day: api.max_cost_per_day,
             expires_at: api.expires_at.map(|dt| format_naive_utc(&dt, *timezone)),
             is_active: api.is_active,
+            log_mode: api.log_mode,
             created_at: format_naive_utc(&api.created_at, *timezone),
             updated_at: format_naive_utc(&api.updated_at, *timezone),
         })
@@ -430,6 +438,9 @@ impl<'a> ServiceApiService<'a> {
         }
         if let Some(strategy) = &request.scheduling_strategy {
             model.scheduling_strategy = Set(Some(strategy.clone()));
+        }
+        if let Some(log_mode) = request.log_mode {
+            model.log_mode = Set(log_mode);
         }
         model.retry_count = Set(request.retry_count);
         model.timeout_seconds = Set(request.timeout_seconds);
@@ -671,6 +682,7 @@ impl<'a> ServiceApiService<'a> {
             api_key: api.api_key,
             usage: Some(usage),
             is_active: api.is_active,
+            log_mode: api.log_mode,
             last_used_at,
             created_at: format_naive_utc(&api.created_at, *timezone),
             expires_at: api.expires_at.map(|dt| format_naive_utc(&dt, *timezone)),
