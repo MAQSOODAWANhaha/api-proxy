@@ -442,22 +442,16 @@ OAuth 2.0 授权系统是平台认证模块的核心组成部分，负责处理�
 `ApiKeyHealthService` 负责对API密钥进行主动健康检查，评估其可用性和性能，并根据检查结果更新密钥的健康状态。它集成了错误分类、健康评分和与数据库的同步机制，确保调度器能够获取到最准确的密钥健康信息。
 
 **核心流程**:
-1.  **执行API测试**: 根据 `provider_types` 配置的 `health_check_path` 和 `api_format`，构建并发送针对AI服务商的健康检查请求。这可能包括GET `/models` 或POST `/messages` 等。
-2.  **结果分析**: 记录响应时间、HTTP状态码。
-3.  **错误分类**: 将失败的响应或网络错误分类为 `InvalidKey`, `QuotaExceeded`, `NetworkError`, `ServerError` 等。
-4.  **更新内存状态**:
-    *   更新 `ApiKeyHealth` 结构体中的 `is_healthy` 状态、连续成功/失败计数、平均响应时间、最后错误信息和最近检查结果历史。
-    *   如果检测到429状态码，尝试从错误信息中解析 `resets_in_seconds`。
-5.  **健康分数计算**: 根据最近的成功率、平均响应时间（惩罚高延迟）和连续失败次数（惩罚不稳定），计算一个介于0到100之间的 `health_score`。
-6.  **同步到数据库**: 将更新后的健康状态（`health_status`, `health_status_detail`, `rate_limit_resets_at`, `last_error_time`）持久化到 `user_provider_keys` 表中。
-7.  **限流重置调度**: 如果密钥被标记为 `rate_limited` 且解析到 `resets_in_seconds`，则向 `RateLimitResetTask` 发送命令，调度在指定时间后自动重置密钥状态。
+1.  **状态读写**: 该服务主要提供 `user_provider_keys` 健康状态的读写接口（不再执行“主动探测/健康检查请求”）。
+2.  **错误驱动更新**: 健康状态通常由代理请求链路中的错误/限流信息驱动更新（例如 429 触发 `rate_limited`，或网络/鉴权错误触发 `unhealthy`）。
+3.  **同步到数据库**: 将健康状态（`health_status`, `health_status_detail`, `rate_limit_resets_at`, `last_error_time`）持久化到 `user_provider_keys` 表中。
+4.  **限流重置调度**: 当密钥进入 `rate_limited` 且存在 `rate_limit_resets_at` 时，由 `RateLimitResetTask` 负责按时间自动重置为 `healthy`。
 
 **关键代码路径：**
 - `src/key_pool/api_key_health.rs`: `ApiKeyHealthService`
-- `src/key_pool/api_key_health.rs`: `check_api_key()`
-- `src/key_pool/api_key_health.rs`: `update_health_status()`
-- `src/key_pool/api_key_health.rs`: `sync_health_status_to_database()`
-- `src/key_pool/api_key_health.rs`: `calculate_health_score()`
+- `src/key_pool/api_key_health.rs`: `mark_key_unhealthy()`
+- `src/key_pool/api_key_health.rs`: `mark_key_rate_limited()`
+- `src/key_pool/api_key_health.rs`: `reset_key_status()`
 
 ## 🎯 核心设计特点
 

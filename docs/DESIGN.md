@@ -728,10 +728,7 @@ impl ApiKeySelector for WeightedApiKeySelector { /* ... */ }
 **健康检查流程**:
 
 1.  **启动时加载**: 服务启动时，从数据库加载所有 API 密钥的健康状态到内存 `health_status` 缓存。
-2.  **主动探测**: `ApiKeyHealthService` 会定期对所有活跃的 API 密钥执行主动探测。
-    - **检查方式**: 根据 `provider_types` 配置的 `health_check_path` 和 `api_format`，构建针对不同 AI 服务商的健康检查请求（例如，OpenAI 的 `/models` GET 请求，Claude 的 `/messages` POST 请求）。
-    - **认证头**: 根据服务商类型，使用正确的认证头（例如，Gemini 使用 `X-goog-api-key`，其他使用 `Authorization: Bearer`）。
-    - **超时**: 请求设置超时，避免长时间阻塞。
+2.  **错误驱动**: 当前版本不再执行“主动探测/健康检查请求”，健康状态主要由代理请求链路中的错误与限流信息驱动更新。
 3.  **结果处理**:
     - 记录响应时间、HTTP 状态码和成功/失败状态。
     - **错误分类**: 将失败的请求错误分类为 `InvalidKey`, `QuotaExceeded`, `NetworkError`, `ServerError` 等。
@@ -3630,15 +3627,9 @@ impl ApiKeySelector for WeightedApiKeySelector { /* ... */ }
 
 **核心流程**:
 
-1.  **执行 API 测试**: 根据 `provider_types` 配置的 `health_check_path` 和 `api_format`，构建并发送针对 AI 服务商的健康检查请求（例如，OpenAI 的 `/models` GET 请求，Claude 的 `/messages` POST 请求）。
-2.  **结果分析**: 记录响应时间、HTTP 状态码。
-3.  **错误分类**: 将失败的响应或网络错误分类为 `InvalidKey`, `QuotaExceeded`, `NetworkError`, `ServerError` 等。
-4.  **更新内存状态**:
-    - 更新 `ApiKeyHealth` 结构体中的 `is_healthy` 状态、连续成功/失败计数、平均响应时间、最后错误信息和最近检查结果历史。
-    - 如果检测到 429 状态码，尝试从错误信息中解析 `resets_in_seconds`。
-5.  **健康分数计算**: 根据最近的成功率、平均响应时间（惩罚高延迟）和连续失败次数（惩罚不稳定），计算一个介于 0 到 100 之间的 `health_score`。
-6.  **同步到数据库**: 将更新后的健康状态（`health_status`, `health_status_detail`, `rate_limit_resets_at`, `last_error_time`）持久化到 `user_provider_keys` 表中。
-7.  **限流重置调度**: 如果密钥被标记为 `rate_limited` 且解析到 `resets_in_seconds`，则向 `RateLimitResetTask` 发送命令，调度在指定时间后自动重置密钥状态。
+1.  **错误驱动更新**: 健康状态由请求链路中捕获到的错误/限流信息驱动更新（例如 429 → `rate_limited`，网络/鉴权错误 → `unhealthy`）。
+2.  **状态写入**: 将健康状态（`health_status`, `health_status_detail`, `rate_limit_resets_at`, `last_error_time`）持久化到 `user_provider_keys` 表中。
+3.  **限流重置调度**: 当密钥进入 `rate_limited` 且存在 `rate_limit_resets_at` 时，由 `RateLimitResetTask` 负责按时间自动重置为 `healthy`。
 
 **关键代码结构**:
 

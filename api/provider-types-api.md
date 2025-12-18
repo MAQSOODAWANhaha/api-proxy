@@ -33,22 +33,25 @@
                 "id": 1,
                 "name": "openai",
                 "display_name": "OpenAI",
-                "description": "OpenAI GPT系列模型",
+                "base_url": "api.openai.com",
+                "timeout_seconds": 30,
                 "is_active": true,
-                "supported_models": ["gpt-4", "gpt-3.5-turbo"],
+                "supported_models": [],
                 "supported_auth_types": ["api_key"],
                 "auth_configs": {
                     "api_key": {}
                 },
-                "created_at": "2024-01-01T00:00:00Z"
+                "created_at": "2024-01-01 00:00:00",
+                "updated_at": "2024-01-01 00:00:00"
             },
             {
                 "id": 2,
                 "name": "gemini",
                 "display_name": "Google Gemini",
-                "description": "Google Gemini系列模型",
+                "base_url": "cloudcode-pa.googleapis.com",
+                "timeout_seconds": 30,
                 "is_active": true,
-                "supported_models": ["gemini-pro", "gemini-pro-vision"],
+                "supported_models": [],
                 "supported_auth_types": ["api_key", "oauth"],
                 "auth_configs": {
                     "api_key": {},
@@ -58,19 +61,21 @@
                         "scopes": "https://www.googleapis.com/auth/generative-language"
                     }
                 },
-                "created_at": "2024-01-01T00:00:00Z"
+                "created_at": "2024-01-01 00:00:00",
+                "updated_at": "2024-01-01 00:00:00"
             },
             {
                 "id": 3,
                 "name": "claude",
                 "display_name": "Anthropic Claude",
-                "description": "Anthropic Claude系列模型",
+                "base_url": "api.anthropic.com",
+                "timeout_seconds": 30,
                 "is_active": true,
-                "supported_models": ["claude-3-opus", "claude-3-sonnet"],
-                "supported_auth_types": ["api_key", "oauth2"],
+                "supported_models": [],
+                "supported_auth_types": ["api_key", "oauth"],
                 "auth_configs": {
                     "api_key": {},
-                    "oauth2": {
+                    "oauth": {
                         "authorize_url": "https://claude.ai/oauth/authorize",
                         "token_url": "https://console.anthropic.com/v1/oauth/token",
                         "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
@@ -78,7 +83,8 @@
                         "pkce_required": true
                     }
                 },
-                "created_at": "2024-01-01T00:00:00Z"
+                "created_at": "2024-01-01 00:00:00",
+                "updated_at": "2024-01-01 00:00:00"
             }
         ]
     },
@@ -94,15 +100,9 @@
 | name | string | 服务商内部标识名称 |
 | display_name | string | 服务商显示名称（用于前端显示） |
 | base_url | string | 服务商基础URL |
-| api_format | string | API格式（例如：openai） |
-| default_model | string | 默认模型 |
-| max_tokens | int | 单次请求最大Token数 |
-| rate_limit | int | 速率限制（请求/分钟） |
 | timeout_seconds | int | 上游请求超时时间（秒） |
-| health_check_path | string | 健康检查路径 |
-| description | string | 服务商描述信息 |
 | is_active | bool | 是否启用 |
-| supported_models | array[string] | 支持的模型列表 |
+| supported_models | array[string] | 支持的模型列表（目前返回空数组，后续可扩展） |
 | supported_auth_types | array[string] | 支持的认证类型列表 |
 | auth_configs | object | 各认证类型的配置信息 |
 | created_at | string | 创建时间（ISO 8601格式） |
@@ -158,5 +158,5 @@
 
 1. 该接口需要用户认证
 2. 默认只返回启用状态的服务商类型
-3. 返回的服务商类型按创建时间排序
+3. 返回的服务商类型按 ID 升序排序
 4. display_name字段用于前端显示，name字段用于系统内部标识
