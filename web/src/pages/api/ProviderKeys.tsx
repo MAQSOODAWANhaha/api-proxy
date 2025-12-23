@@ -459,9 +459,14 @@ const ProviderKeysPage: React.FC = () => {
     setShowKeyValues(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
-  // 复制到剪贴板
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
+  // 复制到剪贴板（与 /providers 页面复制 Base URL 的交互保持一致）
+  const handleCopy = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(`${label}已复制到剪贴板`)
+    } catch {
+      toast.error('复制失败，请手动复制')
+    }
   }
 
   // 健康状态组件
@@ -509,9 +514,9 @@ const ProviderKeysPage: React.FC = () => {
           {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
         <button
-          onClick={() => copyToClipboard(key)}
+          onClick={() => void handleCopy(key, 'API Key')}
           className="text-neutral-500 hover:text-neutral-700"
-          title="复制"
+          title="复制 API Key"
         >
           <Copy size={14} />
         </button>
