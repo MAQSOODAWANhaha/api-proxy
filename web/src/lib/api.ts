@@ -728,6 +728,7 @@ export interface SystemMetrics {
 }
 
 import { userApi } from './userApi';
+import { logger } from './logger'
 
 /**
  * API客户端类
@@ -738,16 +739,6 @@ class ApiClient {
 
   constructor(baseURL: string) {
     this.baseURL = baseURL
-    this.loadToken()
-  }
-
-  /**
-   * 从localStorage加载token
-   */
-  private loadToken() {
-    if (typeof window !== 'undefined') {
-      this.token = localStorage.getItem('auth_token')
-    }
   }
 
   /**
@@ -755,13 +746,6 @@ class ApiClient {
    */
   setToken(token: string | null) {
     this.token = token
-    if (typeof window !== 'undefined') {
-      if (token) {
-        localStorage.setItem('auth_token', token)
-      } else {
-        localStorage.removeItem('auth_token')
-      }
-    }
   }
 
   /**
@@ -795,7 +779,7 @@ class ApiClient {
     // 添加时区信息
     if (typeof window !== 'undefined') {
       const timezoneStore = useTimezoneStore.getState()
-      console.log('[API Debug] Timezone store state:', {
+      logger.debug('[API Debug] Timezone store state:', {
         isInitialized: timezoneStore.isInitialized,
         timezone: timezoneStore.timezone,
         offset: timezoneStore.offset
@@ -803,12 +787,12 @@ class ApiClient {
 
       if (timezoneStore.isInitialized && timezoneStore.timezone) {
         headers['X-Timezone'] = timezoneStore.timezone
-        console.log('[API Debug] X-Timezone header set:', timezoneStore.timezone)
+        logger.debug('[API Debug] X-Timezone header set:', timezoneStore.timezone)
       } else {
-        console.log('[API Debug] X-Timezone header not set - store not initialized or no timezone')
+        logger.debug('[API Debug] X-Timezone header not set - store not initialized or no timezone')
       }
     } else {
-      console.log('[API Debug] Not in browser environment, skipping timezone header')
+      logger.debug('[API Debug] Not in browser environment, skipping timezone header')
     }
 
     return headers
@@ -845,7 +829,7 @@ class ApiClient {
 
     try {
       const logPrefix = skipAuth ? '[API Public]' : '[API]'
-      console.log(`${logPrefix} ${method} ${url}`, body ? { body } : '')
+      logger.debug(`${logPrefix} ${method} ${url}`, body ? { body } : '')
 
       const response = await fetch(url, requestConfig)
 
@@ -879,7 +863,7 @@ class ApiClient {
       }
 
       const data: ApiResponse<T> = await response.json()
-      console.log(`${logPrefix} Success] ${method} ${url}:`, data)
+      logger.debug(`${logPrefix} Success] ${method} ${url}:`, data)
 
       return data
     } catch (error) {
@@ -1087,6 +1071,7 @@ export const dashboardUtils = {
 
 // 导出便捷方法
 export const api = {
+  setToken: (token: string | null) => apiClient.setToken(token),
   login: (credentials: LoginRequest) => apiClient.login(credentials),
   logout: () => apiClient.logout(),
   validateToken: () => apiClient.validateToken(),

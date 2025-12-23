@@ -50,6 +50,9 @@ const esbuildOpts = {
   minify: isProd,
   treeShaking: true,
   jsx: 'automatic',
+  define: {
+    __DEV__: JSON.stringify(!isProd),
+  },
   loader: {
     '.html': 'copy',
     '.png': 'file',

@@ -4,8 +4,9 @@
  */
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import { api, type LoginRequest } from '../lib/api'
+import { logger } from '../lib/logger'
 
 /** 用户信息接口 */
 export interface User {
@@ -82,7 +83,8 @@ export const useAuthStore = create<AuthState>()(
               error: null,
             })
 
-            console.log('Login successful:', user)
+            api.setToken(token)
+            logger.debug('Login successful:', user)
             return true
           } else {
             const errorMessage = response.error?.message || '登录失败'
@@ -95,6 +97,7 @@ export const useAuthStore = create<AuthState>()(
               error: errorMessage,
             })
 
+            api.setToken(null)
             console.error('Login failed:', errorMessage)
             return false
           }
@@ -109,6 +112,7 @@ export const useAuthStore = create<AuthState>()(
             error: errorMessage,
           })
 
+          api.setToken(null)
           console.error('Login exception:', error)
           return false
         }
@@ -141,7 +145,8 @@ export const useAuthStore = create<AuthState>()(
           isRefreshing: false,
         })
 
-        console.log('Logout completed')
+        api.setToken(null)
+            logger.debug('Logout completed')
       },
 
       /**
@@ -157,6 +162,7 @@ export const useAuthStore = create<AuthState>()(
             token: null,
             refreshToken: null,
           })
+          api.setToken(null)
           return false
         }
 
@@ -170,7 +176,7 @@ export const useAuthStore = create<AuthState>()(
               error: null,
             })
 
-            console.log('Token validation successful:', response.data.user)
+            logger.debug('Token validation successful:', response.data.user)
             return true
           } else {
             set({
@@ -181,7 +187,8 @@ export const useAuthStore = create<AuthState>()(
               error: null,
             })
 
-            console.log('Token validation failed')
+            api.setToken(null)
+            logger.debug('Token validation failed')
             return false
           }
         } catch (error) {
@@ -193,6 +200,7 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: null,
             error: null,
           })
+          api.setToken(null)
           return false
         }
       },
@@ -204,7 +212,7 @@ export const useAuthStore = create<AuthState>()(
         const { refreshToken: currentRefreshToken } = get()
 
         if (!currentRefreshToken) {
-          console.log('No refresh token available')
+          logger.debug('No refresh token available')
           await get().logout(false)
           return false
         }
@@ -223,7 +231,8 @@ export const useAuthStore = create<AuthState>()(
               error: null,
             })
 
-            console.log('Token refresh successful')
+            api.setToken(access_token)
+            logger.debug('Token refresh successful')
             return true
           } else {
             const errorMessage = response.error?.message || '刷新令牌失败'
@@ -236,6 +245,7 @@ export const useAuthStore = create<AuthState>()(
               error: errorMessage,
             })
 
+            api.setToken(null)
             console.error('Token refresh failed:', errorMessage)
             return false
           }
@@ -250,6 +260,7 @@ export const useAuthStore = create<AuthState>()(
             error: errorMessage,
           })
 
+          api.setToken(null)
           console.error('Token refresh exception:', error)
           return false
         }
@@ -266,7 +277,11 @@ export const useAuthStore = create<AuthState>()(
       setLoading: (loading: boolean) => set({ isLoading: loading }),
     }),
     {
-      name: 'auth-storage', // localStorage key
+      name: 'auth-storage', // sessionStorage key
+      storage: createJSONStorage(() => sessionStorage),
+      onRehydrateStorage: () => (state) => {
+        api.setToken(state?.token ?? null)
+      },
       partialize: (state) => ({
         isAuthenticated: state.isAuthenticated,
         user: state.user,

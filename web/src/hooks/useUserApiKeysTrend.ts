@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, type UserApiKeysRequestTrendResponse, type UserApiKeysTokenTrendResponse, type ApiResponse } from '../lib/api'
+import { logger } from '../lib/logger'
 
 export type TrendType = 'request' | 'token'
 
@@ -46,7 +47,7 @@ export function useUserApiKeysTrend(initialType: TrendType = 'request'): UseUser
       setIsLoading(true)
       setError(null)
 
-      console.log(`[useUserApiKeysTrend] Fetching ${type} trend data...`)
+      logger.debug(`[useUserApiKeysTrend] Fetching ${type} trend data...`)
       
       let response: ApiResponse<UserApiKeysRequestTrendResponse | UserApiKeysTokenTrendResponse>
       
@@ -60,7 +61,7 @@ export function useUserApiKeysTrend(initialType: TrendType = 'request'): UseUser
       if (!mountedRef.current) return
 
       if (response.success && response.data) {
-        console.log(`[useUserApiKeysTrend] ${type} trend data fetched successfully:`, response.data)
+        logger.debug(`[useUserApiKeysTrend] ${type} trend data fetched successfully:`, response.data)
         setTrendData(response.data)
         setLastUpdated(new Date())
         setError(null)

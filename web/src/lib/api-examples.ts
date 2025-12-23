@@ -5,6 +5,7 @@
  */
 
 import { api, publicApiClient } from './api'
+import { logger } from './logger'
 import { statsApi } from './stats'
 
 /**
@@ -16,13 +17,13 @@ export async function exampleProtectedApi() {
     // 获取用户档案（需要认证）
     const profileResponse = await api.users.getProfile()
     if (profileResponse.success) {
-      console.log('用户档案:', profileResponse.data)
+      logger.debug('用户档案:', profileResponse.data)
     }
 
     // 获取API密钥列表（需要认证）
     const keysResponse = await api.userService.getKeys()
     if (keysResponse.success) {
-      console.log('API密钥列表:', keysResponse.data)
+      logger.debug('API密钥列表:', keysResponse.data)
     }
   } catch (error) {
     console.error('认证API调用失败:', error)
@@ -43,7 +44,7 @@ export async function examplePublicApi() {
     })
 
     if (response.success) {
-      console.log('统计数据:', response.data)
+      logger.debug('统计数据:', response.data)
     }
   } catch (error) {
     console.error('公开API调用失败:', error)
@@ -83,7 +84,7 @@ export async function exampleStatsApi() {
       search: 'gpt-4'
     })
 
-    console.log('统计数据汇总:', {
+    logger.debug('统计数据汇总:', {
       overview: overview.success ? overview.data : overview.error,
       trend: trend.success ? trend.data : trend.error,
       modelShare: modelShare.success ? modelShare.data : modelShare.error,
@@ -124,7 +125,7 @@ export async function exampleWithErrorHandling() {
     }
 
     // 处理成功响应
-    console.log('获取统计数据成功:', response.data)
+    logger.debug('获取统计数据成功:', response.data)
   } catch (error) {
     console.error('异常错误:', error)
   }

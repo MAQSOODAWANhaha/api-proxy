@@ -510,6 +510,7 @@ const ProviderKeysPage: React.FC = () => {
           onClick={() => toggleKeyVisibility(id)}
           className="text-neutral-500 hover:text-neutral-700"
           title={isVisible ? '隐藏' : '显示'}
+          aria-label={isVisible ? '隐藏 API Key' : '显示 API Key'}
         >
           {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
@@ -517,6 +518,7 @@ const ProviderKeysPage: React.FC = () => {
           onClick={() => void handleCopy(key, 'API Key')}
           className="text-neutral-500 hover:text-neutral-700"
           title="复制 API Key"
+          aria-label="复制 API Key"
         >
           <Copy size={14} />
         </button>
@@ -929,48 +931,21 @@ const AddDialog: React.FC<{
 
   // OAuth处理函数
   const handleOAuthComplete = async (result: OAuthResult) => {
-    console.log('=== OAuth完成回调开始 ===')
-    console.log('OAuth完成结果:', result)
-    console.log('当前formData状态:', formData)
-    
     if (result.success && result.data) {
-      console.log('OAuth数据详情:', {
-        access_token: result.data.access_token,
-        refresh_token: result.data.refresh_token,
-        token_type: result.data.token_type,
-        expires_in: result.data.expires_in,
-        auth_status: result.data.auth_status,
-        完整data对象: result.data
-      })
-      
       // OAuth成功完成，将获取到的token填充到表单
       setOAuthStatus('success')
       
       // 将OAuth返回的session_id填入表单的API密钥字段 (OAuth类型需要session_id而不是access_token)
       const newKeyValue = result.data.session_id
-      console.log('准备填充的session_id:', newKeyValue)
-      console.log('session_id类型:', typeof newKeyValue)
-      console.log('session_id长度:', newKeyValue ? newKeyValue.length : 0)
-      console.log('session_id是否为空:', !newKeyValue)
       
       setFormData(prev => {
         const newFormData = {
           ...prev,
           keyValue: newKeyValue,
         }
-        console.log('更新前的formData:', prev)
-        console.log('更新后的formData:', newFormData)
-        console.log('keyValue变更:', prev.keyValue, '=>', newFormData.keyValue)
         return newFormData
       })
-      
-      // 延迟检查状态更新是否生效  
-      setTimeout(() => {
-        console.log('延迟检查 - 当前formData.keyValue:', formData.keyValue)
-        const inputElement = document.querySelector('input[placeholder*="API密钥"]') as HTMLInputElement
-        console.log('延迟检查 - 输入框实际值:', inputElement?.value)
-      }, 100)
-      
+
       // 显示成功消息，提示用户可以看到token并决定是否提交
       toast.success('OAuth授权成功！', {
         description: 'Token已填充到API密钥字段，请检查并完善其他信息后点击"添加"按钮提交。',
@@ -984,7 +959,6 @@ const AddDialog: React.FC<{
       })
       console.error('OAuth失败:', result.error)
     }
-    console.log('=== OAuth完成回调结束 ===')
   }
 
   const handleProviderTypeChange = (value: string) => {

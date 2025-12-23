@@ -93,10 +93,6 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
 
       const { authorize_url, session_id } = response.data
       
-      // 调试信息
-      console.log('OAuth授权响应:', response.data)
-      console.log('授权URL:', authorize_url)
-      
       if (!authorize_url || !authorize_url.trim()) {
         throw new Error('获取授权URL失败，授权URL为空')
       }
@@ -108,8 +104,10 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
       toast.info('请在新打开的页面中完成授权，然后复制授权码回来')
       
       // 在新标签页中打开授权页面
-      console.log('打开授权URL:', authorize_url)
-      const popup = window.open(authorize_url, '_blank')
+      const popup = window.open(authorize_url, '_blank', 'noopener,noreferrer')
+      if (popup) {
+        popup.opener = null
+      }
       
       if (!popup || popup.closed) {
         toast.warning('无法打开弹窗，请检查浏览器弹窗设置，或手动复制下方链接打开')

@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, type TokensTrendResponse, type ApiResponse } from '../lib/api'
+import { logger } from '../lib/logger'
 
 export interface UseTokensTrendReturn {
   /** Token使用趋势数据 */
@@ -38,7 +39,7 @@ export function useTokensTrend(): UseTokensTrendReturn {
       setIsLoading(true)
       setError(null)
 
-      console.log('[useTokensTrend] Fetching tokens trend data...')
+      logger.debug('[useTokensTrend] Fetching tokens trend data...')
       
       const response: ApiResponse<TokensTrendResponse> = await api.statistics.getTokensTrend()
       
@@ -46,7 +47,7 @@ export function useTokensTrend(): UseTokensTrendReturn {
       if (!mountedRef.current) return
 
       if (response.success && response.data) {
-        console.log('[useTokensTrend] Tokens trend data fetched successfully:', response.data)
+        logger.debug('[useTokensTrend] Tokens trend data fetched successfully:', response.data)
         setTokensTrend(response.data)
         setLastUpdated(new Date())
         setError(null)

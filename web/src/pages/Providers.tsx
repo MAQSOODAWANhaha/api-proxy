@@ -240,6 +240,7 @@ const ProvidersPage: React.FC = () => {
                               onClick={() => handleCopy(p.base_url || '', 'Base URL')}
                               className="text-neutral-500 hover:text-neutral-700"
                               title="复制 Base URL"
+                              aria-label="复制 Base URL"
                             >
                               <Copy size={14} />
                             </button>

@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, type DashboardCardsResponse, type ApiResponse } from '../lib/api'
+import { logger } from '../lib/logger'
 
 /**
  * 格式化数值显示
@@ -70,7 +71,7 @@ export function useDashboardCards(): UseDashboardCardsReturn {
       setIsLoading(true)
       setError(null)
 
-      console.log('[useDashboardCards] Fetching dashboard cards...')
+      logger.debug('[useDashboardCards] Fetching dashboard cards...')
       
       const response: ApiResponse<DashboardCardsResponse> = await api.statistics.getDashboardCards()
       
@@ -78,7 +79,7 @@ export function useDashboardCards(): UseDashboardCardsReturn {
       if (!mountedRef.current) return
 
       if (response.success && response.data) {
-        console.log('[useDashboardCards] Cards fetched successfully:', response.data)
+        logger.debug('[useDashboardCards] Cards fetched successfully:', response.data)
         
         // 转换后端数据为前端组件需要的格式
         const processedCards: ProcessedDashboardCard[] = [

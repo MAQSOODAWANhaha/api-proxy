@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, type ModelsStatisticsResponse, type ApiResponse } from '../lib/api'
+import { logger } from '../lib/logger'
 
 export interface UseModelsStatisticsReturn {
   /** 模型详细统计数据 */
@@ -38,7 +39,7 @@ export function useModelsStatistics(range: string = '7days', start?: string, end
       setIsLoading(true)
       setError(null)
 
-      console.log('[useModelsStatistics] Fetching models statistics data...')
+      logger.debug('[useModelsStatistics] Fetching models statistics data...')
       
       const response: ApiResponse<ModelsStatisticsResponse> = await api.statistics.getModelsStatistics(range, start, end)
       
@@ -46,7 +47,7 @@ export function useModelsStatistics(range: string = '7days', start?: string, end
       if (!mountedRef.current) return
 
       if (response.success && response.data) {
-        console.log('[useModelsStatistics] Models statistics data fetched successfully:', response.data)
+        logger.debug('[useModelsStatistics] Models statistics data fetched successfully:', response.data)
         setModelsStatistics(response.data)
         setLastUpdated(new Date())
         setError(null)

@@ -5,6 +5,8 @@
 
 import { useEffect } from 'react'
 import { useAuthStore } from '../store/auth'
+import { logger } from '../lib/logger'
+import { parseJwt } from '../lib/jwt'
 
 /**
  * 自动刷新令牌的Hook
@@ -18,27 +20,9 @@ export const useAutoRefresh = (refreshThreshold: number = 5 * 60 * 1000) => {
       return
     }
 
-    // 解析JWT token获取过期时间
-    const parseJwt = (token: string) => {
-      try {
-        const base64Url = token.split('.')[1]
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-        const jsonPayload = decodeURIComponent(
-          atob(base64)
-            .split('')
-            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-            .join('')
-        )
-        return JSON.parse(jsonPayload)
-      } catch (error) {
-        console.error('Failed to parse JWT token:', error)
-        return null
-      }
-    }
-
     const jwtPayload = parseJwt(token)
     if (!jwtPayload || !jwtPayload.exp) {
-      console.warn('Invalid JWT token format')
+      logger.warn('Invalid JWT token format')
       return
     }
 
@@ -48,14 +32,14 @@ export const useAutoRefresh = (refreshThreshold: number = 5 * 60 * 1000) => {
 
     // 如果token即将过期，触发刷新
     if (timeUntilExpiration > 0 && timeUntilExpiration <= refreshThreshold) {
-      console.log('Token即将过期，自动刷新...')
+      logger.debug('Token即将过期，自动刷新...')
       refreshAccessToken()
     }
 
     // 设置定时器，在刷新阈值时触发刷新
     if (timeUntilExpiration > refreshThreshold) {
       const timeoutId = setTimeout(() => {
-        console.log('定时触发token刷新...')
+        logger.debug('定时触发token刷新...')
         refreshAccessToken()
       }, timeUntilExpiration - refreshThreshold)
 
@@ -77,24 +61,6 @@ export const useAutoRefresh = (refreshThreshold: number = 5 * 60 * 1000) => {
         return
       }
 
-      // 解析JWT token
-      const parseJwt = (token: string) => {
-        try {
-          const base64Url = token.split('.')[1]
-          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-          const jsonPayload = decodeURIComponent(
-            atob(base64)
-              .split('')
-              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-              .join('')
-          )
-          return JSON.parse(jsonPayload)
-        } catch (error) {
-          console.error('Failed to parse JWT token:', error)
-          return null
-        }
-      }
-
       const jwtPayload = parseJwt(token)
       if (!jwtPayload || !jwtPayload.exp) {
         return
@@ -106,7 +72,7 @@ export const useAutoRefresh = (refreshThreshold: number = 5 * 60 * 1000) => {
 
       // 如果在刷新阈值内，触发刷新
       if (timeUntilExpiration > 0 && timeUntilExpiration <= refreshThreshold) {
-        console.log('定时检查：Token即将过期，触发刷新...')
+        logger.debug('定时检查：Token即将过期，触发刷新...')
         refreshAccessToken()
       }
     }, 60000) // 每分钟检查一次

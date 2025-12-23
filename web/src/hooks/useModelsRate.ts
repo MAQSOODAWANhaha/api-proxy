@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, type ModelsRateResponse, type ApiResponse } from '../lib/api'
+import { logger } from '../lib/logger'
 
 export interface UseModelsRateReturn {
   /** 模型使用占比数据 */
@@ -38,7 +39,7 @@ export function useModelsRate(range: string = '7days', start?: string, end?: str
       setIsLoading(true)
       setError(null)
 
-      console.log('[useModelsRate] Fetching models rate data...')
+      logger.debug('[useModelsRate] Fetching models rate data...')
       
       const response: ApiResponse<ModelsRateResponse> = await api.statistics.getModelsRate(range, start, end)
       
@@ -46,7 +47,7 @@ export function useModelsRate(range: string = '7days', start?: string, end?: str
       if (!mountedRef.current) return
 
       if (response.success && response.data) {
-        console.log('[useModelsRate] Models rate data fetched successfully:', response.data)
+        logger.debug('[useModelsRate] Models rate data fetched successfully:', response.data)
         setModelsRate(response.data)
         setLastUpdated(new Date())
         setError(null)
