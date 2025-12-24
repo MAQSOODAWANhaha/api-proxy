@@ -15,11 +15,11 @@ import {
   Search,
   XCircle,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import { api, ProviderType } from '../lib/api'
 import { Badge } from '@/components/ui/badge'
+import { copyWithFeedback } from '../lib/clipboard'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -111,15 +111,6 @@ const ProvidersPage: React.FC = () => {
       return matchesStatus && matchesKeyword
     })
   }, [providers, searchTerm, statusFilter])
-
-  const handleCopy = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success(`${label}已复制到剪贴板`)
-    } catch {
-      toast.error('复制失败，请手动复制')
-    }
-  }
 
   return (
     <div className="w-full">
@@ -237,7 +228,7 @@ const ProvidersPage: React.FC = () => {
                               {p.base_url}
                             </code>
                             <button
-                              onClick={() => handleCopy(p.base_url || '', 'Base URL')}
+                              onClick={() => void copyWithFeedback(p.base_url || '', 'Base URL')}
                               className="text-neutral-500 hover:text-neutral-700"
                               title="复制 Base URL"
                               aria-label="复制 Base URL"

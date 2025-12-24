@@ -3,7 +3,7 @@
  * 用户 API Keys 管理页：完整的增删改查和统计功能
  */
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Search,
   Plus,
@@ -26,7 +26,7 @@ import ModernSelect from "../../components/common/ModernSelect";
 import { api } from "../../lib/api";
 import DialogPortal from "./user-keys/dialogs/DialogPortal";
 import { ApiKey, DialogType } from "./user-keys/types";
-import { toast } from "sonner";
+import { copyWithFeedback } from "../../lib/clipboard";
 
 /** 页面主组件 */
 const ApiUserKeysPage: React.FC = () => {
@@ -48,13 +48,8 @@ const ApiUserKeysPage: React.FC = () => {
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
 
-  // 初始化数据
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   // 获取API Keys列表
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -79,45 +74,20 @@ const ApiUserKeysPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, pageSize, searchTerm, statusFilter]);
 
-  // 过滤数据
-  const filteredData = useMemo(() => {
-    return data.filter((item) => {
-      const matchesSearch =
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.description &&
-          item.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        item.provider.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "active" && item.is_active) ||
-        (statusFilter === "disabled" && !item.is_active);
-      return matchesSearch && matchesStatus;
-    });
-  }, [data, searchTerm, statusFilter]);
-
-  // 分页数据和计算
-  const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return filteredData.slice(startIndex, startIndex + pageSize);
-  }, [filteredData, currentPage, pageSize]);
-
-  const totalPages = Math.ceil(totalItems / pageSize);
-
-  // 重置页码当过滤条件改变时
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter]);
 
-  // 生成新的API Key
-  const generateApiKey = () => {
-    return (
-      "sk-" +
-      Math.random().toString(36).substring(2) +
-      Math.random().toString(36).substring(2)
-    );
-  };
+  // 服务端分页 + 服务端过滤
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const totalPages = Math.ceil(totalItems / pageSize);
+
+  const paginatedData = data;
 
   // 添加新API Key
   const handleAdd = async (
@@ -215,16 +185,6 @@ const ApiUserKeysPage: React.FC = () => {
     setShowKeyValues((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // 复制到剪贴板（与 /providers 页面复制 Base URL 的交互保持一致）
-  const handleCopy = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(`${label}已复制到剪贴板`);
-    } catch {
-      toast.error("复制失败，请手动复制");
-    }
-  };
-
   // 渲染遮罩的API Key
   const renderMaskedKey = (key: string, id: number) => {
     const isVisible = showKeyValues[id];
@@ -243,9 +203,10 @@ const ApiUserKeysPage: React.FC = () => {
           {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
         <button
-          onClick={() => void handleCopy(key, "API Key")}
+          onClick={() => void copyWithFeedback(key, "API Key")}
           className="text-neutral-500 hover:text-neutral-700"
-          title="复制"
+          title="复制 API Key"
+          aria-label="复制 API Key"
         >
           <Copy size={14} />
         </button>
@@ -326,7 +287,7 @@ const ApiUserKeysPage: React.FC = () => {
           />
           <input
             type="text"
-            placeholder="搜索密钥名称、描述或服务商..."
+            placeholder="搜索密钥名称..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
@@ -454,8 +415,8 @@ const ApiUserKeysPage: React.FC = () => {
                       </div>
                       <div className="text-xs text-neutral-500">
                         费用/天:{" "}
-                        {parseFloat(item.max_cost_per_day as any) > 0
-                          ? `$${(parseFloat(item.max_cost_per_day as any)).toFixed(2)}`
+                        {Number(item.max_cost_per_day || 0) > 0
+                          ? `$${Number(item.max_cost_per_day || 0).toFixed(2)}`
                           : "无"}
                       </div>
                     </td>

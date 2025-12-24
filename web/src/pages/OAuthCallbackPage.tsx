@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Copy, ExternalLink, ArrowLeft } from 'lucide-react'
-import { toast } from 'sonner'
+import { copyWithFeedback } from '@/lib/clipboard'
 
 export default function OAuthCallbackPage() {
   const navigate = useNavigate()
@@ -34,12 +34,7 @@ export default function OAuthCallbackPage() {
   }, [])
 
   const copyToClipboard = async (text: string, type: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success(`${type}已复制到剪贴板`)
-    } catch (err) {
-      toast.error('复制失败，请手动复制')
-    }
+    await copyWithFeedback(text, type)
   }
 
   const formatScopes = (scopeString: string) => {
@@ -91,6 +86,7 @@ export default function OAuthCallbackPage() {
                   size="icon"
                   onClick={() => copyToClipboard(code, 'Authorization Code')}
                   disabled={!code}
+                  aria-label="复制 Authorization Code"
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
@@ -116,6 +112,7 @@ export default function OAuthCallbackPage() {
                     variant="outline"
                     size="icon"
                     onClick={() => copyToClipboard(state, 'State')}
+                    aria-label="复制 State"
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -158,6 +155,7 @@ export default function OAuthCallbackPage() {
                   size="icon"
                   onClick={() => copyToClipboard(callbackUrl, '回调URL')}
                   disabled={!callbackUrl}
+                  aria-label="复制回调URL"
                 >
                   <Copy className="h-4 w-4" />
                 </Button>

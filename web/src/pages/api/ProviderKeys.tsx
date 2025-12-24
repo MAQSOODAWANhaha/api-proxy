@@ -3,7 +3,7 @@
  * 账号（上游服务商）API Keys 管理页：完整的增删改查和统计功能
  */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   Search,
   Plus,
@@ -34,6 +34,7 @@ import {
 import { toast } from 'sonner'
 import DialogPortal from './provider-keys/dialogs/DialogPortal'
 import { DialogType, LocalProviderKey } from './provider-keys/types'
+import { copyWithFeedback } from '../../lib/clipboard'
 
 
 // 数据转换工具函数
@@ -66,25 +67,11 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
   }
 }
 
-const transformProviderKeyToAPI = (localKey: Partial<LocalProviderKey>): any => {
-  return {
-    name: localKey.keyName,
-    api_key: localKey.keyValue,
-    is_active: localKey.status === 'active',
-    max_requests_per_minute: localKey.requestLimitPerMinute,
-    max_tokens_prompt_per_minute: localKey.tokenLimitPromptPerMinute,
-    max_requests_per_day: localKey.requestLimitPerDay,
-    weight: localKey.weight,
-  }
-}
-
 /** 页面主组件 */
 const ProviderKeysPage: React.FC = () => {
   // 数据状态
   const [data, setData] = useState<LocalProviderKey[]>([])
   const [dashboardStats, setDashboardStats] = useState<ProviderKeysDashboardStatsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   
   // UI状态
   const [searchTerm, setSearchTerm] = useState('')
@@ -115,11 +102,8 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 获取密钥列表数据
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      setLoading(true)
-      setError(null)
-      
       const response = await api.providerKeys.getList({
         page: currentPage,
         limit: pageSize,
@@ -139,11 +123,8 @@ const ProviderKeysPage: React.FC = () => {
       }
     } catch (error) {
       console.error('获取密钥列表失败:', error)
-      setError(error instanceof Error ? error.message : '获取数据失败')
-    } finally {
-      setLoading(false)
     }
-  }
+  }, [currentPage, pageSize, searchTerm, statusFilter, providerFilter])
 
   // 初始化数据加载
   useEffect(() => {
@@ -152,7 +133,7 @@ const ProviderKeysPage: React.FC = () => {
 
   useEffect(() => {
     fetchData()
-  }, [currentPage, pageSize, searchTerm, statusFilter, providerFilter])
+  }, [fetchData])
 
   // 获取所有账号列表
   const providers = useMemo(() => {
@@ -346,16 +327,6 @@ const ProviderKeysPage: React.FC = () => {
     setShowKeyValues(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
-  // 复制到剪贴板（与 /providers 页面复制 Base URL 的交互保持一致）
-  const handleCopy = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success(`${label}已复制到剪贴板`)
-    } catch {
-      toast.error('复制失败，请手动复制')
-    }
-  }
-
   // 渲染遮罩的API Key
   const renderMaskedKey = (key: string, id: string) => {
     const isVisible = showKeyValues[id]
@@ -373,7 +344,7 @@ const ProviderKeysPage: React.FC = () => {
           {isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
         <button
-          onClick={() => void handleCopy(key, 'API Key')}
+          onClick={() => void copyWithFeedback(key, 'API Key')}
           className="text-neutral-500 hover:text-neutral-700"
           title="复制 API Key"
           aria-label="复制 API Key"

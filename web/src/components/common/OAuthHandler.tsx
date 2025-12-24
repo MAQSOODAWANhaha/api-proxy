@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api, OAuthAuthorizeRequest, OAuthCallbackResponse } from '@/lib/api'
 import { toast } from 'sonner'
+import { copyWithFeedback } from '@/lib/clipboard'
 
 /** OAuth状态类型 */
 export type OAuthStatus = 'idle' | 'authorizing' | 'waiting_code' | 'exchanging' | 'success' | 'error' | 'cancelled'
@@ -167,14 +168,8 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
   /** 复制授权URL */
   const copyAuthUrl = useCallback(async () => {
     if (!authUrl) return
-    
-    try {
-      await navigator.clipboard.writeText(authUrl)
-      toast.success('授权链接已复制到剪贴板')
-    } catch (error) {
-      console.error('复制失败:', error)
-      toast.error('复制失败，请手动复制')
-    }
+
+    await copyWithFeedback(authUrl, '授权链接')
   }, [authUrl])
 
   /** 取消OAuth流程 */
@@ -283,6 +278,7 @@ const OAuthHandler: React.FC<OAuthHandlerProps> = ({
                 size="sm"
                 variant="outline"
                 onClick={copyAuthUrl}
+                aria-label="复制授权链接"
               >
                 <Copy className="h-4 w-4" />
               </Button>

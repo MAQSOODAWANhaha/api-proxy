@@ -4,6 +4,7 @@ import { createSafeStats, safeCurrency, safeDateTime, safeLargeNumber, safePerce
 import { ApiKey } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
+import { BarChart3 } from 'lucide-react';
 
 const StatsDialog: React.FC<{
   item: ApiKey;
@@ -292,8 +293,8 @@ const StatsDialog: React.FC<{
             <div className="p-3 bg-neutral-50 rounded-lg">
               <div className="text-sm text-neutral-600">费用/天</div>
               <div className="font-medium">
-                {parseFloat(item.max_cost_per_day as any) > 0
-                  ? `$${(parseFloat(item.max_cost_per_day as any)).toFixed(2)}`
+                {Number(item.max_cost_per_day || 0) > 0
+                  ? `$${Number(item.max_cost_per_day || 0).toFixed(2)}`
                   : "无"}
               </div>
             </div>
