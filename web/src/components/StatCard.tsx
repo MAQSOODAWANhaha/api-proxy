@@ -3,7 +3,7 @@
  * 今日概览统计卡片，贴近第一张图的小卡片风格。
  */
 import React from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
+import { Card, CardContent } from './ui/card'
 
 /** 统计卡片属性 */
 export interface StatCardProps {

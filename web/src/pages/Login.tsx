@@ -12,8 +12,14 @@ import { Eye, EyeOff, User, Lock, AlertCircle, Loader2 } from 'lucide-react'
 const LoginPage: React.FC = () => {
   const { login, isLoading, error, clearError } = useAuthStore()
   const navigate = useNavigate()
-  const location = useLocation() as any
-  const fromPath: string | undefined = location?.state?.from
+  const location = useLocation()
+  const fromPath = (() => {
+    const state = location.state
+    if (!state || typeof state !== 'object') return undefined
+    if (!('from' in state)) return undefined
+    const value = (state as { from?: unknown }).from
+    return typeof value === 'string' ? value : undefined
+  })()
   
   const [showPassword, setShowPassword] = useState(false)
   const [username, setUsername] = useState('')

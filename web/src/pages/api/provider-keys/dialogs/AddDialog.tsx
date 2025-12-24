@@ -4,12 +4,12 @@ import ModernSelect from '../../../../components/common/ModernSelect'
 import AuthTypeSelector from '../../../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthResult, OAuthStatus } from '../../../../components/common/OAuthHandler'
 import { api, ProviderType } from '../../../../lib/api'
-import { LocalProviderKey, ProviderKeyFormState } from '../types'
+import { ProviderKeyFormState } from '../types'
 
 /** 添加对话框 */
 const AddDialog: React.FC<{
   onClose: () => void
-  onSubmit: (item: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => void
+  onSubmit: (item: ProviderKeyFormState) => void
 }> = ({ onClose, onSubmit }) => {
   const [formData, setFormData] = useState<ProviderKeyFormState>({
     provider: '',
@@ -137,7 +137,7 @@ const AddDialog: React.FC<{
   }> => {
     if (!selectedProviderType?.auth_configs) return []
 
-    const authConfigs = selectedProviderType.auth_configs as any
+    const authConfigs = selectedProviderType.auth_configs
     const currentAuthConfig = authConfigs[formData.auth_type]
 
     return currentAuthConfig?.extra_params || []
@@ -150,25 +150,7 @@ const AddDialog: React.FC<{
       toast.info('请先完成OAuth授权流程')
       return
     }
-    onSubmit({
-      name: formData.keyName,
-      api_key: formData.keyValue,
-      provider: formData.provider,
-      auth_type: formData.auth_type,
-      weight: formData.weight,
-      max_requests_per_minute: formData.requestLimitPerMinute,
-      max_tokens_prompt_per_minute: formData.tokenLimitPromptPerMinute,
-      max_requests_per_day: formData.requestLimitPerDay,
-      is_active: formData.status === 'active',
-      keyName: formData.keyName,
-      keyValue: formData.keyValue,
-      requestLimitPerMinute: formData.requestLimitPerMinute,
-      tokenLimitPromptPerMinute: formData.tokenLimitPromptPerMinute,
-      requestLimitPerDay: formData.requestLimitPerDay,
-      status: formData.status,
-      provider_type_id: formData.provider_type_id,
-      project_id: formData.project_id,
-    } as any)
+    onSubmit(formData)
   }
 
   // 处理数字输入框的增减

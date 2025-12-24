@@ -130,6 +130,7 @@ const MultiLevelMenu: React.FC<MultiLevelMenuProps> = ({
 
   const parentMinH = compact ? 'min-h-[38px]' : 'min-h-[44px]'
   const childMinH = compact ? 'min-h-[34px]' : 'min-h-[38px]'
+  const inactiveStyle: React.CSSProperties = { '--menu-text': DEFAULT_TEXT }
 
   /** 容器样式 */
   const containerClass = useMemo(
@@ -163,7 +164,7 @@ const MultiLevelMenu: React.FC<MultiLevelMenuProps> = ({
                   disabled={p.disabled}
                   onClick={() => commit({ level: 'parent', key: p.key })}
                   className={[parentRowBase, parentMinH, parentTextClass, p.disabled ? 'opacity-50 cursor-not-allowed' : ''].join(' ')}
-                  style={parentActive ? { backgroundColor: PRIMARY } : { ['--menu-text' as any]: DEFAULT_TEXT }}
+                  style={parentActive ? { backgroundColor: PRIMARY } : inactiveStyle}
                   aria-selected={parentActive}
                 >
                   {/* 父级图标（可选） */}
@@ -211,7 +212,7 @@ const MultiLevelMenu: React.FC<MultiLevelMenuProps> = ({
                             childTextClass,
                             c.disabled ? 'opacity-50 cursor-not-allowed' : '',
                           ].join(' ')}
-                          style={childActive ? { backgroundColor: PRIMARY } : { ['--menu-text' as any]: DEFAULT_TEXT }}
+                          style={childActive ? { backgroundColor: PRIMARY } : inactiveStyle}
                           aria-selected={childActive}
                         >
                           {c.icon && (

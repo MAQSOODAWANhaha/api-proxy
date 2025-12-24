@@ -5,12 +5,6 @@
 
 import React, { useState, useCallback } from 'react'
 import { Check, ChevronDown, Search, X } from 'lucide-react'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 

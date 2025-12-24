@@ -139,9 +139,7 @@ export function useDashboardCards(): UseDashboardCardsReturn {
         setError(errorMessage)
         
         // 在错误情况下提供默认数据，确保UI不会完全破坏
-        if (cards.length === 0) {
-          setCards(getDefaultCards())
-        }
+        setCards((prev) => (prev.length === 0 ? getDefaultCards() : prev))
       }
     } catch (error) {
       console.error('[useDashboardCards] Fetch error:', error)
@@ -152,9 +150,7 @@ export function useDashboardCards(): UseDashboardCardsReturn {
       setError(errorMessage)
       
       // 提供默认数据
-      if (cards.length === 0) {
-        setCards(getDefaultCards())
-      }
+      setCards((prev) => (prev.length === 0 ? getDefaultCards() : prev))
     } finally {
       if (mountedRef.current) {
         setIsLoading(false)

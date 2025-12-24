@@ -60,8 +60,8 @@ const UsersPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [isActiveFilter, setIsActiveFilter] = useState<'all' | 'true' | 'false'>('all')
   const [isAdminFilter, setIsAdminFilter] = useState<'all' | 'true' | 'false'>('all')
-  const [sortField, setSortField] = useState<'created_at' | 'updated_at' | 'username' | 'email'>('created_at')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const sortField: UserQueryParams['sort'] = 'created_at'
+  const sortOrder: UserQueryParams['order'] = 'desc'
   
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)

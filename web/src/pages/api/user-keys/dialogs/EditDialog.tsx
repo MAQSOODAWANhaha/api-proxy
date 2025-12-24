@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import FilterSelect from '../../../../components/common/FilterSelect';
+import React, { useEffect, useState, useCallback } from 'react';
 import ModernSelect from '../../../../components/common/ModernSelect';
 import MultiSelect from '../../../../components/common/MultiSelect';
 import { api, ProviderType, SchedulingStrategy } from '../../../../lib/api';
@@ -20,22 +19,19 @@ const EditDialog: React.FC<{
   const [userProviderKeys, setUserProviderKeys] = useState<UserProviderKey[]>(
     []
   );
-  const [loadingProviderTypes, setLoadingProviderTypes] = useState(false);
-  const [loadingSchedulingStrategies, setLoadingSchedulingStrategies] =
-    useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   // 获取API Key完整详情数据
-  const fetchDetailData = async () => {
+  const fetchDetailData = useCallback(async () => {
     setLoadingDetail(true);
     try {
       const response = await api.userService.getKeyDetail(item.id);
       if (response.success && response.data) {
         // 使用完整的详情数据更新formData
-        setFormData({
-          ...formData, // 保留原有的字段
+        setFormData((prev) => ({
+          ...prev, // 保留原有的字段
           ...response.data,
           // 确保数字字段有默认值
           retry_count: response.data.retry_count || 0,
@@ -46,7 +42,7 @@ const EditDialog: React.FC<{
           max_cost_per_day: response.data.max_cost_per_day || 0,
           // 确保数组字段有默认值
           user_provider_keys_ids: response.data.user_provider_keys_ids || [],
-        });
+        }));
       } else {
         console.error("获取API Key详情失败:", response.message);
       }
@@ -55,11 +51,10 @@ const EditDialog: React.FC<{
     } finally {
       setLoadingDetail(false);
     }
-  };
+  }, [item.id]);
 
   // 获取服务商类型列表
   const fetchProviderTypesLocal = async () => {
-    setLoadingProviderTypes(true);
     try {
       const response = await api.auth.getProviderTypes({ is_active: true });
 
@@ -70,14 +65,11 @@ const EditDialog: React.FC<{
       }
     } catch (err) {
       console.error("[EditDialog] 获取服务商类型异常:", err);
-    } finally {
-      setLoadingProviderTypes(false);
     }
   };
 
   // 获取调度策略列表
   const fetchSchedulingStrategiesLocal = async () => {
-    setLoadingSchedulingStrategies(true);
     try {
       const response = await api.auth.getSchedulingStrategies();
       if (response.success && response.data) {
@@ -85,8 +77,6 @@ const EditDialog: React.FC<{
       }
     } catch (err) {
       console.error("获取调度策略失败:", err);
-    } finally {
-      setLoadingSchedulingStrategies(false);
     }
   };
 
@@ -167,7 +157,7 @@ const EditDialog: React.FC<{
       ]);
     };
     initializeEditDialog();
-  }, []);
+  }, [fetchDetailData]);
 
   // 当详情数据加载完成且provider_type_id确定后，获取对应的用户提供商密钥
   useEffect(() => {

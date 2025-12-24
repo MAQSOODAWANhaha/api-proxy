@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import FilterSelect from '../../../../components/common/FilterSelect';
 import ModernSelect from '../../../../components/common/ModernSelect';
 import MultiSelect from '../../../../components/common/MultiSelect';
 import { api, ProviderType, SchedulingStrategy } from '../../../../lib/api';

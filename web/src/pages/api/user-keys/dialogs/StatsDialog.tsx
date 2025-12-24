@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../../lib/api';
 import { createSafeStats, safeCurrency, safeDateTime, safeLargeNumber, safePercentage, safeResponseTime, safeTrendData } from '../../../../lib/dataValidation';
 import { ApiKey } from '../types';
-import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend } from 'recharts';
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { BarChart3 } from 'lucide-react';
 
@@ -15,7 +15,6 @@ const StatsDialog: React.FC<{
 
   // 趋势数据状态管理
   const [trendData, setTrendData] = useState<any[]>([]);
-  const [trendLoading, setTrendLoading] = useState(true);
   const [detailedTrendData, setDetailedTrendData] = useState<any[]>([]);
   const [detailedTrendLoading, setDetailedTrendLoading] = useState(true);
 
@@ -23,7 +22,6 @@ const StatsDialog: React.FC<{
   useEffect(() => {
     const fetchTrendData = async () => {
       try {
-        setTrendLoading(true);
         const response = await api.userService.getKeyTrends(item.id, {
           days: 7,
         });
@@ -44,8 +42,6 @@ const StatsDialog: React.FC<{
       } catch (error) {
         console.error("获取趋势数据失败:", error);
         setTrendData([]);
-      } finally {
-        setTrendLoading(false);
       }
     };
 

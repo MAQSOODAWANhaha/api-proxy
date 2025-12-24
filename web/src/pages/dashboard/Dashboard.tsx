@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, TrendingUp, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 import { useDashboardCards } from '../../hooks/useDashboardCards'
 import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
@@ -29,6 +29,13 @@ interface StatItem {
   delta: string
   icon: React.ReactNode
   color: string
+}
+
+const DASHBOARD_ICON_MAP: Record<string, React.ReactNode> = {
+  requests: <Activity size={18} />,
+  tokens: <Coins size={18} />,
+  latency: <Timer size={18} />,
+  success: <CheckCircle2 size={18} />
 }
 
 /** 时间范围类型 */
@@ -1373,14 +1380,6 @@ const DashboardPage: React.FC = () => {
   // 使用自定义hook获取仪表板数据
   const { cards, isLoading, error, refresh } = useDashboardCards()
 
-  // 图标映射
-  const iconMap: Record<string, React.ReactNode> = {
-    requests: <Activity size={18} />,
-    tokens: <Coins size={18} />,
-    latency: <Timer size={18} />,
-    success: <CheckCircle2 size={18} />
-  }
-
   // 将API数据转换为StatItem格式（保持UI组件不变）
   const stats: StatItem[] = useMemo(() => {
     return cards.map(card => ({
@@ -1388,7 +1387,7 @@ const DashboardPage: React.FC = () => {
       label: card.label,
       value: card.value,
       delta: card.delta,
-      icon: iconMap[card.key] || <Activity size={18} />,
+      icon: DASHBOARD_ICON_MAP[card.key] || <Activity size={18} />,
       color: card.color
     }))
   }, [cards])

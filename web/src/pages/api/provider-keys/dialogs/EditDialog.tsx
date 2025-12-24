@@ -1,16 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import ModernSelect from '../../../../components/common/ModernSelect'
 import AuthTypeSelector from '../../../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthResult, OAuthStatus } from '../../../../components/common/OAuthHandler'
 import { api, ProviderType } from '../../../../lib/api'
-import { LocalProviderKey, ProviderKeyEditFormState } from '../types'
+import { ProviderKeyEditFormState } from '../types'
 
 /** 编辑对话框 */
 const EditDialog: React.FC<{
-  item: LocalProviderKey
+  item: ProviderKeyEditFormState
   onClose: () => void
-  onSubmit: (item: LocalProviderKey) => void
+  onSubmit: (item: ProviderKeyEditFormState) => void
 }> = ({ item, onClose, onSubmit }) => {
   const [formData, setFormData] = useState<ProviderKeyEditFormState>({
     id: Number(item.id),
@@ -37,7 +37,7 @@ const EditDialog: React.FC<{
   const [oauthExtraParams, setOAuthExtraParams] = useState<{ [key: string]: string }>({})
 
   // 获取服务商类型列表
-  const fetchProviderTypes = async () => {
+  const fetchProviderTypes = useCallback(async () => {
     setLoadingProviderTypes(true)
     try {
       const response = await api.auth.getProviderTypes({ is_active: true })
@@ -59,12 +59,12 @@ const EditDialog: React.FC<{
     } finally {
       setLoadingProviderTypes(false)
     }
-  }
+  }, [item.provider])
 
   // 初始化：获取服务商类型
   React.useEffect(() => {
     fetchProviderTypes()
-  }, [])
+  }, [fetchProviderTypes])
 
   // OAuth处理函数
   const handleOAuthComplete = async (result: OAuthResult) => {
@@ -132,7 +132,7 @@ const EditDialog: React.FC<{
   }> => {
     if (!selectedProviderType?.auth_configs) return []
 
-    const authConfigs = selectedProviderType.auth_configs as any
+    const authConfigs = selectedProviderType.auth_configs
     const currentAuthConfig = authConfigs[formData.auth_type]
 
     return currentAuthConfig?.extra_params || []
@@ -145,26 +145,7 @@ const EditDialog: React.FC<{
       toast.info('请先完成OAuth授权流程')
       return
     }
-    onSubmit({
-      id: formData.id,
-      name: formData.keyName,
-      api_key: formData.keyValue,
-      provider: formData.provider,
-      auth_type: formData.auth_type,
-      weight: formData.weight,
-      max_requests_per_minute: formData.requestLimitPerMinute,
-      max_tokens_prompt_per_minute: formData.tokenLimitPromptPerMinute,
-      max_requests_per_day: formData.requestLimitPerDay,
-      is_active: formData.status === 'active',
-      keyName: formData.keyName,
-      keyValue: formData.keyValue,
-      requestLimitPerMinute: formData.requestLimitPerMinute,
-      tokenLimitPromptPerMinute: formData.tokenLimitPromptPerMinute,
-      requestLimitPerDay: formData.requestLimitPerDay,
-      status: formData.status,
-      provider_type_id: formData.provider_type_id,
-      project_id: formData.project_id,
-    } as any)
+    onSubmit(formData)
   }
 
   // 处理数字输入框的增减

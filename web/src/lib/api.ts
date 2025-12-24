@@ -180,6 +180,15 @@ export interface AuthConfig {
   client_id?: string
   scopes?: string
   pkce_required?: boolean
+  extra_params?: Array<{
+    key: string
+    label: string
+    default: string
+    required: boolean
+    type: string
+    placeholder?: string
+    description?: string
+  }>
 }
 
 export interface ProviderType {
@@ -306,6 +315,7 @@ export interface ProviderKey {
   status: {
     is_active: boolean
     health_status: ApiKeyHealthStatus
+    rate_limit_remaining_seconds?: number
   }
   created_at: string
   updated_at: string

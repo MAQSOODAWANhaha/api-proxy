@@ -3,15 +3,11 @@
  * 请求记录页面：完整的请求记录数据展示、搜索过滤和分页功能
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   Search,
-  Filter,
   RefreshCw,
   Calendar,
-  Clock,
-  AlertTriangle,
-  Info,
   XCircle,
   CheckCircle,
   ChevronLeft,
@@ -97,7 +93,7 @@ const LogsPage: React.FC = () => {
   const [totalPages, setTotalPages] = useState(0)
 
   // 获取仪表板统计数据
-  const fetchDashboardStats = async () => {
+  const fetchDashboardStats = useCallback(async () => {
     try {
       const response = await api.logs.getDashboardStats()
       if (response.success && response.data) {
@@ -106,10 +102,10 @@ const LogsPage: React.FC = () => {
     } catch (error) {
       console.error('获取仪表板统计数据失败:', error)
     }
-  }
+  }, [])
 
   // 获取日志列表数据
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
@@ -149,7 +145,7 @@ const LogsPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [currentPage, pageSize, searchTerm, methodFilter, statusFilter, userKeyNameFilter, providerKeyNameFilter])
 
   // 打开详情弹窗并从后端获取完整数据
   const openDetailDialog = async (traceId: number) => {
@@ -177,11 +173,11 @@ const LogsPage: React.FC = () => {
   // 初始化数据加载
   useEffect(() => {
     fetchDashboardStats()
-  }, [])
+  }, [fetchDashboardStats])
 
   useEffect(() => {
     fetchData()
-  }, [currentPage, pageSize, searchTerm, methodFilter, statusFilter, userKeyNameFilter, providerKeyNameFilter])
+  }, [fetchData])
 
   // 由于后端已经处理了过滤和分页，前端直接使用返回的数据
   const paginatedData = data
@@ -574,7 +570,7 @@ const LogDetailsDialog: React.FC<{
       date: d.toLocaleDateString(),
       time: d.toLocaleTimeString()
     }
-  }, [item?.created_at])
+  }, [item])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

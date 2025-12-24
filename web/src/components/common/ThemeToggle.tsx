@@ -16,6 +16,10 @@ export default function ThemeToggle() {
   const current = theme === 'system' ? systemTheme : theme
   const isDark = current === 'dark'
 
+  if (!mounted) {
+    return null
+  }
+
   return (
     <Button
       variant="outline"

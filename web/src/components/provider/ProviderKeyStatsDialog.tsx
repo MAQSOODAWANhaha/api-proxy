@@ -6,7 +6,7 @@
  * - 按模型统计：迷你饼图展示近7天请求占比（与 provider 对齐）
  */
 
-import React, { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ProviderKeyItem } from './ProviderKeysTable'
 import { api } from '@/lib/api'
@@ -21,10 +21,8 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  LineChart,
   Line,
   ComposedChart,
-  Area,
   Legend,
 } from 'recharts'
 
@@ -129,7 +127,9 @@ function lastNDays(n: number): string[] {
 
 /** 将 ISO 日期转为 MM-DD 展示 */
 function md(iso: string): string {
-  const [_, m, d] = iso.split('-')
+  const parts = iso.split('-')
+  const m = parts[1] || ''
+  const d = parts[2] || ''
   return `${m}-${d}`
 }
 
@@ -142,6 +142,31 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
   const [trendData, setTrendData] = useState<TrendData[]>([])
   const [trendLoading, setTrendLoading] = useState(false)
   const [useRealData, setUseRealData] = useState(false)
+
+  // 生成模拟数据（作为fallback）
+  const generateMockData = useCallback(() => {
+    const dates = lastNDays(30)
+    const baseId = item?.id || 'seed'
+    const mockData = dates.map((iso) => {
+      const h = hashStr(baseId + iso)
+      const req = (h % 131) + 30
+      const tokens = req * (8 + (h % 7))
+      const successRate = 0.8 + (h % 20) / 100
+      const avgResponse = 500 + (h % 2000)
+      const cost = (req * 0.12 * (1 + (h % 10) / 40)).toFixed(2)
+      return {
+        date: iso,
+        requests: req,
+        tokens,
+        successful_requests: Math.round(req * successRate),
+        failed_requests: Math.round(req * (1 - successRate)),
+        success_rate: Math.min(100, Math.max(0, successRate * 100)),
+        avg_response_time: avgResponse,
+        cost: Number(cost),
+      }
+    })
+    setTrendData(mockData)
+  }, [item?.id])
 
   // 获取趋势数据
   useEffect(() => {
@@ -180,32 +205,7 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
     }
 
     fetchTrendData()
-  }, [open, item?.id])
-
-  // 生成模拟数据（作为fallback）
-  const generateMockData = () => {
-    const dates = lastNDays(30)
-    const baseId = item?.id || 'seed'
-    const mockData = dates.map((iso) => {
-      const h = hashStr(baseId + iso)
-      const req = (h % 131) + 30
-      const tokens = req * (8 + (h % 7))
-      const successRate = 0.8 + (h % 20) / 100
-      const avgResponse = 500 + (h % 2000)
-      const cost = (req * 0.12 * (1 + (h % 10) / 40)).toFixed(2)
-      return {
-        date: iso,
-        requests: req,
-        tokens,
-        successful_requests: Math.round(req * successRate),
-        failed_requests: Math.round(req * (1 - successRate)),
-        success_rate: Math.min(100, Math.max(0, successRate * 100)),
-        avg_response_time: avgResponse,
-        cost: Number(cost),
-      }
-    })
-    setTrendData(mockData)
-  }
+  }, [open, item?.id, generateMockData])
 
   // 为柱状图准备最近7天的数据
   const recent7Days = useMemo(() => {

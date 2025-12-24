@@ -33,7 +33,7 @@ import {
 } from '../../lib/api'
 import { toast } from 'sonner'
 import DialogPortal from './provider-keys/dialogs/DialogPortal'
-import { DialogType, LocalProviderKey } from './provider-keys/types'
+import { DialogType, LocalProviderKey, ProviderKeyEditFormState, ProviderKeyFormState } from './provider-keys/types'
 import { copyWithFeedback } from '../../lib/clipboard'
 
 
@@ -61,7 +61,7 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
       avg_response_time: 0
     },
     // 添加限流剩余时间（可选字段）
-    rateLimitRemainingSeconds: (apiKey.status as any)?.rate_limit_remaining_seconds,
+    rateLimitRemainingSeconds: apiKey.status?.rate_limit_remaining_seconds,
     // 添加健康状态详情
     health_status_detail: apiKey.health_status_detail,
   }
@@ -162,7 +162,7 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 添加新API Key
-  const handleAdd = async (newKey: Omit<LocalProviderKey, 'id' | 'usage' | 'cost' | 'createdAt' | 'healthCheck'>) => {
+  const handleAdd = async (newKey: ProviderKeyFormState) => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
@@ -214,7 +214,7 @@ const ProviderKeysPage: React.FC = () => {
   }
 
   // 编辑API Key
-  const handleEdit = async (updatedKey: LocalProviderKey) => {
+  const handleEdit = async (updatedKey: ProviderKeyEditFormState) => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
@@ -325,6 +325,15 @@ const ProviderKeysPage: React.FC = () => {
   // 切换API Key可见性
   const toggleKeyVisibility = (id: string) => {
     setShowKeyValues(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const normalizeHealthStatus = (
+    status: string
+  ): 'healthy' | 'rate_limited' | 'unhealthy' => {
+    if (status === 'healthy' || status === 'rate_limited' || status === 'unhealthy') {
+      return status
+    }
+    return 'unhealthy'
   }
 
   // 渲染遮罩的API Key
@@ -531,7 +540,7 @@ const ProviderKeysPage: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <HealthStatusDetail
                         health_status_detail={item.health_status_detail}
-                        health_status={item.healthStatus as any}
+                        health_status={normalizeHealthStatus(item.healthStatus)}
                       />
                       <button
                         onClick={() => performHealthCheck(String(item.id))}
