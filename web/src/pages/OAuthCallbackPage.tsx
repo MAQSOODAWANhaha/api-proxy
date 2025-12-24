@@ -9,11 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Copy, ExternalLink, ArrowLeft } from 'lucide-react'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 
 export default function OAuthCallbackPage() {
   const navigate = useNavigate()
-  const { toast } = useToast()
   const [code, setCode] = useState<string>('')
   const [state, setState] = useState<string>('')
   const [scope, setScope] = useState<string>('')
@@ -37,16 +36,9 @@ export default function OAuthCallbackPage() {
   const copyToClipboard = async (text: string, type: string) => {
     try {
       await navigator.clipboard.writeText(text)
-      toast({
-        title: "复制成功",
-        description: `${type}已复制到剪贴板`,
-      })
+      toast.success(`${type}已复制到剪贴板`)
     } catch (err) {
-      toast({
-        title: "复制失败",
-        description: "请手动复制",
-        variant: "destructive",
-      })
+      toast.error('复制失败，请手动复制')
     }
   }
 
