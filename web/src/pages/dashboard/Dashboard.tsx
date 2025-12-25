@@ -20,7 +20,7 @@ import {
 import { Calendar as DatePicker } from '@/components/ui/calendar'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { DateRange } from 'react-day-picker'
-import { LoadingSpinner } from '@/components/ui/loading'
+import { LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
 
 /** 指标项接口 */
@@ -1082,10 +1082,7 @@ const PieChartWithTimeFilter: React.FC = () => {
       {/* 加载状态 */}
       {isLoading && (
         <div className="flex items-center justify-center h-80">
-          <div className="flex items-center gap-2 text-neutral-500">
-            <LoadingSpinner size="md" tone="muted" />
-            <span className="text-sm">加载模型使用数据...</span>
-          </div>
+          <LoadingState text="加载模型使用数据..." />
         </div>
       )}
 
@@ -1170,10 +1167,7 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
       {/* 加载状态 */}
       {isLoading && (
         <div className="flex items-center justify-center h-80">
-          <div className="flex items-center gap-2 text-neutral-500">
-            <LoadingSpinner size="md" tone="muted" />
-            <span className="text-sm">加载模型统计数据...</span>
-          </div>
+          <LoadingState text="加载模型统计数据..." />
         </div>
       )}
 
@@ -1233,10 +1227,7 @@ const TokenTrendChart: React.FC = () => {
       {/* 加载状态 */}
       {isLoading && (
         <div className="flex items-center justify-center h-80">
-          <div className="flex items-center gap-2 text-neutral-500">
-            <LoadingSpinner size="md" tone="muted" />
-            <span className="text-sm">加载Token趋势数据...</span>
-          </div>
+          <LoadingState text="加载Token趋势数据..." />
         </div>
       )}
 
@@ -1341,10 +1332,7 @@ const UserApiKeysTrendChart: React.FC = () => {
       {/* 加载状态 */}
       {isLoading && (
         <div className="flex items-center justify-center h-80">
-          <div className="flex items-center gap-2 text-neutral-500">
-            <LoadingSpinner size="md" tone="muted" />
-            <span className="text-sm">加载用户API Keys趋势数据...</span>
-          </div>
+          <LoadingState text="加载用户API Keys趋势数据..." />
         </div>
       )}
 

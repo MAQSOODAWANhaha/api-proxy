@@ -21,6 +21,7 @@ import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
 import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse } from '../lib/api'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
+import { Skeleton } from '@/components/ui/skeleton'
 
 // 使用从 api.ts 导出的日志数据接口
 
@@ -74,6 +75,7 @@ const LogsPage: React.FC = () => {
   // 数据状态
   const [data, setData] = useState<ProxyTraceListEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dashboardStats, setDashboardStats] = useState<LogsDashboardStatsResponse | null>(null)
   
@@ -92,9 +94,11 @@ const LogsPage: React.FC = () => {
   const [pageSize, setPageSize] = useState(20)
   const [totalItems, setTotalItems] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
+  const pageLoading = loading || statsLoading
 
   // 获取仪表板统计数据
   const fetchDashboardStats = useCallback(async () => {
+    setStatsLoading(true)
     try {
       const response = await api.logs.getDashboardStats()
       if (response.success && response.data) {
@@ -102,6 +106,8 @@ const LogsPage: React.FC = () => {
       }
     } catch (error) {
       console.error('获取仪表板统计数据失败:', error)
+    } finally {
+      setStatsLoading(false)
     }
   }, [])
 
@@ -240,11 +246,11 @@ const LogsPage: React.FC = () => {
               fetchData()
               fetchDashboardStats()
             }}
-            disabled={loading}
+            disabled={pageLoading}
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
+            {pageLoading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
         </div>
@@ -258,32 +264,51 @@ const LogsPage: React.FC = () => {
       )}
 
       {/* 统计信息 */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard
-          icon={<FileText size={18} />}
-          value={dashboardStats?.total_requests?.toString() || '0'}
-          label="总请求数"
-          color="#7c3aed"
-        />
-        <StatCard
-          icon={<CheckCircle size={18} />}
-          value={dashboardStats?.successful_requests?.toString() || '0'}
-          label="成功请求"
-          color="#10b981"
-        />
-        <StatCard
-          icon={<XCircle size={18} />}
-          value={dashboardStats?.failed_requests?.toString() || '0'}
-          label="失败请求"
-          color="#ef4444"
-        />
-        <StatCard
-          icon={<Timer size={18} />}
-          value={dashboardStats?.avg_response_time ? `${dashboardStats.avg_response_time}ms` : '0ms'}
-          label="平均响应时间"
-          color="#0ea5e9"
-        />
-      </div>
+      {pageLoading ? (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="flex-1">
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <StatCard
+            icon={<FileText size={18} />}
+            value={dashboardStats?.total_requests?.toString() || '0'}
+            label="总请求数"
+            color="#7c3aed"
+          />
+          <StatCard
+            icon={<CheckCircle size={18} />}
+            value={dashboardStats?.successful_requests?.toString() || '0'}
+            label="成功请求"
+            color="#10b981"
+          />
+          <StatCard
+            icon={<XCircle size={18} />}
+            value={dashboardStats?.failed_requests?.toString() || '0'}
+            label="失败请求"
+            color="#ef4444"
+          />
+          <StatCard
+            icon={<Timer size={18} />}
+            value={dashboardStats?.avg_response_time ? `${dashboardStats.avg_response_time}ms` : '0ms'}
+            label="平均响应时间"
+            color="#0ea5e9"
+          />
+        </div>
+      )}
 
       {/* 搜索和过滤 */}
       <div className="flex items-center gap-4 mb-4">
@@ -357,7 +382,7 @@ const LogsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {loading ? (
+              {pageLoading ? (
                 <tr>
                   <td colSpan={9} className="px-4 py-8 text-center">
                     <div className="flex justify-center items-center gap-2">

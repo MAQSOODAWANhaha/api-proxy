@@ -37,6 +37,7 @@ import {
   UpdateUserRequest,
 } from '../lib/userApi'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
+import { Skeleton } from '@/components/ui/skeleton'
 
 /** 弹窗类型 */
 type DialogType = 'add' | 'edit' | 'delete' | 'details' | 'resetPassword' | 'batchDelete' | null
@@ -54,6 +55,7 @@ const UsersPage: React.FC = () => {
   // 数据状态
   const [users, setUsers] = useState<UserType[]>([])
   const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState<UserStats>({ total: 0, active: 0, admin: 0, inactive: 0 })
   
@@ -77,6 +79,7 @@ const UsersPage: React.FC = () => {
 
   // 加载统计数据（避免分页/筛选时重复请求）
   const loadStats = useCallback(async () => {
+    setStatsLoading(true)
     try {
       const statsResponse = await userApi.getUsersStats()
       if (statsResponse.success && statsResponse.data) {
@@ -86,6 +89,8 @@ const UsersPage: React.FC = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载用户统计失败')
+    } finally {
+      setStatsLoading(false)
     }
   }, [])
 
@@ -165,6 +170,8 @@ const UsersPage: React.FC = () => {
   const formatDate = (timestamp: string) => {
     return new Date(timestamp).toLocaleDateString()
   }
+
+  const pageLoading = loading || statsLoading
 
   // 渲染用户状态
   const renderUserStatus = (isActive: boolean) => {
@@ -332,12 +339,15 @@ const UsersPage: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={loadUsers}
-            disabled={loading}
+            onClick={() => {
+              loadUsers()
+              loadStats()
+            }}
+            disabled={pageLoading}
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
+            {pageLoading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
           {selectedUsers.length > 0 && (
@@ -360,32 +370,51 @@ const UsersPage: React.FC = () => {
       </div>
 
       {/* 统计信息 */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard
-          icon={<Users size={18} />}
-          value={stats.total.toString()}
-          label="总用户数"
-          color="#7c3aed"
-        />
-        <StatCard
-          icon={<Activity size={18} />}
-          value={stats.active.toString()}
-          label="活跃用户"
-          color="#10b981"
-        />
-        <StatCard
-          icon={<Shield size={18} />}
-          value={stats.admin.toString()}
-          label="管理员"
-          color="#ef4444"
-        />
-        <StatCard
-          icon={<BarChart3 size={18} />}
-          value={stats.inactive.toString()}
-          label="非活跃用户"
-          color="#f59e0b"
-        />
-      </div>
+      {pageLoading ? (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="flex-1">
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <StatCard
+            icon={<Users size={18} />}
+            value={stats.total.toString()}
+            label="总用户数"
+            color="#7c3aed"
+          />
+          <StatCard
+            icon={<Activity size={18} />}
+            value={stats.active.toString()}
+            label="活跃用户"
+            color="#10b981"
+          />
+          <StatCard
+            icon={<Shield size={18} />}
+            value={stats.admin.toString()}
+            label="管理员"
+            color="#ef4444"
+          />
+          <StatCard
+            icon={<BarChart3 size={18} />}
+            value={stats.inactive.toString()}
+            label="非活跃用户"
+            color="#f59e0b"
+          />
+        </div>
+      )}
 
       {/* 搜索和过滤 */}
       <div className="flex items-center gap-4 mb-4">
@@ -425,11 +454,11 @@ const UsersPage: React.FC = () => {
 
       {/* 数据表格 */}
       <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <LoadingState text="加载中..." />
-          </div>
-        ) : (
+      {pageLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <LoadingState text="加载中..." />
+        </div>
+      ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[1200px]">

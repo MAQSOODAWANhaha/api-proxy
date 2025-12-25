@@ -20,6 +20,7 @@ import FilterSelect from '../components/common/FilterSelect'
 import { api, ProviderType } from '../lib/api'
 import { Badge } from '@/components/ui/badge'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
+import { Skeleton } from '@/components/ui/skeleton'
 import { copyWithFeedback } from '../lib/clipboard'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
@@ -135,26 +136,45 @@ const ProvidersPage: React.FC = () => {
       </div>
 
       {/* 统计卡 */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-        <StatCard
-          icon={<Building2 size={18} />}
-          value={stats.total.toString()}
-          label="服务商总数"
-          color="#7c3aed"
-        />
-        <StatCard
-          icon={<CheckCircle2 size={18} />}
-          value={stats.active.toString()}
-          label="启用服务商"
-          color="#10b981"
-        />
-        <StatCard
-          icon={<XCircle size={18} />}
-          value={stats.inactive.toString()}
-          label="禁用服务商"
-          color="#f59e0b"
-        />
-      </div>
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="flex-1">
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
+          <StatCard
+            icon={<Building2 size={18} />}
+            value={stats.total.toString()}
+            label="服务商总数"
+            color="#7c3aed"
+          />
+          <StatCard
+            icon={<CheckCircle2 size={18} />}
+            value={stats.active.toString()}
+            label="启用服务商"
+            color="#10b981"
+          />
+          <StatCard
+            icon={<XCircle size={18} />}
+            value={stats.inactive.toString()}
+            label="禁用服务商"
+            color="#f59e0b"
+          />
+        </div>
+      )}
 
       {/* 搜索与筛选 */}
       <div className="flex items-center gap-4 mb-4">

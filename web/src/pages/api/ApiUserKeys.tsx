@@ -28,6 +28,7 @@ import DialogPortal from "./user-keys/dialogs/DialogPortal";
 import { ApiKey, DialogType } from "./user-keys/types";
 import { copyWithFeedback } from "../../lib/clipboard";
 import { LoadingSpinner, LoadingState } from "@/components/ui/loading";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /** 页面主组件 */
 const ApiUserKeysPage: React.FC = () => {
@@ -257,31 +258,50 @@ const ApiUserKeysPage: React.FC = () => {
       )}
 
       {/* 统计信息 */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          icon={<Key size={18} />}
-          value={totalItems.toString()}
-          label="总密钥数"
-          color="#7c3aed"
-        />
-        <StatCard
-          icon={<Activity size={18} />}
-          value={data.filter((item) => item.is_active).length.toString()}
-          label="活跃密钥"
-          color="#10b981"
-        />
-        <StatCard
-          icon={<Users size={18} />}
-          value={data
-            .reduce(
-              (sum, item) => sum + (item.usage?.successful_requests || 0),
-              0
-            )
-            .toLocaleString()}
-          label="总使用次数"
-          color="#0ea5e9"
-        />
-      </div>
+      {loading ? (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="flex-1">
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <StatCard
+            icon={<Key size={18} />}
+            value={totalItems.toString()}
+            label="总密钥数"
+            color="#7c3aed"
+          />
+          <StatCard
+            icon={<Activity size={18} />}
+            value={data.filter((item) => item.is_active).length.toString()}
+            label="活跃密钥"
+            color="#10b981"
+          />
+          <StatCard
+            icon={<Users size={18} />}
+            value={data
+              .reduce(
+                (sum, item) => sum + (item.usage?.successful_requests || 0),
+                0
+              )
+              .toLocaleString()}
+            label="总使用次数"
+            color="#0ea5e9"
+          />
+        </div>
+      )}
 
       {/* 搜索和过滤 */}
       <div className="flex items-center gap-4 mb-4">

@@ -158,6 +158,7 @@ const ProviderKeysPage: React.FC = () => {
 
   // 由于后端已经处理了过滤和分页，前端直接使用返回的数据
   const paginatedData = data
+  const pageLoading = loading || statsLoading
   
   // 重置页码当过滤条件改变时
   React.useEffect(() => {
@@ -393,11 +394,11 @@ const ProviderKeysPage: React.FC = () => {
               fetchData()
               fetchDashboardStats()
             }}
-            disabled={loading}
+            disabled={pageLoading}
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
             title="刷新数据"
           >
-            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
+            {pageLoading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
           <button
@@ -418,7 +419,7 @@ const ProviderKeysPage: React.FC = () => {
       )}
 
       {/* 统计信息 */}
-      {statsLoading ? (
+      {pageLoading ? (
         <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
             <div
@@ -520,10 +521,12 @@ const ProviderKeysPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {loading ? (
+              {pageLoading ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center">
-                    <LoadingState text="加载中..." />
+                    <div className="flex justify-center">
+                      <LoadingState text="加载中..." />
+                    </div>
                   </td>
                 </tr>
               ) : paginatedData.length === 0 ? (
