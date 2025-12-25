@@ -1,4 +1,5 @@
-use crate::management::middleware::auth::AuthContext;
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::{RequestId, auth::AuthContext};
 use crate::management::services::provider_types;
 use crate::management::{response, server::ManagementState};
 use crate::types::TimezoneContext;
@@ -25,6 +26,7 @@ pub struct ProviderTypesQuery {
 pub async fn list_provider_types(
     State(state): State<ManagementState>,
     Query(query): Query<ProviderTypesQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
     // 兼容旧逻辑：默认只返回启用的服务商；Providers 页面可通过 include_inactive=true 获取全量
@@ -40,7 +42,14 @@ pub async fn list_provider_types(
             response::success(data)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::Config,
+                "list_provider_types_failed",
+                "获取服务商类型列表失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }

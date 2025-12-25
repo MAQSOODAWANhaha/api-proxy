@@ -8,7 +8,9 @@
     clippy::unnecessary_wraps
 )]
 
-use super::middleware::{IpFilterConfig, ip_filter_middleware, timezone_middleware};
+use super::middleware::{
+    IpFilterConfig, ip_filter_middleware, request_id_middleware, timezone_middleware,
+};
 use crate::app::{context::AppContext, task_scheduler::TaskScheduler, tasks::TaskType};
 use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
 use crate::auth::api_key_oauth_service::ApiKeyOauthService;
@@ -353,6 +355,9 @@ impl ManagementServer {
         } else {
             app = app.layer(service_builder);
         }
+
+        // 添加请求ID中间件
+        app = app.layer(axum::middleware::from_fn(request_id_middleware));
 
         // 添加时区中间件
         app = app.layer(axum::middleware::from_fn(timezone_middleware));

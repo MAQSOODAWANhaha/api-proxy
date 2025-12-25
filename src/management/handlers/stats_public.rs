@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use crate::{
     error::{ProxyError, Result},
-    lerror, linfo,
-    logging::{LogComponent, LogStage},
+    linfo,
+    logging::{LogComponent, LogStage, log_management_error},
     management::{
         response,
         server::ManagementState,
@@ -140,7 +140,7 @@ pub async fn get_stats_overview(
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<OverviewQuery>,
 ) -> Response {
-    let request_id = Uuid::new_v4();
+    let request_id = Uuid::new_v4().to_string();
     let timezone = timezone_ctx.timezone;
     let service = StatsService::new(state.database.as_ref());
 
@@ -165,7 +165,7 @@ pub async fn get_stats_overview(
     match response {
         Ok(summary) => {
             linfo!(
-                request_id,
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_overview_success",
@@ -182,14 +182,13 @@ pub async fn get_stats_overview(
             )))
         }
         Err(err) => {
-            err.log();
-            lerror!(
-                request_id,
+            log_management_error(
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_overview_failed",
                 "public stats overview failed",
-                error = %err,
+                &err,
             );
             response::app_error(err)
         }
@@ -202,7 +201,7 @@ pub async fn get_stats_trend(
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<TrendQuery>,
 ) -> Response {
-    let request_id = Uuid::new_v4();
+    let request_id = Uuid::new_v4().to_string();
     let timezone = timezone_ctx.timezone;
     let service = StatsService::new(state.database.as_ref());
 
@@ -228,7 +227,7 @@ pub async fn get_stats_trend(
     match response {
         Ok(trend) => {
             linfo!(
-                request_id,
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_trend_success",
@@ -238,14 +237,13 @@ pub async fn get_stats_trend(
             response::success(TrendResponse { trend })
         }
         Err(err) => {
-            err.log();
-            lerror!(
-                request_id,
+            log_management_error(
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_trend_failed",
                 "public stats trend failed",
-                error = %err,
+                &err,
             );
             response::app_error(err)
         }
@@ -258,7 +256,7 @@ pub async fn get_stats_model_share(
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<ModelShareQuery>,
 ) -> Response {
-    let request_id = Uuid::new_v4();
+    let request_id = Uuid::new_v4().to_string();
     let timezone = timezone_ctx.timezone;
     let service = StatsService::new(state.database.as_ref());
 
@@ -284,7 +282,7 @@ pub async fn get_stats_model_share(
     match response {
         Ok(ModelSharePayload { today, total }) => {
             linfo!(
-                request_id,
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_model_share_success",
@@ -295,14 +293,13 @@ pub async fn get_stats_model_share(
             response::success(ModelShareResponse { today, total })
         }
         Err(err) => {
-            err.log();
-            lerror!(
-                request_id,
+            log_management_error(
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_model_share_failed",
                 "public stats model share failed",
-                error = %err,
+                &err,
             );
             response::app_error(err)
         }
@@ -315,7 +312,7 @@ pub async fn get_stats_logs(
     Extension(timezone_ctx): Extension<Arc<TimezoneContext>>,
     Query(query): Query<LogsQuery>,
 ) -> Response {
-    let request_id = Uuid::new_v4();
+    let request_id = Uuid::new_v4().to_string();
     let timezone = timezone_ctx.timezone;
     let service = StatsService::new(state.database.as_ref());
 
@@ -343,7 +340,7 @@ pub async fn get_stats_logs(
     match response {
         Ok(logs) => {
             linfo!(
-                request_id,
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_logs_success",
@@ -355,14 +352,13 @@ pub async fn get_stats_logs(
             response::success(LogsResponse { logs })
         }
         Err(err) => {
-            err.log();
-            lerror!(
-                request_id,
+            log_management_error(
+                &request_id,
                 LogStage::ExternalApi,
                 LogComponent::Statistics,
                 "stats_logs_failed",
                 "public stats logs failed",
-                error = %err,
+                &err,
             );
             response::app_error(err)
         }

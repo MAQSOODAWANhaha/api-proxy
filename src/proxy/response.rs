@@ -169,5 +169,8 @@ fn build_auth_failure_message(err: &AuthError) -> String {
         AuthError::Pkce(e) => format!("PKCE 验证失败：{e}"),
         AuthError::Message(msg) => msg.clone(),
         AuthError::UsageLimitExceeded(info) => format_rate_limit_message(info),
+        AuthError::TaskAlreadyRunning | AuthError::TaskNotRunning | AuthError::TaskNotPaused => {
+            "OAuth 刷新任务状态异常".to_string()
+        }
     }
 }

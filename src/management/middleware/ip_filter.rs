@@ -3,6 +3,7 @@
 //! 提供基于IP地址的访问控制功能
 
 use crate::{
+    error::{Result, config::ConfigError},
     ldebug,
     logging::{LogComponent, LogStage},
     lwarn,
@@ -27,10 +28,7 @@ pub struct IpFilterConfig {
 
 impl IpFilterConfig {
     /// 从字符串列表创建配置
-    pub fn from_strings(
-        allowed: &[String],
-        denied: &[String],
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_strings(allowed: &[String], denied: &[String]) -> Result<Self> {
         let mut allowed_ips = Vec::new();
         let mut denied_ips = Vec::new();
 
@@ -49,12 +47,16 @@ impl IpFilterConfig {
                     // 尝试解析为单个IP地址
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
-                            IpAddr::V4(ipv4) => {
-                                IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?)
-                            }
-                            IpAddr::V6(ipv6) => {
-                                IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?)
-                            }
+                            IpAddr::V4(ipv4) => IpNetwork::V4(
+                                ipnetwork::Ipv4Network::new(ipv4, 32).map_err(|err| {
+                                    ConfigError::Load(format!("无效的允许IP: {ip_str}, {err}"))
+                                })?,
+                            ),
+                            IpAddr::V6(ipv6) => IpNetwork::V6(
+                                ipnetwork::Ipv6Network::new(ipv6, 128).map_err(|err| {
+                                    ConfigError::Load(format!("无效的允许IP: {ip_str}, {err}"))
+                                })?,
+                            ),
                         };
                         allowed_ips.push(network);
                     }
@@ -76,12 +78,16 @@ impl IpFilterConfig {
                     );
                     if let Ok(ip) = ip_str.parse::<IpAddr>() {
                         let network = match ip {
-                            IpAddr::V4(ipv4) => {
-                                IpNetwork::V4(ipnetwork::Ipv4Network::new(ipv4, 32)?)
-                            }
-                            IpAddr::V6(ipv6) => {
-                                IpNetwork::V6(ipnetwork::Ipv6Network::new(ipv6, 128)?)
-                            }
+                            IpAddr::V4(ipv4) => IpNetwork::V4(
+                                ipnetwork::Ipv4Network::new(ipv4, 32).map_err(|err| {
+                                    ConfigError::Load(format!("无效的拒绝IP: {ip_str}, {err}"))
+                                })?,
+                            ),
+                            IpAddr::V6(ipv6) => IpNetwork::V6(
+                                ipnetwork::Ipv6Network::new(ipv6, 128).map_err(|err| {
+                                    ConfigError::Load(format!("无效的拒绝IP: {ip_str}, {err}"))
+                                })?,
+                            ),
                         };
                         denied_ips.push(network);
                     }
@@ -147,7 +153,7 @@ pub async fn ip_filter_middleware(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> std::result::Result<Response, StatusCode> {
     let client_ip = addr.ip();
 
     // 从请求扩展中获取IP过滤配置

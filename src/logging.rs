@@ -311,6 +311,18 @@ pub fn log_proxy_error(
     }
 }
 
+/// 管理端错误日志统一入口（不附加额外字段）
+pub fn log_management_error(
+    request_id: &str,
+    stage: LogStage,
+    component: LogComponent,
+    operation: &str,
+    message: &str,
+    error: &ProxyError,
+) {
+    log_proxy_error(request_id, stage, component, operation, message, error, &[]);
+}
+
 /// 格式化请求头为人类可读的字符串（带脱敏处理）
 pub fn format_request_headers(headers: &pingora_http::RequestHeader) -> String {
     let mut formatted = Vec::new();

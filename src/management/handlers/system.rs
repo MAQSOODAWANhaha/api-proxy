@@ -1,5 +1,7 @@
 //! # 系统信息处理器
 
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::RequestId;
 use crate::management::response;
 use crate::management::server::ManagementState;
 use crate::management::services::system;
@@ -19,11 +21,21 @@ pub async fn get_system_info(State(state): State<ManagementState>) -> axum::resp
 }
 
 /// 获取系统指标
-pub async fn get_system_metrics(State(_state): State<ManagementState>) -> axum::response::Response {
+pub async fn get_system_metrics(
+    State(_state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
+) -> axum::response::Response {
     match system::collect_system_metrics().await {
         Ok(metrics) => response::success(metrics),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::Main,
+                "get_system_metrics_failed",
+                "获取系统指标失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }

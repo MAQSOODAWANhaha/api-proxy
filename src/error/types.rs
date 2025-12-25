@@ -175,6 +175,9 @@ impl ProxyError {
                 auth::AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
                 auth::AuthError::ApiKeyMissing => "API_KEY_MISSING",
                 auth::AuthError::UsageLimitExceeded(_) => "RATE_LIMIT_EXCEEDED",
+                auth::AuthError::TaskAlreadyRunning => "OAUTH_REFRESH_TASK_ALREADY_RUNNING",
+                auth::AuthError::TaskNotRunning => "OAUTH_REFRESH_TASK_NOT_RUNNING",
+                auth::AuthError::TaskNotPaused => "OAUTH_REFRESH_TASK_NOT_PAUSED",
                 _ => "AUTHENTICATION_FAILED",
             },
             Self::KeyPool(pool_err) => match pool_err {
@@ -291,6 +294,9 @@ impl ProxyError {
         match self {
             Self::Authentication(auth_err) => match auth_err {
                 auth::AuthError::UsageLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+                auth::AuthError::TaskAlreadyRunning
+                | auth::AuthError::TaskNotRunning
+                | auth::AuthError::TaskNotPaused => StatusCode::CONFLICT,
                 _ => StatusCode::UNAUTHORIZED,
             },
             Self::Config(_) | Self::Database(_) | Self::Internal(_) => {

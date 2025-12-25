@@ -1,7 +1,8 @@
 //! # 用户管理处理器
 #![allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 
-use crate::management::middleware::auth::AuthContext;
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::{RequestId, auth::AuthContext};
 use crate::management::services::shared::ServiceResponse;
 use crate::management::services::users::{
     BatchDeleteRequest, ChangePasswordRequest, CreateUserRequest, ListUsersResult,
@@ -16,13 +17,21 @@ use std::sync::Arc;
 /// 获取用户统计信息（用于管理端统计卡片）
 pub async fn get_user_stats(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = UsersService::new(&state);
     match service.stats(auth_context.as_ref()).await {
         Ok(user_stats) => response::success(user_stats),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_stats_failed",
+                "获取用户统计失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -31,6 +40,7 @@ pub async fn get_user_stats(
 pub async fn list_users(
     State(state): State<ManagementState>,
     Query(query): Query<UserQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -41,7 +51,14 @@ pub async fn list_users(
     {
         Ok(ListUsersResult { users, pagination }) => response::paginated(users, pagination),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "list_users_failed",
+                "获取用户列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -50,6 +67,7 @@ pub async fn list_users(
 /// 创建用户
 pub async fn create_user(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserRequest>,
@@ -64,7 +82,14 @@ pub async fn create_user(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "create_user_failed",
+                "创建用户失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -74,6 +99,7 @@ pub async fn create_user(
 pub async fn get_user(
     State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -84,7 +110,14 @@ pub async fn get_user(
     {
         Ok(user) => response::success(user),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_failed",
+                "获取用户失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -93,6 +126,7 @@ pub async fn get_user(
 /// 获取用户档案
 pub async fn get_user_profile(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -103,7 +137,14 @@ pub async fn get_user_profile(
     {
         Ok(profile) => response::success(profile),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "get_user_profile_failed",
+                "获取用户档案失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -112,6 +153,7 @@ pub async fn get_user_profile(
 /// 更新用户档案
 pub async fn update_user_profile(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<UpdateProfileRequest>,
@@ -126,7 +168,14 @@ pub async fn update_user_profile(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "update_user_profile_failed",
+                "更新用户档案失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -135,6 +184,7 @@ pub async fn update_user_profile(
 /// 修改密码
 pub async fn change_password(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ChangePasswordRequest>,
 ) -> axum::response::Response {
@@ -148,7 +198,14 @@ pub async fn change_password(
             response::success_with_message((), &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "change_password_failed",
+                "修改密码失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -158,6 +215,7 @@ pub async fn change_password(
 pub async fn update_user(
     State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<UpdateUserRequest>,
@@ -172,7 +230,14 @@ pub async fn update_user(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "update_user_failed",
+                "更新用户失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -182,6 +247,7 @@ pub async fn update_user(
 pub async fn delete_user(
     State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = UsersService::new(&state);
@@ -191,7 +257,14 @@ pub async fn delete_user(
             response::success_with_message((), &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "delete_user_failed",
+                "删除用户失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -200,6 +273,7 @@ pub async fn delete_user(
 /// 批量删除用户
 pub async fn batch_delete_users(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<BatchDeleteRequest>,
 ) -> axum::response::Response {
@@ -210,7 +284,14 @@ pub async fn batch_delete_users(
             response::success_with_message((), &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "batch_delete_users_failed",
+                "批量删除用户失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -220,6 +301,7 @@ pub async fn batch_delete_users(
 pub async fn toggle_user_status(
     State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -233,7 +315,14 @@ pub async fn toggle_user_status(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "toggle_user_status_failed",
+                "切换用户状态失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -243,6 +332,7 @@ pub async fn toggle_user_status(
 pub async fn reset_user_password(
     State(state): State<ManagementState>,
     Path(user_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<ResetPasswordRequest>,
 ) -> axum::response::Response {
@@ -256,7 +346,14 @@ pub async fn reset_user_password(
             response::success_with_message((), &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Db,
+                LogComponent::Database,
+                "reset_user_password_failed",
+                "重置用户密码失败",
+                &err,
+            );
             response::app_error(err)
         }
     }

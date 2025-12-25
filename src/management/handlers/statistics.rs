@@ -3,10 +3,9 @@
 //! 调度 `StatisticsService` 处理管理端统计查询。
 
 use crate::{
-    lerror,
-    logging::{LogComponent, LogStage},
+    logging::{LogComponent, LogStage, log_management_error},
     management::{
-        middleware::auth::AuthContext,
+        middleware::{RequestId, auth::AuthContext},
         response,
         server::ManagementState,
         services::statistics::{StatisticsService, TimeRangeQuery},
@@ -19,6 +18,7 @@ use std::sync::Arc;
 /// 今日仪表板卡片 API: /api/statistics/today/cards
 pub async fn get_today_dashboard_cards(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -29,13 +29,13 @@ pub async fn get_today_dashboard_cards(
     {
         Ok(cards) => response::success(cards),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Internal,
                 LogComponent::Statistics,
                 "today_cards_fail",
-                &format!("获取今日仪表板卡片失败: {err}")
+                "获取今日仪表板卡片失败",
+                &err,
             );
             response::app_error(err)
         }
@@ -46,6 +46,7 @@ pub async fn get_today_dashboard_cards(
 pub async fn get_models_usage_rate(
     State(state): State<ManagementState>,
     Query(query): Query<TimeRangeQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -56,13 +57,13 @@ pub async fn get_models_usage_rate(
     {
         Ok(data) => response::success(data),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_models_rate_fail",
-                &format!("获取模型使用占比失败: {err}")
+                "获取模型使用占比失败",
+                &err,
             );
             response::app_error(err)
         }
@@ -73,6 +74,7 @@ pub async fn get_models_usage_rate(
 pub async fn get_models_statistics(
     State(state): State<ManagementState>,
     Query(query): Query<TimeRangeQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -83,13 +85,13 @@ pub async fn get_models_statistics(
     {
         Ok(data) => response::success(data),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_models_stats_fail",
-                &format!("获取模型详细统计失败: {err}")
+                "获取模型详细统计失败",
+                &err,
             );
             response::app_error(err)
         }
@@ -99,6 +101,7 @@ pub async fn get_models_statistics(
 /// Token 使用趋势 API: /api/statistics/tokens/trend
 pub async fn get_tokens_trend(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -109,13 +112,13 @@ pub async fn get_tokens_trend(
     {
         Ok(data) => response::success(data),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_tokens_trend_fail",
-                &format!("获取 Token 趋势失败: {err}")
+                "获取 Token 趋势失败",
+                &err,
             );
             response::app_error(err)
         }
@@ -125,6 +128,7 @@ pub async fn get_tokens_trend(
 /// 用户 API Keys 请求趋势 API: /api/statistics/user-service-api-keys/request
 pub async fn get_user_api_keys_request_trend(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -135,13 +139,13 @@ pub async fn get_user_api_keys_request_trend(
     {
         Ok(data) => response::success(data),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_request_trend_fail",
-                &format!("获取用户 API Keys 请求趋势失败: {err}")
+                "获取用户 API Keys 请求趋势失败",
+                &err,
             );
             response::app_error(err)
         }
@@ -151,6 +155,7 @@ pub async fn get_user_api_keys_request_trend(
 /// 用户 API Keys Token 趋势 API: /api/statistics/user-service-api-keys/token
 pub async fn get_user_api_keys_token_trend(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -161,13 +166,13 @@ pub async fn get_user_api_keys_token_trend(
     {
         Ok(data) => response::success(data),
         Err(err) => {
-            err.log();
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::Db,
                 LogComponent::Database,
                 "fetch_user_keys_token_trend_fail",
-                &format!("获取用户 API Keys Token 趋势失败: {err}")
+                "获取用户 API Keys Token 趋势失败",
+                &err,
             );
             response::app_error(err)
         }

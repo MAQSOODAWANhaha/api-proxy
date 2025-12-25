@@ -8,7 +8,8 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::response::{IntoResponse, Json};
 
 use crate::key_pool::types::ApiKeyHealthStatus;
-use crate::management::middleware::auth::AuthContext;
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::{RequestId, auth::AuthContext};
 use crate::management::services::{
     CreateProviderKeyRequest, ProviderKeyService, ProviderKeysListQuery, ServiceResponse,
     TrendQuery, UpdateProviderKeyRequest, UserProviderKeyQuery,
@@ -20,6 +21,7 @@ use crate::types::TimezoneContext;
 pub async fn get_provider_keys_list(
     State(state): State<ManagementState>,
     Query(query): Query<ProviderKeysListQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -30,7 +32,14 @@ pub async fn get_provider_keys_list(
     {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_provider_keys_list_failed",
+                "获取提供商密钥列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -39,6 +48,7 @@ pub async fn get_provider_keys_list(
 /// 创建提供商密钥
 pub async fn create_provider_key(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(payload): Json<CreateProviderKeyRequest>,
@@ -53,7 +63,14 @@ pub async fn create_provider_key(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "create_provider_key_failed",
+                "创建提供商密钥失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -64,6 +81,7 @@ pub async fn get_provider_key_detail(
     State(state): State<ManagementState>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ProviderKeyService::new(&state);
@@ -73,7 +91,14 @@ pub async fn get_provider_key_detail(
     {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_provider_key_detail_failed",
+                "获取提供商密钥详情失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -83,6 +108,7 @@ pub async fn get_provider_key_detail(
 pub async fn update_provider_key(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(payload): Json<UpdateProviderKeyRequest>,
@@ -97,7 +123,14 @@ pub async fn update_provider_key(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "update_provider_key_failed",
+                "更新提供商密钥失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -107,6 +140,7 @@ pub async fn update_provider_key(
 pub async fn delete_provider_key(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -120,7 +154,14 @@ pub async fn delete_provider_key(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "delete_provider_key_failed",
+                "删除提供商密钥失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -130,6 +171,7 @@ pub async fn delete_provider_key(
 pub async fn get_provider_key_stats(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -140,7 +182,14 @@ pub async fn get_provider_key_stats(
     {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_provider_key_stats_failed",
+                "获取密钥统计信息失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -149,13 +198,21 @@ pub async fn get_provider_key_stats(
 /// 获取密钥卡片统计
 pub async fn get_provider_keys_dashboard_stats(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ProviderKeyService::new(&state);
     match service.dashboard(auth_context.user_id).await {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_provider_keys_dashboard_stats_failed",
+                "获取密钥卡片统计失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -165,13 +222,21 @@ pub async fn get_provider_keys_dashboard_stats(
 pub async fn get_simple_provider_keys_list(
     State(state): State<ManagementState>,
     Query(query): Query<UserProviderKeyQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ProviderKeyService::new(&state);
     match service.simple_list(auth_context.user_id, &query).await {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_simple_provider_keys_list_failed",
+                "获取简化密钥列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -181,6 +246,7 @@ pub async fn get_simple_provider_keys_list(
 pub async fn health_check_provider_key(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -194,7 +260,14 @@ pub async fn health_check_provider_key(
             response::success_with_message(data, &msg)
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "health_check_provider_key_failed",
+                "执行密钥健康检查失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -205,6 +278,7 @@ pub async fn get_provider_key_trends(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
     Query(query): Query<TrendQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -215,7 +289,14 @@ pub async fn get_provider_key_trends(
     {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_provider_key_trends_failed",
+                "获取密钥趋势数据失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -226,6 +307,7 @@ pub async fn get_user_service_api_trends(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Query(query): Query<TrendQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -236,7 +318,14 @@ pub async fn get_user_service_api_trends(
     {
         Ok(ServiceResponse { data, .. }) => response::success(data),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::KeyPool,
+                "get_user_service_api_trends_failed",
+                "获取用户服务 API 趋势数据失败",
+                &err,
+            );
             response::app_error(err)
         }
     }

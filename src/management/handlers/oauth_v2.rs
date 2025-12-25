@@ -10,8 +10,8 @@ use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::linfo;
-use crate::logging::{LogComponent, LogStage};
-use crate::management::middleware::auth::AuthContext;
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::{RequestId, auth::AuthContext};
 use crate::management::services::{
     OAuthProviderSummary, OAuthV2AuthorizeRequest, OAuthV2ExchangeRequest, OAuthV2Service,
 };
@@ -29,6 +29,7 @@ fn get_timezone_from_request(request: &Request) -> Option<TimezoneContext> {
 /// 开始 OAuth 授权流程
 pub async fn start_authorization(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2AuthorizeRequest>,
 ) -> impl IntoResponse {
@@ -39,7 +40,14 @@ pub async fn start_authorization(
     {
         Ok(authorize_response) => response::success(authorize_response),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "start_authorization_failed",
+                "启动 OAuth 授权失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -48,6 +56,7 @@ pub async fn start_authorization(
 /// 交换授权码获取令牌
 pub async fn exchange_token(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<OAuthV2ExchangeRequest>,
 ) -> impl IntoResponse {
@@ -55,7 +64,14 @@ pub async fn exchange_token(
     match service.exchange_token(auth_context.user_id, &request).await {
         Ok(token_response) => response::success(token_response),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "exchange_token_failed",
+                "交换授权码失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -64,6 +80,7 @@ pub async fn exchange_token(
 /// 获取用户 OAuth 会话列表
 pub async fn list_sessions(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     request: Request,
 ) -> impl IntoResponse {
@@ -75,7 +92,14 @@ pub async fn list_sessions(
     {
         Ok(sessions) => response::success(sessions),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "list_sessions_failed",
+                "获取 OAuth 会话列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -84,6 +108,7 @@ pub async fn list_sessions(
 /// 删除 OAuth 会话
 pub async fn delete_session(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
@@ -94,7 +119,14 @@ pub async fn delete_session(
     {
         Ok(()) => response::success("Session deleted successfully"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "delete_session_failed",
+                "删除 OAuth 会话失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -103,6 +135,7 @@ pub async fn delete_session(
 /// 刷新 OAuth 令牌
 pub async fn refresh_token(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
@@ -113,7 +146,14 @@ pub async fn refresh_token(
     {
         Ok(token_response) => response::success(token_response),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "refresh_token_failed",
+                "刷新 OAuth token 失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -122,10 +162,11 @@ pub async fn refresh_token(
 /// 清理过期会话（管理员接口）
 pub async fn cleanup_expired_sessions(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> impl IntoResponse {
     linfo!(
-        "system",
+        &request_id,
         LogStage::Internal,
         LogComponent::OAuth,
         "cleanup_sessions_request",
@@ -139,14 +180,24 @@ pub async fn cleanup_expired_sessions(
     match service.cleanup_expired_sessions().await {
         Ok(deleted_count) => response::success(json!({ "deleted_sessions": deleted_count })),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "cleanup_sessions_failed",
+                "清理过期 OAuth 会话失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
 }
 
 /// 获取支持的 OAuth 提供商列表
-pub async fn list_providers(State(state): State<ManagementState>) -> impl IntoResponse {
+pub async fn list_providers(
+    State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
+) -> impl IntoResponse {
     let service = OAuthV2Service::new(&state);
     match service.list_providers().await {
         Ok(providers) => {
@@ -169,7 +220,14 @@ pub async fn list_providers(State(state): State<ManagementState>) -> impl IntoRe
             response::success(json!({ "providers": providers }))
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::OAuth,
+                "list_providers_failed",
+                "获取 OAuth 提供商列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }

@@ -13,8 +13,9 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
+    logging::{LogComponent, LogStage, log_management_error},
     management::{
-        middleware::auth::AuthContext,
+        middleware::{RequestId, auth::AuthContext},
         response,
         server::ManagementState,
         services::service_apis::{
@@ -28,13 +29,21 @@ use crate::{
 /// 1. 用户 API Keys 卡片展示
 pub async fn get_user_service_cards(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ServiceApiService::new(&state);
     match service.cards(auth_context.user_id).await {
         Ok(cards) => response::success(cards),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "get_user_service_cards_failed",
+                "获取用户 API Key 卡片失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -44,6 +53,7 @@ pub async fn get_user_service_cards(
 pub async fn list_user_service_keys(
     State(state): State<ManagementState>,
     Query(query): Query<UserServiceKeyQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -54,7 +64,14 @@ pub async fn list_user_service_keys(
     {
         Ok(payload) => response::success(payload),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "list_user_service_keys_failed",
+                "获取用户 API Key 列表失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -63,6 +80,7 @@ pub async fn list_user_service_keys(
 /// 3. 新增 API Key
 pub async fn create_user_service_key(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
     Json(request): Json<CreateUserServiceKeyRequest>,
@@ -74,7 +92,14 @@ pub async fn create_user_service_key(
     {
         Ok(result) => response::success_with_message(result, "API Key创建成功"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "create_user_service_key_failed",
+                "创建用户 API Key 失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -84,6 +109,7 @@ pub async fn create_user_service_key(
 pub async fn get_user_service_key(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -94,7 +120,14 @@ pub async fn get_user_service_key(
     {
         Ok(detail) => response::success(detail),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "get_user_service_key_failed",
+                "获取用户 API Key 详情失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -104,6 +137,7 @@ pub async fn get_user_service_key(
 pub async fn update_user_service_key(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateUserServiceKeyRequest>,
 ) -> axum::response::Response {
@@ -111,7 +145,14 @@ pub async fn update_user_service_key(
     match service.update(api_id, auth_context.user_id, &request).await {
         Ok(result) => response::success_with_message(result, "API Key更新成功"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "update_user_service_key_failed",
+                "更新用户 API Key 失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -121,13 +162,21 @@ pub async fn update_user_service_key(
 pub async fn delete_user_service_key(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ServiceApiService::new(&state);
     match service.delete(api_id, auth_context.user_id).await {
         Ok(()) => response::success_with_message(Value::Null, "API Key删除成功"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "delete_user_service_key_failed",
+                "删除用户 API Key 失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -138,6 +187,7 @@ pub async fn get_user_service_key_usage(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
     Query(query): Query<UsageStatsQuery>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Extension(timezone_context): Extension<Arc<TimezoneContext>>,
 ) -> axum::response::Response {
@@ -153,7 +203,14 @@ pub async fn get_user_service_key_usage(
     {
         Ok(summary) => response::success(summary),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "get_user_service_key_usage_failed",
+                "获取用户 API Key 使用统计失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -163,13 +220,21 @@ pub async fn get_user_service_key_usage(
 pub async fn regenerate_user_service_key(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
 ) -> axum::response::Response {
     let service = ServiceApiService::new(&state);
     match service.regenerate(api_id, auth_context.user_id).await {
         Ok(result) => response::success_with_message(result, "API Key重新生成成功"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "regenerate_user_service_key_failed",
+                "重新生成用户 API Key 失败",
+                &err,
+            );
             response::app_error(err)
         }
     }
@@ -179,6 +244,7 @@ pub async fn regenerate_user_service_key(
 pub async fn update_user_service_key_status(
     State(state): State<ManagementState>,
     Path(api_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
     Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(request): Json<UpdateStatusRequest>,
 ) -> axum::response::Response {
@@ -189,7 +255,14 @@ pub async fn update_user_service_key_status(
     {
         Ok(result) => response::success_with_message(result, "API Key状态更新成功"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Internal,
+                LogComponent::ApiKey,
+                "update_user_service_key_status_failed",
+                "更新用户 API Key 状态失败",
+                &err,
+            );
             response::app_error(err)
         }
     }

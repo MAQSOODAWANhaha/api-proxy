@@ -123,7 +123,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::Running) {
-            crate::bail!("Task is already running");
+            crate::bail!(AuthError::TaskAlreadyRunning);
         }
 
         // 启动前执行一次全局扫描
@@ -170,7 +170,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if matches!(*state, TaskState::NotStarted | TaskState::Stopped) {
-            crate::bail!("Task is not running");
+            crate::bail!(AuthError::TaskNotRunning);
         }
 
         // 发送停止信号
@@ -201,7 +201,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Running) {
-            crate::bail!("Task is not running");
+            crate::bail!(AuthError::TaskNotRunning);
         }
 
         *state = TaskState::Paused;
@@ -223,7 +223,7 @@ impl ApiKeyOAuthTokenRefreshTask {
         let mut state = self.task_state.write().await;
 
         if !matches!(*state, TaskState::Paused) {
-            crate::bail!("Task is not paused");
+            crate::bail!(AuthError::TaskNotPaused);
         }
 
         *state = TaskState::Running;

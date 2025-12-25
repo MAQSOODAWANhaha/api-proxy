@@ -1,27 +1,27 @@
 //! API密钥健康检查相关处理器
 
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::RequestId;
 use crate::management::{response, server::ManagementState};
-use crate::{
-    lerror,
-    logging::{LogComponent, LogStage},
-};
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 
 /// 标记API密钥为不健康
 pub async fn mark_key_unhealthy(
     State(state): State<ManagementState>,
     Path(key_id): Path<i32>,
+    Extension(request_id): Extension<RequestId>,
 ) -> axum::response::Response {
     let reason = "Manually marked unhealthy via management API".to_string();
     match mark_key_unhealthy_internal(&state, key_id, reason).await {
         Ok(()) => response::success("API key marked as unhealthy"),
         Err(err) => {
-            lerror!(
-                "system",
+            log_management_error(
+                &request_id,
                 LogStage::HealthCheck,
                 LogComponent::HealthChecker,
                 "mark_key_unhealthy_fail",
-                &format!("Failed to mark key {key_id} as unhealthy: {err}")
+                "标记 API Key 不健康失败",
+                &err,
             );
             response::app_error(err)
         }

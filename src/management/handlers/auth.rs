@@ -2,11 +2,12 @@
 
 use crate::auth::types::UserInfo as AuthUserInfo;
 use crate::error::ProxyError;
-use crate::logging::{LogComponent, LogStage};
+use crate::logging::{LogComponent, LogStage, log_management_error};
+use crate::management::middleware::RequestId;
 use crate::management::services::auth::{AuthManagementService, LoginOutput};
 use crate::management::{response, server::ManagementState};
 use crate::{linfo, lwarn};
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,7 @@ impl From<AuthUserInfo> for UserInfo {
 #[allow(clippy::cognitive_complexity)]
 pub async fn login(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Json(request): Json<LoginRequest>,
 ) -> axum::response::Response {
     let service = AuthManagementService::new(&state);
@@ -76,7 +78,14 @@ pub async fn login(
         }) {
         Ok(response_body) => response::success_with_message(response_body, "Login successful"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "login_failed",
+                "登录失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }
@@ -114,6 +123,7 @@ pub struct RefreshTokenResponse {
 #[allow(clippy::cognitive_complexity)]
 pub async fn logout(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     // 从Authorization头中提取token
@@ -122,7 +132,7 @@ pub async fn logout(
             Ok(header_str) => header_str,
             Err(err) => {
                 lwarn!(
-                    "system",
+                    &request_id,
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "invalid_auth_header",
@@ -135,7 +145,7 @@ pub async fn logout(
         }
     } else {
         lwarn!(
-            "system",
+            &request_id,
             LogStage::Authentication,
             LogComponent::Auth,
             "no_auth_header_logout",
@@ -159,7 +169,7 @@ pub async fn logout(
     match service.decode_token_for_logout(token) {
         Ok(Some(claims)) => {
             linfo!(
-                "system",
+                &request_id,
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "logout_success",
@@ -169,7 +179,14 @@ pub async fn logout(
         }
         Ok(None) => response::success_without_data("Logout successful"),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "logout_failed",
+                "登出失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }
@@ -179,10 +196,11 @@ pub async fn logout(
 #[allow(clippy::cognitive_complexity)]
 pub async fn validate_token(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     linfo!(
-        "system",
+        &request_id,
         LogStage::Authentication,
         LogComponent::Auth,
         "validate_token_headers",
@@ -191,7 +209,7 @@ pub async fn validate_token(
     for (name, value) in &headers {
         if let Ok(value_str) = value.to_str() {
             linfo!(
-                "system",
+                &request_id,
                 LogStage::Authentication,
                 LogComponent::Auth,
                 "validate_token_header",
@@ -205,7 +223,7 @@ pub async fn validate_token(
             Ok(value) => value,
             Err(err) => {
                 lwarn!(
-                    "system",
+                    &request_id,
                     LogStage::Authentication,
                     LogComponent::Auth,
                     "invalid_auth_header",
@@ -219,7 +237,7 @@ pub async fn validate_token(
         }
     } else {
         lwarn!(
-            "system",
+            &request_id,
             LogStage::Authentication,
             LogComponent::Auth,
             "no_auth_header",
@@ -246,7 +264,14 @@ pub async fn validate_token(
             user: output.user.map(UserInfo::from),
         }),
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "validate_token_failed",
+                "验证 token 失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }
@@ -256,6 +281,7 @@ pub async fn validate_token(
 #[allow(clippy::cognitive_complexity)]
 pub async fn refresh_token(
     State(state): State<ManagementState>,
+    Extension(request_id): Extension<RequestId>,
     Json(request): Json<RefreshTokenRequest>,
 ) -> axum::response::Response {
     let service = AuthManagementService::new(&state);
@@ -269,7 +295,14 @@ pub async fn refresh_token(
             response::success_with_message(response_body, "Token refreshed successfully")
         }
         Err(err) => {
-            err.log();
+            log_management_error(
+                &request_id,
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "refresh_token_failed",
+                "刷新 token 失败",
+                &err,
+            );
             crate::management::response::app_error(err)
         }
     }

@@ -57,6 +57,15 @@ pub enum AuthError {
 
     #[error("Authentication error: {0}")]
     Message(String),
+
+    #[error("OAuth refresh task already running")]
+    TaskAlreadyRunning,
+
+    #[error("OAuth refresh task is not running")]
+    TaskNotRunning,
+
+    #[error("OAuth refresh task is not paused")]
+    TaskNotPaused,
 }
 
 /// Errors that occur while parsing authentication headers.

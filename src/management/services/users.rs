@@ -7,8 +7,8 @@ use chrono::{Datelike, Utc};
 use entity::{proxy_tracing, proxy_tracing::Entity as ProxyTracing, users, users::Entity as Users};
 use rand::{Rng, distributions::Alphanumeric};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Select, Set,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Select, Set,
 };
 use serde::{Deserialize, Serialize};
 
@@ -689,7 +689,11 @@ impl<'a> UsersService<'a> {
 
         let user = self.fetch_user(user_id).await?;
         let mut active_model: users::ActiveModel = user.into();
-        active_model.is_active = Set(!active_model.is_active.unwrap());
+        let current_active = match active_model.is_active.clone() {
+            ActiveValue::Set(value) | ActiveValue::Unchanged(value) => value,
+            ActiveValue::NotSet => false,
+        };
+        active_model.is_active = Set(!current_active);
         active_model.updated_at = Set(Utc::now().naive_utc());
 
         let updated_user = active_model
