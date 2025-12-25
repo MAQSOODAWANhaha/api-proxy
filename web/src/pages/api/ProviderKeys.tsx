@@ -23,6 +23,8 @@ import {
 import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import HealthStatusDetail from '../../components/provider/HealthStatusDetail'
+import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   api,
   CreateProviderKeyRequest,
@@ -72,6 +74,9 @@ const ProviderKeysPage: React.FC = () => {
   // 数据状态
   const [data, setData] = useState<LocalProviderKey[]>([])
   const [dashboardStats, setDashboardStats] = useState<ProviderKeysDashboardStatsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   
   // UI状态
   const [searchTerm, setSearchTerm] = useState('')
@@ -89,6 +94,7 @@ const ProviderKeysPage: React.FC = () => {
 
   // 获取仪表板统计数据
   const fetchDashboardStats = async () => {
+    setStatsLoading(true)
     try {
       const response = await api.providerKeys.getDashboardStats()
       if (response.success && response.data) {
@@ -98,11 +104,15 @@ const ProviderKeysPage: React.FC = () => {
       }
     } catch (error) {
       console.error('获取仪表板统计数据异常:', error)
+    } finally {
+      setStatsLoading(false)
     }
   }
 
   // 获取密钥列表数据
   const fetchData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
       const response = await api.providerKeys.getList({
         page: currentPage,
@@ -123,6 +133,11 @@ const ProviderKeysPage: React.FC = () => {
       }
     } catch (error) {
       console.error('获取密钥列表失败:', error)
+      const msg = error instanceof Error ? error.message : '获取密钥列表失败'
+      setError(msg)
+      setData([])
+    } finally {
+      setLoading(false)
     }
   }, [currentPage, pageSize, searchTerm, statusFilter, providerFilter])
 
@@ -378,10 +393,11 @@ const ProviderKeysPage: React.FC = () => {
               fetchData()
               fetchDashboardStats()
             }}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
             title="刷新数据"
           >
-            <RefreshCw size={16} />
+            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
           <button
@@ -394,33 +410,59 @@ const ProviderKeysPage: React.FC = () => {
         </div>
       </div>
 
+      {/* 错误提示 */}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
       {/* 统计信息 */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard
-          icon={<Shield size={18} />}
-          value={dashboardStats?.total_keys?.toString() || '0'}
-          label="总密钥数"
-          color="#7c3aed"
-        />
-        <StatCard
-          icon={<Activity size={18} />}
-          value={dashboardStats?.active_keys?.toString() || '0'}
-          label="活跃密钥"
-          color="#10b981"
-        />
-        <StatCard
-          icon={<BarChart3 size={18} />}
-          value={dashboardStats?.total_usage?.toLocaleString() || '0'}
-          label="总使用次数"
-          color="#0ea5e9"
-        />
-        <StatCard
-          icon={<DollarSign size={18} />}
-          value={`$${dashboardStats?.total_cost?.toFixed(2) || '0.00'}`}
-          label="总花费"
-          color="#f59e0b"
-        />
-      </div>
+      {statsLoading ? (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-xl" />
+                <div className="flex-1">
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <StatCard
+            icon={<Shield size={18} />}
+            value={dashboardStats?.total_keys?.toString() || '0'}
+            label="总密钥数"
+            color="#7c3aed"
+          />
+          <StatCard
+            icon={<Activity size={18} />}
+            value={dashboardStats?.active_keys?.toString() || '0'}
+            label="活跃密钥"
+            color="#10b981"
+          />
+          <StatCard
+            icon={<BarChart3 size={18} />}
+            value={dashboardStats?.total_usage?.toLocaleString() || '0'}
+            label="总使用次数"
+            color="#0ea5e9"
+          />
+          <StatCard
+            icon={<DollarSign size={18} />}
+            value={`$${dashboardStats?.total_cost?.toFixed(2) || '0.00'}`}
+            label="总花费"
+            color="#f59e0b"
+          />
+        </div>
+      )}
 
       {/* 搜索和过滤 */}
       <div className="flex items-center gap-4 mb-4">
@@ -478,7 +520,20 @@ const ProviderKeysPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200">
-              {paginatedData.map((item) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center">
+                    <LoadingState text="加载中..." />
+                  </td>
+                </tr>
+              ) : paginatedData.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                    暂无数据
+                  </td>
+                </tr>
+              ) : (
+                paginatedData.map((item) => (
                 <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
                   <td className="px-4 py-3">
                     <div>
@@ -581,7 +636,8 @@ const ProviderKeysPage: React.FC = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>
