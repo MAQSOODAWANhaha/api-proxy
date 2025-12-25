@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import ModernSelect from '../../../../components/common/ModernSelect'
 import AuthTypeSelector from '../../../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthResult, OAuthStatus } from '../../../../components/common/OAuthHandler'
+import { LoadingSpinner } from '../../../../components/ui/loading'
 import { api, ProviderType } from '../../../../lib/api'
 import { ProviderKeyEditFormState } from '../types'
 
@@ -182,7 +183,7 @@ const EditDialog: React.FC<{
 
           {loadingProviderTypes ? (
             <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+              <LoadingSpinner size="sm" tone="primary" />
               <span className="text-sm text-neutral-600">加载服务商类型...</span>
             </div>
           ) : (

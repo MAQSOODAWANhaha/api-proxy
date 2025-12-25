@@ -27,6 +27,7 @@ import { api } from "../../lib/api";
 import DialogPortal from "./user-keys/dialogs/DialogPortal";
 import { ApiKey, DialogType } from "./user-keys/types";
 import { copyWithFeedback } from "../../lib/clipboard";
+import { LoadingSpinner, LoadingState } from "@/components/ui/loading";
 
 /** 页面主组件 */
 const ApiUserKeysPage: React.FC = () => {
@@ -231,7 +232,11 @@ const ApiUserKeysPage: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            {loading ? (
+              <LoadingSpinner size="sm" tone="muted" />
+            ) : (
+              <RefreshCw size={16} />
+            )}
             刷新
           </button>
           <button
@@ -312,7 +317,7 @@ const ApiUserKeysPage: React.FC = () => {
       {/* 加载指示器 */}
       {loading && (
         <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+          <LoadingState text="加载中..." />
         </div>
       )}
 

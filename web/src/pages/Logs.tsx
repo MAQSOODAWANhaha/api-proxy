@@ -20,6 +20,7 @@ import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
 import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse } from '../lib/api'
+import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 
 // 使用从 api.ts 导出的日志数据接口
 
@@ -243,7 +244,7 @@ const LogsPage: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
         </div>
@@ -360,8 +361,7 @@ const LogsPage: React.FC = () => {
                 <tr>
                   <td colSpan={9} className="px-4 py-8 text-center">
                     <div className="flex justify-center items-center gap-2">
-                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
-                      <span className="text-neutral-600">加载中...</span>
+                      <LoadingState text="加载中..." />
                     </div>
                   </td>
                 </tr>
@@ -587,7 +587,7 @@ const LogDetailsDialog: React.FC<{
         
         {loading ? (
           <div className="py-12 flex items-center justify-center text-neutral-500">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+            <LoadingSpinner size="lg" tone="muted" />
           </div>
         ) : !item ? (
           <div className="py-12 text-center text-neutral-500">暂无详情数据</div>

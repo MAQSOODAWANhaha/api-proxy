@@ -29,13 +29,14 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
-import { 
-  userApi, 
-  User as UserType, 
-  UserQueryParams, 
-  CreateUserRequest, 
-  UpdateUserRequest 
+import {
+  userApi,
+  User as UserType,
+  UserQueryParams,
+  CreateUserRequest,
+  UpdateUserRequest,
 } from '../lib/userApi'
+import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 
 /** 弹窗类型 */
 type DialogType = 'add' | 'edit' | 'delete' | 'details' | 'resetPassword' | 'batchDelete' | null
@@ -336,7 +337,7 @@ const UsersPage: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
           {selectedUsers.length > 0 && (
@@ -426,8 +427,7 @@ const UsersPage: React.FC = () => {
       <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <RefreshCw className="animate-spin text-neutral-400" size={24} />
-            <span className="ml-2 text-neutral-600">加载中...</span>
+            <LoadingState text="加载中..." />
           </div>
         ) : (
           <>

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, BarChart, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Activity, Timer, Coins, CheckCircle2, Calendar as CalendarIcon, ChevronDown, BarChart, AlertCircle, RefreshCw } from 'lucide-react'
 import { useDashboardCards } from '../../hooks/useDashboardCards'
 import { useModelsRate } from '../../hooks/useModelsRate'
 import { useModelsStatistics } from '../../hooks/useModelsStatistics'
@@ -20,6 +20,8 @@ import {
 import { Calendar as DatePicker } from '@/components/ui/calendar'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { DateRange } from 'react-day-picker'
+import { LoadingSpinner } from '@/components/ui/loading'
+import { Skeleton } from '@/components/ui/skeleton'
 
 /** 指标项接口 */
 interface StatItem {
@@ -1081,7 +1083,7 @@ const PieChartWithTimeFilter: React.FC = () => {
       {isLoading && (
         <div className="flex items-center justify-center h-80">
           <div className="flex items-center gap-2 text-neutral-500">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <LoadingSpinner size="md" tone="muted" />
             <span className="text-sm">加载模型使用数据...</span>
           </div>
         </div>
@@ -1169,7 +1171,7 @@ const ModelStatsListWithTimeFilter: React.FC = () => {
       {isLoading && (
         <div className="flex items-center justify-center h-80">
           <div className="flex items-center gap-2 text-neutral-500">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <LoadingSpinner size="md" tone="muted" />
             <span className="text-sm">加载模型统计数据...</span>
           </div>
         </div>
@@ -1232,7 +1234,7 @@ const TokenTrendChart: React.FC = () => {
       {isLoading && (
         <div className="flex items-center justify-center h-80">
           <div className="flex items-center gap-2 text-neutral-500">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <LoadingSpinner size="md" tone="muted" />
             <span className="text-sm">加载Token趋势数据...</span>
           </div>
         </div>
@@ -1340,7 +1342,7 @@ const UserApiKeysTrendChart: React.FC = () => {
       {isLoading && (
         <div className="flex items-center justify-center h-80">
           <div className="flex items-center gap-2 text-neutral-500">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <LoadingSpinner size="md" tone="muted" />
             <span className="text-sm">加载用户API Keys趋势数据...</span>
           </div>
         </div>
@@ -1410,10 +1412,10 @@ const DashboardPage: React.FC = () => {
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-neutral-100 animate-pulse"></div>
+                  <Skeleton className="h-10 w-10 rounded-xl" />
                   <div className="min-w-0 flex-1">
-                    <div className="h-4 w-16 bg-neutral-100 rounded animate-pulse mb-2"></div>
-                    <div className="h-6 w-20 bg-neutral-100 rounded animate-pulse"></div>
+                    <Skeleton className="h-4 w-16 mb-2" />
+                    <Skeleton className="h-6 w-20" />
                   </div>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 import type { LogsPage, LogItem } from '@/types/stats'
 import { Button } from '@/components/ui/button'
@@ -56,7 +56,7 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
       <div className="relative overflow-x-auto">
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70">
-            <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
+            <LoadingSpinner size="md" tone="muted" />
           </div>
         )}
         <table className="w-full text-sm">

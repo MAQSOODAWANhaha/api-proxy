@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { api, SystemMetrics } from '@/lib/api';
 import { Cpu, MemoryStick, HardDrive, Clock, RefreshCw } from 'lucide-react';
+import { LoadingSpinner } from '@/components/ui/loading';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const SystemInfo = () => {
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
@@ -61,20 +63,18 @@ const SystemInfo = () => {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-neutral-800">系统监控</h3>
-          <div className="animate-spin">
-            <RefreshCw size={16} className="text-neutral-400" />
-          </div>
+          <LoadingSpinner size="sm" tone="muted" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="bg-white p-6 rounded-2xl border border-neutral-200 animate-pulse">
+            <div key={i} className="bg-white p-6 rounded-2xl border border-neutral-200">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-neutral-200 rounded-lg"></div>
-                <div className="h-4 bg-neutral-200 rounded w-20"></div>
+                <Skeleton className="h-8 w-8 rounded-lg" />
+                <Skeleton className="h-4 w-20" />
               </div>
-              <div className="h-8 bg-neutral-300 rounded w-16 mb-2"></div>
-              <div className="h-2 bg-neutral-200 rounded w-full mb-2"></div>
-              <div className="h-3 bg-neutral-200 rounded w-24"></div>
+              <Skeleton className="h-8 w-16 mb-2" />
+              <Skeleton className="h-2 w-full mb-2" />
+              <Skeleton className="h-3 w-24" />
             </div>
           ))}
         </div>

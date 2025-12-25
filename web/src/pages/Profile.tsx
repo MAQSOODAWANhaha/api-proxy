@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/auth'
 import { api } from '../lib/api'
 import { toast } from 'sonner'
+import { LoadingSpinner } from '@/components/ui/loading'
 import {
   User,
   Mail,
@@ -116,7 +117,7 @@ const ProfilePage: React.FC = () => {
       <div className="w-full">
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+            <LoadingSpinner size="lg" tone="primary" />
             <p className="mt-2 text-sm text-neutral-600">加载用户档案中...</p>
           </div>
         </div>

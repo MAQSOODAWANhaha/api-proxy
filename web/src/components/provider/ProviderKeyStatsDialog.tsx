@@ -10,6 +10,7 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ProviderKeyItem } from './ProviderKeysTable'
 import { api } from '@/lib/api'
+import { LoadingSpinner } from '@/components/ui/loading'
 import {
   PieChart,
   Pie,
@@ -267,7 +268,7 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
             <div className="h-48 w-full">
               {trendLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                  <LoadingSpinner size="md" tone="primary" />
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -314,7 +315,7 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
             <div className="h-48 w-full">
               {trendLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                  <LoadingSpinner size="md" tone="primary" />
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -419,7 +420,7 @@ const ProviderKeyStatsDialog: React.FC<ProviderKeyStatsDialogProps> = ({ open, o
             <div className="h-64 w-full">
               {trendLoading ? (
                 <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                  <LoadingSpinner size="md" tone="primary" />
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">

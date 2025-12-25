@@ -19,6 +19,7 @@ import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import { api, ProviderType } from '../lib/api'
 import { Badge } from '@/components/ui/badge'
+import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { copyWithFeedback } from '../lib/clipboard'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
@@ -127,7 +128,7 @@ const ProvidersPage: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
             title="刷新数据"
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
           </button>
         </div>
@@ -189,8 +190,7 @@ const ProvidersPage: React.FC = () => {
       <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <RefreshCw className="animate-spin text-neutral-400" size={24} />
-            <span className="ml-2 text-neutral-600">加载中...</span>
+            <LoadingState text="加载中..." />
           </div>
         ) : (
           <>

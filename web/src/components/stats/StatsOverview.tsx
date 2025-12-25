@@ -1,8 +1,9 @@
 import { type ReactNode } from 'react'
-import { Loader2, BarChart4, Coins, DollarSign } from 'lucide-react'
+import { BarChart4, Coins, DollarSign } from 'lucide-react'
 
 import { SummaryMetric } from '@/types/stats'
 import { Card, CardContent } from '@/components/ui/card'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 interface StatsOverviewProps {
   metrics: SummaryMetric[]
@@ -42,7 +43,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
         {[1, 2, 3].map((key) => (
           <Card key={key} className="border border-dashed">
             <CardContent className="flex h-32 items-center justify-center text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <LoadingSpinner size="md" tone="muted" />
             </CardContent>
           </Card>
         ))}

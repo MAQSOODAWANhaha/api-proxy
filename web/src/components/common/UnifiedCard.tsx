@@ -5,6 +5,7 @@
 
 import React, { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { cardVariants } from '@/lib/cardStyles'
 
@@ -147,18 +148,18 @@ export const LoadingCard: React.FC<LoadingCardProps> = ({
   lines = 3
 }) => {
   return (
-    <UnifiedCard variant={variant} className={cn('animate-pulse', className)}>
+    <UnifiedCard variant={variant} className={className}>
       <CardContent className="p-6">
         <div className="space-y-3">
           {Array.from({ length: lines }, (_, i) => (
-            <div
+            <Skeleton
               key={i}
               className={cn(
-                'h-4 bg-neutral-200 rounded',
+                'h-4',
                 i === 0 && 'w-3/4',
                 i === 1 && 'w-full',
                 i === 2 && 'w-2/3',
-                i > 2 && 'w-5/6'
+                i > 2 && 'w-5/6',
               )}
             />
           ))}

@@ -9,6 +9,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { LocalProviderKey, ProviderKeyTrendPoint } from '../types'
+import { LoadingSpinner } from '../../../../components/ui/loading'
 
 /** 统计对话框 */
 const StatsDialog: React.FC<{
@@ -153,7 +154,7 @@ const StatsDialog: React.FC<{
             <div className="h-40 w-full">
               {trendLoading ? (
                 <div className="flex h-full items-center justify-center text-neutral-500">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                  <LoadingSpinner size="md" tone="primary" />
                 </div>
               ) : chartSeries.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-neutral-400 text-sm">
@@ -185,7 +186,7 @@ const StatsDialog: React.FC<{
             <div className="h-40 w-full">
               {trendLoading ? (
                 <div className="flex h-full items-center justify-center text-neutral-500">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                  <LoadingSpinner size="md" tone="primary" />
                 </div>
               ) : chartSeries.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-neutral-400 text-sm">

@@ -6,7 +6,8 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import { useAuthStore } from '../store/auth'
-import { Eye, EyeOff, User, Lock, AlertCircle, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, User, Lock, AlertCircle } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 /** 页面主组件 */
 const LoginPage: React.FC = () => {
@@ -156,7 +157,7 @@ const LoginPage: React.FC = () => {
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <LoadingSpinner size="sm" tone="inverse" />
                   登录中...
                 </>
               ) : (

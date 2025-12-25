@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useAuthStore } from '../store/auth'
-import { Loader2 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 /**
  * ProtectedRoute
@@ -36,7 +36,7 @@ const ProtectedRoute: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
+          <LoadingSpinner size="lg" tone="primary" />
           <p className="text-sm text-neutral-600">验证登录状态...</p>
         </div>
       </div>

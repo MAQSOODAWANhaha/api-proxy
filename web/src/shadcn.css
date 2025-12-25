@@ -28,6 +28,8 @@
   --chart-4: 43 74% 66%;
   --chart-5: 27 87% 67%;
   --radius: 0.5rem;
+  --skeleton-base: 0 0% 96%;
+  --skeleton-highlight: 0 0% 100%;
   --sidebar-background: 0 0% 98%;
   --sidebar-foreground: 240 5.3% 26.1%;
   --sidebar-primary: 240 5.9% 10%;
@@ -63,6 +65,8 @@
   --chart-3: 30 80% 55%;
   --chart-4: 280 65% 60%;
   --chart-5: 340 75% 55%;
+  --skeleton-base: 0 0% 14%;
+  --skeleton-highlight: 0 0% 26%;
   --sidebar-background: 240 5.9% 10%;
   --sidebar-foreground: 240 4.8% 95.9%;
   --sidebar-primary: 224.3 76.3% 48%;
@@ -105,4 +109,42 @@ html > body * {
 * {
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
+}
+
+.loading-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: hsl(var(--skeleton-base));
+}
+
+.loading-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--skeleton-highlight) / 0.65),
+    transparent
+  );
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  60% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-skeleton::after {
+    animation: none;
+  }
 }

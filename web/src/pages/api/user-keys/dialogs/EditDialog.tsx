@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import ModernSelect from '../../../../components/common/ModernSelect';
 import MultiSelect from '../../../../components/common/MultiSelect';
+import { LoadingSpinner } from '../../../../components/ui/loading';
 import { api, ProviderType, SchedulingStrategy } from '../../../../lib/api';
 import { ApiKey, UserProviderKey } from '../types';
 
@@ -174,7 +175,7 @@ const EditDialog: React.FC<{
 
       {loadingDetail ? (
         <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+          <LoadingSpinner size="lg" tone="primary" />
           <span className="ml-2 text-neutral-600">正在加载详情数据...</span>
         </div>
       ) : (
@@ -262,7 +263,7 @@ const EditDialog: React.FC<{
             </label>
             {loadingKeys ? (
               <div className="flex items-center gap-2 p-3 border border-neutral-200 rounded-lg">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-violet-600"></div>
+                <LoadingSpinner size="sm" tone="primary" />
                 <span className="text-sm text-neutral-600">
                   加载密钥列表...
                 </span>
@@ -594,7 +595,7 @@ const EditDialog: React.FC<{
               className="flex-1 px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {submitting && (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <LoadingSpinner size="sm" tone="inverse" />
               )}
               {submitting ? "保存中..." : "保存"}
             </button>

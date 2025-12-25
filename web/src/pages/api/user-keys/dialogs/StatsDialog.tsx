@@ -5,6 +5,7 @@ import { ApiKey } from '../types';
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { BarChart3 } from 'lucide-react';
+import { LoadingSpinner } from '../../../../components/ui/loading';
 
 const StatsDialog: React.FC<{
   item: ApiKey;
@@ -174,7 +175,7 @@ const StatsDialog: React.FC<{
           <div className="h-64 w-full">
             {detailedTrendLoading ? (
               <div className="flex items-center justify-center h-full text-neutral-500">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600"></div>
+                <LoadingSpinner size="md" tone="primary" />
               </div>
             ) : detailedTrendData.length > 0 ? (
               <ChartContainer config={chartConfig} className="w-full h-full">

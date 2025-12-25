@@ -11,10 +11,10 @@ import {
 } from '@/components/ui/chart'
 import type { TrendPoint } from '@/types/stats'
 import { useTimezoneStore } from '@/store/timezone'
-import { Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Timeframe } from '@/store/stats'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 interface StatsTrendChartProps {
   data: TrendPoint[]
@@ -110,7 +110,7 @@ export function StatsTrendChart({
       <CardContent className="pt-0">
         {loading ? (
           <div className="flex h-[280px] items-center justify-center text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <LoadingSpinner size="md" tone="muted" />
           </div>
         ) : !hasFetched ? (
           <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
