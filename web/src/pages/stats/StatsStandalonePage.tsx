@@ -54,7 +54,8 @@ export default function StatsStandalonePage() {
   }, [filters.userServiceKey, filters.timeframe, apiKeyInput])
 
   const hasServiceKey = filters.userServiceKey.trim().length > 0
-  const canSubmit = apiKeyInput.trim().length > 0 && !loading
+  const pageLoading = loading || trendLoading || modelShareLoading
+  const canSubmit = apiKeyInput.trim().length > 0 && !pageLoading
 
   const handleSubmit = () => {
     const key = apiKeyInput.trim()
@@ -120,7 +121,7 @@ export default function StatsStandalonePage() {
                   if (!hasServiceKey) return
                   void fetch({ userServiceKey: filters.userServiceKey })
                 }}
-                disabled={!hasServiceKey || loading}
+                disabled={!hasServiceKey || pageLoading}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 刷新
@@ -134,7 +135,7 @@ export default function StatsStandalonePage() {
                   setModelScope('today')
                   clear()
                 }}
-                disabled={loading}
+                disabled={pageLoading}
               >
                 <RotateCcw className="mr-2 h-4 w-4" />
                 重置
@@ -150,12 +151,12 @@ export default function StatsStandalonePage() {
         </Card>
 
         <section className="space-y-6">
-          <StatsOverview metrics={summary} loading={loading} hasFetched={hasFetched} />
+          <StatsOverview metrics={summary} loading={pageLoading} hasFetched={hasFetched} />
 
           <div className="grid gap-6 lg:grid-cols-2">
             <StatsTrendChart
               data={trend}
-              loading={loading || trendLoading}
+              loading={pageLoading}
               hasFetched={hasFetched}
               timeframe={trendTimeframe}
               timeframeOptions={TREND_OPTIONS}
@@ -167,7 +168,7 @@ export default function StatsStandalonePage() {
 
             <StatsModelShare
               data={modelShare}
-              loading={loading || modelShareLoading}
+              loading={pageLoading}
               hasFetched={hasFetched}
               scope={modelScope}
               onScopeChange={(scope) => {
@@ -179,7 +180,7 @@ export default function StatsStandalonePage() {
 
           <StatsLogsTable
             logs={logs}
-            loading={loading}
+            loading={pageLoading}
             hasFetched={hasFetched}
             onPageChange={(page) => {
               if (!hasServiceKey) return
