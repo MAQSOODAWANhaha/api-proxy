@@ -1,87 +1,52 @@
-# AI代理平台 Docker Compose 配置 - 统一部署版本
+# AI Proxy Platform - Standalone Docker Compose
+# 目标：用户只需要这个 docker-compose.yaml + deploy.sh，就能完成部署（无需 git clone 项目源码）。
+#
+# 运行前提：
+# - 必须提供 JWT_SECRET（>=32位）
+#   - 方式1：export JWT_SECRET="..."
+#   - 方式2：同目录放置 .env（deploy.sh 会自动生成）并包含 JWT_SECRET=...
 
 services:
-  # ================================
-  # 统一代理服务 (前后端合并)
-  # ================================
   proxy:
     image: gghtrt520/api-proxy:latest
-    container_name: api-proxy-service
+    container_name: api-proxy
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:9090:9090" # 统一服务端口（API + 静态文件）
-      - "127.0.0.1:8080:8080" # 重定向端口（可选）
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>=32 chars)}
     volumes:
-      # 数据持久化
       - proxy_data:/app/data
       - proxy_logs:/app/logs
-      # 配置文件（可选，用于动态配置）
-      - ../config:/app/config:ro
-    env_file:
-      - ./.env
-    networks:
-      - api-proxy-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/api/ping"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:9090/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 20s
 
-  # ================================
-  # Caddy 反向代理和SSL终端
-  # ================================
   caddy:
-    image: docker.m.daocloud.io/caddy:2.8-alpine
+    image: caddy:2.8-alpine
     container_name: api-proxy-caddy
     restart: unless-stopped
-    ports:
-      - "80:80" # HTTP
-      - "443:443" # HTTPS (避免与k8s Traefik冲突)
-      - "8443:8443" # HTTPS (8443端口)
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./certs:/etc/caddy/certs:ro
-      # 证书数据持久化 - 关键配置，避免证书重复申请
-      - ./caddy_data:/data
-      - ./caddy_config:/config
-      # Caddy日志持久化
-      - ./logs/caddy:/var/log/caddy
-    env_file:
-      - ./.env
-    networks:
-      - api-proxy-network
     depends_on:
       - proxy
+    ports:
+      - "80:80"
+      - "443:443"   # 管理服务入口 -> proxy:9090
+      - "8443:8443" # 代理服务入口 -> proxy:8080
+    volumes:
+      # 由 deploy.sh 生成（自签/自动证书两种模式共用）
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与内部CA等数据持久化（避免重复申请/重启丢失）
+      - caddy_data:/data
+      - caddy_config:/config
     healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://localhost:2019/config/",
-        ]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:2019/config/"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-# ================================
-# 数据卷定义
-# ================================
 volumes:
   proxy_data:
-    driver: local
   proxy_logs:
-    driver: local
-
-# ================================
-# 网络定义
-# ================================
-networks:
-  api-proxy-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+  caddy_data:
+  caddy_config:

@@ -83,8 +83,8 @@ COPY --from=frontend-builder /app/web/dist /app/static
 # 创建必要的目录
 RUN mkdir -p /app/data /app/certs /app/logs /app/config
 
-# 复制配置文件
-COPY ../config/ ./config/
+# 复制生产配置到默认位置（无需运行时环境变量覆盖即可启动）
+COPY config/config.prod.toml /app/config/config.toml
 
 # 设置权限
 RUN chown -R apiproxy:apiproxy /app
@@ -100,14 +100,7 @@ EXPOSE 9090 8080
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:9090/api/health || exit 1
-
-# 设置环境变量
-ENV RUST_LOG=info,sqlx::query=off
-ENV RUST_BACKTRACE=1
-ENV API_PROXY_CONFIG_PATH=/app/config/config.prod.toml
-ENV API_PROXY_DATA_DIR=/app/data
-ENV API_PROXY_STATIC_DIR=/app/static
+    CMD curl -fsS http://localhost:9090/ping || exit 1
 
 # 启动命令
 CMD ["./api-proxy"]
