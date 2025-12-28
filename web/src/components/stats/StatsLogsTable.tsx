@@ -1,8 +1,8 @@
 import { LoadingSpinner } from '@/components/ui/loading'
 
 import type { LogsPage, LogItem } from '@/types/stats'
-import { Button } from '@/components/ui/button'
 import { useTimezoneStore } from '@/store/timezone'
+import Pagination from '@/components/common/Pagination'
 
 interface StatsLogsTableProps {
   logs: LogsPage | null
@@ -44,7 +44,7 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
   }
 
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
+    <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
       <div className="flex flex-col gap-1 border-b border-neutral-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base font-semibold text-neutral-900">请求记录</h2>
@@ -142,23 +142,15 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
         </table>
       </div>
 
-      <div className="flex flex-col items-center justify-between gap-3 border-t border-neutral-200 px-5 py-4 text-sm text-neutral-500 sm:flex-row">
-        <span>
-          共 {total.toLocaleString()} 条记录 · 当前第 {page}/{totalPages} 页
-        </span>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => handlePageChange(page - 1)} disabled={page <= 1 || loading}>
-            上一页
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handlePageChange(page + 1)}
-            disabled={page >= totalPages || loading}
-          >
-            下一页
-          </Button>
-        </div>
+      <div className="border-t border-neutral-200 px-5 py-4">
+        <Pagination
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={handlePageChange}
+          showSizeChanger={false}
+          className="text-neutral-500"
+        />
       </div>
     </div>
   )

@@ -31,9 +31,9 @@ const iconMap: Record<string, ReactNode> = {
 }
 
 const colorMap: Record<string, { bg: string; fg: string }> = {
-  requests: { bg: 'bg-indigo-50', fg: 'text-indigo-600' },
-  tokens: { bg: 'bg-sky-50', fg: 'text-sky-600' },
-  cost: { bg: 'bg-amber-50', fg: 'text-amber-600' },
+  requests: { bg: 'bg-violet-50', fg: 'text-violet-700' },
+  tokens: { bg: 'bg-emerald-50', fg: 'text-emerald-700' },
+  cost: { bg: 'bg-orange-50', fg: 'text-orange-700' },
 }
 
 export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewProps) {
@@ -41,7 +41,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
     return (
       <div className="grid gap-4 md:grid-cols-3">
         {[1, 2, 3].map((key) => (
-          <Card key={key} className="border border-dashed">
+          <Card key={key} className="rounded-2xl border border-dashed border-neutral-200 bg-white shadow-sm">
             <CardContent className="flex h-32 items-center justify-center text-muted-foreground">
               <LoadingSpinner size="md" tone="muted" />
             </CardContent>
@@ -53,7 +53,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
 
   if (!hasFetched) {
     return (
-      <Card className="border border-dashed">
+      <Card className="rounded-2xl border border-dashed border-neutral-200 bg-white shadow-sm">
         <CardContent className="flex h-32 flex-col items-center justify-center text-center text-muted-foreground">
           <p className="text-sm">请输入有效的用户 API Key 并点击“查询统计”加载数据。</p>
         </CardContent>
@@ -70,7 +70,10 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
         const color = colorMap[metric.id] ?? { bg: 'bg-neutral-100', fg: 'text-neutral-600' }
 
         return (
-          <Card key={metric.id} className="border border-neutral-200 shadow-sm">
+          <Card
+            key={metric.id}
+            className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md"
+          >
             <CardContent className="flex h-full flex-col gap-4 p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">

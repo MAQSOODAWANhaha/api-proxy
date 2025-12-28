@@ -4,6 +4,7 @@ import { Pie, PieChart, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import type { ModelShareItem } from '@/types/stats'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { LoadingSpinner } from '@/components/ui/loading'
 
 interface StatsModelShareProps {
   data: {
@@ -35,11 +36,11 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
   )
 
   return (
-    <Card className="shadow-sm">
+    <Card className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
       <CardHeader className="pb-4">
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <CardTitle className="text-lg font-semibold">模型占比</CardTitle>
+            <CardTitle className="text-lg font-semibold text-neutral-800">模型占比</CardTitle>
             <ToggleGroup
               type="single"
               value={scope}
@@ -48,27 +49,27 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
                   onScopeChange?.(value)
                 }
               }}
-              className="rounded-md border border-neutral-200 bg-neutral-50 p-1 text-xs"
+              className="rounded-lg border border-neutral-200 bg-neutral-50 p-1 text-xs"
             >
               {(['today', 'total'] as const).map((option) => (
                 <ToggleGroupItem
                   key={option}
                   value={option}
-                  className="px-3 py-1 data-[state=on]:bg-white data-[state=on]:text-neutral-900"
+                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700 data-[state=on]:shadow-sm"
                 >
                   {scopeLabel[option]}
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
           </div>
-          <CardDescription className="leading-relaxed">
-            模型请求占比
-          </CardDescription>
+          <CardDescription className="leading-relaxed">模型请求占比</CardDescription>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
         {loading ? (
-          <div className="flex h-[280px] items-center justify-center text-muted-foreground">加载中...</div>
+          <div className="flex h-[280px] items-center justify-center text-muted-foreground">
+            <LoadingSpinner size="md" tone="muted" />
+          </div>
         ) : !hasFetched ? (
           <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
             查询完成后将显示模型占比。

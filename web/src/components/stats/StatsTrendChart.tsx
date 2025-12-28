@@ -77,11 +77,11 @@ export function StatsTrendChart({
   }, [data, timeframe, timezone])
 
   return (
-    <Card className="shadow-sm">
+    <Card className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
       <CardHeader className="pb-4">
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <CardTitle className="text-lg font-semibold">请求趋势</CardTitle>
+            <CardTitle className="text-lg font-semibold text-neutral-800">请求趋势</CardTitle>
             <ToggleGroup
               type="single"
               value={timeframe}
@@ -89,13 +89,13 @@ export function StatsTrendChart({
                 if (!value) return
                 onTimeframeChange?.(value as Timeframe)
               }}
-              className="rounded-md border border-neutral-200 bg-neutral-50 p-1 text-xs"
+              className="rounded-lg border border-neutral-200 bg-neutral-50 p-1 text-xs"
             >
               {timeframeOptions.map((option) => (
                 <ToggleGroupItem
                   key={option}
                   value={option}
-                  className="px-3 py-1 data-[state=on]:bg-white data-[state=on]:text-neutral-900"
+                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700 data-[state=on]:shadow-sm"
                 >
                   {option === '7d' ? '近 7 天' : option === '30d' ? '近 30 天' : '近 90 天'}
                 </ToggleGroupItem>

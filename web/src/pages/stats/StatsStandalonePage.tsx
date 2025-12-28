@@ -82,16 +82,16 @@ export default function StatsStandalonePage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50">
+    <div className="min-h-screen bg-white text-foreground">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-10 px-6 pb-16 pt-12 sm:px-8 lg:px-10">
-        <header className="text-center space-y-3">
-          <h1 className="text-3xl font-semibold text-neutral-900">用户 API Key 使用统计</h1>
-          <p className="text-sm text-neutral-500">
+        <header className="space-y-3 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">用户 API Key 使用统计</h1>
+          <p className="text-sm text-neutral-600">
             在此查看指定用户服务密钥的请求趋势、模型占比以及最新调用日志。
           </p>
         </header>
 
-        <Card className="mx-auto w-full max-w-7xl border border-neutral-200 bg-white shadow-sm">
+        <Card className="mx-auto w-full max-w-7xl rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
           <CardContent className="space-y-5 p-8">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-neutral-600" htmlFor="user-service-key">
@@ -105,18 +105,22 @@ export default function StatsStandalonePage() {
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') handleSubmit()
                 }}
-                className="h-12 text-base"
+                className="h-10 text-sm"
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-3">
-              <Button className="min-w-[120px]" onClick={handleSubmit} disabled={!canSubmit}>
+              <Button
+                className="min-w-[120px] bg-violet-600 text-white hover:bg-violet-700"
+                onClick={handleSubmit}
+                disabled={!canSubmit}
+              >
                 <Search className="mr-2 h-4 w-4" />
                 查询统计
               </Button>
               <Button
                 variant="outline"
-                className="min-w-[120px]"
+                className="min-w-[120px] border-neutral-200 text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900"
                 onClick={() => {
                   if (!hasServiceKey) return
                   void fetch({ userServiceKey: filters.userServiceKey })
@@ -128,7 +132,7 @@ export default function StatsStandalonePage() {
               </Button>
               <Button
                 variant="ghost"
-                className="min-w-[120px]"
+                className="min-w-[120px] text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900"
                 onClick={() => {
                   setApiKeyInput('')
                   setTrendTimeframe('7d')
