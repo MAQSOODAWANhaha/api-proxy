@@ -143,32 +143,14 @@ impl TraceManager {
     ) {
         log_proxy_failure_details(&ctx.request_id, status_code, error, ctx);
 
+        let should_log_response_body = ctx
+            .user_service_api
+            .as_ref()
+            .is_some_and(|user_api| user_api.log_mode);
+
         if let Some(tracer) = &self.tracer {
-            let (error_type, error_message) = error.map_or_else(
-                || {
-                    let err_type = format!("HTTP {status_code}");
-                    let body = decode_response_body(ctx).unwrap_or_default();
-                    let structured = json!({
-                        "source": "upstream",
-                        "kind": "upstream_error",
-                        "error_type": err_type,
-                        "message": body
-                    })
-                    .to_string();
-                    (Some(err_type), Some(structured))
-                },
-                |err| {
-                    let err_type = format!("{:?}", err.etype);
-                    let structured = json!({
-                        "source": "pingora",
-                        "kind": "pingora_error",
-                        "error_type": err_type,
-                        "message": err.to_string()
-                    })
-                    .to_string();
-                    (Some(err_type), Some(structured))
-                },
-            );
+            let (error_type, error_message) =
+                build_failure_error_payload(status_code, error, ctx, should_log_response_body);
 
             let params = CompleteTraceParams {
                 status_code,
@@ -325,6 +307,43 @@ impl TraceManager {
     }
 }
 
+fn build_failure_error_payload(
+    status_code: u16,
+    error: Option<&PingoraError>,
+    ctx: &ProxyContext,
+    should_log_response_body: bool,
+) -> (Option<String>, Option<String>) {
+    error.map_or_else(
+        || {
+            let err_type = format!("HTTP {status_code}");
+            let body = if should_log_response_body {
+                decode_response_body(ctx).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let structured = json!({
+                "source": "upstream",
+                "kind": "upstream_error",
+                "error_type": err_type,
+                "message": body
+            })
+            .to_string();
+            (Some(err_type), Some(structured))
+        },
+        |err| {
+            let err_type = format!("{:?}", err.etype);
+            let structured = json!({
+                "source": "pingora",
+                "kind": "pingora_error",
+                "error_type": err_type,
+                "message": err.to_string()
+            })
+            .to_string();
+            (Some(err_type), Some(structured))
+        },
+    )
+}
+
 fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
     if ctx.response_body.is_empty() {
         return None;
@@ -346,4 +365,32 @@ fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
     }
 
     Some(String::from_utf8_lossy(raw_bytes).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_failure_error_payload_redacts_body_when_log_mode_disabled() {
+        let mut ctx = ProxyContext::default();
+        ctx.response_body.extend_from_slice(b"secret body");
+
+        let (_ty, msg) = build_failure_error_payload(500, None, &ctx, false);
+        let msg = msg.expect("should have error_message");
+        assert!(
+            !msg.contains("secret body"),
+            "非 debugmode 不应记录响应体内容"
+        );
+    }
+
+    #[test]
+    fn test_build_failure_error_payload_keeps_body_when_log_mode_enabled() {
+        let mut ctx = ProxyContext::default();
+        ctx.response_body.extend_from_slice(b"secret body");
+
+        let (_ty, msg) = build_failure_error_payload(500, None, &ctx, true);
+        let msg = msg.expect("should have error_message");
+        assert!(msg.contains("secret body"), "debugmode 需要保留响应体内容");
+    }
 }

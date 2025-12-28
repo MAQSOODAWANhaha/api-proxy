@@ -1011,53 +1011,29 @@ pub fn log_proxy_failure_details(
     // 获取Pingora错误详情
     let pingora_error_details = error.map_or_else(|| "无Pingora错误".to_string(), Error::to_string);
 
-    // 处理响应体
-    let response_body = if ctx
-        .response_details
-        .content_encoding
-        .as_deref()
-        .is_some_and(|encoding| encoding.contains("gzip"))
-    {
-        let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
-        let mut decompressed = Vec::new();
-        if decoder.read_to_end(&mut decompressed).is_ok() {
-            String::from_utf8_lossy(&decompressed).to_string()
-        } else {
-            String::from_utf8_lossy(&ctx.response_body).to_string()
-        }
-    } else {
-        String::from_utf8_lossy(&ctx.response_body).to_string()
-    };
-
     // 检测状态码不一致问题
     let context_status_code = ctx.response_details.status_code;
     let status_code_consistent = context_status_code.is_none_or(|ctx_code| ctx_code == status_code);
 
+    let should_log_response_body = ctx
+        .user_service_api
+        .as_ref()
+        .is_some_and(|user_api| user_api.log_mode);
+
     // 记录详细的错误信息
-    lerror!(
+    let response_body = should_log_response_body.then(|| decode_response_body_for_logging(ctx));
+    let summary = ProxyFailureLogSummary {
         request_id,
-        LogStage::ResponseFailure,
-        LogComponent::Proxy,
-        "proxy_request_failed",
-        "代理请求失败 - 详细分析",
-        status_code = status_code,
-        context_status_code = ?context_status_code,
-        status_code_consistent = status_code_consistent,
-        error_category = %error_category,
-        error_type_cn = %error_type_cn,
-        error_message = %error_message,
-        pingora_error_details = %pingora_error_details,
-        path = %ctx.request_details.path,
-        method = %ctx.request_details.method,
-        client_ip = %ctx.request_details.client_ip,
-        user_agent = ?ctx.request_details.user_agent,
-        request_body_size = ctx.request_body.len(),
-        response_body_size = ctx.response_body.len(),
-        response_body = %response_body,
-        has_selected_backend = ctx.selected_backend.is_some(),
-        provider_type = ?ctx.provider_type.as_ref().map(|p| &p.name),
-        request_duration_ms = ctx.start_time.elapsed().as_millis()
-    );
+        status_code,
+        context_status_code,
+        status_code_consistent,
+        error_category: &error_category,
+        error_type_cn: &error_type_cn,
+        error_message: &error_message,
+        pingora_error_details: &pingora_error_details,
+        ctx,
+    };
+    log_proxy_failure_summary(&summary, response_body.as_deref());
 
     // 针对连接失败的特殊日志
     if matches!(
@@ -1090,6 +1066,88 @@ pub fn log_proxy_failure_details(
             error_category = %error_category
         );
     }
+}
+
+struct ProxyFailureLogSummary<'a> {
+    request_id: &'a str,
+    status_code: u16,
+    context_status_code: Option<u16>,
+    status_code_consistent: bool,
+    error_category: &'a str,
+    error_type_cn: &'a str,
+    error_message: &'a str,
+    pingora_error_details: &'a str,
+    ctx: &'a ProxyContext,
+}
+
+fn log_proxy_failure_summary(summary: &ProxyFailureLogSummary<'_>, response_body: Option<&str>) {
+    if let Some(response_body) = response_body {
+        lerror!(
+            summary.request_id,
+            LogStage::ResponseFailure,
+            LogComponent::Proxy,
+            "proxy_request_failed",
+            "代理请求失败 - 详细分析",
+            status_code = summary.status_code,
+            context_status_code = ?summary.context_status_code,
+            status_code_consistent = summary.status_code_consistent,
+            error_category = %summary.error_category,
+            error_type_cn = %summary.error_type_cn,
+            error_message = %summary.error_message,
+            pingora_error_details = %summary.pingora_error_details,
+            path = %summary.ctx.request_details.path,
+            method = %summary.ctx.request_details.method,
+            client_ip = %summary.ctx.request_details.client_ip,
+            user_agent = ?summary.ctx.request_details.user_agent,
+            request_body_size = summary.ctx.request_body.len(),
+            response_body_size = summary.ctx.response_body.len(),
+            response_body = %response_body,
+            has_selected_backend = summary.ctx.selected_backend.is_some(),
+            provider_type = ?summary.ctx.provider_type.as_ref().map(|p| &p.name),
+            request_duration_ms = summary.ctx.start_time.elapsed().as_millis()
+        );
+    } else {
+        lerror!(
+            summary.request_id,
+            LogStage::ResponseFailure,
+            LogComponent::Proxy,
+            "proxy_request_failed",
+            "代理请求失败 - 详细分析",
+            status_code = summary.status_code,
+            context_status_code = ?summary.context_status_code,
+            status_code_consistent = summary.status_code_consistent,
+            error_category = %summary.error_category,
+            error_type_cn = %summary.error_type_cn,
+            error_message = %summary.error_message,
+            pingora_error_details = %summary.pingora_error_details,
+            path = %summary.ctx.request_details.path,
+            method = %summary.ctx.request_details.method,
+            client_ip = %summary.ctx.request_details.client_ip,
+            user_agent = ?summary.ctx.request_details.user_agent,
+            request_body_size = summary.ctx.request_body.len(),
+            response_body_size = summary.ctx.response_body.len(),
+            has_selected_backend = summary.ctx.selected_backend.is_some(),
+            provider_type = ?summary.ctx.provider_type.as_ref().map(|p| &p.name),
+            request_duration_ms = summary.ctx.start_time.elapsed().as_millis()
+        );
+    }
+}
+
+fn decode_response_body_for_logging(ctx: &ProxyContext) -> String {
+    if ctx
+        .response_details
+        .content_encoding
+        .as_deref()
+        .is_some_and(|encoding| encoding.to_ascii_lowercase().contains("gzip"))
+    {
+        let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_ok() {
+            return String::from_utf8_lossy(&decompressed).to_string();
+        }
+    }
+
+    String::from_utf8_lossy(&ctx.response_body).to_string()
 }
 
 /// 记录 Gemini 完整请求信息
