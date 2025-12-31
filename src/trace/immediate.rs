@@ -182,7 +182,7 @@ impl ImmediateProxyTracer {
         provider_type_id: Option<ProviderTypeId>,
         model_used: Option<String>,
         user_provider_key_id: Option<i32>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // 构建更新模型
         let mut update_model = proxy_tracing::ActiveModel::default();
 
@@ -208,7 +208,9 @@ impl ImmediateProxyTracer {
             .exec(&*self.db)
             .await?;
 
-        if update_result.rows_affected > 0 {
+        let updated = update_result.rows_affected > 0;
+
+        if updated {
             linfo!(
                 request_id,
                 LogStage::RequestModify,
@@ -228,7 +230,7 @@ impl ImmediateProxyTracer {
             );
         }
 
-        Ok(())
+        Ok(updated)
     }
 
     /// 完成追踪 - 更新最终结果

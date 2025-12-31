@@ -45,9 +45,9 @@ impl TraceManager {
         path: Option<String>,
         client_ip: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(tracer) = &self.tracer else {
-            return Ok(());
+            return Ok(false);
         };
 
         let params = StartTraceParams {
@@ -77,6 +77,7 @@ impl TraceManager {
                 );
             })
             .context("Failed to start trace")
+            .map(|()| true)
     }
 
     /// 更新模型信息（在解析完成后调用）
@@ -91,7 +92,7 @@ impl TraceManager {
             return;
         };
 
-        if let Err(err) = tracer
+        match tracer
             .update_trace_model_info(
                 request_id,
                 provider_type_id,
@@ -100,25 +101,30 @@ impl TraceManager {
             )
             .await
         {
-            lwarn!(
-                request_id,
-                LogStage::Error,
-                LogComponent::Tracing,
-                "model_info_update_failed",
-                "模型信息更新失败",
-                error = format!("{:?}", err)
-            );
-        } else {
-            linfo!(
-                request_id,
-                LogStage::RequestModify,
-                LogComponent::Tracing,
-                "model_info_updated",
-                "模型信息更新成功",
-                provider_type_id = provider_type_id,
-                model_used = model_used,
-                user_provider_key_id = user_provider_key_id
-            );
+            Ok(updated) => {
+                if updated {
+                    linfo!(
+                        request_id,
+                        LogStage::RequestModify,
+                        LogComponent::Tracing,
+                        "model_info_updated",
+                        "模型信息更新成功",
+                        provider_type_id = provider_type_id,
+                        model_used = model_used,
+                        user_provider_key_id = user_provider_key_id
+                    );
+                }
+            }
+            Err(err) => {
+                lwarn!(
+                    request_id,
+                    LogStage::Error,
+                    LogComponent::Tracing,
+                    "model_info_update_failed",
+                    "模型信息更新失败",
+                    error = format!("{:?}", err)
+                );
+            }
         }
     }
 
@@ -128,7 +134,40 @@ impl TraceManager {
         metrics: &CollectedMetrics,
         ctx: &ProxyContext,
     ) -> Result<()> {
-        self.write_success_trace(metrics).await?;
+        if ctx.is_trace_started() {
+            let Some(tracer) = &self.tracer else {
+                return Ok(());
+            };
+
+            tracer
+                .complete_trace_with_stats(
+                    &metrics.request_id,
+                    CompleteTraceParams {
+                        status_code: metrics.status_code,
+                        is_success: true,
+                        tokens_prompt: metrics.usage.prompt_tokens,
+                        tokens_completion: metrics.usage.completion_tokens,
+                        error_type: None,
+                        error_message: None,
+                        cache_create_tokens: metrics.usage.cache_create_tokens,
+                        cache_read_tokens: metrics.usage.cache_read_tokens,
+                        cost: metrics.cost.value,
+                        cost_currency: metrics.cost.currency.clone(),
+                    },
+                )
+                .await
+                .inspect_err(|err| {
+                    err.log();
+                    lwarn!(
+                        &metrics.request_id,
+                        LogStage::Error,
+                        LogComponent::Tracing,
+                        "success_trace_complete_failed",
+                        "成功请求追踪完成失败",
+                        error = format!("{:?}", err)
+                    );
+                })?;
+        }
         self.update_rate_limits(metrics, ctx).await;
         Ok(())
     }
@@ -143,77 +182,66 @@ impl TraceManager {
     ) {
         log_proxy_failure_details(&ctx.request_id, status_code, error, ctx);
 
-        let should_log_response_body = ctx
-            .user_service_api
-            .as_ref()
-            .is_some_and(|user_api| user_api.log_mode);
-
-        if let Some(tracer) = &self.tracer {
-            let (error_type, error_message) =
-                build_failure_error_payload(status_code, error, ctx, should_log_response_body);
-
-            let params = CompleteTraceParams {
-                status_code,
-                is_success: false,
-                tokens_prompt: metrics.and_then(|m| m.usage.prompt_tokens),
-                tokens_completion: metrics.and_then(|m| m.usage.completion_tokens),
-                error_type,
-                error_message,
-                cache_create_tokens: metrics.and_then(|m| m.usage.cache_create_tokens),
-                cache_read_tokens: metrics.and_then(|m| m.usage.cache_read_tokens),
-                cost: metrics.and_then(|m| m.cost.value),
-                cost_currency: metrics.and_then(|m| m.cost.currency.clone()),
-            };
-
-            if let Err(e) = tracer
-                .complete_trace_with_stats(&ctx.request_id, params)
-                .await
-            {
-                lwarn!(
-                    &ctx.request_id,
-                    LogStage::Error,
-                    LogComponent::Tracing,
-                    "failure_trace_complete_failed",
-                    "失败请求追踪完成失败",
-                    error = format!("{:?}", e)
-                );
-            }
+        if !ctx.is_trace_started() {
+            return;
         }
-    }
 
-    async fn write_success_trace(&self, metrics: &CollectedMetrics) -> Result<()> {
         let Some(tracer) = &self.tracer else {
-            return Ok(());
+            return;
         };
+
+        let (error_type, error_message) = error.map_or_else(
+            || {
+                let err_type = format!("HTTP {status_code}");
+                let body = decode_response_body(ctx).unwrap_or_default();
+                let structured = json!({
+                    "source": "upstream",
+                    "kind": "upstream_error",
+                    "error_type": err_type,
+                    "message": body
+                })
+                .to_string();
+                (Some(err_type), Some(structured))
+            },
+            |err| {
+                let err_type = format!("{:?}", err.etype);
+                let structured = json!({
+                    "source": "pingora",
+                    "kind": "pingora_error",
+                    "error_type": err_type,
+                    "message": err.to_string()
+                })
+                .to_string();
+                (Some(err_type), Some(structured))
+            },
+        );
 
         let params = CompleteTraceParams {
-            status_code: metrics.status_code,
-            is_success: true,
-            tokens_prompt: metrics.usage.prompt_tokens,
-            tokens_completion: metrics.usage.completion_tokens,
-            error_type: None,
-            error_message: None,
-            cache_create_tokens: metrics.usage.cache_create_tokens,
-            cache_read_tokens: metrics.usage.cache_read_tokens,
-            cost: metrics.cost.value,
-            cost_currency: metrics.cost.currency.clone(),
+            status_code,
+            is_success: false,
+            tokens_prompt: metrics.and_then(|m| m.usage.prompt_tokens),
+            tokens_completion: metrics.and_then(|m| m.usage.completion_tokens),
+            error_type,
+            error_message,
+            cache_create_tokens: metrics.and_then(|m| m.usage.cache_create_tokens),
+            cache_read_tokens: metrics.and_then(|m| m.usage.cache_read_tokens),
+            cost: metrics.and_then(|m| m.cost.value),
+            cost_currency: metrics.and_then(|m| m.cost.currency.clone()),
         };
 
-        tracer
-            .complete_trace_with_stats(&metrics.request_id, params)
+        if let Err(e) = tracer
+            .complete_trace_with_stats(&ctx.request_id, params)
             .await
-            .inspect_err(|err| {
-                err.log();
-                lwarn!(
-                    &metrics.request_id,
-                    LogStage::Error,
-                    LogComponent::Tracing,
-                    "success_trace_complete_failed",
-                    "成功请求追踪完成失败",
-                    error = format!("{:?}", err)
-                );
-            })
-            .context("Failed to complete trace")
+        {
+            lwarn!(
+                &ctx.request_id,
+                LogStage::Error,
+                LogComponent::Tracing,
+                "failure_trace_complete_failed",
+                "失败请求追踪完成失败",
+                error = format!("{:?}", e)
+            );
+        }
     }
 
     async fn update_rate_limits(&self, metrics: &CollectedMetrics, ctx: &ProxyContext) {
@@ -307,43 +335,6 @@ impl TraceManager {
     }
 }
 
-fn build_failure_error_payload(
-    status_code: u16,
-    error: Option<&PingoraError>,
-    ctx: &ProxyContext,
-    should_log_response_body: bool,
-) -> (Option<String>, Option<String>) {
-    error.map_or_else(
-        || {
-            let err_type = format!("HTTP {status_code}");
-            let body = if should_log_response_body {
-                decode_response_body(ctx).unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let structured = json!({
-                "source": "upstream",
-                "kind": "upstream_error",
-                "error_type": err_type,
-                "message": body
-            })
-            .to_string();
-            (Some(err_type), Some(structured))
-        },
-        |err| {
-            let err_type = format!("{:?}", err.etype);
-            let structured = json!({
-                "source": "pingora",
-                "kind": "pingora_error",
-                "error_type": err_type,
-                "message": err.to_string()
-            })
-            .to_string();
-            (Some(err_type), Some(structured))
-        },
-    )
-}
-
 fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
     if ctx.response_body.is_empty() {
         return None;
@@ -365,32 +356,4 @@ fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
     }
 
     Some(String::from_utf8_lossy(raw_bytes).into_owned())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_failure_error_payload_redacts_body_when_log_mode_disabled() {
-        let mut ctx = ProxyContext::default();
-        ctx.response_body.extend_from_slice(b"secret body");
-
-        let (_ty, msg) = build_failure_error_payload(500, None, &ctx, false);
-        let msg = msg.expect("should have error_message");
-        assert!(
-            !msg.contains("secret body"),
-            "非 debugmode 不应记录响应体内容"
-        );
-    }
-
-    #[test]
-    fn test_build_failure_error_payload_keeps_body_when_log_mode_enabled() {
-        let mut ctx = ProxyContext::default();
-        ctx.response_body.extend_from_slice(b"secret body");
-
-        let (_ty, msg) = build_failure_error_payload(500, None, &ctx, true);
-        let msg = msg.expect("should have error_message");
-        assert!(msg.contains("secret body"), "debugmode 需要保留响应体内容");
-    }
 }

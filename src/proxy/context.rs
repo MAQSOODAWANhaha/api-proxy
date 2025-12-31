@@ -50,6 +50,8 @@ pub struct ProxyContext {
     pub requested_model: Option<String>,
     /// 最终使用量（统一出口）
     pub usage_final: Option<TokenUsageMetrics>,
+    /// 追踪记录是否已成功写入数据库
+    pub trace_started: bool,
 
     // === 认证相关字段（逐步填充） ===
     /// 用户对外API配置
@@ -84,6 +86,7 @@ impl Default for ProxyContext {
             account_id: None,
             requested_model: None,
             usage_final: None,
+            trace_started: false,
             // 认证相关字段
             user_service_api: None,
             selected_backend: None,
@@ -96,3 +99,16 @@ impl Default for ProxyContext {
 }
 
 impl ProxyContext {}
+
+impl ProxyContext {
+    /// 标记追踪已成功启动
+    pub const fn mark_trace_started(&mut self) {
+        self.trace_started = true;
+    }
+
+    /// 判断是否已成功启动追踪
+    #[must_use]
+    pub const fn is_trace_started(&self) -> bool {
+        self.trace_started
+    }
+}

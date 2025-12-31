@@ -131,21 +131,25 @@ impl ProxyService {
         if let Some(user_api) = &ctx.user_service_api {
             let provider_type_id = ctx.provider_type.as_ref().map(|p| p.id);
             let user_provider_key_id = ctx.selected_backend.as_ref().map(|backend| backend.id);
-            let _ = self
-                .state
-                .trace_manager
-                .start_trace(
-                    &ctx.request_id,
-                    user_api.id,
-                    Some(user_api.user_id),
-                    provider_type_id,
-                    user_provider_key_id,
-                    req_stats.method.as_str(),
-                    Some(req_stats.path.clone()),
-                    Some(req_stats.client_ip.clone()),
-                    req_stats.user_agent.clone(),
-                )
-                .await;
+            if matches!(
+                self.state
+                    .trace_manager
+                    .start_trace(
+                        &ctx.request_id,
+                        user_api.id,
+                        Some(user_api.user_id),
+                        provider_type_id,
+                        user_provider_key_id,
+                        req_stats.method.as_str(),
+                        Some(req_stats.path.clone()),
+                        Some(req_stats.client_ip.clone()),
+                        req_stats.user_agent.clone(),
+                    )
+                    .await,
+                Ok(true)
+            ) {
+                ctx.mark_trace_started();
+            }
         }
     }
 
@@ -511,15 +515,17 @@ impl ProxyHttp for ProxyService {
             .finalize_metrics(ctx, status_code)
             .await;
 
-        self.state
-            .trace_manager
-            .update_model(
-                &ctx.request_id,
-                metrics.provider_type_id,
-                metrics.model.clone(),
-                ctx.selected_backend.as_ref().map(|k| k.id),
-            )
-            .await;
+        if ctx.is_trace_started() {
+            self.state
+                .trace_manager
+                .update_model(
+                    &ctx.request_id,
+                    metrics.provider_type_id,
+                    metrics.model.clone(),
+                    ctx.selected_backend.as_ref().map(|k| k.id),
+                )
+                .await;
+        }
 
         if status_code < 400 {
             if let Err(err) = self.state.trace_manager.record_success(&metrics, ctx).await {

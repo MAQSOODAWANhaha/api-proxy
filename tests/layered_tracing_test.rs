@@ -200,6 +200,7 @@ async fn test_record_success_updates_trace() {
         .expect("start trace");
 
     let mut ctx = build_context(request_id);
+    ctx.mark_trace_started();
     ctx.user_service_api = user_service_apis::Entity::find_by_id(service_api_id)
         .one(db.as_ref())
         .await
@@ -274,7 +275,8 @@ async fn test_record_failure_updates_trace() {
         .await
         .expect("start trace");
 
-    let ctx = build_context(request_id);
+    let mut ctx = build_context(request_id);
+    ctx.mark_trace_started();
 
     trace_manager.record_failure(None, 502, None, &ctx).await;
 
