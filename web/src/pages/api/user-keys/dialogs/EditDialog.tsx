@@ -30,19 +30,20 @@ const EditDialog: React.FC<{
     try {
       const response = await api.userService.getKeyDetail(item.id);
       if (response.success && response.data) {
+        const detail = response.data;
         // 使用完整的详情数据更新formData
         setFormData((prev) => ({
           ...prev, // 保留原有的字段
-          ...response.data,
+          ...detail,
           // 确保数字字段有默认值
-          retry_count: response.data.retry_count || 0,
-          timeout_seconds: response.data.timeout_seconds || 0,
-          max_request_per_min: response.data.max_request_per_min || 0,
-          max_requests_per_day: response.data.max_requests_per_day || 0,
-          max_tokens_per_day: response.data.max_tokens_per_day || 0,
-          max_cost_per_day: response.data.max_cost_per_day || 0,
+          retry_count: detail.retry_count || 0,
+          timeout_seconds: detail.timeout_seconds || 0,
+          max_request_per_min: detail.max_request_per_min || 0,
+          max_requests_per_day: detail.max_requests_per_day || 0,
+          max_tokens_per_day: detail.max_tokens_per_day || 0,
+          max_cost_per_day: detail.max_cost_per_day || 0,
           // 确保数组字段有默认值
-          user_provider_keys_ids: response.data.user_provider_keys_ids || [],
+          user_provider_keys_ids: detail.user_provider_keys_ids || [],
         }));
       } else {
         console.error("获取API Key详情失败:", response.message);
@@ -232,7 +233,7 @@ const EditDialog: React.FC<{
               }}
               options={providerTypes.map((type) => ({
                 value: type.id.toString(),
-                label: type.display_name,
+                label: `${type.display_name} (${type.name}) / ${type.auth_type || ""}`,
               }))}
               placeholder="请选择服务商类型"
             />

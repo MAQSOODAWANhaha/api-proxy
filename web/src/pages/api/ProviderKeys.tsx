@@ -182,23 +182,35 @@ const ProviderKeysPage: React.FC = () => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
-      let providerTypeId = 1 // 默认值
+      let providerTypeId = newKey.provider_type_id || Number(newKey.provider) || 0
       let matchedType: ProviderType | undefined
-      
+
       if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
         matchedType = providerTypesResponse.data.provider_types.find(
-          type => type.display_name === newKey.provider
+          type => type.id === providerTypeId
         )
-        if (matchedType) {
+        if (!matchedType && newKey.provider) {
+          matchedType = providerTypesResponse.data.provider_types.find(
+            type => type.display_name === newKey.provider || type.name === newKey.provider
+          )
+        }
+        if (matchedType && !providerTypeId) {
           providerTypeId = matchedType.id
         }
       }
 
+      if (!providerTypeId) {
+        throw new Error('未选择有效的服务商类型')
+      }
+
+      const authType = matchedType?.auth_type || newKey.auth_type || 'api_key'
+      const providerLabel = matchedType?.display_name || matchedType?.name || newKey.provider
+
       const payload: CreateProviderKeyRequest = {
         provider_type_id: providerTypeId,
         name: newKey.keyName,
-        api_key: newKey.keyValue || generateApiKey(newKey.provider),
-        auth_type: newKey.auth_type || 'api_key',
+        api_key: newKey.keyValue || generateApiKey(providerLabel),
+        auth_type: authType,
         weight: newKey.weight || 1,
         max_requests_per_minute: newKey.requestLimitPerMinute || 0,
         max_tokens_prompt_per_minute: newKey.tokenLimitPromptPerMinute || 0,
@@ -207,7 +219,7 @@ const ProviderKeysPage: React.FC = () => {
       }
 
       const projectId = (newKey.project_id || '').trim()
-      if (projectId && matchedType?.name === 'gemini' && (newKey.auth_type || '').includes('oauth')) {
+      if (projectId && matchedType?.name === 'gemini' && authType.includes('oauth')) {
         payload.project_id = projectId
       }
 
@@ -234,23 +246,34 @@ const ProviderKeysPage: React.FC = () => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
-      let providerTypeId = 1 // 默认值
+      let providerTypeId = updatedKey.provider_type_id || Number(updatedKey.provider) || 0
       let matchedType: ProviderType | undefined
-      
+
       if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
         matchedType = providerTypesResponse.data.provider_types.find(
-          type => type.display_name === updatedKey.provider
+          type => type.id === providerTypeId
         )
-        if (matchedType) {
+        if (!matchedType && updatedKey.provider) {
+          matchedType = providerTypesResponse.data.provider_types.find(
+            type => type.display_name === updatedKey.provider || type.name === updatedKey.provider
+          )
+        }
+        if (matchedType && !providerTypeId) {
           providerTypeId = matchedType.id
         }
       }
+
+      if (!providerTypeId) {
+        throw new Error('未选择有效的服务商类型')
+      }
+
+      const authType = matchedType?.auth_type || updatedKey.auth_type || 'api_key'
 
       const payload: UpdateProviderKeyRequest = {
         provider_type_id: providerTypeId,
         name: updatedKey.keyName,
         api_key: updatedKey.keyValue,
-        auth_type: updatedKey.auth_type || 'api_key',
+        auth_type: authType,
         weight: updatedKey.weight,
         max_requests_per_minute: updatedKey.requestLimitPerMinute,
         max_tokens_prompt_per_minute: updatedKey.tokenLimitPromptPerMinute,
@@ -259,7 +282,7 @@ const ProviderKeysPage: React.FC = () => {
       }
 
       const projectId = (updatedKey.project_id || '').trim()
-      if (projectId && matchedType?.name === 'gemini' && (updatedKey.auth_type || '').includes('oauth')) {
+      if (projectId && matchedType?.name === 'gemini' && authType.includes('oauth')) {
         payload.project_id = projectId
       }
 

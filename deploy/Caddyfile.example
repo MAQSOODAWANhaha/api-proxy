@@ -1,0 +1,74 @@
+{
+    # 自动HTTPS (域名模式下默认启用，不需要重定向)
+    auto_https disable_redirects
+    
+    # 证书申请邮箱
+    email admin@******.work
+    
+    # 管理端点
+    admin :2019
+    
+    # 日志级别
+    log {
+        level INFO
+    }
+    
+    # ACME服务器（生产环境使用Let's Encrypt）
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+# ================================
+# 主域名 HTTPS (443端口) - 自动证书
+# ================================
+******.**** {
+    # 健康检查端点
+    handle /health {
+        respond "OK - Auto TLS" 200
+    }
+    
+    # 管理API和前端 - 转发到9090端口
+    handle /* {
+        reverse_proxy proxy:9090 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+    
+    # 访问日志
+    log {
+        output file /var/log/caddy/domain.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+}
+
+# ================================
+# 8443端口 HTTPS 转发 - 自动证书 (AI代理服务)
+# ================================
+******.****:8443 {
+    # 健康检查端点
+    handle /health {
+        respond "OK - Port 8443" 200
+    }
+    
+    # AI代理服务 - 转发到8080端口
+    handle /* {
+        reverse_proxy proxy:8080 {
+            header_up Host {http.request.host}
+            header_up X-Real-IP {http.request.remote.host}
+            header_up X-Forwarded-For {http.request.remote.host}
+            header_up X-Forwarded-Proto {http.request.scheme}
+        }
+    }
+}
+
+# ================================
+# HTTP重定向到HTTPS
+# ================================
+http://******.**** {
+    redir https://******.****{uri} permanent
+}

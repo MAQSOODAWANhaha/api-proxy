@@ -256,7 +256,7 @@ const AddDialog: React.FC<{
               onValueChange={handleProviderTypeChange}
               options={providerTypes.map((type) => ({
                 value: type.id.toString(),
-                label: type.display_name,
+                label: `${type.display_name} (${type.name}) / ${type.auth_type || ""}`,
               }))}
               placeholder="请选择服务商类型"
             />

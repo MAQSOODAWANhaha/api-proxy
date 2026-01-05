@@ -159,7 +159,7 @@ const ProvidersPage: React.FC = () => {
         <div className="flex gap-2">
           <button
             onClick={openCreate}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
+            className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-violet-700"
             title="新增服务商类型"
           >
             <Plus size={16} />
@@ -168,7 +168,7 @@ const ProvidersPage: React.FC = () => {
           <button
             onClick={fetchProviders}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
             title="刷新数据"
           >
             {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
@@ -343,22 +343,20 @@ const ProvidersPage: React.FC = () => {
                       </td>
 
                       <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(p)}
-                            className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
+                            className="p-1 text-neutral-500 hover:text-violet-600"
                             title="编辑"
                           >
                             <Pencil size={14} />
-                            编辑
                           </button>
                           <button
                             onClick={() => void deleteRow(p)}
-                            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                            className="p-1 text-neutral-500 hover:text-red-600"
                             title="删除"
                           >
                             <Trash2 size={14} />
-                            删除
                           </button>
                         </div>
                       </td>

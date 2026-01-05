@@ -1,18 +1,21 @@
+# 兼容旧版 docker-compose (<=1.x)：必须声明 version，否则会按 v1 格式解析并报错
+version: "3.7"
+
 # AI Proxy Platform - Standalone Docker Compose
-# 目标：用户只需要这个 docker-compose.yaml + deploy.sh，就能完成部署（无需 git clone 项目源码）。
+# 目标：用户只需要这个 docker-compose.yaml + Caddyfile + .env，就能完成部署（无需 git clone 项目源码）。
 #
 # 运行前提：
 # - 必须提供 JWT_SECRET（>=32位）
 #   - 方式1：export JWT_SECRET="..."
-#   - 方式2：同目录放置 .env（deploy.sh 会自动生成）并包含 JWT_SECRET=...
+#   - 方式2：同目录放置 .env 并包含 JWT_SECRET=...
 
 services:
   proxy:
     image: gghtrt520/api-proxy:latest
     container_name: api-proxy
     restart: unless-stopped
-    environment:
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>=32 chars)}
+    env_file:
+      - .env
     volumes:
       - proxy_data:/app/data
       - proxy_logs:/app/logs
@@ -21,7 +24,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
 
   caddy:
     image: caddy:2.8-alpine
@@ -34,7 +36,7 @@ services:
       - "443:443"   # 管理服务入口 -> proxy:9090
       - "8443:8443" # 代理服务入口 -> proxy:8080
     volumes:
-      # 由 deploy.sh 生成（自签/自动证书两种模式共用）
+      # Caddy 配置（你自己维护，可参考同目录的 Caddyfile.example）
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # 证书与内部CA等数据持久化（避免重复申请/重启丢失）
       - caddy_data:/data

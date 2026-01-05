@@ -140,7 +140,8 @@ const EditDialog: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if (formData.auth_type === 'oauth' && oauthStatus !== 'success') {
+    const existingOAuthKey = (formData.keyValue || '').trim()
+    if (formData.auth_type === 'oauth' && !existingOAuthKey && oauthStatus !== 'success') {
       toast.info('请先完成OAuth授权流程')
       return
     }
