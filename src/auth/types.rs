@@ -73,7 +73,7 @@ pub struct OAuthProviderConfig {
     pub redirect_uri: String,
     pub scopes: Vec<String>,
     pub pkce_required: bool,
-    pub extra_params: HashMap<String, String>,
+    pub extra_params: HashMap<String, serde_json::Value>,
 }
 
 /// JWT 载荷

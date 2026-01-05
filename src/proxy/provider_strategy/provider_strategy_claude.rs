@@ -23,7 +23,6 @@ use std::sync::Arc;
 /// 2. 替换 `metadata.user_id` 中的 client ID 以保护隐私
 /// 3. 设置 Claude 特定的请求头
 pub struct ClaudeStrategy {
-    #[allow(dead_code)]
     health_checker: Option<Arc<ApiKeyHealthService>>,
     unified_client_id: String,
 }
@@ -193,8 +192,8 @@ mod tests {
             config_json: Some(r#"{"request_stage":{"required_headers":{"anthropic-version":"2023-06-01"}},"response_stage":{}}"#.to_string()),
             token_mappings_json: Some(r#"{"tokens_prompt":{"type":"direct","path":"usage.input_tokens","fallback":{"type":"direct","path":"usage.prompt_tokens"}},"tokens_completion":{"type":"direct","path":"usage.output_tokens","fallback":{"type":"direct","path":"usage.completion_tokens"}},"tokens_total":{"type":"expression","formula":"usage.total_tokens","fallback":{"type":"expression","formula":"usage.input_tokens + usage.output_tokens"}},"cache_create_tokens":{"type":"direct","path":"usage.cache_creation_input_tokens","fallback":{"type":"direct","path":"usage.prompt_tokens_details.cached_tokens"}},"cache_read_tokens":{"type":"direct","path":"usage.cache_read_input_tokens","fallback":{"type":"direct","path":"usage.cached_tokens"}}}"#.to_string()),
             model_extraction_json: Some(r#"{"extraction_rules":[{"type":"body_json","path":"model","priority":1,"description":"从请求body提取模型名"}],"fallback_model":"claude-4-sonnet"}"#.to_string()),
-            supported_auth_types: r#"["api_key", "oauth"]"#.to_string(),
-            auth_configs_json: Some(r#"{"api_key": {}, "oauth": {"client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e", "authorize_url": "https://claude.ai/oauth/authorize", "token_url": "https://console.anthropic.com/v1/oauth/token", "redirect_uri": "https://console.anthropic.com/oauth/code/callback", "scopes": "org:create_api_key user:profile user:inference", "pkce_required": true, "extra_params": {"response_type": "code", "code": "true"}}}"#.to_string()),
+            auth_type: "api_key".to_string(),
+            auth_configs_json: Some(r"{}".to_string()),
             created_at: now,
             updated_at: now,
         }

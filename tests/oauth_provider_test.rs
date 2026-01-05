@@ -67,10 +67,22 @@ mod tests {
     /// `创建测试用的OpenAI` `OAuth配置`
     fn create_openai_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
-        extra_params.insert("response_type".to_string(), "code".to_string());
-        extra_params.insert("id_token_add_organizations".to_string(), "true".to_string());
-        extra_params.insert("codex_cli_simplified_flow".to_string(), "true".to_string());
-        extra_params.insert("originator".to_string(), "codex_cli_rs".to_string());
+        extra_params.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("code".to_string()),
+        );
+        extra_params.insert(
+            "id_token_add_organizations".to_string(),
+            serde_json::Value::String("true".to_string()),
+        );
+        extra_params.insert(
+            "codex_cli_simplified_flow".to_string(),
+            serde_json::Value::String("true".to_string()),
+        );
+        extra_params.insert(
+            "originator".to_string(),
+            serde_json::Value::String("codex_cli_rs".to_string()),
+        );
 
         OAuthConfig {
             client_id: "test_client_id".to_string(),
@@ -293,7 +305,7 @@ mod tests {
         assert!(config.pkce_required);
         assert_eq!(
             config.extra_params.get("custom_param"),
-            Some(&"custom_value".to_string())
+            Some(&serde_json::Value::String("custom_value".to_string()))
         );
     }
 
@@ -303,8 +315,14 @@ mod tests {
 
         // 创建包含response_type的额外参数配置
         let mut extra_params = HashMap::new();
-        extra_params.insert("response_type".to_string(), "token".to_string()); // 非标准值
-        extra_params.insert("custom_param".to_string(), "custom_value".to_string());
+        extra_params.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("token".to_string()),
+        ); // 非标准值
+        extra_params.insert(
+            "custom_param".to_string(),
+            serde_json::Value::String("custom_value".to_string()),
+        );
 
         let config = OAuthProviderConfig {
             provider_name: "test:oauth".to_string(),
@@ -346,10 +364,13 @@ mod tests {
 
         // 创建包含特殊字符的参数
         let mut extra_params = HashMap::new();
-        extra_params.insert("scope".to_string(), "email profile".to_string()); // 会覆盖基础scope
+        extra_params.insert(
+            "scope".to_string(),
+            serde_json::Value::String("email profile".to_string()),
+        ); // 会覆盖基础scope
         extra_params.insert(
             "redirect_uri".to_string(),
-            "https://example.com/callback?param=value".to_string(),
+            serde_json::Value::String("https://example.com/callback?param=value".to_string()),
         ); // 包含特殊字符
 
         let config = OAuthProviderConfig {
@@ -420,15 +441,15 @@ mod tests {
         assert!(config.pkce_required);
         assert_eq!(
             config.extra_params.get("response_type"),
-            Some(&"code".to_string())
+            Some(&serde_json::Value::String("code".to_string()))
         );
         assert_eq!(
             config.extra_params.get("id_token_add_organizations"),
-            Some(&"true".to_string())
+            Some(&serde_json::Value::String("true".to_string()))
         );
         assert_eq!(
             config.extra_params.get("originator"),
-            Some(&"codex_cli_rs".to_string())
+            Some(&serde_json::Value::String("codex_cli_rs".to_string()))
         );
 
         // 验证没有重复参数
@@ -438,8 +459,14 @@ mod tests {
     /// 创建Claude OAuth配置（多scope测试）
     fn create_claude_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
-        extra_params.insert("response_type".to_string(), "code".to_string());
-        extra_params.insert("code".to_string(), "true".to_string());
+        extra_params.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("code".to_string()),
+        );
+        extra_params.insert(
+            "code".to_string(),
+            serde_json::Value::String("true".to_string()),
+        );
 
         OAuthConfig {
             client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string(),
@@ -542,9 +569,18 @@ mod tests {
     /// 创建Gemini `OAuth配置`
     fn create_gemini_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
-        extra_params.insert("response_type".to_string(), "code".to_string());
-        extra_params.insert("access_type".to_string(), "offline".to_string());
-        extra_params.insert("prompt".to_string(), "select_account".to_string());
+        extra_params.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("code".to_string()),
+        );
+        extra_params.insert(
+            "access_type".to_string(),
+            serde_json::Value::String("offline".to_string()),
+        );
+        extra_params.insert(
+            "prompt".to_string(),
+            serde_json::Value::String("select_account".to_string()),
+        );
 
         OAuthConfig {
             client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"

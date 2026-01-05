@@ -13,28 +13,11 @@ use crate::{
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 
-#[derive(Debug, Clone, PartialEq)]
-enum GeminiProxyMode {
-    OAuthWithoutProject,
-    OAuthWithProject(String),
-    ApiKey,
-}
-
-impl GeminiProxyMode {
-    const fn upstream_host(&self) -> &'static str {
-        match self {
-            Self::OAuthWithoutProject | Self::OAuthWithProject(_) => "cloudcode-pa.googleapis.com",
-            Self::ApiKey => "generativelanguage.googleapis.com",
-        }
-    }
-}
-
 use crate::key_pool::ApiKeyHealthService;
 use std::sync::Arc;
 
 #[derive(Default)]
 pub struct GeminiStrategy {
-    #[allow(dead_code)]
     health_checker: Option<Arc<ApiKeyHealthService>>,
 }
 
@@ -55,24 +38,9 @@ impl ProviderStrategy for GeminiStrategy {
         &self,
         ctx: &crate::proxy::ProxyContext,
     ) -> Result<Option<String>> {
-        let Some(backend) = &ctx.selected_backend else {
-            return Ok(None);
-        };
-        let mode =
-            match backend.auth_type.as_str() {
-                "oauth" => backend.project_id.as_ref().map_or(
-                    GeminiProxyMode::OAuthWithoutProject,
-                    |pid| {
-                        if pid.is_empty() {
-                            GeminiProxyMode::OAuthWithoutProject
-                        } else {
-                            GeminiProxyMode::OAuthWithProject(pid.clone())
-                        }
-                    },
-                ),
-                _ => GeminiProxyMode::ApiKey,
-            };
-        Ok(Some(mode.upstream_host().to_string()))
+        ctx.provider_type
+            .as_ref()
+            .map_or_else(|| Ok(None), |provider| Ok(Some(provider.base_url.clone())))
     }
 
     async fn modify_request(
@@ -81,7 +49,7 @@ impl ProviderStrategy for GeminiStrategy {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<()> {
-        // 设置正确的Host头 - 复用 select_upstream_host 的逻辑
+        // 设置正确的 Host 头（使用数据库配置的 base_url）
         if let Ok(Some(host)) = self.select_upstream_host(ctx).await {
             upstream_request
                 .insert_header("host", &host)
@@ -92,7 +60,7 @@ impl ProviderStrategy for GeminiStrategy {
                 LogStage::RequestModify,
                 LogComponent::GeminiStrategy,
                 "set_host_header",
-                "Set correct Host header for Gemini provider",
+                "已设置 Gemini 上游 Host 头",
                 host = %host,
                 uri = %upstream_request.uri
             );
@@ -257,6 +225,7 @@ fn inject_load_code_assist_fields(json_value: &mut serde_json::Value, project_id
 mod tests {
     use super::*;
     use crate::{auth::types::AuthStatus, proxy::ProxyContext};
+    use entity::provider_types;
     use entity::user_provider_keys;
     use sea_orm::prelude::DateTime;
 
@@ -287,11 +256,30 @@ mod tests {
         }
     }
 
+    fn dummy_provider(base_url: &str, auth_type: &str) -> provider_types::Model {
+        let now: DateTime = chrono::Utc::now().naive_utc();
+        provider_types::Model {
+            id: 1,
+            name: "gemini".to_string(),
+            display_name: "Google Gemini".to_string(),
+            auth_type: auth_type.to_string(),
+            base_url: base_url.to_string(),
+            is_active: true,
+            config_json: None,
+            token_mappings_json: None,
+            model_extraction_json: None,
+            auth_configs_json: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn test_select_upstream_host_oauth_with_project() {
         let strat = GeminiStrategy::new(None);
         let ctx = ProxyContext {
             selected_backend: Some(dummy_key("oauth", Some("proj-123"))),
+            provider_type: Some(dummy_provider("cloudcode-pa.googleapis.com", "oauth")),
             ..Default::default()
         };
         let host = strat.select_upstream_host(&ctx).await.unwrap();
@@ -303,6 +291,10 @@ mod tests {
         let strat = GeminiStrategy::new(None);
         let ctx = ProxyContext {
             selected_backend: Some(dummy_key("api_key", None)),
+            provider_type: Some(dummy_provider(
+                "generativelanguage.googleapis.com",
+                "api_key",
+            )),
             ..Default::default()
         };
         let host = strat.select_upstream_host(&ctx).await.unwrap();

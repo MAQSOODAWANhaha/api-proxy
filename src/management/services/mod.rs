@@ -26,6 +26,9 @@ pub use provider_keys::{
     CreateProviderKeyRequest, ProviderKeysListQuery, TrendQuery, UpdateProviderKeyRequest,
     UserProviderKeyQuery,
 };
+pub use provider_types::{
+    CreateProviderTypeRequest, ProviderTypesCrudService, UpdateProviderTypeRequest,
+};
 pub use service_apis::ServiceApiService;
 pub use statistics::StatisticsService;
 pub use stats_public::StatsService;

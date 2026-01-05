@@ -9,6 +9,18 @@ use super::registry::resolve_oauth_provider;
 use super::types::ProviderType;
 use std::collections::HashMap;
 
+fn json_value_to_query_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            serde_json::to_string(value).ok()
+        }
+    }
+}
+
 /// 根据会话与配置构建授权 URL。
 pub fn build_authorize_url(
     config: &OAuthProviderConfig,
@@ -38,7 +50,7 @@ pub fn build_authorize_url(
     let response_type = config
         .extra_params
         .get("response_type")
-        .cloned()
+        .and_then(json_value_to_query_value)
         .unwrap_or_else(|| "code".to_string());
     params.insert("response_type".to_string(), response_type);
 
@@ -49,7 +61,9 @@ pub fn build_authorize_url(
 
     // 添加额外参数，会覆盖同名的现有参数
     for (key, value) in &config.extra_params {
-        params.insert(key.clone(), value.clone());
+        if let Some(s) = json_value_to_query_value(value) {
+            params.insert(key.clone(), s);
+        }
     }
 
     let provider_type = ProviderType::parse(

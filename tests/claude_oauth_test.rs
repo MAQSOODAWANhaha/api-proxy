@@ -43,8 +43,14 @@ mod tests {
     /// 创建Claude OAuth配置（多scope测试）
     fn create_claude_oauth_config() -> OAuthConfig {
         let mut extra_params = HashMap::new();
-        extra_params.insert("response_type".to_string(), "code".to_string());
-        extra_params.insert("code".to_string(), "true".to_string());
+        extra_params.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("code".to_string()),
+        );
+        extra_params.insert(
+            "code".to_string(),
+            serde_json::Value::String("true".to_string()),
+        );
 
         OAuthConfig {
             client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_string(),
@@ -210,8 +216,14 @@ mod tests {
             pkce_required: true,
             extra_params: {
                 let mut params = HashMap::new();
-                params.insert("response_type".to_string(), "code".to_string());
-                params.insert("code".to_string(), "true".to_string());
+                params.insert(
+                    "response_type".to_string(),
+                    serde_json::Value::String("code".to_string()),
+                );
+                params.insert(
+                    "code".to_string(),
+                    serde_json::Value::String("true".to_string()),
+                );
                 params
             },
         };

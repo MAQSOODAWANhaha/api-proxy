@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import ModernSelect from '../../../../components/common/ModernSelect'
-import AuthTypeSelector from '../../../../components/common/AuthTypeSelector'
 import OAuthHandler, { OAuthResult, OAuthStatus } from '../../../../components/common/OAuthHandler'
 import { LoadingSpinner } from '../../../../components/ui/loading'
 import { api, ProviderType } from '../../../../lib/api'
@@ -15,7 +14,7 @@ const EditDialog: React.FC<{
 }> = ({ item, onClose, onSubmit }) => {
   const [formData, setFormData] = useState<ProviderKeyEditFormState>({
     id: Number(item.id),
-    provider: item.provider,
+    provider: item.provider_type_id ? String(item.provider_type_id) : item.provider,
     provider_type_id: item.provider_type_id || 0,
     keyName: item.keyName,
     keyValue: item.keyValue,
@@ -45,12 +44,18 @@ const EditDialog: React.FC<{
 
       if (response.success && response.data) {
         setProviderTypes(response.data.provider_types || [])
-        // 根据当前item的provider设置selectedProviderType
-        const currentProvider = response.data.provider_types?.find(
-          (type) => type.display_name === item.provider
-        )
+        // 优先按 provider_type_id 匹配（避免 display_name 重名）
+        const currentProvider =
+          response.data.provider_types?.find((type) => type.id === item.provider_type_id) ||
+          response.data.provider_types?.find((type) => type.display_name === item.provider)
         if (currentProvider) {
           setSelectedProviderType(currentProvider)
+          setFormData((prev) => ({
+            ...prev,
+            provider: String(currentProvider.id),
+            provider_type_id: currentProvider.id,
+            auth_type: currentProvider.auth_type || prev.auth_type,
+          }))
         }
       } else {
         console.error('[EditDialog] 获取服务商类型失败:', response.message)
@@ -60,7 +65,7 @@ const EditDialog: React.FC<{
     } finally {
       setLoadingProviderTypes(false)
     }
-  }, [item.provider])
+  }, [item.provider, item.provider_type_id])
 
   // 初始化：获取服务商类型
   React.useEffect(() => {
@@ -96,29 +101,26 @@ const EditDialog: React.FC<{
   }
 
   const handleProviderTypeChange = (value: string) => {
-    const selectedProvider = providerTypes.find((type) => type.display_name === value)
+    const selectedProvider = providerTypes.find((type) => String(type.id) === value)
     if (selectedProvider) {
       setFormData((prev) => ({
         ...prev,
-        provider: selectedProvider.display_name,
+        provider: String(selectedProvider.id),
         provider_type_id: selectedProvider.id,
+        auth_type: selectedProvider.auth_type || 'api_key',
+        keyValue: '',
       }))
       setSelectedProviderType(selectedProvider)
-      // 重置OAuth状态和认证类型
+      // 重置 OAuth 状态
       setOAuthStatus('idle')
-      setFormData((prev) => ({ ...prev, auth_type: 'api_key' }))
       setOAuthExtraParams({})
     }
   }
 
-  const handleAuthTypeChange = (authType: string) => {
-    setFormData((prev) => ({ ...prev, auth_type: authType }))
-    // 如果切换到非OAuth类型，重置OAuth状态
-    if (!authType.includes('oauth')) {
-      setOAuthStatus('idle')
-    }
-    // 重置额外参数
-    setOAuthExtraParams({})
+  const getAuthConfig = (): any | null => {
+    const authConfigs = selectedProviderType?.auth_configs
+    if (!authConfigs || typeof authConfigs !== 'object' || Array.isArray(authConfigs)) return null
+    return authConfigs
   }
 
   // 获取当前认证类型的额外参数配置
@@ -131,18 +133,14 @@ const EditDialog: React.FC<{
     placeholder?: string
     description?: string
   }> => {
-    if (!selectedProviderType?.auth_configs) return []
-
-    const authConfigs = selectedProviderType.auth_configs
-    const currentAuthConfig = authConfigs[formData.auth_type]
-
-    return currentAuthConfig?.extra_params || []
+    const cfg = getAuthConfig()
+    return cfg?.extra_params || []
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     // OAuth类型的密钥需要先完成OAuth流程
-    if (formData.auth_type.includes('oauth') && oauthStatus !== 'success') {
+    if (formData.auth_type === 'oauth' && oauthStatus !== 'success') {
       toast.info('请先完成OAuth授权流程')
       return
     }
@@ -191,30 +189,24 @@ const EditDialog: React.FC<{
               value={formData.provider}
               onValueChange={handleProviderTypeChange}
               options={providerTypes.map((type) => ({
-                value: type.display_name,
-                label: type.display_name,
+                value: String(type.id),
+                label: `${type.display_name} (${type.name}) / ${type.auth_type || ''}`,
               }))}
               placeholder="请选择服务商类型"
             />
           )}
         </div>
 
-        {/* 认证类型 */}
+        {/* 认证类型（由服务商类型行决定） */}
         {selectedProviderType && (
-          <div>
-            <label className="block text-sm font-medium text-neutral-700 mb-1">
-              <span className="text-red-500">*</span> 认证类型
-            </label>
-            <AuthTypeSelector
-              providerType={selectedProviderType}
-              value={formData.auth_type || 'api_key'}
-              onValueChange={handleAuthTypeChange}
-            />
+          <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
+            <span className="font-medium">认证类型：</span>
+            <span>{selectedProviderType.auth_type || formData.auth_type}</span>
           </div>
         )}
 
         {/* 动态额外参数字段 */}
-        {selectedProviderType && formData.auth_type.includes('oauth') && getCurrentAuthExtraParams().length > 0 && (
+        {selectedProviderType && formData.auth_type === 'oauth' && getCurrentAuthExtraParams().length > 0 && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-2">OAuth额外参数</label>
             {getCurrentAuthExtraParams().map((param) => (
@@ -244,14 +236,14 @@ const EditDialog: React.FC<{
         )}
 
         {/* OAuth Handler */}
-        {selectedProviderType && formData.auth_type.includes('oauth') && (
+        {selectedProviderType && formData.auth_type === 'oauth' && (
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1">
               OAuth授权
             </label>
             <OAuthHandler
               request={{
-                provider_name: selectedProviderType.name,
+                provider_name: `${selectedProviderType.name}:${selectedProviderType.auth_type || 'oauth'}`,
                 name: formData.keyName || 'Provider Key',
                 description: `${selectedProviderType.display_name} OAuth Key`,
                 extra_params: oauthExtraParams,
@@ -270,11 +262,11 @@ const EditDialog: React.FC<{
           </label>
           <input
             type="text"
-            required={!formData.auth_type.includes('oauth')}
+            required={formData.auth_type !== 'oauth'}
             value={formData.keyValue}
             onChange={(e) => setFormData({ ...formData, keyValue: e.target.value })}
-            placeholder={formData.auth_type.includes('oauth') ? 'OAuth授权完成后自动填入' : '请输入API密钥'}
-            disabled={formData.auth_type.includes('oauth')}
+            placeholder={formData.auth_type === 'oauth' ? 'OAuth授权完成后自动填入' : '请输入API密钥'}
+            disabled={formData.auth_type === 'oauth'}
             className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:bg-neutral-50 disabled:text-neutral-500"
           />
         </div>

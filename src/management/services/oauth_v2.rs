@@ -28,7 +28,7 @@ pub struct OAuthV2AuthorizeRequest {
     /// 会话描述
     pub description: Option<String>,
     /// 用户提供的额外参数（如Gemini的 `project_id`）
-    pub extra_params: Option<HashMap<String, String>>,
+    pub extra_params: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// OAuth v2轮询查询参数

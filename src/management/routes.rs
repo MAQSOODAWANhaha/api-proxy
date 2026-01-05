@@ -319,10 +319,27 @@ fn user_service_routes() -> Router<ManagementState> {
 
 /// Provider类型管理路由
 fn provider_type_routes() -> Router<ManagementState> {
+    use axum::routing::{delete, put};
     Router::new()
         .route(
             "/providers",
             get(crate::management::handlers::provider_types::list_provider_types),
+        )
+        .route(
+            "/providers",
+            post(crate::management::handlers::provider_types::create_provider_type),
+        )
+        .route(
+            "/providers/{id}",
+            get(crate::management::handlers::provider_types::get_provider_type),
+        )
+        .route(
+            "/providers/{id}",
+            put(crate::management::handlers::provider_types::update_provider_type),
+        )
+        .route(
+            "/providers/{id}",
+            delete(crate::management::handlers::provider_types::delete_provider_type),
         )
         .route(
             "/scheduling-strategies",

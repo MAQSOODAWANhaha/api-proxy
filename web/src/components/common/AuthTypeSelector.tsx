@@ -80,13 +80,13 @@ const AuthTypeSelector: React.FC<AuthTypeSelectorProps> = ({
 
   // 根据服务商类型更新可用的认证类型
   useEffect(() => {
-    if (!providerType?.supported_auth_types) {
+    if (!providerType?.auth_type) {
       setAvailableAuthTypes([])
       return
     }
 
-    const supportedTypes = providerType.supported_auth_types
-      .map(type => AUTH_TYPE_CONFIG[type])
+    const supportedTypes = [providerType.auth_type]
+      .map((type) => AUTH_TYPE_CONFIG[type])
       .filter(Boolean)
 
     setAvailableAuthTypes(supportedTypes)

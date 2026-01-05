@@ -119,7 +119,7 @@ export interface OAuthAuthorizeRequest {
   provider_name: string
   name: string
   description?: string
-  extra_params?: Record<string, string>
+  extra_params?: Record<string, any>
 }
 
 export interface OAuthAuthorizeResponse {
@@ -195,17 +195,49 @@ export interface ProviderType {
   id: number
   name: string
   display_name: string
+  auth_type?: string
   base_url?: string
   is_active: boolean
   supported_models?: string[]
-  supported_auth_types: string[]
-  auth_configs?: Record<string, AuthConfig>
+  // 后端按 `auth_type` 分行存储，单行的 auth_configs 为扁平对象
+  auth_configs?: any
+  config_json?: any
+  token_mappings_json?: any
+  model_extraction_json?: any
   created_at: string
   updated_at?: string
 }
 
 export interface ProviderTypesResponse {
   provider_types: ProviderType[]
+}
+
+export interface ProviderTypeSingleResponse {
+  provider_type: ProviderType
+}
+
+export interface CreateProviderTypeRequest {
+  name: string
+  display_name: string
+  auth_type: 'api_key' | 'oauth'
+  base_url: string
+  is_active?: boolean
+  config_json?: any
+  token_mappings_json?: any
+  model_extraction_json?: any
+  auth_configs_json?: any
+}
+
+export interface UpdateProviderTypeRequest {
+  name?: string
+  display_name?: string
+  auth_type?: 'api_key' | 'oauth'
+  base_url?: string
+  is_active?: boolean
+  config_json?: any
+  token_mappings_json?: any
+  model_extraction_json?: any
+  auth_configs_json?: any
 }
 
 export interface SchedulingStrategy {
@@ -1505,6 +1537,66 @@ export const api = {
           error: {
             code: 'PROVIDER_TYPES_ERROR',
             message: '获取服务商类型失败'
+          }
+        }
+      }
+    },
+
+    async getProviderType(id: number): Promise<ApiResponse<ProviderTypeSingleResponse>> {
+      try {
+        return await apiClient.get<ProviderTypeSingleResponse>(`/provider-types/providers/${id}`)
+      } catch (error) {
+        console.error('[Auth] Failed to fetch provider type:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_TYPE_GET_ERROR',
+            message: '获取服务商类型失败'
+          }
+        }
+      }
+    },
+
+    async createProviderType(payload: CreateProviderTypeRequest): Promise<ApiResponse<ProviderTypeSingleResponse>> {
+      try {
+        return await apiClient.post<ProviderTypeSingleResponse>('/provider-types/providers', payload)
+      } catch (error) {
+        console.error('[Auth] Failed to create provider type:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_TYPE_CREATE_ERROR',
+            message: '创建服务商类型失败'
+          }
+        }
+      }
+    },
+
+    async updateProviderType(id: number, payload: UpdateProviderTypeRequest): Promise<ApiResponse<ProviderTypeSingleResponse>> {
+      try {
+        return await apiClient.put<ProviderTypeSingleResponse>(`/provider-types/providers/${id}`, payload)
+      } catch (error) {
+        console.error('[Auth] Failed to update provider type:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_TYPE_UPDATE_ERROR',
+            message: '更新服务商类型失败'
+          }
+        }
+      }
+    },
+
+    async deleteProviderType(id: number): Promise<ApiResponse<{ deleted: boolean }>> {
+      try {
+        return await apiClient.delete<{ deleted: boolean }>(`/provider-types/providers/${id}`)
+      } catch (error) {
+        console.error('[Auth] Failed to delete provider type:', error)
+        return {
+          success: false,
+          error: {
+            code: 'PROVIDER_TYPE_DELETE_ERROR',
+            message: '删除服务商类型失败'
           }
         }
       }

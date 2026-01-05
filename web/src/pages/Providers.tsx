@@ -11,8 +11,11 @@ import {
   Building2,
   CheckCircle2,
   Copy,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
+  Trash2,
   XCircle,
 } from 'lucide-react'
 import { StatCard } from '../components/common/StatCard'
@@ -22,6 +25,8 @@ import { Badge } from '@/components/ui/badge'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
 import { copyWithFeedback } from '../lib/clipboard'
+import ProviderTypeDialog from '@/components/provider/ProviderTypeDialog'
+import { toast } from 'sonner'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -60,6 +65,10 @@ const ProvidersPage: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create')
+  const [editing, setEditing] = useState<ProviderType | null>(null)
 
   /** 拉取服务商类型列表（包含禁用项） */
   const fetchProviders = useCallback(async () => {
@@ -114,6 +123,31 @@ const ProvidersPage: React.FC = () => {
     })
   }, [providers, searchTerm, statusFilter])
 
+  const openCreate = () => {
+    setEditing(null)
+    setDialogMode('create')
+    setDialogOpen(true)
+  }
+
+  const openEdit = (p: ProviderType) => {
+    setEditing(p)
+    setDialogMode('edit')
+    setDialogOpen(true)
+  }
+
+  const deleteRow = async (p: ProviderType) => {
+    if (!confirm(`确认删除该服务商类型？\\n\\n${p.display_name} (${p.name}) / ${p.auth_type || ''}`)) {
+      return
+    }
+    const res = await api.auth.deleteProviderType(p.id)
+    if (!res.success) {
+      toast.error(res.error?.message || '删除失败')
+      return
+    }
+    toast.success('删除成功')
+    void fetchProviders()
+  }
+
   return (
     <div className="w-full">
       {/* 页面头部 */}
@@ -123,6 +157,14 @@ const ProvidersPage: React.FC = () => {
           <p className="text-sm text-neutral-600 mt-1">查看系统内置的AI服务商类型与状态</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800"
+            title="新增服务商类型"
+          >
+            <Plus size={16} />
+            新增
+          </button>
           <button
             onClick={fetchProviders}
             disabled={loading}
@@ -229,6 +271,7 @@ const ProvidersPage: React.FC = () => {
                     <th className="px-4 py-3 text-left font-medium min-w-[180px]">认证方式</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[100px]">状态</th>
                     <th className="px-4 py-3 text-left font-medium min-w-[160px]">创建时间</th>
+                    <th className="px-4 py-3 text-right font-medium min-w-[140px]">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
@@ -263,16 +306,14 @@ const ProvidersPage: React.FC = () => {
 
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
-                          {(p.supported_auth_types || []).length > 0 ? (
-                            p.supported_auth_types.map((t) => (
-                              <Badge
-                                key={`${p.id}-${t}`}
-                                variant="outline"
-                                className="text-xs"
-                              >
-                                {authTypeLabel(t)}
-                              </Badge>
-                            ))
+                          {p.auth_type ? (
+                            <Badge
+                              key={`${p.id}-${p.auth_type}`}
+                              variant="outline"
+                              className="text-xs"
+                            >
+                              {authTypeLabel(p.auth_type)}
+                            </Badge>
                           ) : (
                             <span className="text-foreground/60">-</span>
                           )}
@@ -300,12 +341,33 @@ const ProvidersPage: React.FC = () => {
                       <td className="px-4 py-3 text-foreground/70">
                         {formatDate(p.created_at)}
                       </td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openEdit(p)}
+                            className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
+                            title="编辑"
+                          >
+                            <Pencil size={14} />
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => void deleteRow(p)}
+                            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                            title="删除"
+                          >
+                            <Trash2 size={14} />
+                            删除
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
 
                   {filteredProviders.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-10 text-center text-neutral-500">
+                      <td colSpan={6} className="px-4 py-10 text-center text-neutral-500">
                         暂无匹配的服务商数据
                       </td>
                     </tr>
@@ -316,6 +378,14 @@ const ProvidersPage: React.FC = () => {
           </>
         )}
       </div>
+
+      <ProviderTypeDialog
+        open={dialogOpen}
+        mode={dialogMode}
+        editing={editing}
+        onOpenChange={setDialogOpen}
+        onSaved={() => void fetchProviders()}
+      />
     </div>
   )
 }

@@ -47,14 +47,6 @@ pub enum Relation {
     User,
     #[sea_orm(
         belongs_to = "super::provider_types::Entity",
-        from = "Column::ProviderName",
-        to = "super::provider_types::Column::Name",
-        on_update = "Cascade",
-        on_delete = "Restrict"
-    )]
-    ProviderType,
-    #[sea_orm(
-        belongs_to = "super::provider_types::Entity",
         from = "Column::ProviderTypeId",
         to = "super::provider_types::Column::Id",
         on_update = "Cascade",
@@ -66,12 +58,6 @@ pub enum Relation {
 impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::User.def()
-    }
-}
-
-impl Related<super::provider_types::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ProviderType.def()
     }
 }
 

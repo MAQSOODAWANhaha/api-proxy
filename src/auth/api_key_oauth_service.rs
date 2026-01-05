@@ -88,14 +88,15 @@ impl ApiKeyOauthService {
         provider_name: &str,
         name: &str,
         description: Option<&str>,
-        extra_params: Option<HashMap<String, String>>,
+        extra_params: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AuthorizeUrlResponse> {
         let mut config = self.config.get_config(provider_name).await?;
         if let Some(user_params) = extra_params {
             for (key, value) in user_params {
-                if !value.trim().is_empty() {
-                    config.extra_params.insert(key, value);
+                if value.is_null() {
+                    continue;
                 }
+                config.extra_params.insert(key, value);
             }
         }
 

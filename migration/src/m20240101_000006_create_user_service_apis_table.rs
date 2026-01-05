@@ -65,6 +65,12 @@ impl MigrationTrait for Migration {
                             .default(10_000_000),
                     )
                     .col(ColumnDef::new(UserServiceApis::MaxCostPerDay).decimal_len(10, 4))
+                    .col(
+                        ColumnDef::new(UserServiceApis::LogMode)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
                     .col(ColumnDef::new(UserServiceApis::ExpiresAt).timestamp())
                     .col(
                         ColumnDef::new(UserServiceApis::IsActive)
@@ -162,6 +168,7 @@ enum UserServiceApis {
     MaxRequestsPerDay,
     MaxTokensPerDay,
     MaxCostPerDay,
+    LogMode,
     ExpiresAt,
     IsActive,
     CreatedAt,

@@ -101,6 +101,7 @@ impl ApiKeyProviderConfig {
 
         let model = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(base_provider))
+            .filter(provider_types::Column::AuthType.eq(oauth_type))
             .filter(provider_types::Column::IsActive.eq(true))
             .one(self.db.as_ref())
             .await?;
@@ -113,17 +114,6 @@ impl ApiKeyProviderConfig {
                         oauth_type,
                         oauth_config,
                     ));
-                }
-
-                let oauth_types = model.get_oauth_types();
-                for available_type in oauth_types {
-                    if let Ok(Some(oauth_config)) = model.get_oauth_config(&available_type) {
-                        return Ok(Self::oauth_model_to_config(
-                            &model,
-                            &available_type,
-                            oauth_config,
-                        ));
-                    }
                 }
 
                 Err(OAuthError::ProviderNotFound(format!(
@@ -159,7 +149,7 @@ impl ApiKeyProviderConfig {
             .map(str::to_string)
             .collect();
 
-        let mut extra_params = HashMap::new();
+        let mut extra_params: HashMap<String, serde_json::Value> = HashMap::new();
 
         if let Some(ref config_extra_params) = oauth_config.extra_params {
             extra_params.extend(config_extra_params.clone());
@@ -278,9 +268,10 @@ impl ProviderConfigBuilder {
 
     #[must_use]
     pub fn extra_param(mut self, key: &str, value: &str) -> Self {
-        self.config
-            .extra_params
-            .insert(key.to_string(), value.to_string());
+        self.config.extra_params.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
         self
     }
 
@@ -313,7 +304,7 @@ mod tests {
         assert_eq!(config.scopes, vec!["read", "write"]);
         assert_eq!(
             config.extra_params.get("custom"),
-            Some(&"value".to_string())
+            Some(&serde_json::Value::String("value".to_string()))
         );
     }
 }

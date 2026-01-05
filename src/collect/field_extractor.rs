@@ -12,6 +12,327 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// `严格校验 token_mappings_json 是否符合字段提取器定义`
+///
+/// 说明：
+/// - 采集层在运行时会尽量“容错”（失败则回退默认值），避免因为配置错误导致请求失败。
+/// - 管理端在新增/编辑时需要“严格校验”，将无效配置拦截在写入数据库之前。
+pub fn validate_token_mappings_value(value: &Value) -> Result<()> {
+    validate_token_mappings_value_inner(value, 0)
+}
+
+fn validate_token_mappings_value_inner(value: &Value, depth: usize) -> Result<()> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return Err(crate::error::conversion::ConversionError::message(
+            "token_mappings_json 嵌套过深（fallback 链过长）",
+        )
+        .into());
+    }
+
+    let obj = value.as_object().ok_or_else(|| {
+        crate::error::conversion::ConversionError::message(
+            "token_mappings_json 必须是对象（field_name -> mapping）",
+        )
+    })?;
+
+    if obj.is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(
+            "token_mappings_json 不能为空对象",
+        )
+        .into());
+    }
+
+    for (field_name, mapping_cfg) in obj {
+        if field_name.trim().is_empty() {
+            return Err(crate::error::conversion::ConversionError::message(
+                "token_mappings_json 的字段名不能为空",
+            )
+            .into());
+        }
+        validate_token_mapping_config(field_name, mapping_cfg, depth)?;
+    }
+
+    Ok(())
+}
+
+fn validate_token_mapping_config(field_name: &str, config: &Value, depth: usize) -> Result<()> {
+    let mapping_type = config.get("type").and_then(Value::as_str).ok_or_else(|| {
+        crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: 缺少或非法的 type 字段"
+        ))
+    })?;
+
+    validate_token_mapping_type(field_name, config, mapping_type)?;
+    validate_token_mapping_fallback(field_name, config, depth)
+}
+
+fn validate_token_mapping_type(field_name: &str, config: &Value, mapping_type: &str) -> Result<()> {
+    match mapping_type {
+        "direct" => validate_token_mapping_direct(field_name, config),
+        "expression" => validate_token_mapping_expression(field_name, config),
+        "default" => validate_token_mapping_default(field_name, config),
+        "conditional" => validate_token_mapping_conditional(field_name, config),
+        "fallback" => validate_token_mapping_fallback_paths(field_name, config),
+        other => Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: 未知的 mapping type: {other}"
+        ))
+        .into()),
+    }
+}
+
+fn validate_token_mapping_direct(field_name: &str, config: &Value) -> Result<()> {
+    let path = config.get("path").and_then(Value::as_str).unwrap_or("");
+    if path.trim().is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: direct 类型必须提供非空 path"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_token_mapping_expression(field_name: &str, config: &Value) -> Result<()> {
+    let formula = config.get("formula").and_then(Value::as_str).unwrap_or("");
+    if formula.trim().is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: expression 类型必须提供非空 formula"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_token_mapping_default(field_name: &str, config: &Value) -> Result<()> {
+    if !config.as_object().is_some_and(|m| m.contains_key("value")) {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: default 类型必须提供 value"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_token_mapping_conditional(field_name: &str, config: &Value) -> Result<()> {
+    let condition = config
+        .get("condition")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let true_value = config
+        .get("true_value")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if condition.trim().is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional 类型必须提供非空 condition"
+        ))
+        .into());
+    }
+    if true_value.trim().is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional 类型必须提供非空 true_value"
+        ))
+        .into());
+    }
+    if !config
+        .as_object()
+        .is_some_and(|m| m.contains_key("false_value"))
+    {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional 类型必须提供 false_value"
+        ))
+        .into());
+    }
+    validate_condition_syntax(field_name, condition)
+}
+
+fn validate_token_mapping_fallback_paths(field_name: &str, config: &Value) -> Result<()> {
+    let paths = config
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            crate::error::conversion::ConversionError::message(format!(
+                "token_mappings_json.{field_name}: fallback 类型必须提供 paths 数组"
+            ))
+        })?;
+    if paths.is_empty() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: fallback 类型的 paths 不能为空数组"
+        ))
+        .into());
+    }
+    for (i, p) in paths.iter().enumerate() {
+        let s = p.as_str().unwrap_or("").trim();
+        if s.is_empty() {
+            return Err(crate::error::conversion::ConversionError::message(format!(
+                "token_mappings_json.{field_name}: fallback.paths[{i}] 必须是非空字符串"
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_token_mapping_fallback(field_name: &str, config: &Value, depth: usize) -> Result<()> {
+    let Some(fallback_cfg) = config.get("fallback") else {
+        return Ok(());
+    };
+    if fallback_cfg.is_null() {
+        return Ok(());
+    }
+
+    validate_token_mappings_value_inner(&serde_json::json!({ field_name: fallback_cfg }), depth + 1)
+}
+
+fn validate_condition_syntax(field_name: &str, condition: &str) -> Result<()> {
+    // 当前实现只支持："{path} > 0" / "1 < 2" / "{path} == 0" 这种三段式条件
+    let tokens: Vec<&str> = condition.split_whitespace().collect();
+    if tokens.len() != 3 {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional.condition 仅支持三段式表达式，例如 \"{{usage.total_tokens}} > 0\""
+        ))
+        .into());
+    }
+    let left = tokens[0];
+    let op = tokens[1];
+    let right = tokens[2];
+
+    if op != ">" && op != "<" && op != "==" {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional.condition 操作符仅支持 > / < / =="
+        ))
+        .into());
+    }
+
+    // left: number 或 {path}
+    let left_ok = if left.starts_with('{') && left.ends_with('}') {
+        left.len() > 2
+    } else {
+        left.parse::<f64>().is_ok()
+    };
+    if !left_ok {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional.condition 左侧必须是数字或 {{path}}"
+        ))
+        .into());
+    }
+
+    if right.parse::<f64>().is_err() {
+        return Err(crate::error::conversion::ConversionError::message(format!(
+            "token_mappings_json.{field_name}: conditional.condition 右侧必须是数字"
+        ))
+        .into());
+    }
+
+    Ok(())
+}
+
+/// `严格校验 model_extraction_json 是否符合字段提取器定义`
+pub fn validate_model_extraction_value(value: &Value) -> Result<()> {
+    let obj = value.as_object().ok_or_else(|| {
+        crate::error::conversion::ConversionError::message("model_extraction_json 必须是对象")
+    })?;
+
+    let rules = obj
+        .get("extraction_rules")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            crate::error::conversion::ConversionError::message(
+                "model_extraction_json.extraction_rules 必须是数组",
+            )
+        })?;
+
+    if rules.is_empty()
+        && obj
+            .get("fallback_model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    {
+        return Err(crate::error::conversion::ConversionError::message(
+            "model_extraction_json 至少需要提供 extraction_rules 或 fallback_model",
+        )
+        .into());
+    }
+
+    for (i, item) in rules.iter().enumerate() {
+        let item_obj = item.as_object().ok_or_else(|| {
+            crate::error::conversion::ConversionError::message(format!(
+                "model_extraction_json.extraction_rules[{i}] 必须是对象"
+            ))
+        })?;
+
+        let rule_type = item_obj
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if rule_type.is_empty() {
+            return Err(crate::error::conversion::ConversionError::message(format!(
+                "model_extraction_json.extraction_rules[{i}] 缺少 type"
+            ))
+            .into());
+        }
+
+        match rule_type.as_str() {
+            "body_json" => {
+                let path = item_obj
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if path.is_empty() {
+                    return Err(crate::error::conversion::ConversionError::message(format!(
+                        "model_extraction_json.extraction_rules[{i}]: body_json 必须提供非空 path"
+                    ))
+                    .into());
+                }
+            }
+            "url_regex" => {
+                let pattern = item_obj
+                    .get("pattern")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if pattern.is_empty() {
+                    return Err(crate::error::conversion::ConversionError::message(format!(
+                        "model_extraction_json.extraction_rules[{i}]: url_regex 必须提供非空 pattern"
+                    ))
+                    .into());
+                }
+                Regex::new(pattern).map_err(|e| {
+                    crate::error::conversion::ConversionError::message(format!(
+                        "model_extraction_json.extraction_rules[{i}]: url_regex.pattern 非法: {e}"
+                    ))
+                })?;
+            }
+            "query_param" => {
+                let name = item_obj
+                    .get("parameter")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if name.is_empty() {
+                    return Err(crate::error::conversion::ConversionError::message(format!(
+                        "model_extraction_json.extraction_rules[{i}]: query_param 必须提供非空 parameter"
+                    ))
+                    .into());
+                }
+            }
+            other => {
+                return Err(crate::error::conversion::ConversionError::message(format!(
+                    "model_extraction_json.extraction_rules[{i}]: 未知的 type: {other}"
+                ))
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Token字段映射类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenMapping {
