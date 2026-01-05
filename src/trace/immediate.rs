@@ -34,6 +34,7 @@ pub struct CompleteTraceParams {
     pub tokens_completion: Option<TokenCount>,
     pub error_type: Option<String>,
     pub error_message: Option<String>,
+    pub retry_count: Option<i32>,
     pub cache_create_tokens: Option<TokenCount>,
     pub cache_read_tokens: Option<TokenCount>,
     pub cost: Option<f64>,
@@ -242,6 +243,7 @@ impl ImmediateProxyTracer {
             tokens_completion: params.tokens_completion,
             error_type: params.error_type,
             error_message: params.error_message,
+            retry_count: None,
             cache_create_tokens: None,
             cache_read_tokens: None,
             cost: None,
@@ -338,6 +340,7 @@ impl ImmediateProxyTracer {
             cost_currency: Set(params.cost_currency),
             error_type: Set(params.error_type),
             error_message: Set(params.error_message),
+            retry_count: Set(params.retry_count),
             ..Default::default()
         };
 

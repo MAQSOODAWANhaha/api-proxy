@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::time::Duration;
 use uuid::Uuid;
 
 use crate::proxy::context::ProxyContext;
@@ -28,6 +29,8 @@ pub struct ProxyService {
 }
 
 impl ProxyService {
+    const DEFAULT_BASE_RETRY_DELAY_MS: u64 = 500;
+
     /// 创建新的代理服务实例
     pub const fn new(state: Arc<ProxyState>) -> pingora_core::Result<Self> {
         Ok(Self { state })
@@ -53,6 +56,139 @@ impl ProxyService {
         let has_connection_error = Self::is_connection_failure(error);
 
         has_response_status && has_connection_error
+    }
+
+    /// 获取本次请求允许的最大重试次数（不包含首次尝试）
+    fn max_retry_budget(ctx: &ProxyContext) -> u32 {
+        let retry_count = ctx
+            .user_service_api
+            .as_ref()
+            .and_then(|api| api.retry_count)
+            .unwrap_or(0)
+            .max(0);
+        u32::try_from(retry_count).unwrap_or(0)
+    }
+
+    /// 获取数据库配置的超时上限（秒），用于限制退避等待的最大时长
+    ///
+    /// - 若未设置或非法（<=0），按迁移默认值 30 秒处理
+    fn db_timeout_seconds(ctx: &ProxyContext) -> u64 {
+        let configured = ctx
+            .user_service_api
+            .as_ref()
+            .and_then(|api| api.timeout_seconds);
+        let secs = configured.unwrap_or(30);
+        let secs = if secs <= 0 { 30 } else { secs };
+        u64::try_from(secs).unwrap_or(30)
+    }
+
+    fn max_retry_delay_ms(ctx: &ProxyContext) -> u64 {
+        Self::db_timeout_seconds(ctx).saturating_mul(1000)
+    }
+
+    /// 判断是否应对上游状态码进行重试（仅基于状态码维度）
+    const fn should_retry_upstream_status(status_code: u16) -> bool {
+        // 最佳实践：仅对常见“临时性”错误码重试，避免对不可能成功的请求浪费资源与引入重复计费风险。
+        matches!(status_code, 429 | 500 | 502 | 503 | 504)
+    }
+
+    /// 判断当前请求是否具备“可安全重试”的前提（请求体可重放）
+    fn is_safe_to_retry(session: &mut Session) -> bool {
+        // Pingora 的重试依赖 request retry buffer；如果缓冲被截断则不应重试。
+        if session.retry_buffer_truncated() {
+            return false;
+        }
+        // 无 body 的请求天然可重试；有 body 时需要确保 retry buffer 存在。
+        if session.is_body_empty() {
+            return true;
+        }
+        session.get_retry_buffer().is_some()
+    }
+
+    /// 在允许的情况下标记错误可重试，并推进上下文重试计数
+    fn apply_retry_policy(
+        session: &mut Session,
+        ctx: &mut ProxyContext,
+        err: &mut Error,
+        reason: &'static str,
+        status_code: Option<u16>,
+    ) {
+        // 防止同一次失败被多次 hook 重入导致重复计数与预算提前耗尽。
+        // 典型场景：上游 5xx 在 upstream_response_filter 中触发 retry 后，
+        // Pingora 会进入 error_while_proxy；若不防护会双计数。
+        if !ctx.retry.try_mark_policy_applied() {
+            return;
+        }
+
+        let max_retry_budget = Self::max_retry_budget(ctx);
+
+        if max_retry_budget == 0 {
+            err.set_retry(false);
+            return;
+        }
+
+        // 已收到部分响应的情况下不应重试（避免重复返回/重复计费风险）
+        if Self::is_partial_response_error(ctx, Some(err)) {
+            err.set_retry(false);
+            return;
+        }
+
+        // 不具备可安全重试的前提（retry buffer 缺失/截断）
+        if !Self::is_safe_to_retry(session) {
+            err.set_retry(false);
+            return;
+        }
+
+        // 达到预算上限后停止重试
+        if ctx.retry.retry_count >= max_retry_budget {
+            err.set_retry(false);
+            return;
+        }
+
+        // 退避：对 429 默认指数退避；对其他可重试错误也使用相同退避策略，
+        // 避免集中重试造成“雪崩”。
+        let base_delay_ms = Self::DEFAULT_BASE_RETRY_DELAY_MS;
+        let max_delay_ms = Self::max_retry_delay_ms(ctx);
+        let delay_ms = ctx.retry.consume_budget_and_schedule(
+            max_retry_budget,
+            status_code,
+            base_delay_ms,
+            max_delay_ms,
+        );
+
+        if delay_ms == 0 {
+            err.set_retry(false);
+            return;
+        }
+
+        err.set_retry(true);
+
+        linfo!(
+            &ctx.request_id,
+            LogStage::ResponseFailure,
+            LogComponent::Proxy,
+            "retry_scheduled",
+            "满足重试条件，计划重试同一上游请求",
+            reason = reason,
+            status_code = status_code,
+            attempt = ctx.retry.retry_count,
+            max_retry_budget = max_retry_budget,
+            delay_ms = delay_ms
+        );
+    }
+
+    /// 每次重试开始前重置上下文中与上一轮响应相关的缓存
+    fn reset_ctx_for_retry(ctx: &mut ProxyContext) {
+        ctx.response_details = crate::collect::types::ResponseDetails::default();
+        ctx.response_body = BytesMut::new();
+        // 注意：重试时 Pingora 会从内部 retry buffer 重放请求体，并再次调用 `request_body_filter`。
+        // 这里清空 `ctx.request_body` 仅影响本地缓存/日志与“基于完整 body 的改写逻辑”，不会导致上游请求体丢失。
+        ctx.request_body = BytesMut::new();
+        ctx.upstream_request_headers = None;
+        ctx.upstream_request_uri = None;
+        ctx.usage_final = None;
+        ctx.requested_model = None;
+        ctx.retry.reset_for_new_attempt();
     }
 
     /// 重构的状态码解析函数 - 优先使用Pingora错误信息
@@ -290,6 +426,27 @@ impl ProxyHttp for ProxyService {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
+        // 每次重试前执行退避（如果上一次失败设置了 delay）
+        if let Some(delay_ms) = ctx.retry.next_retry_delay_ms.take()
+            && delay_ms > 0
+        {
+            linfo!(
+                &ctx.request_id,
+                LogStage::UpstreamRequest,
+                LogComponent::Proxy,
+                "retry_backoff_sleep",
+                "重试退避等待",
+                delay_ms = delay_ms,
+                attempt = ctx.retry.retry_count,
+                status_code = ctx.retry.last_retry_status_code
+            );
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+
+        // Pingora 在重试时会再次调用 upstream_peer，这里清理上一轮尝试的响应/请求缓存，避免混淆统计与日志。
+        if ctx.retry.retry_count > 0 {
+            Self::reset_ctx_for_retry(ctx);
+        }
         let peer = self.state.upstream_service.select_peer(ctx).await?;
         Ok(peer)
     }
@@ -468,6 +625,116 @@ impl ProxyHttp for ProxyService {
         Ok(())
     }
 
+    fn upstream_response_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<()> {
+        let status_code = upstream_response.status.as_u16();
+
+        if !Self::should_retry_upstream_status(status_code) {
+            return Ok(());
+        }
+
+        // 解析 Retry-After（仅用于 429）
+        if status_code == 429
+            && let Some(value) = upstream_response.headers.get("retry-after")
+            && let Ok(value_str) = std::str::from_utf8(value.as_bytes())
+        {
+            ctx.retry
+                .set_retry_after_from_header_value(&ctx.request_id, value_str);
+        }
+
+        let reason = if status_code == 429 {
+            "rate_limited"
+        } else {
+            "upstream_5xx"
+        };
+
+        // 仅在“预算允许且可安全重试”时，把该响应视为 error 触发 Pingora 重试；
+        // 否则保持原样把上游响应（含 body）透传给下游。
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(status_code));
+        Self::apply_retry_policy(session, ctx, err.as_mut(), reason, Some(status_code));
+
+        if err.retry() {
+            return Err(err);
+        }
+
+        // 未触发重试：重置标记，避免后续路径误判“已应用重试策略”
+        ctx.retry.clear_policy_after_no_retry();
+        Ok(())
+    }
+
+    fn fail_to_connect(
+        &self,
+        session: &mut Session,
+        peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        e: Box<Error>,
+    ) -> Box<Error> {
+        let mut err = e.more_context(format!("Peer: {peer}"));
+        // 连接建立阶段失败：通常属于可重试范畴，交由预算控制。
+        Self::apply_retry_policy(session, ctx, err.as_mut(), "connect_failure", None);
+        err
+    }
+
+    fn error_while_proxy(
+        &self,
+        peer: &HttpPeer,
+        session: &mut Session,
+        e: Box<Error>,
+        ctx: &mut Self::CTX,
+        client_reused: bool,
+    ) -> Box<Error> {
+        let policy_already_applied = ctx.retry.retry_policy_applied;
+
+        // 基于 Pingora 默认逻辑补充上下文，并决定“复用连接时才重试”这类错误的最终 retry 值。
+        let mut err = e.more_context(format!("Peer: {peer}"));
+        err.retry
+            .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
+
+        // 上游响应在 upstream_response_filter 阶段已完成“预算消耗/计数”决策时，
+        // 这里必须避免重复应用策略导致双计数。
+        if policy_already_applied {
+            return err;
+        }
+
+        // 仅对上游连接类错误进行重试预算控制；其他内部错误默认不重试。
+        let is_upstream_error = err.esource == pingora_core::ErrorSource::Upstream
+            || matches!(err.etype, ErrorType::HTTPStatus(_));
+
+        if !is_upstream_error {
+            err.set_retry(false);
+            return err;
+        }
+
+        // 对于已收到部分响应的场景，强制不重试（避免重复输出）。
+        if Self::is_partial_response_error(ctx, Some(&err)) {
+            err.set_retry(false);
+            return err;
+        }
+
+        if let ErrorType::HTTPStatus(code) = err.etype
+            && Self::should_retry_upstream_status(code)
+        {
+            let reason = if code == 429 {
+                "rate_limited"
+            } else {
+                "upstream_5xx"
+            };
+            Self::apply_retry_policy(session, ctx, err.as_mut(), reason, Some(code));
+            return err;
+        }
+
+        // 对上游连接类错误（Pingora 已判断可重试的）应用预算控制。
+        if err.retry() {
+            Self::apply_retry_policy(session, ctx, err.as_mut(), "proxy_error", None);
+        }
+
+        err
+    }
+
     fn response_body_filter(
         &self,
         _session: &mut Session,
@@ -556,5 +823,284 @@ impl ProxyHttp for ProxyService {
             status_code = status_code,
             duration_ms = ctx.start_time.elapsed().as_millis()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use entity::user_service_apis;
+    use pingora_core::protocols::l4::stream::Stream;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::{TcpListener, TcpStream};
+
+    async fn make_test_session_with_client(request: &str) -> (Session, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let mut client = TcpStream::connect(addr).await.expect("connect");
+        let (server, _) = listener.accept().await.expect("accept");
+
+        client
+            .write_all(request.as_bytes())
+            .await
+            .expect("write request");
+
+        let stream = Stream::from(server);
+        let mut session = Session::new_h1(Box::new(stream));
+
+        session
+            .downstream_session
+            .read_request()
+            .await
+            .expect("read request");
+
+        (session, client)
+    }
+
+    async fn make_test_session(request: &str) -> Session {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let mut client = TcpStream::connect(addr).await.expect("connect");
+        let (server, _) = listener.accept().await.expect("accept");
+
+        client
+            .write_all(request.as_bytes())
+            .await
+            .expect("write request");
+
+        let stream = Stream::from(server);
+        let mut session = Session::new_h1(Box::new(stream));
+
+        session
+            .downstream_session
+            .read_request()
+            .await
+            .expect("read request");
+
+        session
+    }
+
+    fn make_test_user_service_api(retry_count: i32) -> user_service_apis::Model {
+        let now = chrono::Utc::now().naive_utc();
+        user_service_apis::Model {
+            id: 1,
+            user_id: 1,
+            provider_type_id: 1,
+            user_provider_keys_ids: serde_json::json!([]),
+            api_key: "test-api-key".to_string(),
+            name: None,
+            description: None,
+            scheduling_strategy: None,
+            retry_count: Some(retry_count),
+            timeout_seconds: None,
+            max_request_per_min: None,
+            max_requests_per_day: None,
+            max_tokens_per_day: None,
+            max_cost_per_day: None,
+            log_mode: false,
+            expires_at: None,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn reset_retry_policy_state(ctx: &mut ProxyContext) {
+        ctx.retry.reset_for_new_attempt();
+    }
+
+    #[tokio::test]
+    async fn test_retry_budget_consumption_for_upstream_5xx() {
+        let mut session = make_test_session("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+
+        let mut ctx = ProxyContext {
+            request_id: "test-request".to_string(),
+            start_time: Instant::now(),
+            user_service_api: Some(make_test_user_service_api(2)),
+            ..Default::default()
+        };
+
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(500));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "test_upstream_5xx",
+            Some(500),
+        );
+        assert!(err.retry());
+        assert_eq!(ctx.retry.retry_count, 1);
+        reset_retry_policy_state(&mut ctx);
+
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(502));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "test_upstream_5xx",
+            Some(502),
+        );
+        assert!(err.retry());
+        assert_eq!(ctx.retry.retry_count, 2);
+        reset_retry_policy_state(&mut ctx);
+
+        // 达到预算上限后不再重试
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(503));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "test_upstream_5xx",
+            Some(503),
+        );
+        assert!(!err.retry());
+        assert_eq!(ctx.retry.retry_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_policy_is_not_double_counted_when_called_twice() {
+        let mut session = make_test_session("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+
+        let mut ctx = ProxyContext {
+            request_id: "test-request".to_string(),
+            start_time: Instant::now(),
+            user_service_api: Some(make_test_user_service_api(2)),
+            ..Default::default()
+        };
+
+        let mut err1 = PingoraError::new_up(ErrorType::HTTPStatus(500));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err1.as_mut(),
+            "test_upstream_5xx",
+            Some(500),
+        );
+        assert!(err1.retry());
+        assert_eq!(ctx.retry.retry_count, 1);
+
+        // 同一轮失败不应重复计数
+        let mut err2 = PingoraError::new_up(ErrorType::HTTPStatus(500));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err2.as_mut(),
+            "test_upstream_5xx",
+            Some(500),
+        );
+        assert_eq!(ctx.retry.retry_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_is_capped_by_db_timeout_seconds() {
+        let mut session = make_test_session("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+
+        let mut user_api = make_test_user_service_api(1);
+        user_api.timeout_seconds = Some(1);
+
+        let mut ctx = ProxyContext {
+            request_id: "test-request".to_string(),
+            start_time: Instant::now(),
+            user_service_api: Some(user_api),
+            ..Default::default()
+        };
+        ctx.retry.retry_after_ms = Some(2_000);
+
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(429));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "rate_limited",
+            Some(429),
+        );
+
+        assert!(err.retry());
+        assert_eq!(ctx.retry.retry_count, 1);
+        assert_eq!(ctx.retry.next_retry_delay_ms, Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_is_capped_by_default_timeout_when_timeout_seconds_is_non_positive() {
+        let mut session = make_test_session("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+
+        let mut user_api = make_test_user_service_api(1);
+        user_api.timeout_seconds = Some(0);
+
+        let mut ctx = ProxyContext {
+            request_id: "test-request".to_string(),
+            start_time: Instant::now(),
+            user_service_api: Some(user_api),
+            ..Default::default()
+        };
+        ctx.retry.retry_after_ms = Some(120_000);
+
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(429));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "rate_limited",
+            Some(429),
+        );
+
+        assert!(err.retry());
+        assert_eq!(ctx.retry.retry_count, 1);
+        assert_eq!(ctx.retry.next_retry_delay_ms, Some(30_000));
+    }
+
+    #[tokio::test]
+    async fn test_is_safe_to_retry_false_when_retry_buffer_truncated() {
+        let body = "a".repeat(70_000);
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let (mut session, _client_guard) = make_test_session_with_client(&request).await;
+        session.enable_retry_buffering();
+
+        loop {
+            let chunk = session
+                .read_request_body()
+                .await
+                .expect("read request body");
+            if chunk.is_none() {
+                break;
+            }
+        }
+
+        assert!(session.retry_buffer_truncated());
+        assert!(!ProxyService::is_safe_to_retry(&mut session));
+    }
+
+    #[tokio::test]
+    async fn test_retry_disabled_when_retry_count_is_zero() {
+        let mut session = make_test_session("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await;
+
+        let mut ctx = ProxyContext {
+            request_id: "test-request".to_string(),
+            start_time: Instant::now(),
+            user_service_api: Some(make_test_user_service_api(0)),
+            ..Default::default()
+        };
+
+        let mut err = PingoraError::new_up(ErrorType::HTTPStatus(500));
+        ProxyService::apply_retry_policy(
+            &mut session,
+            &mut ctx,
+            err.as_mut(),
+            "test_upstream_5xx",
+            Some(500),
+        );
+        assert!(!err.retry());
+        assert_eq!(ctx.retry.retry_count, 0);
     }
 }

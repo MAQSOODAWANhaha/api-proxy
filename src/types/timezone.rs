@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_response_time_converter() {
         use super::timezone_utils;
-        use chrono::{DateTime, Utc};
+        use chrono::{DateTime, Datelike, Utc};
 
         let tz = Tz::Asia__Shanghai;
         let utc_time = Utc::now();
@@ -350,7 +350,7 @@ mod tests {
         // 测试UTC时间转换
         let formatted = timezone_utils::format_utc_for_response(&utc_time, &tz);
         assert!(!formatted.is_empty());
-        assert!(formatted.contains("2025") || formatted.contains("2024")); // 支持当前年份或2024年
+        assert!(formatted.contains(&utc_time.year().to_string())); // 支持当前年份
 
         // 测试可选UTC时间转换
         let some_time = Some(&utc_time);
