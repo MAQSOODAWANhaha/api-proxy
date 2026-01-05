@@ -6,6 +6,7 @@ use crate::error::{Result, config::ConfigError};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
+use pingora_core::protocols::TcpKeepalive;
 use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use sea_orm::DatabaseConnection;
 use std::convert::TryFrom;
@@ -73,18 +74,25 @@ impl UpstreamService {
         let mut peer = HttpPeer::new(&final_addr, true, sni);
 
         let timeout = u64::try_from(ctx.timeout_seconds.unwrap_or(30).max(0)).unwrap_or(30);
-        let total_timeout_secs = timeout + 5;
         let read_timeout_secs = timeout * 2;
 
         if let Some(options) = peer.get_mut_peer_options() {
             options.alpn = ALPN::H2H1;
-            options.connection_timeout = Some(Duration::from_secs(timeout));
-            options.total_connection_timeout = Some(Duration::from_secs(total_timeout_secs));
+            // [优化] 连接建立应该快速失败，不要等待业务超时
+            options.connection_timeout = Some(Duration::from_secs(6)); // TCP握手超时
+            options.total_connection_timeout = Some(Duration::from_secs(10)); // 含TLS握手超时
             options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.idle_timeout = Some(Duration::from_secs(60));
             options.h2_ping_interval = Some(Duration::from_secs(20));
             options.max_h2_streams = 100;
+            // 启用 TCP Keepalive，防止长连接在无数据传输时被中间设备断开
+            options.tcp_keepalive = Some(TcpKeepalive {
+                idle: Duration::from_secs(20),
+                interval: Duration::from_secs(5),
+                count: 5,
+                user_timeout: Duration::from_secs(timeout),
+            });
         }
 
         linfo!(
