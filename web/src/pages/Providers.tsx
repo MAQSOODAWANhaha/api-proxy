@@ -283,12 +283,12 @@ const ProvidersPage: React.FC = () => {
               </TableHeader>
               <TableBody>
                 {filteredProviders.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium text-foreground">
-                        <div className="flex flex-col">
-                          <span>{p.display_name}</span>
-                          <span className="table-subtext">{p.name}</span>
-                        </div>
+                    <TableRow key={p.id}>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="table-tag">{p.display_name}</span>
+                        <span className="table-subtext">{p.name}</span>
+                      </div>
                     </TableCell>
 
                     <TableCell>
