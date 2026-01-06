@@ -151,7 +151,7 @@ html > body * {
 
 @layer components {
   .table-tag {
-    @apply inline-flex items-center text-sm font-medium text-slate-700 dark:text-slate-200;
+    @apply inline-flex items-center text-sm text-slate-700 dark:text-slate-200;
   }
 
   .table-code {

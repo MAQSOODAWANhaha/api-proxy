@@ -204,7 +204,7 @@ const UsersPage: React.FC = () => {
   const renderUserRole = (isAdmin: boolean) => {
     if (isAdmin) {
       return (
-        <span className="table-tag gap-1 text-rose-700">
+        <span className="table-tag gap-1 font-medium text-rose-700">
           <Shield size={10} />
           管理员
         </span>
