@@ -39,142 +39,6 @@ function parseJsonText(text: string) {
   return JSON.parse(trimmed)
 }
 
-function isPlainObject(value: any): value is Record<string, any> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function validateConfigJson(value: any) {
-  if (value === null) return
-  if (!isPlainObject(value)) throw new Error('config_json 必须是对象或留空')
-}
-
-function validateTokenMappings(value: any) {
-  if (value === null) return
-  if (!isPlainObject(value)) throw new Error('token_mappings_json 必须是对象（field_name -> mapping）')
-  const keys = Object.keys(value)
-  if (keys.length === 0) throw new Error('token_mappings_json 不能为空对象')
-
-  const validateMapping = (fieldName: string, mapping: any, depth: number) => {
-    if (depth > 8) throw new Error(`${fieldName}: fallback 嵌套过深`)
-    if (!isPlainObject(mapping)) throw new Error(`${fieldName}: mapping 必须是对象`)
-
-    const type = String(mapping.type || '').trim()
-    if (!type) throw new Error(`${fieldName}: 缺少 type`)
-
-    if (type === 'direct') {
-      const path = String(mapping.path || '').trim()
-      if (!path) throw new Error(`${fieldName}: direct 必须提供非空 path`)
-    } else if (type === 'expression') {
-      const formula = String(mapping.formula || '').trim()
-      if (!formula) throw new Error(`${fieldName}: expression 必须提供非空 formula`)
-    } else if (type === 'default') {
-      if (!Object.prototype.hasOwnProperty.call(mapping, 'value')) {
-        throw new Error(`${fieldName}: default 必须提供 value`)
-      }
-    } else if (type === 'conditional') {
-      const condition = String(mapping.condition || '').trim()
-      const trueValue = String(mapping.true_value || '').trim()
-      if (!condition) throw new Error(`${fieldName}: conditional 必须提供非空 condition`)
-      if (!trueValue) throw new Error(`${fieldName}: conditional 必须提供非空 true_value`)
-      if (!Object.prototype.hasOwnProperty.call(mapping, 'false_value')) {
-        throw new Error(`${fieldName}: conditional 必须提供 false_value`)
-      }
-
-      const parts = condition.split(/\s+/).filter(Boolean)
-      if (parts.length !== 3) throw new Error(`${fieldName}: conditional.condition 仅支持三段式表达式`)
-      const [left, op, right] = parts
-      if (!['>', '<', '=='].includes(op)) throw new Error(`${fieldName}: conditional.condition 操作符仅支持 > / < / ==`)
-
-      const leftOk =
-        (left.startsWith('{') && left.endsWith('}') && left.length > 2) || !Number.isNaN(Number(left))
-      if (!leftOk) throw new Error(`${fieldName}: conditional.condition 左侧必须是数字或 {path}`)
-      if (Number.isNaN(Number(right))) throw new Error(`${fieldName}: conditional.condition 右侧必须是数字`)
-    } else if (type === 'fallback') {
-      if (!Array.isArray(mapping.paths)) throw new Error(`${fieldName}: fallback 必须提供 paths 数组`)
-      if (mapping.paths.length === 0) throw new Error(`${fieldName}: fallback.paths 不能为空数组`)
-      mapping.paths.forEach((p: any, idx: number) => {
-        const s = String(p || '').trim()
-        if (!s) throw new Error(`${fieldName}: fallback.paths[${idx}] 必须是非空字符串`)
-      })
-    } else {
-      throw new Error(`${fieldName}: 未知的 mapping type: ${type}`)
-    }
-
-    if (mapping.fallback !== undefined && mapping.fallback !== null) {
-      validateMapping(fieldName, mapping.fallback, depth + 1)
-    }
-  }
-
-  keys.forEach((fieldName) => {
-    if (!fieldName.trim()) throw new Error('token_mappings_json 字段名不能为空')
-    validateMapping(fieldName, value[fieldName], 0)
-  })
-}
-
-function validateModelExtraction(value: any) {
-  if (value === null) return
-  if (!isPlainObject(value)) throw new Error('model_extraction_json 必须是对象')
-
-  const rules = value.extraction_rules
-  const fallbackModel = String(value.fallback_model || '').trim()
-  if (rules === undefined && !fallbackModel) throw new Error('model_extraction_json 至少需要提供 extraction_rules 或 fallback_model')
-
-  if (rules !== undefined) {
-    if (!Array.isArray(rules)) throw new Error('model_extraction_json.extraction_rules 必须是数组')
-    rules.forEach((rule: any, idx: number) => {
-      if (!isPlainObject(rule)) throw new Error(`extraction_rules[${idx}] 必须是对象`)
-      const type = String(rule.type || '').trim()
-      if (!type) throw new Error(`extraction_rules[${idx}] 缺少 type`)
-
-      if (type === 'body_json') {
-        const path = String(rule.path || '').trim()
-        if (!path) throw new Error(`extraction_rules[${idx}]: body_json 必须提供非空 path`)
-      } else if (type === 'url_regex') {
-        const pattern = String(rule.pattern || '').trim()
-        if (!pattern) throw new Error(`extraction_rules[${idx}]: url_regex 必须提供非空 pattern`)
-        // eslint-disable-next-line no-new
-        new RegExp(pattern)
-      } else if (type === 'query_param') {
-        const parameter = String(rule.parameter || '').trim()
-        if (!parameter) throw new Error(`extraction_rules[${idx}]: query_param 必须提供非空 parameter`)
-      } else {
-        throw new Error(`extraction_rules[${idx}]: 未知的 type: ${type}`)
-      }
-    })
-  }
-}
-
-function validateAuthConfigs(authType: 'api_key' | 'oauth', value: any) {
-  if (authType === 'api_key') {
-    if (value === null) return
-    if (!isPlainObject(value)) throw new Error('auth_configs_json（api_key）必须是对象或留空')
-    return
-  }
-
-  if (value === null) throw new Error('auth_configs_json（oauth）不能为空')
-  if (!isPlainObject(value)) throw new Error('auth_configs_json（oauth）必须是对象')
-
-  const requiredString = (k: string) => {
-    const v = String(value[k] || '').trim()
-    if (!v) throw new Error(`auth_configs_json（oauth）缺少 ${k}`)
-  }
-  requiredString('client_id')
-  requiredString('authorize_url')
-  requiredString('token_url')
-  requiredString('scopes')
-  if (typeof value.pkce_required !== 'boolean') throw new Error('auth_configs_json（oauth）缺少 pkce_required（true/false）')
-
-  if (value.client_secret !== undefined && value.client_secret !== null && typeof value.client_secret !== 'string') {
-    throw new Error('auth_configs_json（oauth）client_secret 必须是字符串或 null')
-  }
-  if (value.redirect_uri !== undefined && value.redirect_uri !== null && typeof value.redirect_uri !== 'string') {
-    throw new Error('auth_configs_json（oauth）redirect_uri 必须是字符串或 null')
-  }
-  if (value.extra_params !== undefined && value.extra_params !== null && !isPlainObject(value.extra_params)) {
-    throw new Error('auth_configs_json（oauth）extra_params 必须是对象或 null')
-  }
-}
-
 export const ProviderTypeDialog: React.FC<ProviderTypeDialogProps> = ({
   open,
   mode,
@@ -204,7 +68,7 @@ export const ProviderTypeDialog: React.FC<ProviderTypeDialogProps> = ({
       config_json: stringifyJson(p?.config_json),
       token_mappings_json: stringifyJson(p?.token_mappings_json),
       model_extraction_json: stringifyJson(p?.model_extraction_json),
-      auth_configs_json: stringifyJson((p as any)?.auth_configs_json ?? p?.auth_configs ?? null),
+      auth_configs_json: stringifyJson(p?.auth_configs_json ?? null),
     }
   }, [editing])
 
@@ -262,16 +126,6 @@ export const ProviderTypeDialog: React.FC<ProviderTypeDialogProps> = ({
         auth_configs_json = parseJsonText(form.auth_configs_json)
       } catch (e: any) {
         toast.error(`auth_configs_json JSON 无效：${e?.message || '解析失败'}`)
-        return
-      }
-
-      try {
-        validateConfigJson(config_json)
-        validateTokenMappings(token_mappings_json)
-        validateModelExtraction(model_extraction_json)
-        validateAuthConfigs(form.auth_type, auth_configs_json)
-      } catch (e: any) {
-        toast.error(`配置校验失败：${e?.message || '请检查输入'}`)
         return
       }
 

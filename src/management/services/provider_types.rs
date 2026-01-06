@@ -11,7 +11,7 @@ use crate::key_pool::types::SchedulingStrategy;
 use crate::management::middleware::AuthContext;
 use crate::management::server::ManagementState;
 use crate::types::timezone_utils;
-use crate::{bail, ensure, error};
+use crate::{ensure, error};
 
 use entity::{provider_types, provider_types::Entity as ProviderTypes};
 use sea_orm::{
@@ -28,7 +28,8 @@ pub struct ProviderTypeItem {
     pub base_url: String,
     pub is_active: bool,
     pub supported_models: Vec<String>,
-    pub auth_configs: Option<serde_json::Value>,
+    /// 原始 `auth_configs_json` 回显（包含敏感字段，管理端需完整回显）
+    pub auth_configs_json: Option<serde_json::Value>,
     pub config_json: Option<serde_json::Value>,
     pub token_mappings_json: Option<serde_json::Value>,
     pub model_extraction_json: Option<serde_json::Value>,
@@ -47,7 +48,7 @@ pub struct SchedulingStrategyItem {
 /// 列出全部激活的提供商类型。
 pub async fn list_active_types(
     state: &ManagementState,
-    timezone: &Tz,
+    timezone: Tz,
 ) -> Result<Vec<ProviderTypeItem>> {
     list_types(state, timezone, Some(true)).await
 }
@@ -58,7 +59,7 @@ pub async fn list_active_types(
 /// - `is_active` 为 None 时返回全部
 pub async fn list_types(
     state: &ManagementState,
-    timezone: &Tz,
+    timezone: Tz,
     is_active: Option<bool>,
 ) -> Result<Vec<ProviderTypeItem>> {
     let mut query = ProviderTypes::find().order_by_asc(provider_types::Column::Id);
@@ -71,46 +72,43 @@ pub async fn list_types(
         .await
         .context("Failed to fetch provider types")?;
 
-    Ok(rows
-        .into_iter()
-        .map(|provider| to_item(&provider, timezone))
-        .collect())
+    let mut items = Vec::with_capacity(rows.len());
+    for provider in rows {
+        items.push(to_item(&provider, timezone)?);
+    }
+    Ok(items)
 }
 
-/// 脱敏认证配置中的敏感字段（如 `client_secret`）
-fn sanitize_auth_configs(value: &serde_json::Value) -> serde_json::Value {
-    let mut sanitized = value.clone();
-    let serde_json::Value::Object(ref mut map) = sanitized else {
-        return sanitized;
-    };
-
-    map.remove("client_secret");
-    map.remove("secret");
-    sanitized
+fn parse_json_strict(raw: &str, field: &'static str) -> Result<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(raw).map_err(|e| {
+        error::conversion::ConversionError::message(format!("{field} 不是合法 JSON: {e}")).into()
+    })
 }
 
-#[must_use]
-pub fn to_item(provider: &provider_types::Model, timezone: &Tz) -> ProviderTypeItem {
-    let auth_configs = provider
+pub fn to_item(provider: &provider_types::Model, timezone: Tz) -> Result<ProviderTypeItem> {
+    let auth_configs_json = provider
         .auth_configs_json
-        .as_ref()
-        .and_then(|config_json| serde_json::from_str::<serde_json::Value>(config_json).ok())
-        .map(|value| sanitize_auth_configs(&value));
+        .as_deref()
+        .map(|raw| parse_json_strict(raw, "auth_configs_json"))
+        .transpose()?;
 
     let config_json = provider
         .config_json
-        .as_ref()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+        .as_deref()
+        .map(|raw| parse_json_strict(raw, "config_json"))
+        .transpose()?;
     let token_mappings_json = provider
         .token_mappings_json
-        .as_ref()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+        .as_deref()
+        .map(|raw| parse_json_strict(raw, "token_mappings_json"))
+        .transpose()?;
     let model_extraction_json = provider
         .model_extraction_json
-        .as_ref()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+        .as_deref()
+        .map(|raw| parse_json_strict(raw, "model_extraction_json"))
+        .transpose()?;
 
-    ProviderTypeItem {
+    Ok(ProviderTypeItem {
         id: provider.id,
         name: provider.name.clone(),
         display_name: provider.display_name.clone(),
@@ -118,13 +116,18 @@ pub fn to_item(provider: &provider_types::Model, timezone: &Tz) -> ProviderTypeI
         base_url: provider.base_url.clone(),
         is_active: provider.is_active,
         supported_models: Vec::new(),
-        auth_configs,
+        auth_configs_json,
         config_json,
         token_mappings_json,
         model_extraction_json,
-        created_at: timezone_utils::format_naive_utc_for_response(&provider.created_at, timezone),
-        updated_at: timezone_utils::format_naive_utc_for_response(&provider.updated_at, timezone),
-    }
+        created_at: timezone_utils::format_naive_utc_for_response(&provider.created_at, &timezone),
+        updated_at: timezone_utils::format_naive_utc_for_response(&provider.updated_at, &timezone),
+    })
+}
+
+/// 兼容旧调用方：管理端回显完整的 `auth_configs_json`（包含敏感字段）
+pub fn to_item_admin(provider: &provider_types::Model, timezone: Tz) -> Result<ProviderTypeItem> {
+    to_item(provider, timezone)
 }
 
 /// 获取调度策略枚举。
@@ -234,7 +237,6 @@ impl ProviderTypesCrudService {
         validate_display_name(&request.display_name)?;
         validate_auth_type(&request.auth_type)?;
         validate_base_url(&request.base_url)?;
-        validate_json_payload_for_create(request)?;
 
         let now = chrono::Utc::now().naive_utc();
 
@@ -311,8 +313,6 @@ impl ProviderTypesCrudService {
             active.auth_configs_json = Set(json_to_string(request.auth_configs_json.as_ref())?);
         }
 
-        validate_json_payload_for_update(&existing_auth_type, request)?;
-
         active.updated_at = Set(chrono::Utc::now().naive_utc());
 
         let updated = active
@@ -387,212 +387,7 @@ fn json_to_string(value: Option<&serde_json::Value>) -> Result<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
     };
-    if value.is_null() {
-        return Ok(None);
-    }
     Ok(Some(
         serde_json::to_string(value).context("序列化 JSON 失败")?,
     ))
-}
-
-fn validate_json_payload_for_create(request: &CreateProviderTypeRequest) -> Result<()> {
-    validate_common_json_fields(
-        request.config_json.as_ref(),
-        request.token_mappings_json.as_ref(),
-        request.model_extraction_json.as_ref(),
-    )?;
-    validate_auth_configs_json(&request.auth_type, request.auth_configs_json.as_ref())
-}
-
-fn validate_json_payload_for_update(
-    existing_auth_type: &str,
-    request: &UpdateProviderTypeRequest,
-) -> Result<()> {
-    // 仅当字段被提交时做校验（避免对历史脏数据造成“无法编辑其它字段”的阻塞）
-    if request.config_json.is_some() {
-        validate_config_json(request.config_json.as_ref())?;
-    }
-    if request.token_mappings_json.is_some() {
-        validate_token_mappings_json(request.token_mappings_json.as_ref())?;
-    }
-    if request.model_extraction_json.is_some() {
-        validate_model_extraction_json(request.model_extraction_json.as_ref())?;
-    }
-    if request.auth_configs_json.is_some() {
-        validate_auth_configs_json(existing_auth_type, request.auth_configs_json.as_ref())?;
-    }
-    Ok(())
-}
-
-fn validate_common_json_fields(
-    config_json: Option<&serde_json::Value>,
-    token_mappings_json: Option<&serde_json::Value>,
-    model_extraction_json: Option<&serde_json::Value>,
-) -> Result<()> {
-    // 新建时：如果提供了字段就严格校验
-    validate_config_json(config_json)?;
-    validate_token_mappings_json(token_mappings_json)?;
-    validate_model_extraction_json(model_extraction_json)?;
-    Ok(())
-}
-
-fn validate_config_json(value: Option<&serde_json::Value>) -> Result<()> {
-    let Some(v) = value else {
-        return Ok(());
-    };
-    if v.is_null() {
-        return Ok(());
-    }
-    ensure!(
-        v.is_object(),
-        error::conversion::ConversionError::message("config_json 必须是对象或 null")
-    );
-    Ok(())
-}
-
-fn validate_token_mappings_json(value: Option<&serde_json::Value>) -> Result<()> {
-    let Some(v) = value else {
-        return Ok(());
-    };
-    if v.is_null() {
-        return Ok(());
-    }
-    crate::collect::field_extractor::validate_token_mappings_value(v)
-}
-
-fn validate_model_extraction_json(value: Option<&serde_json::Value>) -> Result<()> {
-    let Some(v) = value else {
-        return Ok(());
-    };
-    if v.is_null() {
-        return Ok(());
-    }
-    crate::collect::field_extractor::validate_model_extraction_value(v)
-}
-
-fn validate_auth_configs_json(auth_type: &str, value: Option<&serde_json::Value>) -> Result<()> {
-    match auth_type {
-        "api_key" => validate_auth_configs_api_key(value),
-        "oauth" => validate_auth_configs_oauth(value),
-        other => bail!(error::conversion::ConversionError::message(format!(
-            "未知的 auth_type: {other}"
-        ))),
-    }
-}
-
-fn validate_auth_configs_api_key(value: Option<&serde_json::Value>) -> Result<()> {
-    if let Some(v) = value
-        && !v.is_null()
-    {
-        ensure!(
-            v.is_object(),
-            error::conversion::ConversionError::message(
-                "auth_configs_json（api_key）必须是对象或 null"
-            )
-        );
-    }
-    Ok(())
-}
-
-fn validate_auth_configs_oauth(value: Option<&serde_json::Value>) -> Result<()> {
-    let Some(v) = value else {
-        bail!(error::conversion::ConversionError::message(
-            "auth_configs_json（oauth）不能为空，请填写 OAuth 配置对象"
-        ));
-    };
-    if v.is_null() {
-        bail!(error::conversion::ConversionError::message(
-            "auth_configs_json（oauth）不能为空，请填写 OAuth 配置对象"
-        ));
-    }
-
-    let obj = v.as_object().ok_or_else(|| {
-        error::conversion::ConversionError::message(
-            "auth_configs_json（oauth）必须是对象（包含 client_id/authorize_url/token_url/scopes/pkce_required）",
-        )
-    })?;
-
-    ensure_required_nonempty_string(obj, "client_id", "auth_configs_json（oauth）缺少 client_id")?;
-    ensure_required_nonempty_string(
-        obj,
-        "authorize_url",
-        "auth_configs_json（oauth）缺少 authorize_url",
-    )?;
-    ensure_required_nonempty_string(obj, "token_url", "auth_configs_json（oauth）缺少 token_url")?;
-    ensure_required_nonempty_string(obj, "scopes", "auth_configs_json（oauth）缺少 scopes")?;
-
-    ensure!(
-        obj.get("pkce_required")
-            .and_then(sea_orm::JsonValue::as_bool)
-            .is_some(),
-        error::conversion::ConversionError::message(
-            "auth_configs_json（oauth）缺少 pkce_required（true/false）"
-        )
-    );
-
-    ensure_optional_string_or_null(
-        obj,
-        "client_secret",
-        "auth_configs_json（oauth）client_secret",
-    )?;
-    ensure_optional_string_or_null(
-        obj,
-        "redirect_uri",
-        "auth_configs_json（oauth）redirect_uri",
-    )?;
-    ensure_optional_object_or_null(
-        obj,
-        "extra_params",
-        "auth_configs_json（oauth）extra_params",
-    )?;
-
-    Ok(())
-}
-
-fn ensure_required_nonempty_string(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    message: &str,
-) -> Result<()> {
-    let value = obj
-        .get(key)
-        .and_then(sea_orm::JsonValue::as_str)
-        .unwrap_or("");
-    ensure!(
-        !value.trim().is_empty(),
-        error::conversion::ConversionError::message(message)
-    );
-    Ok(())
-}
-
-fn ensure_optional_string_or_null(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    label: &str,
-) -> Result<()> {
-    let Some(v) = obj.get(key) else {
-        return Ok(());
-    };
-    if v.is_null() || v.is_string() {
-        return Ok(());
-    }
-    bail!(error::conversion::ConversionError::message(format!(
-        "{label} 必须是字符串或 null"
-    )));
-}
-
-fn ensure_optional_object_or_null(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    label: &str,
-) -> Result<()> {
-    let Some(v) = obj.get(key) else {
-        return Ok(());
-    };
-    if v.is_null() || v.is_object() {
-        return Ok(());
-    }
-    bail!(error::conversion::ConversionError::message(format!(
-        "{label} 必须是对象或 null"
-    )));
 }

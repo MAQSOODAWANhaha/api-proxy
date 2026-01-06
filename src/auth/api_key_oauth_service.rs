@@ -5,7 +5,6 @@
 use crate::auth::api_key_oauth_refresh_service::ApiKeyOAuthRefreshService;
 use crate::auth::api_key_oauth_state_service::ApiKeyOAuthStateService;
 use crate::auth::types::{AuthStatus, OAuthProviderConfig};
-use crate::cache::CacheManager;
 use crate::error::Result;
 use crate::provider::{ApiKeyProviderConfig, build_authorize_url};
 use serde::{Deserialize, Serialize};
@@ -56,8 +55,8 @@ pub struct ApiKeyOauthService {
 
 impl ApiKeyOauthService {
     #[must_use]
-    pub fn new(db: Arc<sea_orm::DatabaseConnection>, cache: Arc<CacheManager>) -> Self {
-        let config = Arc::new(ApiKeyProviderConfig::new(db.clone(), cache));
+    pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
+        let config = Arc::new(ApiKeyProviderConfig::new(db.clone()));
         let state = Arc::new(ApiKeyOAuthStateService::new(db));
         let refresh = Arc::new(ApiKeyOAuthRefreshService::new(
             reqwest::Client::new(),

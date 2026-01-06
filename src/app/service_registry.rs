@@ -66,7 +66,7 @@ impl AppServices {
             health.clone(),
         ));
 
-        let oauth = Arc::new(ApiKeyOauthService::new(database.clone(), resources.cache()));
+        let oauth = Arc::new(ApiKeyOauthService::new(database.clone()));
         let oauth_state = oauth.api_key_oauth_state_service();
         let refresh = oauth.api_key_oauth_refresh_service();
 

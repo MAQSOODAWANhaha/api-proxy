@@ -77,6 +77,7 @@ const ProvidersPage: React.FC = () => {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create')
   const [editing, setEditing] = useState<ProviderType | null>(null)
+  const [openingEdit, setOpeningEdit] = useState(false)
 
   /** 拉取服务商类型列表（包含禁用项） */
   const fetchProviders = useCallback(async () => {
@@ -138,9 +139,21 @@ const ProvidersPage: React.FC = () => {
   }
 
   const openEdit = (p: ProviderType) => {
-    setEditing(p)
-    setDialogMode('edit')
-    setDialogOpen(true)
+    void (async () => {
+      try {
+        setOpeningEdit(true)
+        const res = await api.auth.getProviderType(p.id)
+        if (!res.success || !res.data) {
+          toast.error(res.error?.message || '获取服务商类型详情失败')
+          return
+        }
+        setEditing(res.data.provider_type)
+        setDialogMode('edit')
+        setDialogOpen(true)
+      } finally {
+        setOpeningEdit(false)
+      }
+    })()
   }
 
   const deleteRow = async (p: ProviderType) => {
@@ -339,6 +352,7 @@ const ProvidersPage: React.FC = () => {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(p)}
+                            disabled={openingEdit}
                             className="p-1 text-neutral-500 hover:text-violet-600"
                             title="编辑"
                           >

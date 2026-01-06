@@ -1,9 +1,8 @@
 use super::types::ProviderType;
 use crate::auth::types::OAuthProviderConfig;
-use crate::cache::CacheManager;
 use crate::error::{ProxyError, Result, auth::OAuthError};
+use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
-use crate::{ldebug, lwarn};
 use entity::{ProviderTypes, provider_types};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::collections::HashMap;
@@ -14,22 +13,16 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ApiKeyProviderConfig {
     db: Arc<DatabaseConnection>,
-    cache: Arc<CacheManager>,
 }
 
 impl ApiKeyProviderConfig {
     #[must_use]
-    pub const fn new(db: Arc<DatabaseConnection>, cache: Arc<CacheManager>) -> Self {
-        Self { db, cache }
+    pub const fn new(db: Arc<DatabaseConnection>) -> Self {
+        Self { db }
     }
 
     pub async fn get_config(&self, provider_name: &str) -> Result<OAuthProviderConfig> {
-        if let Some(config) = self.read_from_cache(provider_name).await {
-            return Ok(config);
-        }
-        let config = self.load_config_from_db(provider_name).await?;
-        self.cache_config(provider_name, &config).await;
-        Ok(config)
+        self.load_config_from_db(provider_name).await
     }
 
     pub async fn list_active_configs(&self) -> Result<Vec<OAuthProviderConfig>> {
@@ -52,14 +45,6 @@ impl ApiKeyProviderConfig {
         Ok(configs)
     }
 
-    pub async fn reload_cache(&self) -> Result<()> {
-        let configs = self.list_active_configs().await?;
-        for config in configs {
-            self.cache_config(&config.provider_name, &config).await;
-        }
-        Ok(())
-    }
-
     pub async fn supports_oauth(&self, provider_name: &str) -> Result<bool> {
         match self.get_config(provider_name).await {
             Ok(_) => Ok(true),
@@ -75,23 +60,6 @@ impl ApiKeyProviderConfig {
     pub async fn fetch_redirect_uri(&self, provider_name: &str) -> Result<String> {
         let config = self.get_config(provider_name).await?;
         Ok(config.redirect_uri)
-    }
-
-    async fn read_from_cache(&self, provider_name: &str) -> Option<OAuthProviderConfig> {
-        let key = Self::cache_key(provider_name);
-        match self.cache.get::<OAuthProviderConfig>(&key).await {
-            Ok(result) => result,
-            Err(err) => {
-                lwarn!(
-                    "system",
-                    LogStage::Cache,
-                    LogComponent::OAuth,
-                    "provider_cache_get_failed",
-                    &format!("获取缓存失败: {err}")
-                );
-                None
-            }
-        }
     }
 
     async fn load_config_from_db(&self, provider_name: &str) -> Result<OAuthProviderConfig> {
@@ -122,19 +90,6 @@ impl ApiKeyProviderConfig {
                 .into())
             }
             None => Err(OAuthError::ProviderNotFound(provider_name.to_string()).into()),
-        }
-    }
-
-    async fn cache_config(&self, provider_name: &str, config: &OAuthProviderConfig) {
-        let key = Self::cache_key(provider_name);
-        if let Err(err) = self.cache.set(&key, config, None).await {
-            lwarn!(
-                "system",
-                LogStage::Cache,
-                LogComponent::OAuth,
-                "provider_cache_set_failed",
-                &format!("写入缓存失败: {err}")
-            );
         }
     }
 
@@ -189,9 +144,7 @@ impl ApiKeyProviderConfig {
 }
 
 impl ApiKeyProviderConfig {
-    fn cache_key(provider_name: &str) -> String {
-        format!("provider:oauth_config:{provider_name}")
-    }
+    // 历史上曾缓存 OAuth 配置；目前为避免陈旧配置导致鉴权失败，已禁用该缓存。
 }
 
 impl fmt::Debug for ApiKeyProviderConfig {

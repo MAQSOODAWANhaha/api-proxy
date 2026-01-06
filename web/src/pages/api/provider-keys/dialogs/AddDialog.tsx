@@ -118,7 +118,7 @@ const AddDialog: React.FC<{
   }
 
   const getAuthConfig = (): any | null => {
-    const authConfigs = selectedProviderType?.auth_configs
+    const authConfigs = selectedProviderType?.auth_configs_json
     if (!authConfigs || typeof authConfigs !== 'object' || Array.isArray(authConfigs)) return null
     return authConfigs
   }

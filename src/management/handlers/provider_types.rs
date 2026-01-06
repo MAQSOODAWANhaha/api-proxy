@@ -40,7 +40,7 @@ pub async fn list_provider_types(
         Some(query.is_active.unwrap_or(true))
     };
 
-    match provider_types::list_types(&state, &timezone_context.timezone, is_active_filter).await {
+    match provider_types::list_types(&state, timezone_context.timezone, is_active_filter).await {
         Ok(list) => {
             let data = json!({ "provider_types": list });
             response::success(data)
@@ -77,7 +77,20 @@ pub async fn get_provider_type(
 ) -> axum::response::Response {
     let service = ProviderTypesCrudService::new(state.database());
     match service.get(auth_context.as_ref(), id).await {
-        Ok(model) => response::success(provider_types::to_item(&model, &timezone_context.timezone)),
+        Ok(model) => match provider_types::to_item(&model, timezone_context.timezone) {
+            Ok(item) => response::success(item),
+            Err(err) => {
+                log_management_error(
+                    &request_id,
+                    LogStage::Internal,
+                    LogComponent::Config,
+                    "get_provider_type_parse_failed",
+                    "解析服务商类型 JSON 字段失败",
+                    &err,
+                );
+                response::app_error(err)
+            }
+        },
         Err(err) => {
             log_management_error(
                 &request_id,
@@ -102,9 +115,20 @@ pub async fn create_provider_type(
 ) -> axum::response::Response {
     let service = ProviderTypesCrudService::new(state.database());
     match service.create(auth_context.as_ref(), &request).await {
-        Ok(model) => response::success(json!({
-            "provider_type": provider_types::to_item(&model, &timezone_context.timezone)
-        })),
+        Ok(model) => match provider_types::to_item(&model, timezone_context.timezone) {
+            Ok(item) => response::success(json!({ "provider_type": item })),
+            Err(err) => {
+                log_management_error(
+                    &request_id,
+                    LogStage::Internal,
+                    LogComponent::Config,
+                    "create_provider_type_parse_failed",
+                    "解析服务商类型 JSON 字段失败",
+                    &err,
+                );
+                response::app_error(err)
+            }
+        },
         Err(err) => {
             log_management_error(
                 &request_id,
@@ -130,9 +154,20 @@ pub async fn update_provider_type(
 ) -> axum::response::Response {
     let service = ProviderTypesCrudService::new(state.database());
     match service.update(auth_context.as_ref(), id, &request).await {
-        Ok(model) => response::success(json!({
-            "provider_type": provider_types::to_item(&model, &timezone_context.timezone)
-        })),
+        Ok(model) => match provider_types::to_item(&model, timezone_context.timezone) {
+            Ok(item) => response::success(json!({ "provider_type": item })),
+            Err(err) => {
+                log_management_error(
+                    &request_id,
+                    LogStage::Internal,
+                    LogComponent::Config,
+                    "update_provider_type_parse_failed",
+                    "解析服务商类型 JSON 字段失败",
+                    &err,
+                );
+                response::app_error(err)
+            }
+        },
         Err(err) => {
             log_management_error(
                 &request_id,

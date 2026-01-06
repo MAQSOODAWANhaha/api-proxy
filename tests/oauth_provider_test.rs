@@ -14,7 +14,6 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use api_proxy::cache::CacheManager;
     use entity::oauth_client_sessions::Model;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::DatabaseConnection;
@@ -22,8 +21,7 @@ mod tests {
     use url::Url;
 
     fn make_manager(db: DatabaseConnection) -> ApiKeyProviderConfig {
-        let cache = Arc::new(CacheManager::memory_only());
-        ApiKeyProviderConfig::new(Arc::new(db), cache)
+        ApiKeyProviderConfig::new(Arc::new(db))
     }
 
     /// 创建测试用的数据库连接

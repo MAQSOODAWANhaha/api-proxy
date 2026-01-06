@@ -251,6 +251,8 @@ impl ApiKeyOAuthRefreshService {
         Ok(oauth_response)
     }
 
+    // 注意：此处不做任何缓存重试；OAuth 配置会始终从数据库读取。
+
     async fn send_token_request(&self, payload: TokenRequestPayload) -> Result<TokenResponse> {
         let (token_url, form_params) = payload;
         let response = self

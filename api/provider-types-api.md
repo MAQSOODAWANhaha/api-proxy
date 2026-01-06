@@ -45,7 +45,7 @@
                 "base_url": "api.openai.com",
                 "is_active": true,
                 "supported_models": [],
-                "auth_configs": {},
+                "auth_configs_json": {},
                 "config_json": {},
                 "token_mappings_json": {},
                 "model_extraction_json": {},
@@ -60,7 +60,7 @@
                 "base_url": "cloudcode-pa.googleapis.com",
                 "is_active": true,
                 "supported_models": [],
-                "auth_configs": {
+                "auth_configs_json": {
                     "client_id": "xxx",
                     "authorize_url": "https://accounts.google.com/o/oauth2/auth",
                     "token_url": "https://oauth2.googleapis.com/token",
@@ -91,7 +91,7 @@
 | base_url | string | 服务商基础URL |
 | is_active | bool | 是否启用 |
 | supported_models | array[string] | 支持的模型列表（目前返回空数组，后续可扩展） |
-| auth_configs | object | 本行认证配置（已脱敏；不强制包含 `{"api_key":{}}` 外层） |
+| auth_configs_json | object | 本行认证配置（数据库原始字段；提交什么就存什么并回显） |
 | config_json | object \| null | 本行通用配置（JSON，可编辑） |
 | token_mappings_json | object \| null | 本行 token 映射配置（JSON，可编辑） |
 | model_extraction_json | object \| null | 本行模型提取配置（JSON，可编辑） |
@@ -153,7 +153,7 @@
       "base_url": "api.openai.com",
       "is_active": true,
       "supported_models": [],
-      "auth_configs": {},
+      "auth_configs_json": {},
       "config_json": {},
       "token_mappings_json": {},
       "model_extraction_json": {},

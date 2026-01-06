@@ -199,8 +199,8 @@ export interface ProviderType {
   base_url?: string
   is_active: boolean
   supported_models?: string[]
-  // 后端按 `auth_type` 分行存储，单行的 auth_configs 为扁平对象
-  auth_configs?: any
+  // 管理端回显完整原始配置（可能包含敏感字段）
+  auth_configs_json?: any
   config_json?: any
   token_mappings_json?: any
   model_extraction_json?: any

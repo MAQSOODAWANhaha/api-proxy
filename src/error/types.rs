@@ -294,10 +294,20 @@ impl ProxyError {
         match self {
             Self::Authentication(auth_err) => match auth_err {
                 auth::AuthError::UsageLimitExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+                auth::AuthError::PermissionDenied { .. } => StatusCode::FORBIDDEN,
                 auth::AuthError::TaskAlreadyRunning
                 | auth::AuthError::TaskNotRunning
                 | auth::AuthError::TaskNotPaused => StatusCode::CONFLICT,
-                _ => StatusCode::UNAUTHORIZED,
+                // OAuth 交换/刷新失败属于业务流程错误，不应触发前端“登录失效”逻辑
+                auth::AuthError::OAuth(_)
+                | auth::AuthError::Pkce(_)
+                | auth::AuthError::HeaderParse(_)
+                | auth::AuthError::Message(_) => StatusCode::BAD_REQUEST,
+                auth::AuthError::NotAuthenticated
+                | auth::AuthError::ApiKeyMissing
+                | auth::AuthError::ApiKeyInvalid(_)
+                | auth::AuthError::ApiKeyMalformed
+                | auth::AuthError::ApiKeyInactive => StatusCode::UNAUTHORIZED,
             },
             Self::Config(_) | Self::Database(_) | Self::Internal(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
