@@ -158,14 +158,6 @@ const ProvidersPage: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={openCreate}
-            className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-violet-700"
-            title="新增服务商类型"
-          >
-            <Plus size={16} />
-            新增
-          </button>
-          <button
             onClick={fetchProviders}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:text-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -173,6 +165,14 @@ const ProvidersPage: React.FC = () => {
           >
             {loading ? <LoadingSpinner size="sm" tone="muted" /> : <RefreshCw size={16} />}
             刷新
+          </button>
+          <button
+            onClick={openCreate}
+            className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-violet-700"
+            title="新增服务商类型"
+          >
+            <Plus size={16} />
+            新增
           </button>
         </div>
       </div>

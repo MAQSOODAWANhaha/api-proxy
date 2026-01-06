@@ -68,6 +68,18 @@ const transformProviderKeyFromAPI = (apiKey: ProviderKey): LocalProviderKey => {
   }
 }
 
+const authTypeLabel = (authType?: string) => {
+  switch (authType) {
+    case 'api_key':
+      return 'API Key'
+    case 'oauth':
+    case 'oauth2':
+      return 'OAuth'
+    default:
+      return authType || '-'
+  }
+}
+
 /** 页面主组件 */
 const ProviderKeysPage: React.FC = () => {
   // 数据状态
@@ -535,6 +547,7 @@ const ProviderKeysPage: React.FC = () => {
                 <th className="px-4 py-3 text-left font-medium">账号</th>
                 <th className="px-4 py-3 text-left font-medium">密钥名称</th>
                 <th className="px-4 py-3 text-left font-medium">API Key</th>
+                <th className="px-4 py-3 text-left font-medium">认证类型</th>
                 <th className="px-4 py-3 text-left font-medium">使用情况</th>
                 <th className="px-4 py-3 text-left font-medium">花费</th>
                 <th className="px-4 py-3 text-left font-medium">健康状态</th>
@@ -545,7 +558,7 @@ const ProviderKeysPage: React.FC = () => {
             <tbody className="divide-y divide-neutral-200">
               {pageLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center">
+                  <td colSpan={9} className="px-4 py-10 text-center">
                     <div className="flex justify-center">
                       <LoadingState text="加载中..." />
                     </div>
@@ -553,7 +566,7 @@ const ProviderKeysPage: React.FC = () => {
                 </tr>
               ) : paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-neutral-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-neutral-500">
                     暂无数据
                   </td>
                 </tr>
@@ -561,12 +574,9 @@ const ProviderKeysPage: React.FC = () => {
                 paginatedData.map((item) => (
                 <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
                   <td className="px-4 py-3">
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        <Shield size={16} className="text-neutral-500" />
-                        {item.provider}
-                      </div>
-                    </div>
+                    <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
+                      {item.provider}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <div>
@@ -575,6 +585,11 @@ const ProviderKeysPage: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3">{renderMaskedKey(item.keyValue, String(item.id))}</td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
+                      {authTypeLabel(item.auth_type)}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span className="text-sm">
