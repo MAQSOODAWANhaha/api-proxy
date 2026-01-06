@@ -35,6 +35,7 @@ const EditDialog: React.FC<{
   // OAuth相关状态
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>('idle')
   const [oauthExtraParams, setOAuthExtraParams] = useState<{ [key: string]: string }>({})
+  const [loadingDetail, setLoadingDetail] = useState(true)
 
   // 获取服务商类型列表
   const fetchProviderTypes = useCallback(async () => {
@@ -44,19 +45,6 @@ const EditDialog: React.FC<{
 
       if (response.success && response.data) {
         setProviderTypes(response.data.provider_types || [])
-        // 优先按 provider_type_id 匹配（避免 display_name 重名）
-        const currentProvider =
-          response.data.provider_types?.find((type) => type.id === item.provider_type_id) ||
-          response.data.provider_types?.find((type) => type.display_name === item.provider)
-        if (currentProvider) {
-          setSelectedProviderType(currentProvider)
-          setFormData((prev) => ({
-            ...prev,
-            provider: String(currentProvider.id),
-            provider_type_id: currentProvider.id,
-            auth_type: currentProvider.auth_type || prev.auth_type,
-          }))
-        }
       } else {
         console.error('[EditDialog] 获取服务商类型失败:', response.message)
       }
@@ -65,12 +53,74 @@ const EditDialog: React.FC<{
     } finally {
       setLoadingProviderTypes(false)
     }
-  }, [item.provider, item.provider_type_id])
+  }, [])
+
+  const fetchDetail = useCallback(async () => {
+    setLoadingDetail(true)
+    try {
+      const response = await api.providerKeys.getDetail(String(item.id))
+      if (response.success && response.data) {
+        const detail = response.data
+        setFormData((prev) => ({
+          ...prev,
+          provider: detail.provider_type_id ? String(detail.provider_type_id) : prev.provider,
+          provider_type_id: detail.provider_type_id || prev.provider_type_id,
+          keyName: detail.name || prev.keyName,
+          keyValue: detail.api_key || prev.keyValue,
+          auth_type: detail.auth_type || prev.auth_type,
+          weight: detail.weight ?? prev.weight,
+          requestLimitPerMinute: detail.max_requests_per_minute ?? prev.requestLimitPerMinute,
+          tokenLimitPromptPerMinute:
+            detail.max_tokens_prompt_per_minute ?? prev.tokenLimitPromptPerMinute,
+          requestLimitPerDay: detail.max_requests_per_day ?? prev.requestLimitPerDay,
+          status: detail.is_active ? 'active' : 'disabled',
+          project_id: detail.project_id ?? prev.project_id ?? '',
+        }))
+
+        if (detail.auth_type === 'oauth' && detail.auth_status === 'authorized') {
+          setOAuthStatus('success')
+        } else {
+          setOAuthStatus('idle')
+        }
+      } else {
+        console.error('[EditDialog] 获取密钥详情失败:', response.error?.message || response.message)
+      }
+    } catch (err) {
+      console.error('[EditDialog] 获取密钥详情异常:', err)
+    } finally {
+      setLoadingDetail(false)
+    }
+  }, [item.id])
 
   // 初始化：获取服务商类型
   React.useEffect(() => {
     fetchProviderTypes()
   }, [fetchProviderTypes])
+
+  // 初始化：获取详情数据，确保 provider_type_id/auth_type 正确回填
+  React.useEffect(() => {
+    fetchDetail()
+  }, [fetchDetail])
+
+  // provider_type_id 确认后，匹配服务商类型并同步 auth_type
+  React.useEffect(() => {
+    if (!formData.provider_type_id || providerTypes.length === 0) return
+    const currentProvider = providerTypes.find((type) => type.id === formData.provider_type_id)
+    if (!currentProvider) return
+    setSelectedProviderType(currentProvider)
+    setFormData((prev) => {
+      const nextProvider = String(currentProvider.id)
+      const nextAuthType = currentProvider.auth_type || prev.auth_type
+      if (prev.provider === nextProvider && prev.auth_type === nextAuthType) {
+        return prev
+      }
+      return {
+        ...prev,
+        provider: nextProvider,
+        auth_type: nextAuthType,
+      }
+    })
+  }, [formData.provider_type_id, providerTypes])
 
   // OAuth处理函数
   const handleOAuthComplete = async (result: OAuthResult) => {
@@ -159,20 +209,26 @@ const EditDialog: React.FC<{
   return (
     <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">编辑账号密钥</h3>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* 密钥名称 */}
-        <div>
-          <label className="block text-sm font-medium text-neutral-700 mb-1">
-            <span className="text-red-500">*</span> 密钥名称
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.keyName}
-            onChange={(e) => setFormData({ ...formData, keyName: e.target.value })}
-            className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-          />
+      {loadingDetail ? (
+        <div className="flex items-center justify-center py-8">
+          <LoadingSpinner size="lg" tone="primary" />
+          <span className="ml-2 text-neutral-600">正在加载详情数据...</span>
         </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* 密钥名称 */}
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-1">
+              <span className="text-red-500">*</span> 密钥名称
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.keyName}
+              onChange={(e) => setFormData({ ...formData, keyName: e.target.value })}
+              className="w-full px-3 py-2 border border-neutral-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+            />
+          </div>
 
         {/* 服务商类型 */}
         <div>
@@ -441,6 +497,7 @@ const EditDialog: React.FC<{
           </button>
         </div>
       </form>
+      )}
     </div>
   )
 }

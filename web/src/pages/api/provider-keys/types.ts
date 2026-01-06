@@ -23,7 +23,6 @@ export interface LocalProviderKey extends Omit<ProviderKey, 'status'> {
     last_used_at?: string
   } // 使用完整的usage对象结构
   rateLimitRemainingSeconds?: number // 限流剩余时间（秒）
-  provider_type_id?: number // 服务商类型ID
   project_id?: string // Gemini OAuth extra project scope
   health_status_detail?: string // 健康状态详情（JSON字符串）
 }

@@ -482,6 +482,7 @@ impl<'a> ProviderKeyService<'a> {
         let data = json!({
             "id": key.id,
             "provider": provider_name,
+            "provider_type_id": key.provider_type_id,
             "name": key.name,
             "api_key": api_key_value,
             "auth_type": key.auth_type,
@@ -497,6 +498,7 @@ impl<'a> ProviderKeyService<'a> {
             "max_tokens_prompt_per_minute": key.max_tokens_prompt_per_minute,
             "max_requests_per_day": key.max_requests_per_day,
             "is_active": key.is_active,
+            "project_id": key.project_id,
             "usage": {
                 "total_requests": key_stats.total_requests,
                 "successful_requests": key_stats.successful_requests,
@@ -1377,6 +1379,7 @@ fn build_provider_key_json(
     json!({
         "id": provider_key.id,
         "provider": provider_name,
+        "provider_type_id": provider_key.provider_type_id,
         "name": provider_key.name,
         "api_key": provider_key.api_key,
         "auth_type": provider_key.auth_type,

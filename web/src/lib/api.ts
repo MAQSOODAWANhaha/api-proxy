@@ -320,6 +320,7 @@ export interface UserApiKeysTokenTrendResponse {
 export interface ProviderKey {
   id: number
   provider: string
+  provider_type_id: number
   name: string
   api_key: string
   auth_type: string // "api_key", "oauth"
