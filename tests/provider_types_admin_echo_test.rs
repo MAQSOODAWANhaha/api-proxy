@@ -62,7 +62,7 @@ async fn test_admin_echo_and_update_stores_exact_payload() {
     .unwrap();
 
     // 回显应包含完整配置（包含 `client_secret`）
-    let item_before = provider_types::to_item_admin(&inserted, chrono_tz::UTC).unwrap();
+    let item_before = provider_types::convert_model_to_dto(&inserted, chrono_tz::UTC).unwrap();
     let raw_before = item_before.auth_configs_json.as_ref().unwrap();
     assert_eq!(
         raw_before.get("client_secret").and_then(|v| v.as_str()),
@@ -103,7 +103,7 @@ async fn test_admin_echo_and_update_stores_exact_payload() {
     );
 
     // 回显应保持与数据库一致
-    let item_admin = provider_types::to_item_admin(&updated, chrono_tz::UTC).unwrap();
+    let item_admin = provider_types::convert_model_to_dto(&updated, chrono_tz::UTC).unwrap();
     let raw = item_admin.auth_configs_json.unwrap();
     assert_eq!(raw.get("client_secret"), None, "更新后回显应与数据库一致");
 }
