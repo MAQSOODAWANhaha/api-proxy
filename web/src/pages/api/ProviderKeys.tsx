@@ -30,7 +30,6 @@ import {
   CreateProviderKeyRequest,
   ProviderKey,
   ProviderKeysDashboardStatsResponse,
-  ProviderType,
   UpdateProviderKeyRequest,
 } from '../../lib/api'
 import { toast } from 'sonner'
@@ -182,29 +181,29 @@ const ProviderKeysPage: React.FC = () => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
-      let providerTypeId = newKey.provider_type_id || Number(newKey.provider) || 0
-      let matchedType: ProviderType | undefined
+      const providerTypeId = newKey.provider_type_id || Number(newKey.provider) || 0
 
-      if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
-        matchedType = providerTypesResponse.data.provider_types.find(
-          type => type.id === providerTypeId
-        )
-        if (!matchedType && newKey.provider) {
-          matchedType = providerTypesResponse.data.provider_types.find(
-            type => type.display_name === newKey.provider || type.name === newKey.provider
-          )
-        }
-        if (matchedType && !providerTypeId) {
-          providerTypeId = matchedType.id
-        }
+      if (!providerTypesResponse.success || !providerTypesResponse.data?.provider_types) {
+        throw new Error('获取服务商类型失败，请刷新后重试')
+      }
+
+      const matchedType = providerTypesResponse.data.provider_types.find(
+        type => type.id === providerTypeId
+      )
+
+      if (!matchedType) {
+        throw new Error('无法匹配服务商类型，请刷新后重试')
       }
 
       if (!providerTypeId) {
         throw new Error('未选择有效的服务商类型')
       }
 
-      const authType = matchedType?.auth_type || newKey.auth_type || 'api_key'
-      const providerLabel = matchedType?.display_name || matchedType?.name || newKey.provider
+      const authType = matchedType.auth_type || ''
+      if (!authType) {
+        throw new Error('服务商类型缺少认证类型配置')
+      }
+      const providerLabel = matchedType.display_name || matchedType.name || newKey.provider
 
       const payload: CreateProviderKeyRequest = {
         provider_type_id: providerTypeId,
@@ -246,28 +245,28 @@ const ProviderKeysPage: React.FC = () => {
     try {
       // 找到对应的provider_type_id
       const providerTypesResponse = await api.auth.getProviderTypes({ is_active: true })
-      let providerTypeId = updatedKey.provider_type_id || Number(updatedKey.provider) || 0
-      let matchedType: ProviderType | undefined
+      const providerTypeId = updatedKey.provider_type_id || Number(updatedKey.provider) || 0
 
-      if (providerTypesResponse.success && providerTypesResponse.data?.provider_types) {
-        matchedType = providerTypesResponse.data.provider_types.find(
-          type => type.id === providerTypeId
-        )
-        if (!matchedType && updatedKey.provider) {
-          matchedType = providerTypesResponse.data.provider_types.find(
-            type => type.display_name === updatedKey.provider || type.name === updatedKey.provider
-          )
-        }
-        if (matchedType && !providerTypeId) {
-          providerTypeId = matchedType.id
-        }
+      if (!providerTypesResponse.success || !providerTypesResponse.data?.provider_types) {
+        throw new Error('获取服务商类型失败，请刷新后重试')
+      }
+
+      const matchedType = providerTypesResponse.data.provider_types.find(
+        type => type.id === providerTypeId
+      )
+
+      if (!matchedType) {
+        throw new Error('无法匹配服务商类型，请刷新后重试')
       }
 
       if (!providerTypeId) {
         throw new Error('未选择有效的服务商类型')
       }
 
-      const authType = matchedType?.auth_type || updatedKey.auth_type || 'api_key'
+      const authType = matchedType.auth_type || ''
+      if (!authType) {
+        throw new Error('服务商类型缺少认证类型配置')
+      }
 
       const payload: UpdateProviderKeyRequest = {
         provider_type_id: providerTypeId,

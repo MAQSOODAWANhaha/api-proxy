@@ -280,18 +280,54 @@ impl<'a> ProviderKeyService<'a> {
         timezone_context: &TimezoneContext,
         payload: &CreateProviderKeyRequest,
     ) -> Result<ServiceResponse<Value>> {
+        let provider_type =
+            load_provider_type_or_error(self.db(), payload.provider_type_id).await?;
+        let effective_auth_type = provider_type.auth_type.clone();
+        if payload.auth_type != effective_auth_type {
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "provider_key_auth_type_mismatch",
+                "Payload auth_type does not match provider type auth_type, using provider type value",
+                user_id = user_id,
+                provider_type_id = payload.provider_type_id,
+                payload_auth_type = payload.auth_type.as_str(),
+                provider_auth_type = effective_auth_type.as_str(),
+            );
+        }
+
         ensure_unique_provider_key(self.db(), user_id, payload).await?;
-        validate_create_payload(payload)?;
-        validate_oauth_session_for_creation(self.db(), user_id, payload).await?;
+        validate_create_payload(payload, effective_auth_type.as_str())?;
+        validate_oauth_session_for_creation(
+            self.db(),
+            user_id,
+            payload,
+            effective_auth_type.as_str(),
+        )
+        .await?;
 
         let PrepareGeminiContext {
             final_project_id,
             health_status,
             needs_auto_get_project_id_async,
-        } = prepare_gemini_context(self.db(), user_id, payload).await?;
+        } = prepare_gemini_context(
+            self.db(),
+            user_id,
+            payload,
+            effective_auth_type.as_str(),
+            provider_type.name.as_str(),
+        )
+        .await?;
 
-        let pending_schedule =
-            schedule_oauth_if_needed(self.refresh_task(), payload, user_id, None).await?;
+        let pending_schedule = schedule_oauth_if_needed(
+            self.refresh_task(),
+            payload,
+            user_id,
+            None,
+            effective_auth_type.as_str(),
+        )
+        .await?;
 
         let record = insert_provider_key_record(
             self.db(),
@@ -299,6 +335,7 @@ impl<'a> ProviderKeyService<'a> {
             payload,
             final_project_id,
             health_status,
+            effective_auth_type.as_str(),
         )
         .await?;
 
@@ -318,11 +355,7 @@ impl<'a> ProviderKeyService<'a> {
             record.id,
         );
 
-        let provider_name = ProviderType::find_by_id(payload.provider_type_id)
-            .one(self.db())
-            .await
-            .context("Failed to fetch provider type")?
-            .map_or_else(|| "Unknown".to_string(), |provider| provider.display_name);
+        let provider_name = provider_type.display_name.clone();
 
         let mut message = "创建成功".to_string();
         if needs_auto_get_project_id_async {
@@ -362,20 +395,51 @@ impl<'a> ProviderKeyService<'a> {
         let refresh_task = self.refresh_task();
 
         let existing_key = self.load_existing_key(key_id, user_id).await?;
+        let provider_type = load_provider_type_or_error(db, payload.provider_type_id).await?;
+        let effective_auth_type = provider_type.auth_type.clone();
+        if payload.auth_type != effective_auth_type {
+            lwarn!(
+                "system",
+                LogStage::Authentication,
+                LogComponent::Auth,
+                "provider_key_auth_type_mismatch",
+                "Payload auth_type does not match provider type auth_type, using provider type value",
+                user_id = user_id,
+                provider_type_id = payload.provider_type_id,
+                payload_auth_type = payload.auth_type.as_str(),
+                provider_auth_type = effective_auth_type.as_str(),
+            );
+        }
+
         self.ensure_unique_name(user_id, key_id, &existing_key, payload)
             .await?;
-        validate_update_requirements(payload)?;
-        if payload.auth_type == OAUTH_AUTH_TYPE {
-            validate_oauth_session_for_update(db, user_id, key_id, payload).await?;
+        validate_update_requirements(payload, effective_auth_type.as_str())?;
+        if effective_auth_type == OAUTH_AUTH_TYPE {
+            validate_oauth_session_for_update(
+                db,
+                user_id,
+                key_id,
+                payload,
+                effective_auth_type.as_str(),
+            )
+            .await?;
         }
 
         let pending_schedule = self
-            .prepare_pending_schedule(refresh_task, payload, user_id, key_id)
+            .prepare_pending_schedule(
+                refresh_task,
+                payload,
+                user_id,
+                key_id,
+                effective_auth_type.as_str(),
+            )
             .await?;
 
         let original_key = existing_key.clone();
         let old_session_id = extract_oauth_session_id(&existing_key);
-        let updated_key = self.persist_updated_key(existing_key, payload).await?;
+        let updated_key = self
+            .persist_updated_key(existing_key, payload, effective_auth_type.as_str())
+            .await?;
 
         self.enqueue_pending_schedule(
             refresh_task,
@@ -912,8 +976,9 @@ impl<'a> ProviderKeyService<'a> {
         payload: &UpdateProviderKeyRequest,
         user_id: i32,
         key_id: i32,
+        auth_type: &str,
     ) -> Result<Option<ScheduledTokenRefresh>> {
-        if payload.auth_type != OAUTH_AUTH_TYPE {
+        if auth_type != OAUTH_AUTH_TYPE {
             return Ok(None);
         }
 
@@ -930,12 +995,13 @@ impl<'a> ProviderKeyService<'a> {
         &self,
         existing_key: user_provider_keys::Model,
         payload: &UpdateProviderKeyRequest,
+        auth_type: &str,
     ) -> Result<user_provider_keys::Model> {
         let mut active_model: user_provider_keys::ActiveModel = existing_key.into();
         active_model.provider_type_id = Set(payload.provider_type_id);
         active_model.name = Set(payload.name.clone());
         active_model.api_key = Set(payload.api_key.clone().unwrap_or_default());
-        active_model.auth_type = Set(payload.auth_type.clone());
+        active_model.auth_type = Set(auth_type.to_string());
         active_model.weight = Set(payload.weight);
         active_model.max_requests_per_minute = Set(payload.max_requests_per_minute);
         active_model.max_tokens_prompt_per_minute = Set(payload.max_tokens_prompt_per_minute);
@@ -1254,14 +1320,14 @@ async fn fetch_key_trends_data(
     Ok(trend_data)
 }
 
-fn validate_update_requirements(payload: &UpdateProviderKeyRequest) -> Result<()> {
-    if payload.auth_type == "api_key" && payload.api_key.is_none() {
+fn validate_update_requirements(payload: &UpdateProviderKeyRequest, auth_type: &str) -> Result<()> {
+    if auth_type == "api_key" && payload.api_key.is_none() {
         return Err(ProxyError::Authentication(AuthError::Message(
             "API Key认证类型需要提供api_key字段 (field: api_key)".to_string(),
         )));
     }
 
-    if payload.auth_type == "oauth" && payload.api_key.is_none() {
+    if auth_type == "oauth" && payload.api_key.is_none() {
         return Err(ProxyError::Authentication(AuthError::Message(
             "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)".to_string(),
         )));
@@ -1457,20 +1523,33 @@ struct PrepareGeminiContext {
     needs_auto_get_project_id_async: bool,
 }
 
-fn validate_create_payload(payload: &CreateProviderKeyRequest) -> Result<()> {
-    if payload.auth_type == "api_key" && payload.api_key.is_none() {
+fn validate_create_payload(payload: &CreateProviderKeyRequest, auth_type: &str) -> Result<()> {
+    if auth_type == "api_key" && payload.api_key.is_none() {
         return Err(ProxyError::Authentication(AuthError::Message(
             "API Key认证类型需要提供api_key字段 (field: api_key)".to_string(),
         )));
     }
 
-    if payload.auth_type == "oauth" && payload.api_key.is_none() {
+    if auth_type == "oauth" && payload.api_key.is_none() {
         return Err(ProxyError::Authentication(AuthError::Message(
             "OAuth认证类型需要通过api_key字段提供session_id (field: api_key)".to_string(),
         )));
     }
 
     Ok(())
+}
+
+async fn load_provider_type_or_error(
+    db: &DatabaseConnection,
+    provider_type_id: ProviderTypeId,
+) -> Result<provider_types::Model> {
+    ProviderType::find_by_id(provider_type_id)
+        .one(db)
+        .await
+        .context("Failed to fetch provider type")?
+        .ok_or_else(|| {
+            ProxyError::Authentication(AuthError::Message("服务商类型不存在".to_string()))
+        })
 }
 
 async fn ensure_unique_provider_key(
@@ -1511,8 +1590,9 @@ async fn validate_oauth_session_for_creation(
     db: &DatabaseConnection,
     user_id: i32,
     payload: &CreateProviderKeyRequest,
+    auth_type: &str,
 ) -> Result<()> {
-    if payload.auth_type != "oauth" {
+    if auth_type != "oauth" {
         return Ok(());
     }
 
@@ -1579,8 +1659,9 @@ async fn validate_oauth_session_for_update(
     user_id: i32,
     key_id: i32,
     payload: &UpdateProviderKeyRequest,
+    auth_type: &str,
 ) -> Result<()> {
-    if payload.auth_type != "oauth" {
+    if auth_type != "oauth" {
         return Ok(());
     }
 
@@ -1625,6 +1706,8 @@ async fn prepare_gemini_context(
     db: &DatabaseConnection,
     user_id: i32,
     payload: &CreateProviderKeyRequest,
+    auth_type: &str,
+    provider_type_name: &str,
 ) -> Result<PrepareGeminiContext> {
     let mut context = PrepareGeminiContext {
         final_project_id: payload.project_id.clone(),
@@ -1632,7 +1715,7 @@ async fn prepare_gemini_context(
         needs_auto_get_project_id_async: false,
     };
 
-    if !is_gemini_oauth_flow(db, payload).await? {
+    if !is_gemini_oauth_flow(auth_type, provider_type_name) {
         return Ok(context);
     }
 
@@ -1667,20 +1750,8 @@ async fn prepare_gemini_context(
     Ok(context)
 }
 
-async fn is_gemini_oauth_flow(
-    db: &DatabaseConnection,
-    payload: &CreateProviderKeyRequest,
-) -> Result<bool> {
-    if payload.auth_type != OAUTH_AUTH_TYPE {
-        return Ok(false);
-    }
-
-    let provider = ProviderType::find_by_id(payload.provider_type_id)
-        .one(db)
-        .await
-        .context("Failed to query provider type for Gemini validation")?;
-
-    Ok(matches!(provider.map(|p| p.name), Some(name) if name == GEMINI_PROVIDER_NAME))
+fn is_gemini_oauth_flow(auth_type: &str, provider_type_name: &str) -> bool {
+    auth_type == OAUTH_AUTH_TYPE && provider_type_name == GEMINI_PROVIDER_NAME
 }
 
 async fn validate_oauth_session(
@@ -1805,8 +1876,9 @@ async fn schedule_oauth_if_needed(
     payload: &CreateProviderKeyRequest,
     user_id: i32,
     key_id: Option<i32>,
+    auth_type: &str,
 ) -> Result<Option<ScheduledTokenRefresh>> {
-    if payload.auth_type != OAUTH_AUTH_TYPE {
+    if auth_type != OAUTH_AUTH_TYPE {
         return Ok(None);
     }
 
@@ -1860,13 +1932,14 @@ async fn insert_provider_key_record(
     payload: &CreateProviderKeyRequest,
     final_project_id: Option<String>,
     health_status: String,
+    auth_type: &str,
 ) -> Result<user_provider_keys::Model> {
     let new_provider_key = user_provider_keys::ActiveModel {
         user_id: Set(user_id),
         provider_type_id: Set(payload.provider_type_id),
         name: Set(payload.name.clone()),
         api_key: Set(payload.api_key.clone().unwrap_or_default()),
-        auth_type: Set(payload.auth_type.clone()),
+        auth_type: Set(auth_type.to_string()),
         auth_status: Set(Some(AuthStatus::Authorized.to_string())),
         weight: Set(payload.weight),
         max_requests_per_minute: Set(payload.max_requests_per_minute),
