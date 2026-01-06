@@ -29,6 +29,7 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
+import DataTableShell from '@/components/common/DataTableShell'
 import {
   userApi,
   User as UserType,
@@ -38,6 +39,14 @@ import {
 } from '../lib/userApi'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 /** 弹窗类型 */
 type DialogType = 'add' | 'edit' | 'delete' | 'details' | 'resetPassword' | 'batchDelete' | null
@@ -453,153 +462,151 @@ const UsersPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+      <DataTableShell>
       {pageLoading ? (
         <div className="flex items-center justify-center py-12">
           <LoadingState text="加载中..." />
         </div>
       ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[1200px]">
-                <thead className="bg-neutral-50 text-neutral-600">
-                  <tr>
-                    <th className="px-4 py-3 text-left w-[50px]">
+            <Table className="min-w-[1200px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[50px]">
+                    <input
+                      type="checkbox"
+                      checked={selectedUsers.length === users.length && users.length > 0}
+                      onChange={(e) => handleSelectAll(e.target.checked)}
+                      className="rounded border-neutral-300"
+                    />
+                  </TableHead>
+                  <TableHead className="w-[280px]">用户</TableHead>
+                  <TableHead className="w-[80px]">角色</TableHead>
+                  <TableHead className="w-[80px]">状态</TableHead>
+                  <TableHead className="w-[100px]">请求数</TableHead>
+                  <TableHead className="w-[100px]">花费</TableHead>
+                  <TableHead className="w-[120px]">Token</TableHead>
+                  <TableHead className="w-[140px]">最后登录</TableHead>
+                  <TableHead className="w-[140px]">创建时间</TableHead>
+                  <TableHead className="w-[150px]">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {users.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell className="w-[50px]">
                       <input
                         type="checkbox"
-                        checked={selectedUsers.length === users.length && users.length > 0}
-                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        checked={selectedUsers.includes(user.id)}
+                        onChange={(e) => handleSelectUser(user.id, e.target.checked)}
                         className="rounded border-neutral-300"
                       />
-                    </th>
-                    <th className="px-4 py-3 text-left font-medium w-[280px]">用户</th>
-                    <th className="px-4 py-3 text-left font-medium w-[80px]">角色</th>
-                    <th className="px-4 py-3 text-left font-medium w-[80px]">状态</th>
-                    <th className="px-4 py-3 text-left font-medium w-[100px]">请求数</th>
-                    <th className="px-4 py-3 text-left font-medium w-[100px]">花费</th>
-                    <th className="px-4 py-3 text-left font-medium w-[120px]">Token</th>
-                    <th className="px-4 py-3 text-left font-medium w-[140px]">最后登录</th>
-                    <th className="px-4 py-3 text-left font-medium w-[140px]">创建时间</th>
-                    <th className="px-4 py-3 text-left font-medium w-[150px]">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-200">
-                  {users.map((user) => (
-                    <tr key={user.id} className="text-neutral-800 hover:bg-neutral-50">
-                      <td className="px-4 py-3 w-[50px]">
-                        <input
-                          type="checkbox"
-                          checked={selectedUsers.includes(user.id)}
-                          onChange={(e) => handleSelectUser(user.id, e.target.checked)}
-                          className="rounded border-neutral-300"
-                        />
-                      </td>
-                      <td className="px-4 py-3 w-[280px]">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-full bg-violet-100 flex items-center justify-center">
-                            <User size={18} className="text-violet-600" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium truncate">{user.username}</div>
-                            <div className="text-xs text-neutral-500 flex items-center gap-1 truncate">
-                              <Mail size={10} />
-                              <span className="truncate">{user.email}</span>
-                            </div>
+                    </TableCell>
+                    <TableCell className="w-[280px]">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-violet-100 flex items-center justify-center">
+                          <User size={18} className="text-violet-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium truncate">{user.username}</div>
+                          <div className="text-xs text-neutral-500 flex items-center gap-1 truncate">
+                            <Mail size={10} />
+                            <span className="truncate">{user.email}</span>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 w-[80px]">{renderUserRole(user.is_admin)}</td>
-                      <td className="px-4 py-3 w-[80px]">{renderUserStatus(user.is_active)}</td>
-                      <td className="px-4 py-3 w-[100px]">
-                        <div className="flex items-center gap-1">
-                          <BarChart3 size={12} className="text-blue-400" />
-                          <span className="text-xs font-medium text-blue-600">
-                            {user.total_requests.toLocaleString()}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 w-[100px]">
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-green-600 font-medium">
-                            ${user.total_cost.toFixed(2)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 w-[120px]">
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-purple-600 font-medium">
-                            {user.total_tokens.toLocaleString()}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 w-[140px]">
-                        <div className="flex items-center gap-1">
-                          <Clock size={12} className="text-neutral-400" />
-                          <span className="text-xs truncate">{formatLastLogin(user.last_login)}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 w-[140px]">
-                        <div className="flex items-center gap-1">
-                          <Calendar size={12} className="text-neutral-400" />
-                          <span className="text-xs truncate">{formatDate(user.created_at)}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 w-[150px]">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleToggleStatus(user)}
-                            className="p-1 text-neutral-500 hover:text-orange-600"
-                            title={user.is_active ? '停用用户' : '启用用户'}
-                          >
-                            {user.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setDialogType('details')
-                            }}
-                            className="p-1 text-neutral-500 hover:text-blue-600"
-                            title="查看详情"
-                          >
-                            <Eye size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setDialogType('edit')
-                            }}
-                            className="p-1 text-neutral-500 hover:text-violet-600"
-                            title="编辑"
-                          >
-                            <Edit size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setDialogType('resetPassword')
-                            }}
-                            className="p-1 text-neutral-500 hover:text-green-600"
-                            title="重置密码"
-                          >
-                            <Key size={16} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setDialogType('delete')
-                            }}
-                            className="p-1 text-neutral-500 hover:text-red-600"
-                            title="删除"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[80px]">{renderUserRole(user.is_admin)}</TableCell>
+                    <TableCell className="w-[80px]">{renderUserStatus(user.is_active)}</TableCell>
+                    <TableCell className="w-[100px]">
+                      <div className="flex items-center gap-1">
+                        <BarChart3 size={12} className="text-blue-400" />
+                        <span className="text-xs font-medium text-blue-600">
+                          {user.total_requests.toLocaleString()}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[100px]">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-green-600 font-medium">
+                          ${user.total_cost.toFixed(2)}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[120px]">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-purple-600 font-medium">
+                          {user.total_tokens.toLocaleString()}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[140px]">
+                      <div className="flex items-center gap-1">
+                        <Clock size={12} className="text-neutral-400" />
+                        <span className="text-xs truncate">{formatLastLogin(user.last_login)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[140px]">
+                      <div className="flex items-center gap-1">
+                        <Calendar size={12} className="text-neutral-400" />
+                        <span className="text-xs truncate">{formatDate(user.created_at)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-[150px]">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleToggleStatus(user)}
+                          className="p-1 text-neutral-500 hover:text-orange-600"
+                          title={user.is_active ? '停用用户' : '启用用户'}
+                        >
+                          {user.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedUser(user)
+                            setDialogType('details')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-blue-600"
+                          title="查看详情"
+                        >
+                          <Eye size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedUser(user)
+                            setDialogType('edit')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-violet-600"
+                          title="编辑"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedUser(user)
+                            setDialogType('resetPassword')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-green-600"
+                          title="重置密码"
+                        >
+                          <Key size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedUser(user)
+                            setDialogType('delete')
+                          }}
+                          className="p-1 text-neutral-500 hover:text-red-600"
+                          title="删除"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
             
             {/* 分页组件 */}
             {totalPages > 1 && (
@@ -690,7 +697,7 @@ const UsersPage: React.FC = () => {
             )}
           </>
         )}
-      </div>
+      </DataTableShell>
 
       {/* 对话框组件 */}
       {dialogType && (

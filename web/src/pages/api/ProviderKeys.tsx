@@ -23,8 +23,17 @@ import {
 import { StatCard } from '../../components/common/StatCard'
 import FilterSelect from '../../components/common/FilterSelect'
 import HealthStatusDetail from '../../components/provider/HealthStatusDetail'
+import DataTableShell from '@/components/common/DataTableShell'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import {
   api,
   CreateProviderKeyRequest,
@@ -539,62 +548,61 @@ const ProviderKeysPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">账号</th>
-                <th className="px-4 py-3 text-left font-medium">密钥名称</th>
-                <th className="px-4 py-3 text-left font-medium">API Key</th>
-                <th className="px-4 py-3 text-left font-medium">认证类型</th>
-                <th className="px-4 py-3 text-left font-medium">使用情况</th>
-                <th className="px-4 py-3 text-left font-medium">花费</th>
-                <th className="px-4 py-3 text-left font-medium">健康状态</th>
-                <th className="px-4 py-3 text-left font-medium">权重</th>
-                <th className="px-4 py-3 text-left font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200">
-              {pageLoading ? (
-                <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center">
-                    <div className="flex justify-center">
-                      <LoadingState text="加载中..." />
-                    </div>
-                  </td>
-                </tr>
-              ) : paginatedData.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-neutral-500">
-                    暂无数据
-                  </td>
-                </tr>
-              ) : (
-                paginatedData.map((item) => (
-                <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
+      <DataTableShell>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>账号</TableHead>
+              <TableHead>密钥名称</TableHead>
+              <TableHead>API Key</TableHead>
+              <TableHead>认证类型</TableHead>
+              <TableHead>使用情况</TableHead>
+              <TableHead>花费</TableHead>
+              <TableHead>健康状态</TableHead>
+              <TableHead>权重</TableHead>
+              <TableHead>操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pageLoading ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center">
+                  <div className="flex justify-center">
+                    <LoadingState text="加载中..." />
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : paginatedData.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center text-neutral-500">
+                  暂无数据
+                </TableCell>
+              </TableRow>
+            ) : (
+              paginatedData.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>
+                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
                       {item.provider}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <div>
                       <div className="font-medium">{item.keyName}</div>
                       <div className="text-xs text-neutral-500">创建于 {item.createdAt}</div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3">{renderMaskedKey(item.keyValue, String(item.id))}</td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
+                  </TableCell>
+                  <TableCell>{renderMaskedKey(item.keyValue, String(item.id))}</TableCell>
+                  <TableCell>
+                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
                       {authTypeLabel(item.auth_type)}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-2">
                       <span className="text-sm">
-                          {(item.usage?.successful_requests || 0).toLocaleString()} / {(item.usage?.failed_requests || 0).toLocaleString()}
-                        </span>
+                        {(item.usage?.successful_requests || 0).toLocaleString()} / {(item.usage?.failed_requests || 0).toLocaleString()}
+                      </span>
                       <button
                         onClick={() => {
                           setSelectedItem(item)
@@ -606,9 +614,9 @@ const ProviderKeysPage: React.FC = () => {
                         <BarChart3 size={14} />
                       </button>
                     </div>
-                    <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
+                    <div className="mt-1 h-1.5 w-full rounded-full bg-neutral-200">
                       <div
-                        className="bg-violet-600 h-1.5 rounded-full"
+                        className="h-1.5 rounded-full bg-violet-600"
                         style={{
                           width: `${Math.min(
                             ((item.usage?.successful_requests || 0) / Math.max(1, (item.usage?.successful_requests || 0) + (item.usage?.failed_requests || 0))) * 100,
@@ -617,7 +625,7 @@ const ProviderKeysPage: React.FC = () => {
                         }}
                       />
                     </div>
-                    <div className="text-xs text-neutral-500 mt-1">
+                    <div className="mt-1 text-xs text-neutral-500">
                       请求限制: {item.requestLimitPerMinute ? `${item.requestLimitPerMinute}/分钟` : '无'}
                     </div>
                     <div className="text-xs text-neutral-500">
@@ -626,12 +634,12 @@ const ProviderKeysPage: React.FC = () => {
                     <div className="text-xs text-neutral-500">
                       请求限制: {item.requestLimitPerDay ? `${item.requestLimitPerDay.toLocaleString()}/天` : '无'}
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <div className="text-sm font-medium text-neutral-900">${(item.cost || 0).toFixed(2)}</div>
                     <div className="text-xs text-neutral-500">本月花费</div>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-2">
                       <HealthStatusDetail
                         health_status_detail={item.health_status_detail}
@@ -645,13 +653,13 @@ const ProviderKeysPage: React.FC = () => {
                         <RefreshCw size={12} />
                       </button>
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 ring-1 ring-blue-200">
+                  </TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200">
                       权重 {item.weight}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => {
@@ -674,13 +682,12 @@ const ProviderKeysPage: React.FC = () => {
                         <Trash2 size={16} />
                       </button>
                     </div>
-                  </td>
-                </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
         
         {/* 分页组件 */}
         {totalPages > 1 && (
@@ -755,7 +762,7 @@ const ProviderKeysPage: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
+      </DataTableShell>
 
 
       {/* 对话框组件 */}

@@ -26,6 +26,15 @@ import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
 import { copyWithFeedback } from '../lib/clipboard'
 import ProviderTypeDialog from '@/components/provider/ProviderTypeDialog'
+import DataTableShell from '@/components/common/DataTableShell'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { toast } from 'sonner'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
@@ -249,7 +258,7 @@ const ProvidersPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
+      <DataTableShell>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <LoadingState text="加载中..." />
@@ -262,29 +271,28 @@ const ProvidersPage: React.FC = () => {
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[780px]">
-                <thead className="bg-neutral-50 text-neutral-600">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-medium min-w-[180px]">服务商</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[220px]">Base URL</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[180px]">认证方式</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[100px]">状态</th>
-                    <th className="px-4 py-3 text-left font-medium min-w-[160px]">创建时间</th>
-                    <th className="px-4 py-3 text-right font-medium min-w-[140px]">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-200">
-                  {filteredProviders.map((p) => (
-                    <tr key={p.id} className="text-neutral-800 hover:bg-neutral-50">
-                      <td className="px-4 py-3 font-medium text-foreground">
+            <Table className="min-w-[780px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[180px]">服务商</TableHead>
+                  <TableHead className="min-w-[220px]">Base URL</TableHead>
+                  <TableHead className="min-w-[180px]">认证方式</TableHead>
+                  <TableHead className="min-w-[100px]">状态</TableHead>
+                  <TableHead className="min-w-[160px]">创建时间</TableHead>
+                  <TableHead className="min-w-[140px] text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredProviders.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium text-foreground">
                         <div className="flex flex-col">
                           <span>{p.display_name}</span>
                           <span className="text-xs text-muted-foreground">{p.name}</span>
                         </div>
-                      </td>
+                    </TableCell>
 
-                      <td className="px-4 py-3">
+                    <TableCell>
                         {p.base_url ? (
                           <div className="flex items-center gap-2">
                             <code className="rounded bg-muted px-2 py-0.5 text-xs text-foreground/80">
@@ -302,9 +310,9 @@ const ProvidersPage: React.FC = () => {
                         ) : (
                           <span className="text-foreground/60">-</span>
                         )}
-                      </td>
+                    </TableCell>
 
-                      <td className="px-4 py-3">
+                    <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {p.auth_type ? (
                             <Badge
@@ -318,9 +326,9 @@ const ProvidersPage: React.FC = () => {
                             <span className="text-foreground/60">-</span>
                           )}
                         </div>
-                      </td>
+                    </TableCell>
 
-                      <td className="px-4 py-3">
+                    <TableCell>
                         {p.is_active ? (
                           <Badge
                             variant="outline"
@@ -336,13 +344,13 @@ const ProvidersPage: React.FC = () => {
                             禁用
                           </Badge>
                         )}
-                      </td>
+                    </TableCell>
 
-                      <td className="px-4 py-3 text-foreground/70">
+                    <TableCell className="text-foreground/70">
                         {formatDate(p.created_at)}
-                      </td>
+                    </TableCell>
 
-                      <td className="px-4 py-3">
+                    <TableCell>
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(p)}
@@ -359,23 +367,22 @@ const ProvidersPage: React.FC = () => {
                             <Trash2 size={14} />
                           </button>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
+                    </TableCell>
+                  </TableRow>
+                ))}
 
-                  {filteredProviders.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center text-neutral-500">
-                        暂无匹配的服务商数据
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                {filteredProviders.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-10 text-center text-neutral-500">
+                      暂无匹配的服务商数据
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </>
         )}
-      </div>
+      </DataTableShell>
 
       <ProviderTypeDialog
         open={dialogOpen}

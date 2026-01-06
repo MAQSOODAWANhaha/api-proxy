@@ -19,9 +19,18 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import ModernSelect from '../components/common/ModernSelect'
+import DataTableShell from '@/components/common/DataTableShell'
 import { api, ProxyTraceEntry, ProxyTraceListEntry, LogsDashboardStatsResponse } from '../lib/api'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 // 使用从 api.ts 导出的日志数据接口
 
@@ -365,114 +374,112 @@ const LogsPage: React.FC = () => {
       </div>
 
       {/* 数据表格 */}
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">时间</th>
-                <th className="px-4 py-3 text-left font-medium">用户 API Key</th>
-                <th className="px-4 py-3 text-left font-medium">账号 API Key</th>
-                <th className="px-4 py-3 text-left font-medium">路径</th>
-                <th className="px-4 py-3 text-left font-medium">状态</th>
-                <th className="px-4 py-3 text-left font-medium">模型</th>
-                <th className="px-4 py-3 text-left font-medium">Token</th>
-                <th className="px-4 py-3 text-left font-medium">费用</th>
-                <th className="px-4 py-3 text-left font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-200">
-              {pageLoading ? (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center">
-                    <div className="flex justify-center items-center gap-2">
-                      <LoadingState text="加载中..." />
-                    </div>
-                  </td>
-                </tr>
-              ) : paginatedData.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
-                    暂无数据
-                  </td>
-                </tr>
-              ) : (
-                paginatedData.map((item) => {
-                  const { date, time } = formatTimestamp(item.created_at)
-                  return (
-                    <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Calendar size={14} className="text-neutral-400" />
-                          <div>
-                            <div className="text-xs text-neutral-500">{date}</div>
-                            <div className="text-xs font-mono text-neutral-700">{time}</div>
-                          </div>
+      <DataTableShell>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>时间</TableHead>
+              <TableHead>用户 API Key</TableHead>
+              <TableHead>账号 API Key</TableHead>
+              <TableHead>路径</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>模型</TableHead>
+              <TableHead>Token</TableHead>
+              <TableHead>费用</TableHead>
+              <TableHead>操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pageLoading ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-8 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <LoadingState text="加载中..." />
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : paginatedData.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-8 text-center text-neutral-500">
+                  暂无数据
+                </TableCell>
+              </TableRow>
+            ) : (
+              paginatedData.map((item) => {
+                const { date, time } = formatTimestamp(item.created_at)
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Calendar size={14} className="text-neutral-400" />
+                        <div>
+                          <div className="text-xs text-neutral-500">{date}</div>
+                          <div className="text-xs font-mono text-neutral-700">{time}</div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col text-xs text-neutral-600">
-                          <span className="font-medium text-neutral-800">{item.user_service_api_name || '未命名'}</span>
-                          <span className="text-neutral-500">ID: {item.user_service_api_id}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col text-xs text-neutral-600">
+                        <span className="font-medium text-neutral-800">{item.user_service_api_name || '未命名'}</span>
+                        <span className="text-neutral-500">ID: {item.user_service_api_id}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col text-xs text-neutral-600">
+                        <span className="font-medium text-neutral-800">{item.user_provider_key_name || '未绑定'}</span>
+                        {item.user_provider_key_id && (
+                          <span className="text-neutral-500">ID: {item.user_provider_key_id}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <code className="block max-w-xs truncate rounded bg-neutral-100 px-2 py-1 text-xs">
+                        {item.path || 'N/A'}
+                      </code>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {renderSuccessStatus(item.is_success)}
+                        {item.status_code && renderStatusCode(item.status_code)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xs text-neutral-600">
+                        {item.model_used || 'N/A'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-xs space-y-1">
+                        <div className="font-medium">总计: {item.tokens_total.toLocaleString()}</div>
+                        <div className="space-y-0.5 text-neutral-500">
+                          <div>输入: {item.tokens_prompt.toLocaleString()} | 输出: {item.tokens_completion.toLocaleString()}</div>
+                          <div>缓存创建: {item.cache_create_tokens.toLocaleString()} | 缓存读取: {item.cache_read_tokens.toLocaleString()}</div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col text-xs text-neutral-600">
-                          <span className="font-medium text-neutral-800">{item.user_provider_key_name || '未绑定'}</span>
-                          {item.user_provider_key_id && (
-                            <span className="text-neutral-500">ID: {item.user_provider_key_id}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <code className="text-xs bg-neutral-100 px-2 py-1 rounded max-w-xs truncate block">
-                          {item.path || 'N/A'}
-                        </code>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          {renderSuccessStatus(item.is_success)}
-                          {item.status_code && renderStatusCode(item.status_code)}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs text-neutral-600">
-                          {item.model_used || 'N/A'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-xs space-y-1">
-                          <div className="font-medium">总计: {item.tokens_total.toLocaleString()}</div>
-                          <div className="text-neutral-500 space-y-0.5">
-                            <div>输入: {item.tokens_prompt.toLocaleString()} | 输出: {item.tokens_completion.toLocaleString()}</div>
-                            <div>缓存创建: {item.cache_create_tokens.toLocaleString()} | 缓存读取: {item.cache_read_tokens.toLocaleString()}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-xs">
-                          {item.cost ? `$${item.cost.toFixed(4)}` : 'N/A'}
-                          {item.cost_currency && item.cost_currency !== 'USD' && (
-                            <span className="text-neutral-500"> {item.cost_currency}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => openDetailDialog(item.id)}
-                          className="p-1 text-neutral-500 hover:text-violet-600"
-                          title="查看详情"
-                        >
-                          <Eye size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-xs">
+                        {item.cost ? `$${item.cost.toFixed(4)}` : 'N/A'}
+                        {item.cost_currency && item.cost_currency !== 'USD' && (
+                          <span className="text-neutral-500"> {item.cost_currency}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        onClick={() => openDetailDialog(item.id)}
+                        className="p-1 text-neutral-500 hover:text-violet-600"
+                        title="查看详情"
+                      >
+                        <Eye size={16} />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
         
         {/* 分页组件 */}
         {totalPages > 1 && (
@@ -561,7 +568,7 @@ const LogsPage: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
+      </DataTableShell>
 
 
       {/* 详情对话框 */}

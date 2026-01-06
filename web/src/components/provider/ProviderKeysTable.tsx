@@ -1,13 +1,14 @@
 /**
  * ProviderKeysTable.tsx
- * 账号 API Keys 列表表格组件（无外部卡片样式）：
+ * 账号 API Keys 列表表格组件（包含统一外层卡片样式）：
  * - 展示名称、服务商、密钥（脱敏）、权重、限流、状态、创建时间、操作
  * - 交互：启用开关、编辑、删除、统计查看
- * - 外部容器（卡片/边框/阴影）由页面决定，保持全站风格一致
+ * - 外层容器（卡片/边框/阴影）由 DataTableShell 统一提供
  */
 
 import React from 'react'
 import { Switch } from '@/components/ui/switch'
+import DataTableShell from '@/components/common/DataTableShell'
 import {
   Table,
   TableHeader,
@@ -88,9 +89,9 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
   onShowStats,
 }) => {
   return (
-    <div className="w-full">
+    <DataTableShell>
       <Table className="min-w-[960px]">
-        <TableHeader className="bg-muted/40">
+        <TableHeader>
           <TableRow>
             <TableHead className="min-w-[160px]">名称</TableHead>
             <TableHead className="min-w-[140px]">服务商</TableHead>
@@ -163,7 +164,7 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
           ))}
         </TableBody>
       </Table>
-    </div>
+    </DataTableShell>
   )
 }
 

@@ -1,4 +1,13 @@
 import { LoadingSpinner } from '@/components/ui/loading'
+import DataTableShell from '@/components/common/DataTableShell'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 import type { LogsPage, LogItem } from '@/types/stats'
 import { useTimezoneStore } from '@/store/timezone'
@@ -44,7 +53,7 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
   }
 
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+    <DataTableShell>
       <div className="flex flex-col gap-1 border-b border-neutral-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base font-semibold text-neutral-900">请求记录</h2>
@@ -53,38 +62,38 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
         <span className="text-xs text-neutral-400">时间显示时区：{timezone}</span>
       </div>
 
-      <div className="relative overflow-x-auto">
+      <div className="relative">
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70">
             <LoadingSpinner size="md" tone="muted" />
           </div>
         )}
-        <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
-            <tr>
-              <th className="px-5 py-3 text-left font-medium">时间</th>
-              <th className="px-5 py-3 text-left font-medium">请求信息</th>
-              <th className="px-5 py-3 text-left font-medium">状态</th>
-              <th className="px-5 py-3 text-left font-medium">模型</th>
-              <th className="px-5 py-3 text-left font-medium">Token</th>
-              <th className="px-5 py-3 text-left font-medium">费用</th>
-              <th className="px-5 py-3 text-left font-medium">耗时</th>
-              <th className="px-5 py-3 text-left font-medium">客户端</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-100">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>时间</TableHead>
+              <TableHead>请求信息</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>模型</TableHead>
+              <TableHead>Token</TableHead>
+              <TableHead>费用</TableHead>
+              <TableHead>耗时</TableHead>
+              <TableHead>客户端</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {!hasFetched ? (
-              <tr>
-                <td colSpan={8} className="px-5 py-10 text-center text-sm text-neutral-500">
+              <TableRow>
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
                   请输入用户 API Key 并点击查询，日志将显示在此处。
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-5 py-10 text-center text-sm text-neutral-500">
+              <TableRow>
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
                   当前条件下暂无调用记录。
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               rows.map((item) => {
                 const { date, time } = formatTimestamp(item.timestamp, timezone)
@@ -92,54 +101,54 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
                 const costCurrency = item.cost_currency ?? 'USD'
 
                 return (
-                  <tr key={item.id} className="text-neutral-800 hover:bg-neutral-50">
-                    <td className="px-5 py-3 align-top">
+                  <TableRow key={item.id}>
+                    <TableCell className="align-top">
                       <div className="flex flex-col text-xs">
                         <span className="font-medium text-neutral-700">{date}</span>
                         <span className="font-mono text-neutral-500">{time}</span>
                       </div>
-                    </td>
-                    <td className="px-5 py-3 align-top">
+                    </TableCell>
+                    <TableCell className="align-top">
                       <div className="space-y-1 text-xs text-neutral-600">
                         <div className="font-medium text-neutral-800">
                           {method} {item.path ?? '-'}
                         </div>
                         <div className="text-neutral-400">Request ID: {item.request_id}</div>
                       </div>
-                    </td>
-                    <td className="px-5 py-3 align-top">
+                    </TableCell>
+                    <TableCell className="align-top">
                       <StatusPill item={item} />
-                    </td>
-                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-neutral-600">
                       {item.model ?? '-'}
-                    </td>
-                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-neutral-600">
                       <div className="font-medium text-neutral-800">
                         总计：{item.tokens_total.toLocaleString()}
                       </div>
-                      <div className="text-neutral-400 space-y-0.5">
+                      <div className="space-y-0.5 text-neutral-400">
                         <div>输入：{item.tokens_prompt.toLocaleString()} | 输出：{item.tokens_completion.toLocaleString()}</div>
                         <div>缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} | 缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}</div>
                       </div>
-                    </td>
-                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-neutral-600">
                       {item.cost != null ? `${costCurrency} ${item.cost.toFixed(4)}` : '--'}
-                    </td>
-                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-neutral-600">
                       {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
-                    </td>
-                    <td className="px-5 py-3 align-top text-xs text-neutral-600">
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-neutral-600">
                       <div className="space-y-1">
                         <div>{item.client_ip ?? '--'}</div>
                         <div className="text-neutral-400">{item.user_agent ?? '--'}</div>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )
               })
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       <div className="border-t border-neutral-200 px-5 py-4">
@@ -152,6 +161,6 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
           className="text-neutral-500"
         />
       </div>
-    </div>
+    </DataTableShell>
   )
 }

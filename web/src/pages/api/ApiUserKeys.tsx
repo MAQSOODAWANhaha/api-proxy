@@ -23,12 +23,21 @@ import {
 import { StatCard } from "../../components/common/StatCard";
 import FilterSelect from "../../components/common/FilterSelect";
 import ModernSelect from "../../components/common/ModernSelect";
+import DataTableShell from "@/components/common/DataTableShell";
 import { api } from "../../lib/api";
 import DialogPortal from "./user-keys/dialogs/DialogPortal";
 import { ApiKey, DialogType } from "./user-keys/types";
 import { copyWithFeedback } from "../../lib/clipboard";
 import { LoadingSpinner, LoadingState } from "@/components/ui/loading";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 /** 页面主组件 */
 const ApiUserKeysPage: React.FC = () => {
@@ -343,164 +352,155 @@ const ApiUserKeysPage: React.FC = () => {
 
       {/* 数据表格 */}
       {!loading && (
-        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden hover:shadow-sm transition-shadow">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-50 text-neutral-600">
-                <tr>
-                  <th className="px-4 py-3 text-left font-medium">密钥名称</th>
-                  <th className="px-4 py-3 text-left font-medium">描述</th>
-                  <th className="px-4 py-3 text-left font-medium">服务商</th>
-                  <th className="px-4 py-3 text-left font-medium">API Key</th>
-                  <th className="px-4 py-3 text-left font-medium">使用情况</th>
-                  <th className="px-4 py-3 text-left font-medium">状态</th>
-                  <th className="px-4 py-3 text-left font-medium">日志</th>
-                  <th className="px-4 py-3 text-left font-medium">最后使用</th>
-                  <th className="px-4 py-3 text-left font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-200">
-                {paginatedData.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="text-neutral-800 hover:bg-neutral-50"
-                  >
-                    <td className="px-4 py-3">
-                      <div>
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-xs text-neutral-500">
-                          创建于{" "}
-                          {new Date(item.created_at).toLocaleDateString()}
-                        </div>
+        <DataTableShell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>密钥名称</TableHead>
+                <TableHead>描述</TableHead>
+                <TableHead>服务商</TableHead>
+                <TableHead>API Key</TableHead>
+                <TableHead>使用情况</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>日志</TableHead>
+                <TableHead>最后使用</TableHead>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedData.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>
+                    <div>
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-xs text-neutral-500">
+                        创建于{" "}
+                        {new Date(item.created_at).toLocaleDateString()}
                       </div>
-                    </td>
-                    <td className="px-4 py-3">
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div
+                      className="max-w-xs truncate"
+                      title={item.description || ""}
+                    >
+                      {item.description || "无描述"}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
+                      {item.provider || `服务商 ${item.provider_type_id}`}
+                    </span>
+                  </TableCell>
+                  <TableCell>{renderMaskedKey(item.api_key, item.id)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">
+                        {(item.usage?.successful_requests || 0).toLocaleString()}{" "}
+                        /{" "}
+                        {(item.usage?.failed_requests || 0).toLocaleString()}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setSelectedItem(item);
+                          setDialogType("stats");
+                        }}
+                        className="text-violet-600 hover:text-violet-700"
+                        title="查看统计"
+                      >
+                        <BarChart3 size={14} />
+                      </button>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full rounded-full bg-neutral-200">
                       <div
-                        className="max-w-xs truncate"
-                        title={item.description || ""}
+                        className="h-1.5 rounded-full bg-violet-600"
+                        style={{
+                          width: `${Math.min(
+                            ((item.usage?.successful_requests || 0) /
+                              Math.max(
+                                1,
+                                (item.usage?.successful_requests || 0) +
+                                  (item.usage?.failed_requests || 0)
+                              )) *
+                              100,
+                            100
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-500">
+                      速率限制/分: {(item.max_request_per_min || 0) > 0 ? `${item.max_request_per_min!.toLocaleString()}` : "无"}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      速率限制/天:{" "}
+                      {(item.max_requests_per_day || 0) > 0 ? `${item.max_requests_per_day!.toLocaleString()}` : "无"}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      Token/天:{" "}
+                      {(item.max_tokens_per_day || 0) > 0 ? `${item.max_tokens_per_day!.toLocaleString()}` : "无"}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      费用/天:{" "}
+                      {Number(item.max_cost_per_day || 0) > 0
+                        ? `$${Number(item.max_cost_per_day || 0).toFixed(2)}`
+                        : "无"}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                        item.is_active
+                          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                          : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
+                      }`}
+                    >
+                      {item.is_active ? "启用" : "停用"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                        item.log_mode
+                          ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200"
+                          : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
+                      }`}
+                    >
+                      {item.log_mode ? "开启" : "关闭"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs text-neutral-600">
+                    {item.last_used_at
+                      ? new Date(item.last_used_at).toLocaleString()
+                      : "从未使用"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setSelectedItem(item);
+                          setDialogType("edit");
+                        }}
+                        className="p-1 text-neutral-500 hover:text-violet-600"
+                        title="编辑"
                       >
-                        {item.description || "无描述"}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-1 bg-neutral-100 text-neutral-700 rounded text-xs font-medium">
-                        {item.provider || `服务商 ${item.provider_type_id}`}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {renderMaskedKey(item.api_key, item.id)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">
-                          {(
-                            item.usage?.successful_requests || 0
-                          ).toLocaleString()}{" "}
-                          /{" "}
-                          {(item.usage?.failed_requests || 0).toLocaleString()}
-                        </span>
-                        <button
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setDialogType("stats");
-                          }}
-                          className="text-violet-600 hover:text-violet-700"
-                          title="查看统计"
-                        >
-                          <BarChart3 size={14} />
-                        </button>
-                      </div>
-                      <div className="w-full bg-neutral-200 rounded-full h-1.5 mt-1">
-                        <div
-                          className="bg-violet-600 h-1.5 rounded-full"
-                          style={{
-                            width: `${Math.min(
-                              ((item.usage?.successful_requests || 0) /
-                                Math.max(
-                                  1,
-                                  (item.usage?.successful_requests || 0) +
-                                    (item.usage?.failed_requests || 0)
-                                )) *
-                                100,
-                              100
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                      <div className="text-xs text-neutral-500 mt-1">
-                        速率限制/分: {(item.max_request_per_min || 0) > 0 ? `${item.max_request_per_min!.toLocaleString()}` : "无"}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        速率限制/天:{" "}
-                        {(item.max_requests_per_day || 0) > 0 ? `${item.max_requests_per_day!.toLocaleString()}` : "无"}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        Token/天:{" "}
-                        {(item.max_tokens_per_day || 0) > 0 ? `${item.max_tokens_per_day!.toLocaleString()}` : "无"}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        费用/天:{" "}
-                        {Number(item.max_cost_per_day || 0) > 0
-                          ? `$${Number(item.max_cost_per_day || 0).toFixed(2)}`
-                          : "无"}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          item.is_active
-                            ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                            : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
-                        }`}
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedItem(item);
+                          setDialogType("delete");
+                        }}
+                        className="p-1 text-neutral-500 hover:text-red-600"
+                        title="删除"
                       >
-                        {item.is_active ? "启用" : "停用"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          item.log_mode
-                            ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200"
-                            : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
-                        }`}
-                      >
-                        {item.log_mode ? "开启" : "关闭"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-neutral-600">
-                      {item.last_used_at
-                        ? new Date(item.last_used_at).toLocaleString()
-                        : "从未使用"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setDialogType("edit");
-                          }}
-                          className="p-1 text-neutral-500 hover:text-violet-600"
-                          title="编辑"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setDialogType("delete");
-                          }}
-                          className="p-1 text-neutral-500 hover:text-red-600"
-                          title="删除"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
 
           {/* 分页组件 */}
           {totalPages > 1 && (
@@ -590,7 +590,7 @@ const ApiUserKeysPage: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
+        </DataTableShell>
       )}
 
       {/* 对话框组件 */}
