@@ -100,7 +100,7 @@ type TrendViewMode = 'requests' | 'tokens'
 /** 指标卡片组件 */
 const StatCard: React.FC<{ item: StatItem }> = ({ item }) => {
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm transition hover:shadow-md">
+    <div className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 transition-colors hover:bg-neutral-50">
       {/* 顶部色条 */}
       <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: item.color }} />
       <div className="flex items-center gap-3">
@@ -531,7 +531,7 @@ const CompactTimeRangeSelector: React.FC<{
       </button>
 
       {showDropdown && (
-        <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-neutral-200 bg-white shadow-lg">
+        <div className="absolute right-0 z-10 mt-1 w-48 rounded-lg border border-neutral-200 bg-white">
           <div className="p-1">
             {timeRangeOptions.map((option) => (
               <button
@@ -648,7 +648,7 @@ const ModelUsageTooltip: React.FC<TooltipProps<number, string>> = ({
   ]
 
   return (
-    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs">
       <div className="flex items-center gap-2">
         <span
           className="h-2.5 w-2.5 rounded-sm"
@@ -722,7 +722,7 @@ const TokenTrendTooltip: React.FC<TokenTrendTooltipProps> = ({
   ].filter((row) => row.always || row.value > 0)
 
   return (
-    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+    <div className="grid min-w-[12rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs">
       <div className="font-medium text-foreground">{dateLabel}</div>
       <div className="grid gap-1.5">
         {rows.map((row) => (
@@ -779,7 +779,7 @@ const UserApiTrendTooltip: React.FC<UserApiTrendTooltipProps> = ({
   const deltaLabel = `${delta >= 0 ? '+' : '-'}${formatValue(Math.abs(delta))}`
 
   return (
-    <div className="grid min-w-[11rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+    <div className="grid min-w-[11rem] items-start gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs">
       <div className="font-medium text-foreground">{dateLabel}</div>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -1398,7 +1398,7 @@ const DashboardPage: React.FC = () => {
         {isLoading && (
           <>
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+              <div key={i} className="group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4">
                 <div className="flex items-center gap-3">
                   <Skeleton className="h-10 w-10 rounded-xl" />
                   <div className="min-w-0 flex-1">

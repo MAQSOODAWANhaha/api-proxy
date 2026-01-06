@@ -156,7 +156,7 @@ const AddDialog: React.FC<{
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">新增账号密钥</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 密钥名称 */}

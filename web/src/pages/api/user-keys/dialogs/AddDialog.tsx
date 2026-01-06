@@ -197,7 +197,7 @@ const AddDialog: React.FC<{
   }, [formData.provider_type_id]);
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto border border-neutral-200">
       <h3 className="text-lg font-medium text-neutral-900 mb-4">
         新增 API Key
       </h3>

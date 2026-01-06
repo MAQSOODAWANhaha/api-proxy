@@ -29,7 +29,7 @@ export interface SectionCardProps {
  */
 const SectionCard: React.FC<SectionCardProps> = ({ children, className, bodyClassName }) => {
   return (
-    <Card className={cn('shadow-sm', className)}>
+    <Card className={cn(className)}>
       <CardContent className={cn('p-4 md:p-6', bodyClassName)}>
         {children}
       </CardContent>

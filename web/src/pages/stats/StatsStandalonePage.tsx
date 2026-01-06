@@ -91,7 +91,7 @@ export default function StatsStandalonePage() {
           </p>
         </header>
 
-        <Card className="mx-auto w-full max-w-7xl rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+        <Card className="mx-auto w-full max-w-7xl rounded-2xl border border-neutral-200 bg-white">
           <CardContent className="space-y-5 p-8">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-neutral-600" htmlFor="user-service-key">

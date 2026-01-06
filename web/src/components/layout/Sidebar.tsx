@@ -70,7 +70,7 @@ const NavButton: React.FC<{
       {active && (
         <span
           aria-hidden
-          className="absolute left-0 top-1 bottom-1 w-[4px] rounded-r-full bg-white/90 shadow-sm"
+          className="absolute left-0 top-1 bottom-1 w-[4px] rounded-r-full bg-white/90"
         />
       )}
       <Button
@@ -80,8 +80,8 @@ const NavButton: React.FC<{
           'relative flex items-center gap-3 rounded-none min-h-10 text-sm font-medium transition-all duration-200 select-none group w-full',
           collapsed ? 'justify-center px-0' : 'justify-start pl-6 pr-3',
           active
-            ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/25 ring-1 ring-violet-500 hover:bg-violet-600'
-            : 'text-neutral-700 hover:bg-neutral-100 hover:shadow-sm hover:scale-[1.02]'
+            ? 'bg-violet-600 text-white outline outline-1 outline-violet-500/50 outline-offset-0 hover:bg-violet-600'
+            : 'text-neutral-700 hover:bg-neutral-100'
         )}
         title={title ?? label}
         aria-current={active ? 'page' : undefined}
@@ -106,7 +106,7 @@ const Brand: React.FC<{ collapsed: boolean }> = ({ collapsed }) => {
       ].join(' ')}
     >
       <div
-        className="flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-[0_0_0_1px_rgba(0,0,0,0.04)_inset]"
+        className="flex h-10 w-10 items-center justify-center rounded-xl border border-black/5 text-white"
         style={{ backgroundColor: PRIMARY }}
         aria-label="品牌"
         title="品牌"

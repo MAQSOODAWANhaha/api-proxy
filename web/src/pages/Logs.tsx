@@ -274,7 +274,7 @@ const LogsPage: React.FC = () => {
           {[1, 2, 3, 4].map((i) => (
             <div
               key={i}
-              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+              className="rounded-2xl border border-neutral-200 bg-white p-4"
             >
               <div className="flex items-center gap-3">
                 <Skeleton className="h-10 w-10 rounded-xl" />
@@ -415,17 +415,13 @@ const LogsPage: React.FC = () => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-col text-xs">
-                        <span className="font-medium text-neutral-800">{item.user_service_api_name || '未命名'}</span>
-                        <span className="table-subtext">ID: {item.user_service_api_id}</span>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{item.user_service_api_name || '未命名'}</span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-col text-xs">
-                        <span className="font-medium text-neutral-800">{item.user_provider_key_name || '未绑定'}</span>
-                        {item.user_provider_key_id && (
-                          <span className="table-subtext">ID: {item.user_provider_key_id}</span>
-                        )}
+                      <div className="flex flex-col">
+                        <span className="font-medium">{item.user_provider_key_name || '未绑定'}</span>
                       </div>
                     </TableCell>
                     <TableCell>

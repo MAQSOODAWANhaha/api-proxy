@@ -4,7 +4,7 @@
  */
 
 // 基础卡片样式
-const cardBase = "bg-white border border-neutral-200 shadow-sm hover:shadow-md transition-shadow duration-200"
+const cardBase = "bg-white border border-neutral-200"
 
 // 卡片变体样式
 export const cardVariants = {
@@ -21,7 +21,7 @@ export const cardVariants = {
   container: `${cardBase} rounded-xl`,
   
   // 统计卡片 - 用于KPI展示
-  stat: `${cardBase} rounded-xl p-4 hover:shadow-lg`,
+  stat: `${cardBase} rounded-xl p-4`,
 }
 
 // 内边距工具类
@@ -43,9 +43,9 @@ export const cardRadius = {
 // 阴影工具类  
 export const cardShadow = {
   none: '',
-  default: 'shadow-sm hover:shadow-md',
-  strong: 'shadow-md hover:shadow-lg',
-  subtle: 'shadow-xs hover:shadow-sm',
+  default: '',
+  strong: '',
+  subtle: '',
 }
 
 // 组合工具函数

@@ -43,7 +43,7 @@ function Dot({ healthy }: { healthy: boolean }) {
  */
 const ProviderStatus: React.FC<ProviderStatusProps> = ({ items }) => {
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-neutral-200 bg-white p-4">
       <h3 className="mb-3 text-base font-semibold text-neutral-900">服务商状态监控</h3>
       <div className="divide-y divide-neutral-100">
         <div className="grid grid-cols-12 items-center gap-2 px-2 py-2 text-xs text-neutral-500">

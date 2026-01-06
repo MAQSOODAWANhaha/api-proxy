@@ -272,7 +272,7 @@ const ApiUserKeysPage: React.FC = () => {
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
+              className="rounded-2xl border border-neutral-200 bg-white p-4"
             >
               <div className="flex items-center gap-3">
                 <Skeleton className="h-10 w-10 rounded-xl" />

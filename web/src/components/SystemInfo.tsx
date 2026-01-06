@@ -112,7 +112,7 @@ const SystemInfo = () => {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* CPU 使用率 */}
-        <div className="bg-white p-6 rounded-2xl border border-neutral-200 hover:shadow-sm transition-shadow">
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-violet-100 rounded-lg">
               <Cpu size={16} className="text-violet-600" />
@@ -135,7 +135,7 @@ const SystemInfo = () => {
         </div>
 
         {/* 内存使用率 */}
-        <div className="bg-white p-6 rounded-2xl border border-neutral-200 hover:shadow-sm transition-shadow">
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-emerald-100 rounded-lg">
               <MemoryStick size={16} className="text-emerald-600" />
@@ -162,7 +162,7 @@ const SystemInfo = () => {
         </div>
 
         {/* 磁盘使用率 */}
-        <div className="bg-white p-6 rounded-2xl border border-neutral-200 hover:shadow-sm transition-shadow">
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-blue-100 rounded-lg">
               <HardDrive size={16} className="text-blue-600" />
@@ -189,7 +189,7 @@ const SystemInfo = () => {
         </div>
 
         {/* 运行时间 */}
-        <div className="bg-white p-6 rounded-2xl border border-neutral-200 hover:shadow-sm transition-shadow">
+        <div className="bg-white p-6 rounded-2xl border border-neutral-200">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-orange-100 rounded-lg">
               <Clock size={16} className="text-orange-600" />

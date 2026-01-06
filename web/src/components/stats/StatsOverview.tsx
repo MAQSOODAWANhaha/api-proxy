@@ -41,7 +41,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
     return (
       <div className="grid gap-4 md:grid-cols-3">
         {[1, 2, 3].map((key) => (
-          <Card key={key} className="rounded-2xl border border-dashed border-neutral-200 bg-white shadow-sm">
+          <Card key={key} className="rounded-2xl border border-dashed border-neutral-200 bg-white">
             <CardContent className="flex h-32 items-center justify-center text-muted-foreground">
               <LoadingSpinner size="md" tone="muted" />
             </CardContent>
@@ -53,7 +53,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
 
   if (!hasFetched) {
     return (
-      <Card className="rounded-2xl border border-dashed border-neutral-200 bg-white shadow-sm">
+      <Card className="rounded-2xl border border-dashed border-neutral-200 bg-white">
         <CardContent className="flex h-32 flex-col items-center justify-center text-center text-muted-foreground">
           <p className="text-sm">请输入有效的用户 API Key 并点击“查询统计”加载数据。</p>
         </CardContent>
@@ -72,7 +72,7 @@ export function StatsOverview({ metrics, loading, hasFetched }: StatsOverviewPro
         return (
           <Card
             key={metric.id}
-            className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md"
+            className="rounded-2xl border border-neutral-200 bg-white"
           >
             <CardContent className="flex h-full flex-col gap-4 p-5">
               <div className="flex items-center justify-between">

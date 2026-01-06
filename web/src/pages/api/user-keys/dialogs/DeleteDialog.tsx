@@ -7,7 +7,7 @@ const DeleteDialog: React.FC<{
   onConfirm: () => void;
 }> = ({ item, onClose, onConfirm }) => {
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200 hover:shadow-sm transition-shadow">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 border border-neutral-200">
       <h3 className="text-lg font-medium text-neutral-900 mb-2">确认删除</h3>
       <p className="text-sm text-neutral-600 mb-4">
         确定要删除密钥 <strong>{item.name}</strong> 吗？此操作无法撤销。

@@ -62,7 +62,7 @@ const LoginPage: React.FC = () => {
 
       {/* 登录卡片 */}
       <div className="relative w-full max-w-md">
-        <div className="bg-white/80 backdrop-blur-lg rounded-2xl shadow-xl border border-white/20 p-8">
+        <div className="bg-white/80 backdrop-blur-lg rounded-2xl border border-white/20 p-8">
           {/* 品牌区域 */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-violet-600 rounded-2xl mb-4">
@@ -153,7 +153,7 @@ const LoginPage: React.FC = () => {
             <button
               type="submit"
               disabled={isLoading || !username.trim() || !password.trim()}
-              className="w-full bg-violet-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transform transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
+              className="w-full bg-violet-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <>

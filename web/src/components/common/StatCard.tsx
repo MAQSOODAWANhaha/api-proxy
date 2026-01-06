@@ -16,7 +16,7 @@ interface StatCardProps {
 
 export function StatCard({ icon, value, label, delta, color, className = '' }: StatCardProps) {
   return (
-    <div className={`group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm transition hover:shadow-md ${className}`}>
+    <div className={`group relative overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 ${className}`}>
       {/* 顶部色条 */}
       <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} />
       <div className="flex items-center gap-3">

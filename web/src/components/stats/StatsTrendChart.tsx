@@ -77,7 +77,7 @@ export function StatsTrendChart({
   }, [data, timeframe, timezone])
 
   return (
-    <Card className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+    <Card className="rounded-2xl border border-neutral-200 bg-white">
       <CardHeader className="pb-4">
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -95,7 +95,7 @@ export function StatsTrendChart({
                 <ToggleGroupItem
                   key={option}
                   value={option}
-                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700 data-[state=on]:shadow-sm"
+                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700"
                 >
                   {option === '7d' ? '近 7 天' : option === '30d' ? '近 30 天' : '近 90 天'}
                 </ToggleGroupItem>

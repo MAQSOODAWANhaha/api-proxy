@@ -17,7 +17,7 @@ export interface StatCardProps {
 /** 统计卡片 */
 export default function StatCard({ icon, value, title, delta, bg = 'bg-pink-100' }: StatCardProps) {
   return (
-    <Card className="shadow-sm">
+    <Card>
       <CardContent className="p-4">
         <div className="flex items-center gap-3">
           <div className={`flex h-12 w-12 items-center justify-center rounded-lg ${bg}`}>{icon}</div>

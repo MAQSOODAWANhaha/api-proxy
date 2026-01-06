@@ -36,7 +36,7 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
   )
 
   return (
-    <Card className="rounded-2xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+    <Card className="rounded-2xl border border-neutral-200 bg-white">
       <CardHeader className="pb-4">
         <div className="flex w-full flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -55,7 +55,7 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
                 <ToggleGroupItem
                   key={option}
                   value={option}
-                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700 data-[state=on]:shadow-sm"
+                  className="px-3 py-1 text-neutral-700 data-[state=on]:bg-white data-[state=on]:text-violet-700"
                 >
                   {scopeLabel[option]}
                 </ToggleGroupItem>

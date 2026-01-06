@@ -115,7 +115,7 @@ const StatsDialog: React.FC<{
   } satisfies ChartConfig;
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">API Key 统计</h3>
         <button

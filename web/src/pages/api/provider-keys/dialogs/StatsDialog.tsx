@@ -102,7 +102,7 @@ const StatsDialog: React.FC<{
   } satisfies ChartConfig
 
   return (
-    <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200 hover:shadow-sm transition-shadow">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-3xl mx-4 max-h-[80vh] overflow-y-auto border border-neutral-200">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-neutral-900">账号密钥统计</h3>
         <button onClick={onClose} className="text-neutral-500 hover:text-neutral-700">

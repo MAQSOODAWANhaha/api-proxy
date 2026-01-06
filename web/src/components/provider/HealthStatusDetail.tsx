@@ -246,7 +246,7 @@ const renderLimitWindow = (
         </div>
       </TooltipTrigger>
 
-      <TooltipContent className="max-w-xs space-y-2 bg-white/95 dark:bg-gray-900/95 border-gray-200 dark:border-gray-700 shadow-lg">
+      <TooltipContent className="max-w-xs space-y-2 rounded-lg border bg-white/95 dark:bg-gray-900/95 border-gray-200 dark:border-gray-700">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-relaxed">
           <span className="text-muted-foreground">时间窗口</span>
           <span className="text-foreground">{windowDurationText}</span>

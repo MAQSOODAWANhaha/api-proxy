@@ -1,15 +1,15 @@
 /**
  * MultiLevelMenu.tsx
- * 通用两级菜单组件：父/子互斥选中。高亮使用统一主色（#1890ff），未选中常规色（#333）。
+ * 通用两级菜单组件：父/子互斥选中。高亮使用全局主色（primary），未选中使用全局前景色。
  * 支持受控/非受控、父级展开/收起、响应式尺寸与可选图标。
  */
 
 import React, { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-/** 统一主色与默认文字色（可按需从外部覆盖） */
-const PRIMARY = '#1890ff'
-const DEFAULT_TEXT = '#333'
+/** 统一主色与默认文字色（与全局 Dashboard 风格保持一致） */
+const PRIMARY = 'hsl(var(--primary))'
+const DEFAULT_TEXT = 'hsl(var(--foreground))'
 
 /** 子菜单项接口 */
 export interface SubMenuItem {
@@ -124,9 +124,9 @@ const MultiLevelMenu: React.FC<MultiLevelMenuProps> = ({
 
   /** 行样式（根据紧凑/常规） */
   const parentRowBase =
-    'flex w-full items-center gap-2 rounded-lg px-3 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-200'
+    'flex w-full items-center gap-2 rounded-lg px-3 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-200'
   const childRowBase =
-    'flex w-full items-center gap-2 rounded-lg px-3 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-indigo-200'
+    'flex w-full items-center gap-2 rounded-lg px-3 transition-colors text-left focus:outline-none focus:ring-2 focus:ring-violet-200'
 
   const parentMinH = compact ? 'min-h-[38px]' : 'min-h-[44px]'
   const childMinH = compact ? 'min-h-[34px]' : 'min-h-[38px]'
@@ -137,7 +137,6 @@ const MultiLevelMenu: React.FC<MultiLevelMenuProps> = ({
     () =>
       [
         'w-full max-w-full sm:max-w-72 rounded-xl border border-neutral-200 bg-white p-2',
-        'shadow-sm',
         className || '',
       ].join(' '),
     [className],

@@ -146,7 +146,7 @@ const MultiSelect: React.FC<MultiSelectProps> = ({
 
       {/* 下拉内容 */}
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-popover border border-border rounded-md shadow-lg z-50 overflow-hidden">
+        <div className="absolute top-full left-0 right-0 mt-2 bg-popover border border-border rounded-md z-50 overflow-hidden">
           {/* 搜索框 */}
           {searchable && (
             <div className="p-3 border-b border-border">

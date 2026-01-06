@@ -325,9 +325,9 @@ export const ProviderTypeDialog: React.FC<ProviderTypeDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[760px] max-h-[80vh] overflow-y-auto bg-white rounded-2xl border border-neutral-200 shadow-none hover:shadow-sm transition-shadow">
+      <DialogContent className="sm:max-w-[760px] max-h-[80vh] overflow-y-auto">
         <DialogHeader className="text-left">
-          <DialogTitle className="text-lg font-medium text-neutral-900">
+          <DialogTitle>
             {isEdit ? '编辑服务商类型' : '新增服务商类型'}
           </DialogTitle>
         </DialogHeader>
@@ -377,7 +377,7 @@ export const ProviderTypeDialog: React.FC<ProviderTypeDialogProps> = ({
                   <SelectTrigger className={selectTriggerClass}>
                     <SelectValue placeholder="选择认证类型" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-lg border border-neutral-200 bg-white shadow-sm">
+                  <SelectContent className="rounded-lg border border-neutral-200 bg-white">
                     <SelectItem value="api_key">api_key</SelectItem>
                     <SelectItem value="oauth">oauth</SelectItem>
                   </SelectContent>
