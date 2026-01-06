@@ -11,7 +11,7 @@ const DataTableShell = React.forwardRef<HTMLDivElement, DataTableShellProps>(
     <div
       ref={ref}
       className={cn(
-        'overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md',
+        'overflow-hidden rounded-2xl border border-slate-200 bg-white',
         className
       )}
       {...props}

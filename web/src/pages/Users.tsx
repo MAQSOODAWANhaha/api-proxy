@@ -204,14 +204,14 @@ const UsersPage: React.FC = () => {
   const renderUserRole = (isAdmin: boolean) => {
     if (isAdmin) {
       return (
-        <span className="table-tag gap-1 border-rose-200 bg-rose-50 text-rose-700">
+        <span className="table-tag gap-1 text-rose-700">
           <Shield size={10} />
           管理员
         </span>
       )
     }
     return (
-      <span className="table-tag gap-1">
+      <span className="table-subtext flex items-center gap-1">
         <User size={10} />
         普通用户
       </span>
