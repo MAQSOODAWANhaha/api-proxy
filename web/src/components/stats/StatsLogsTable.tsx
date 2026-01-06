@@ -30,12 +30,8 @@ const formatTimestamp = (timestamp: string, timezone: string) => {
 
 const StatusPill = ({ item }: { item: LogItem }) => {
   const success = item.is_success
-  const base =
-    'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1'
-  const classes = success
-    ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
-    : 'bg-rose-50 text-rose-600 ring-rose-200'
-  return <span className={`${base} ${classes}`}>{item.status_code ?? '--'}</span>
+  const classes = success ? 'table-status-success' : 'table-status-danger'
+  return <span className={classes}>{item.status_code ?? '--'}</span>
 }
 
 export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: StatsLogsTableProps) {
@@ -104,43 +100,49 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
                   <TableRow key={item.id}>
                     <TableCell className="align-top">
                       <div className="flex flex-col text-xs">
-                        <span className="font-medium text-neutral-700">{date}</span>
-                        <span className="font-mono text-neutral-500">{time}</span>
+                        <span className="table-subtext">{date}</span>
+                        <span className="table-subtext font-mono">{time}</span>
                       </div>
                     </TableCell>
                     <TableCell className="align-top">
-                      <div className="space-y-1 text-xs text-neutral-600">
+                      <div className="space-y-1 text-xs">
                         <div className="font-medium text-neutral-800">
                           {method} {item.path ?? '-'}
                         </div>
-                        <div className="text-neutral-400">Request ID: {item.request_id}</div>
+                        <div className="table-subtext">Request ID: {item.request_id}</div>
                       </div>
                     </TableCell>
                     <TableCell className="align-top">
                       <StatusPill item={item} />
                     </TableCell>
-                    <TableCell className="align-top text-xs text-neutral-600">
-                      {item.model ?? '-'}
+                    <TableCell className="align-top">
+                      <span className="table-subtext">{item.model ?? '-'}</span>
                     </TableCell>
-                    <TableCell className="align-top text-xs text-neutral-600">
-                      <div className="font-medium text-neutral-800">
-                        总计：{item.tokens_total.toLocaleString()}
+                    <TableCell className="align-top">
+                      <div className="text-xs">
+                        <div className="font-medium text-neutral-800">
+                          总计：{item.tokens_total.toLocaleString()}
+                        </div>
+                        <div className="table-subtext space-y-0.5">
+                          <div>输入：{item.tokens_prompt.toLocaleString()} | 输出：{item.tokens_completion.toLocaleString()}</div>
+                          <div>缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} | 缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}</div>
+                        </div>
                       </div>
-                      <div className="space-y-0.5 text-neutral-400">
-                        <div>输入：{item.tokens_prompt.toLocaleString()} | 输出：{item.tokens_completion.toLocaleString()}</div>
-                        <div>缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} | 缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}</div>
-                      </div>
                     </TableCell>
-                    <TableCell className="align-top text-xs text-neutral-600">
-                      {item.cost != null ? `${costCurrency} ${item.cost.toFixed(4)}` : '--'}
+                    <TableCell className="align-top">
+                      <span className="table-subtext">
+                        {item.cost != null ? `${costCurrency} ${item.cost.toFixed(4)}` : '--'}
+                      </span>
                     </TableCell>
-                    <TableCell className="align-top text-xs text-neutral-600">
-                      {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
+                    <TableCell className="align-top">
+                      <span className="table-subtext">
+                        {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
+                      </span>
                     </TableCell>
-                    <TableCell className="align-top text-xs text-neutral-600">
-                      <div className="space-y-1">
+                    <TableCell className="align-top">
+                      <div className="table-subtext space-y-1">
                         <div>{item.client_ip ?? '--'}</div>
-                        <div className="text-neutral-400">{item.user_agent ?? '--'}</div>
+                        <div>{item.user_agent ?? '--'}</div>
                       </div>
                     </TableCell>
                   </TableRow>

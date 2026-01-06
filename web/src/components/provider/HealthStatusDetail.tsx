@@ -122,17 +122,17 @@ function formatDuration(seconds?: number): string {
   return timeUnits.join('')
 }
 
-/** 获取健康状态颜色 */
-function getHealthStatusColor(status: string): string {
+/** 获取健康状态样式 */
+function getHealthStatusClass(status: string): string {
   switch (status) {
     case 'healthy':
-      return 'text-green-600 bg-green-50 border-green-200'
+      return 'table-status-success'
     case 'rate_limited':
-      return 'text-yellow-600 bg-yellow-50 border-yellow-200'
+      return 'table-status-warning'
     case 'unhealthy':
-      return 'text-red-600 bg-red-50 border-red-200'
+      return 'table-status-danger'
     default:
-      return 'text-gray-600 bg-gray-50 border-gray-200'
+      return 'table-status-muted'
   }
 }
 
@@ -328,7 +328,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
   if (!detailData) {
     return (
       <div className="flex items-center gap-2">
-        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getHealthStatusColor(health_status)}`}>
+        <div className={`${getHealthStatusClass(health_status)} gap-1.5`}>
           {health_status === 'healthy' && <CheckCircle className="h-3 w-3" />}
           {health_status === 'rate_limited' && <Clock className="h-3 w-3" />}
           {health_status === 'unhealthy' && <AlertCircle className="h-3 w-3" />}
@@ -356,7 +356,7 @@ const HealthStatusDetail: React.FC<HealthStatusDetailProps> = ({
     <TooltipProvider>
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getHealthStatusColor(health_status)}`}>
+          <div className={`${getHealthStatusClass(health_status)} gap-1.5`}>
             {health_status === 'healthy' && <CheckCircle className="h-3 w-3" />}
             {health_status === 'rate_limited' && <Clock className="h-3 w-3" />}
             {health_status === 'unhealthy' && <AlertCircle className="h-3 w-3" />}

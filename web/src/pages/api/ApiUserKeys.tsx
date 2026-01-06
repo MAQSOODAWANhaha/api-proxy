@@ -201,7 +201,7 @@ const ApiUserKeysPage: React.FC = () => {
     const isVisible = showKeyValues[id];
     return (
       <div className="flex items-center gap-2">
-        <code className="font-mono text-xs bg-neutral-100 px-2 py-1 rounded">
+        <code className="table-code">
           {isVisible
             ? key
             : `${key.substring(0, 8)}...${key.substring(key.length - 4)}`}
@@ -373,7 +373,7 @@ const ApiUserKeysPage: React.FC = () => {
                   <TableCell>
                     <div>
                       <div className="font-medium">{item.name}</div>
-                      <div className="text-xs text-neutral-500">
+                      <div className="table-subtext">
                         创建于{" "}
                         {new Date(item.created_at).toLocaleDateString()}
                       </div>
@@ -381,14 +381,14 @@ const ApiUserKeysPage: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <div
-                      className="max-w-xs truncate"
+                      className="table-subtext max-w-xs truncate"
                       title={item.description || ""}
                     >
                       {item.description || "无描述"}
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
+                    <span className="table-tag">
                       {item.provider || `服务商 ${item.provider_type_id}`}
                     </span>
                   </TableCell>
@@ -428,18 +428,18 @@ const ApiUserKeysPage: React.FC = () => {
                         }}
                       />
                     </div>
-                    <div className="mt-1 text-xs text-neutral-500">
+                    <div className="mt-1 table-subtext">
                       速率限制/分: {(item.max_request_per_min || 0) > 0 ? `${item.max_request_per_min!.toLocaleString()}` : "无"}
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="table-subtext">
                       速率限制/天:{" "}
                       {(item.max_requests_per_day || 0) > 0 ? `${item.max_requests_per_day!.toLocaleString()}` : "无"}
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="table-subtext">
                       Token/天:{" "}
                       {(item.max_tokens_per_day || 0) > 0 ? `${item.max_tokens_per_day!.toLocaleString()}` : "无"}
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="table-subtext">
                       费用/天:{" "}
                       {Number(item.max_cost_per_day || 0) > 0
                         ? `$${Number(item.max_cost_per_day || 0).toFixed(2)}`
@@ -447,28 +447,16 @@ const ApiUserKeysPage: React.FC = () => {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        item.is_active
-                          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                          : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
-                      }`}
-                    >
+                    <span className={item.is_active ? "table-status-success" : "table-status-muted"}>
                       {item.is_active ? "启用" : "停用"}
                     </span>
                   </TableCell>
                   <TableCell>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        item.log_mode
-                          ? "bg-violet-50 text-violet-700 ring-1 ring-violet-200"
-                          : "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300"
-                      }`}
-                    >
+                    <span className={item.log_mode ? "table-status-success" : "table-status-muted"}>
                       {item.log_mode ? "开启" : "关闭"}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs text-neutral-600">
+                  <TableCell className="table-subtext">
                     {item.last_used_at
                       ? new Date(item.last_used_at).toLocaleString()
                       : "从未使用"}

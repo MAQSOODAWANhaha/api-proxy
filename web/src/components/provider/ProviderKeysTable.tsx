@@ -79,7 +79,7 @@ function formatDate(iso: string) {
 
 /**
  * ProviderKeysTable
- * - 无外层边框/背景，由页面卡片容器统一控制
+ * - 统一表格卡片外层样式，保持全站一致
  */
 const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
   data,
@@ -109,15 +109,13 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
           {data.map((row) => (
             <TableRow key={row.id}>
               <TableCell className="font-medium text-foreground">{row.name}</TableCell>
-              <TableCell className="text-foreground/80">
+              <TableCell className="table-subtext">
                 {row.provider ? providerLabelMap[row.provider] : '-'}
               </TableCell>
               <TableCell>
-                <span className="rounded bg-muted px-2 py-0.5 text-sm text-foreground/70">
-                  {maskKey(row.apiKey)}
-                </span>
+                <span className="table-code">{maskKey(row.apiKey)}</span>
               </TableCell>
-              <TableCell className="text-foreground/70">
+              <TableCell className="table-subtext">
                 {row.projectId || '-'}
               </TableCell>
               <TableCell className="text-right tabular-nums">{row.weight}</TableCell>
@@ -125,18 +123,13 @@ const ProviderKeysTable: React.FC<ProviderKeysTableProps> = ({
               <TableCell className="text-right tabular-nums">{row.tokenLimitPerDay}</TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  <span
-                    className={[
-                      'inline-flex items-center rounded-full px-2 py-0.5 text-xs',
-                      row.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-muted text-muted-foreground',
-                    ].join(' ')}
-                  >
+                  <span className={row.enabled ? 'table-status-success' : 'table-status-muted'}>
                     {row.enabled ? '启用' : '禁用'}
                   </span>
                   <Switch checked={row.enabled} onCheckedChange={(v) => onToggleEnabled(row.id, v)} />
                 </div>
               </TableCell>
-              <TableCell className="text-foreground/70">{formatDate(row.createdAt)}</TableCell>
+              <TableCell className="table-subtext">{formatDate(row.createdAt)}</TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-2">
                   <Button

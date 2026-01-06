@@ -148,3 +148,33 @@ html > body * {
     animation: none;
   }
 }
+
+@layer components {
+  .table-tag {
+    @apply inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700;
+  }
+
+  .table-code {
+    @apply rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700;
+  }
+
+  .table-subtext {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .table-status-success {
+    @apply inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700;
+  }
+
+  .table-status-warning {
+    @apply inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700;
+  }
+
+  .table-status-danger {
+    @apply inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700;
+  }
+
+  .table-status-muted {
+    @apply inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600;
+  }
+}

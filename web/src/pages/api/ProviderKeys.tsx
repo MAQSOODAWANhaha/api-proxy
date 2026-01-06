@@ -400,7 +400,7 @@ const ProviderKeysPage: React.FC = () => {
     const isVisible = showKeyValues[id]
     return (
       <div className="flex items-center gap-2">
-        <code className="font-mono text-xs bg-neutral-100 px-2 py-1 rounded">
+        <code className="table-code">
           {isVisible ? key : `${key.substring(0, 12)}...${key.substring(key.length - 4)}`}
         </code>
         <button
@@ -582,21 +582,17 @@ const ProviderKeysPage: React.FC = () => {
               paginatedData.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell>
-                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
-                      {item.provider}
-                    </span>
+                    <span className="table-tag">{item.provider}</span>
                   </TableCell>
                   <TableCell>
                     <div>
                       <div className="font-medium">{item.keyName}</div>
-                      <div className="text-xs text-neutral-500">创建于 {item.createdAt}</div>
+                      <div className="table-subtext">创建于 {item.createdAt}</div>
                     </div>
                   </TableCell>
                   <TableCell>{renderMaskedKey(item.keyValue, String(item.id))}</TableCell>
                   <TableCell>
-                    <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700">
-                      {authTypeLabel(item.auth_type)}
-                    </span>
+                    <span className="table-tag">{authTypeLabel(item.auth_type)}</span>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -625,19 +621,19 @@ const ProviderKeysPage: React.FC = () => {
                         }}
                       />
                     </div>
-                    <div className="mt-1 text-xs text-neutral-500">
+                    <div className="mt-1 table-subtext">
                       请求限制: {item.requestLimitPerMinute ? `${item.requestLimitPerMinute}/分钟` : '无'}
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="table-subtext">
                       Token限制: {item.tokenLimitPromptPerMinute ? `${item.tokenLimitPromptPerMinute.toLocaleString()}/分钟` : '无'}
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="table-subtext">
                       请求限制: {item.requestLimitPerDay ? `${item.requestLimitPerDay.toLocaleString()}/天` : '无'}
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="text-sm font-medium text-neutral-900">${(item.cost || 0).toFixed(2)}</div>
-                    <div className="text-xs text-neutral-500">本月花费</div>
+                    <div className="table-subtext">本月花费</div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -655,9 +651,7 @@ const ProviderKeysPage: React.FC = () => {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200">
-                      权重 {item.weight}
-                    </span>
+                    <span className="table-tag">权重 {item.weight}</span>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">

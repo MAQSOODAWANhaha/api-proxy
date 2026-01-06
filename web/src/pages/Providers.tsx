@@ -21,7 +21,6 @@ import {
 import { StatCard } from '../components/common/StatCard'
 import FilterSelect from '../components/common/FilterSelect'
 import { api, ProviderType } from '../lib/api'
-import { Badge } from '@/components/ui/badge'
 import { LoadingSpinner, LoadingState } from '@/components/ui/loading'
 import { Skeleton } from '@/components/ui/skeleton'
 import { copyWithFeedback } from '../lib/clipboard'
@@ -288,14 +287,14 @@ const ProvidersPage: React.FC = () => {
                     <TableCell className="font-medium text-foreground">
                         <div className="flex flex-col">
                           <span>{p.display_name}</span>
-                          <span className="text-xs text-muted-foreground">{p.name}</span>
+                          <span className="table-subtext">{p.name}</span>
                         </div>
                     </TableCell>
 
                     <TableCell>
                         {p.base_url ? (
                           <div className="flex items-center gap-2">
-                            <code className="rounded bg-muted px-2 py-0.5 text-xs text-foreground/80">
+                            <code className="table-code">
                               {p.base_url}
                             </code>
                             <button
@@ -315,13 +314,9 @@ const ProvidersPage: React.FC = () => {
                     <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {p.auth_type ? (
-                            <Badge
-                              key={`${p.id}-${p.auth_type}`}
-                              variant="outline"
-                              className="text-xs"
-                            >
+                            <span className="table-tag" key={`${p.id}-${p.auth_type}`}>
                               {authTypeLabel(p.auth_type)}
-                            </Badge>
+                            </span>
                           ) : (
                             <span className="text-foreground/60">-</span>
                           )}
@@ -330,19 +325,9 @@ const ProvidersPage: React.FC = () => {
 
                     <TableCell>
                         {p.is_active ? (
-                          <Badge
-                            variant="outline"
-                            className="border-emerald-200 bg-emerald-50 text-emerald-700"
-                          >
-                            启用
-                          </Badge>
+                          <span className="table-status-success">启用</span>
                         ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-neutral-200 bg-neutral-50 text-neutral-700"
-                          >
-                            禁用
-                          </Badge>
+                          <span className="table-status-muted">禁用</span>
                         )}
                     </TableCell>
 

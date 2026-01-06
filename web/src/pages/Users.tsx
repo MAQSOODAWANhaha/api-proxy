@@ -186,15 +186,15 @@ const UsersPage: React.FC = () => {
   const renderUserStatus = (isActive: boolean) => {
     if (isActive) {
       return (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200">
-          <Activity size={10} className="mr-1" />
+        <span className="table-status-success gap-1">
+          <Activity size={10} />
           活跃
         </span>
       )
     }
     return (
-      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 ring-1 ring-red-200">
-        <Activity size={10} className="mr-1" />
+      <span className="table-status-danger gap-1">
+        <Activity size={10} />
         非活跃
       </span>
     )
@@ -204,15 +204,15 @@ const UsersPage: React.FC = () => {
   const renderUserRole = (isAdmin: boolean) => {
     if (isAdmin) {
       return (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 ring-1 ring-red-200">
-          <Shield size={10} className="mr-1" />
+        <span className="table-tag gap-1 border-rose-200 bg-rose-50 text-rose-700">
+          <Shield size={10} />
           管理员
         </span>
       )
     }
     return (
-      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-neutral-50 text-neutral-600 ring-1 ring-neutral-200">
-        <User size={10} className="mr-1" />
+      <span className="table-tag gap-1">
+        <User size={10} />
         普通用户
       </span>
     )
@@ -509,10 +509,10 @@ const UsersPage: React.FC = () => {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="font-medium truncate">{user.username}</div>
-                          <div className="text-xs text-neutral-500 flex items-center gap-1 truncate">
-                            <Mail size={10} />
-                            <span className="truncate">{user.email}</span>
-                          </div>
+                            <div className="table-subtext flex items-center gap-1 truncate">
+                              <Mail size={10} />
+                              <span className="truncate">{user.email}</span>
+                            </div>
                         </div>
                       </div>
                     </TableCell>
@@ -543,14 +543,14 @@ const UsersPage: React.FC = () => {
                     <TableCell className="w-[140px]">
                       <div className="flex items-center gap-1">
                         <Clock size={12} className="text-neutral-400" />
-                        <span className="text-xs truncate">{formatLastLogin(user.last_login)}</span>
-                      </div>
+                          <span className="table-subtext truncate">{formatLastLogin(user.last_login)}</span>
+                        </div>
                     </TableCell>
                     <TableCell className="w-[140px]">
                       <div className="flex items-center gap-1">
                         <Calendar size={12} className="text-neutral-400" />
-                        <span className="text-xs truncate">{formatDate(user.created_at)}</span>
-                      </div>
+                          <span className="table-subtext truncate">{formatDate(user.created_at)}</span>
+                        </div>
                     </TableCell>
                     <TableCell className="w-[150px]">
                       <div className="flex items-center gap-1">

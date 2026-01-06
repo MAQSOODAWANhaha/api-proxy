@@ -215,13 +215,13 @@ const LogsPage: React.FC = () => {
   // 渲染成功状态
   const renderSuccessStatus = (isSuccess: boolean) => {
     return isSuccess ? (
-      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
-        <CheckCircle size={10} className="mr-1" />
+      <span className="table-status-success gap-1">
+        <CheckCircle size={10} />
         成功
       </span>
     ) : (
-      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
-        <XCircle size={10} className="mr-1" />
+      <span className="table-status-danger gap-1">
+        <XCircle size={10} />
         失败
       </span>
     )
@@ -231,11 +231,7 @@ const LogsPage: React.FC = () => {
   const renderStatusCode = (statusCode: number) => {
     const isError = statusCode >= 400
     return (
-      <span className={`px-2 py-1 rounded text-xs font-mono ${
-        isError 
-          ? 'bg-red-50 text-red-700 ring-1 ring-red-200' 
-          : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-      }`}>
+      <span className={`${isError ? 'table-status-danger' : 'table-status-success'} font-mono`}>
         {statusCode}
       </span>
     )
@@ -413,27 +409,27 @@ const LogsPage: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <Calendar size={14} className="text-neutral-400" />
                         <div>
-                          <div className="text-xs text-neutral-500">{date}</div>
-                          <div className="text-xs font-mono text-neutral-700">{time}</div>
+                          <div className="table-subtext">{date}</div>
+                          <div className="table-subtext font-mono">{time}</div>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-col text-xs text-neutral-600">
+                      <div className="flex flex-col text-xs">
                         <span className="font-medium text-neutral-800">{item.user_service_api_name || '未命名'}</span>
-                        <span className="text-neutral-500">ID: {item.user_service_api_id}</span>
+                        <span className="table-subtext">ID: {item.user_service_api_id}</span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-col text-xs text-neutral-600">
+                      <div className="flex flex-col text-xs">
                         <span className="font-medium text-neutral-800">{item.user_provider_key_name || '未绑定'}</span>
                         {item.user_provider_key_id && (
-                          <span className="text-neutral-500">ID: {item.user_provider_key_id}</span>
+                          <span className="table-subtext">ID: {item.user_provider_key_id}</span>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <code className="block max-w-xs truncate rounded bg-neutral-100 px-2 py-1 text-xs">
+                      <code className="table-code block max-w-xs truncate">
                         {item.path || 'N/A'}
                       </code>
                     </TableCell>
@@ -444,14 +440,12 @@ const LogsPage: React.FC = () => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="text-xs text-neutral-600">
-                        {item.model_used || 'N/A'}
-                      </span>
+                      <span className="table-subtext">{item.model_used || 'N/A'}</span>
                     </TableCell>
                     <TableCell>
                       <div className="text-xs space-y-1">
                         <div className="font-medium">总计: {item.tokens_total.toLocaleString()}</div>
-                        <div className="space-y-0.5 text-neutral-500">
+                        <div className="table-subtext space-y-0.5">
                           <div>输入: {item.tokens_prompt.toLocaleString()} | 输出: {item.tokens_completion.toLocaleString()}</div>
                           <div>缓存创建: {item.cache_create_tokens.toLocaleString()} | 缓存读取: {item.cache_read_tokens.toLocaleString()}</div>
                         </div>
@@ -461,7 +455,7 @@ const LogsPage: React.FC = () => {
                       <div className="text-xs">
                         {item.cost ? `$${item.cost.toFixed(4)}` : 'N/A'}
                         {item.cost_currency && item.cost_currency !== 'USD' && (
-                          <span className="text-neutral-500"> {item.cost_currency}</span>
+                          <span className="table-subtext"> {item.cost_currency}</span>
                         )}
                       </div>
                     </TableCell>
@@ -653,7 +647,7 @@ const LogDetailsDialog: React.FC<{
 
           <div className="p-3 bg-neutral-50 rounded-lg">
             <div className="text-sm text-neutral-600">请求路径</div>
-            <code className="text-sm bg-neutral-100 px-2 py-1 rounded mt-1 inline-block">
+            <code className="table-code mt-1 inline-block">
               {item.path || 'N/A'}
             </code>
           </div>
@@ -664,7 +658,7 @@ const LogDetailsDialog: React.FC<{
               <div className="font-medium">
                 {item.user_service_api_name || '未命名'}
               </div>
-              <div className="text-xs text-neutral-500 mt-1">
+              <div className="table-subtext mt-1">
                 ID: {item.user_service_api_id}
               </div>
             </div>
@@ -673,7 +667,7 @@ const LogDetailsDialog: React.FC<{
               <div className="font-medium">
                 {item.user_provider_key_name || '未绑定'}
               </div>
-              <div className="text-xs text-neutral-500 mt-1">
+              <div className="table-subtext mt-1">
                 ID: {item.user_provider_key_id || 'N/A'}
               </div>
             </div>
