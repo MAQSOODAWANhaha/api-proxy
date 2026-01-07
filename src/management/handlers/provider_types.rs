@@ -79,7 +79,7 @@ pub async fn get_provider_type(
     match service.get(auth_context.as_ref(), id).await {
         Ok(model) => {
             match provider_types::convert_model_to_dto(&model, timezone_context.timezone) {
-                Ok(item) => response::success(item),
+                Ok(item) => response::success(json!({ "provider_type": item })),
                 Err(err) => {
                     log_management_error(
                         &request_id,
