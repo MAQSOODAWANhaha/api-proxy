@@ -62,18 +62,42 @@ pub struct ApiKeyInfo {
     pub updated_at: DateTime<Utc>,
 }
 
-/// OAuth 提供商配置
+/// OAuth 请求配置（完全由数据库驱动）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthAuthorizeConfig {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub query: HashMap<String, serde_json::Value>,
+}
+
+/// OAuth Token 请求配置（exchange/refresh）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokenConfig {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub body: HashMap<String, serde_json::Value>,
+}
+
+/// OAuth 提供商配置（按 `provider_types` 表存储）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthProviderConfig {
     pub provider_name: String,
     pub client_id: String,
+    /// 固定的 `client_secret`（如 `Google`/`OpenAI`）。若某些提供商需要动态值（如基于会话的 `PKCE verifier`），可省略此字段。
     pub client_secret: Option<String>,
-    pub authorize_url: String,
-    pub token_url: String,
     pub redirect_uri: String,
-    pub scopes: Vec<String>,
+    /// 空格分隔的 scope 字符串（保持与数据库一致）
+    pub scopes: String,
     pub pkce_required: bool,
-    pub extra_params: HashMap<String, serde_json::Value>,
+    pub authorize: OAuthAuthorizeConfig,
+    pub exchange: OAuthTokenConfig,
+    pub refresh: OAuthTokenConfig,
 }
 
 /// JWT 载荷

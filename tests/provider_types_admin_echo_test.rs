@@ -35,12 +35,26 @@ async fn test_admin_echo_and_update_stores_exact_payload() {
     let original_auth_configs = serde_json::json!({
         "client_id": "test_client_id",
         "client_secret": "test_client_secret",
-        "authorize_url": "https://example.com/oauth/authorize",
-        "token_url": "https://example.com/oauth/token",
         "redirect_uri": "https://example.com/callback",
         "scopes": "scope_a scope_b",
         "pkce_required": true,
-        "extra_params": { "response_type": "code" }
+        "authorize": {
+            "url": "https://example.com/oauth/authorize",
+            "method": "GET",
+            "query": { "response_type": "code" }
+        },
+        "exchange": {
+            "url": "https://example.com/oauth/token",
+            "method": "POST",
+            "headers": {},
+            "body": { "grant_type": "authorization_code" }
+        },
+        "refresh": {
+            "url": "https://example.com/oauth/token",
+            "method": "POST",
+            "headers": {},
+            "body": { "grant_type": "refresh_token" }
+        }
     });
 
     let inserted = provider_types_entity::ActiveModel {
@@ -76,12 +90,26 @@ async fn test_admin_echo_and_update_stores_exact_payload() {
     // 更新时未提交 client_secret：应按提交内容覆盖存储（不会自动保留/合并）
     let update_auth_configs = serde_json::json!({
         "client_id": "test_client_id",
-        "authorize_url": "https://example.com/oauth/authorize",
-        "token_url": "https://example.com/oauth/token",
         "redirect_uri": "https://example.com/callback",
         "scopes": "scope_a scope_b",
         "pkce_required": true,
-        "extra_params": { "response_type": "code" }
+        "authorize": {
+            "url": "https://example.com/oauth/authorize",
+            "method": "GET",
+            "query": { "response_type": "code" }
+        },
+        "exchange": {
+            "url": "https://example.com/oauth/token",
+            "method": "POST",
+            "headers": {},
+            "body": { "grant_type": "authorization_code" }
+        },
+        "refresh": {
+            "url": "https://example.com/oauth/token",
+            "method": "POST",
+            "headers": {},
+            "body": { "grant_type": "refresh_token" }
+        }
     });
 
     let update_request = UpdateProviderTypeRequest {

@@ -81,7 +81,15 @@ async fn create_update_delete_provider_type() {
                 config_json: None,
                 token_mappings_json: None,
                 model_extraction_json: None,
-                auth_configs_json: Some(serde_json::json!({"client_id":"x","authorize_url":"https://a","token_url":"https://t","scopes":"s","pkce_required":true})),
+                auth_configs_json: Some(serde_json::json!({
+                    "client_id":"x",
+                    "redirect_uri":"https://example.com/callback",
+                    "scopes":"s",
+                    "pkce_required":true,
+                    "authorize":{"url":"https://example.com/oauth/authorize","method":"GET","query":{}},
+                    "exchange":{"url":"https://example.com/oauth/token","method":"POST","body":{}},
+                    "refresh":{"url":"https://example.com/oauth/token","method":"POST","body":{}}
+                })),
             },
         )
         .await

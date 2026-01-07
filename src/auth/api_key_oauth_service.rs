@@ -8,7 +8,6 @@ use crate::auth::types::{AuthStatus, OAuthProviderConfig};
 use crate::error::Result;
 use crate::provider::{ApiKeyProviderConfig, build_authorize_url};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 授权 URL 响应
@@ -81,23 +80,14 @@ impl ApiKeyOauthService {
         Arc::clone(&self.state)
     }
 
-    pub async fn start_authorization_with_extra_params(
+    pub async fn start_authorization(
         &self,
         user_id: i32,
         provider_name: &str,
         name: &str,
         description: Option<&str>,
-        extra_params: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<AuthorizeUrlResponse> {
-        let mut config = self.config.get_config(provider_name).await?;
-        if let Some(user_params) = extra_params {
-            for (key, value) in user_params {
-                if value.is_null() {
-                    continue;
-                }
-                config.extra_params.insert(key, value);
-            }
-        }
+        let config = self.config.get_config(provider_name).await?;
 
         let session = self
             .state

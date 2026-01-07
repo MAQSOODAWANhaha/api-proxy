@@ -62,11 +62,48 @@
                 "supported_models": [],
                 "auth_configs_json": {
                     "client_id": "xxx",
-                    "authorize_url": "https://accounts.google.com/o/oauth2/auth",
-                    "token_url": "https://oauth2.googleapis.com/token",
+                    "client_secret": "yyy",
                     "redirect_uri": "https://example.com/oauth/callback",
                     "scopes": "https://www.googleapis.com/auth/generative-language",
-                    "pkce_required": true
+                    "pkce_required": true,
+                    "authorize": {
+                        "url": "https://accounts.google.com/o/oauth2/auth",
+                        "method": "GET",
+                        "headers": {},
+                        "query": {
+                            "client_id": "{{client_id}}",
+                            "redirect_uri": "{{redirect_uri}}",
+                            "state": "{{session.state}}",
+                            "scope": "{{scopes}}",
+                            "response_type": "code",
+                            "code_challenge": "{{session.code_challenge}}",
+                            "code_challenge_method": "S256"
+                        }
+                    },
+                    "exchange": {
+                        "url": "https://oauth2.googleapis.com/token",
+                        "method": "POST",
+                        "headers": {},
+                        "body": {
+                            "grant_type": "authorization_code",
+                            "code": "{{request.authorization_code}}",
+                            "client_id": "{{client_id}}",
+                            "client_secret": "{{client_secret}}",
+                            "redirect_uri": "{{redirect_uri}}",
+                            "code_verifier": "{{session.code_verifier}}"
+                        }
+                    },
+                    "refresh": {
+                        "url": "https://oauth2.googleapis.com/token",
+                        "method": "POST",
+                        "headers": {},
+                        "body": {
+                            "grant_type": "refresh_token",
+                            "refresh_token": "{{request.refresh_token}}",
+                            "client_id": "{{client_id}}",
+                            "client_secret": "{{client_secret}}"
+                        }
+                    }
                 },
                 "config_json": {},
                 "token_mappings_json": {},

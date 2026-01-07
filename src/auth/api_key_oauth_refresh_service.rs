@@ -9,8 +9,7 @@ use crate::auth::types::AuthStatus;
 use crate::error::{Context, ProxyError, Result, auth::OAuthError};
 use crate::logging::{LogComponent, LogStage};
 use crate::provider::{
-    ApiKeyProviderConfig, TokenExchangeContext, TokenRefreshContext, TokenRequestPayload,
-    TokenRevokeContext, get_provider_by_name,
+    ApiKeyProviderConfig, TokenRequestPayload, build_exchange_request, build_refresh_request,
 };
 use crate::{ensure, ldebug, lwarn};
 use chrono::{DateTime, Duration, Utc};
@@ -37,15 +36,6 @@ pub struct OAuthErrorResponse {
     pub error: String,
     pub error_description: Option<String>,
     pub error_uri: Option<String>,
-}
-
-/// 令牌交换请求参数
-#[derive(Debug, Clone)]
-pub struct TokenExchangeRequest {
-    pub session_id: String,
-    pub authorization_code: String,
-    pub code_verifier: String,
-    pub redirect_uri: String,
 }
 
 /// OAuth Token 刷新执行器
@@ -164,14 +154,7 @@ impl ApiKeyOAuthRefreshService {
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
-        let provider = get_provider_by_name(&session.provider_name)?;
-
-        let refresh_context = TokenRefreshContext {
-            session,
-            config: &config,
-            refresh_token,
-        };
-        let payload = provider.build_refresh_request(refresh_context);
+        let payload = build_refresh_request(&config, session, refresh_token)?;
         let token_response = self.send_token_request(payload).await?;
 
         let oauth_response = Self::process_token_response(token_response, &session.session_id);
@@ -227,7 +210,6 @@ impl ApiKeyOAuthRefreshService {
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
-        let provider = get_provider_by_name(&session.provider_name)?;
 
         let actual_code = authorization_code
             .split('#')
@@ -235,12 +217,7 @@ impl ApiKeyOAuthRefreshService {
             .unwrap_or(authorization_code)
             .to_string();
 
-        let exchange_context = TokenExchangeContext {
-            session: &session,
-            config: &config,
-            authorization_code: &actual_code,
-        };
-        let payload = provider.build_token_request(exchange_context);
+        let payload = build_exchange_request(&config, &session, &actual_code)?;
         let token_response = self.send_token_request(payload).await?;
 
         let oauth_response = Self::process_token_response(token_response, session_id);
@@ -254,13 +231,23 @@ impl ApiKeyOAuthRefreshService {
     // 注意：此处不做任何缓存重试；OAuth 配置会始终从数据库读取。
 
     async fn send_token_request(&self, payload: TokenRequestPayload) -> Result<TokenResponse> {
-        let (token_url, form_params) = payload;
-        let response = self
+        let method = reqwest::Method::from_bytes(payload.method.as_bytes()).map_err(|_| {
+            ProxyError::from(OAuthError::TokenExchangeFailed(format!(
+                "Invalid HTTP method: {}",
+                payload.method
+            )))
+        })?;
+
+        let mut req = self
             .http_client
-            .post(&token_url)
-            .form(&form_params)
-            .send()
-            .await?;
+            .request(method, &payload.url)
+            .form(&payload.form);
+        // headers 由配置驱动；如果存在同名 header（如 Content-Type），以配置为准覆盖 reqwest 默认值
+        for (k, v) in payload.headers {
+            req = req.header(k, v);
+        }
+
+        let response = req.send().await?;
 
         let status = response.status();
         if status.is_success() {
@@ -297,58 +284,5 @@ impl ApiKeyOAuthRefreshService {
             expires_in,
             scopes,
         }
-    }
-
-    /// 撤销令牌
-    pub async fn revoke_token(
-        &self,
-        session_id: &str,
-        token: &str,
-        token_type_hint: Option<&str>,
-    ) -> Result<()> {
-        // 获取会话信息
-        let session = self.session_manager.get_session(session_id).await?;
-        let config = self
-            .provider_manager
-            .get_config(&session.provider_name)
-            .await?;
-        let provider = get_provider_by_name(&session.provider_name)?;
-        let revoke_context = TokenRevokeContext {
-            session: &session,
-            config: &config,
-            token,
-            hint: token_type_hint,
-        };
-        let Some(payload) = provider.build_revoke_request(revoke_context) else {
-            ldebug!(
-                "system",
-                LogStage::Authentication,
-                LogComponent::OAuth,
-                "revocation_unsupported",
-                &format!(
-                    "Provider {} does not support token revocation",
-                    session.provider_name
-                )
-            );
-            return Ok(());
-        };
-
-        let (revoke_url, form_params) = payload;
-
-        // 发送撤销请求
-        let response = self
-            .http_client
-            .post(&revoke_url)
-            .form(&form_params)
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            return Err(ProxyError::from(OAuthError::TokenExchangeFailed(format!(
-                "Token revocation failed: {}",
-                response.status()
-            ))));
-        }
-
-        Ok(())
     }
 }

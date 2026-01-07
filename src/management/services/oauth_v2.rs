@@ -3,7 +3,6 @@
 //! 封装 OAuth v2 客户端相关的业务逻辑，供 handler 复用。
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::auth::api_key_oauth_service::{
     ApiKeyOauthService, AuthorizeUrlResponse, OAuthSessionInfo, OAuthTokenResponse,
@@ -27,8 +26,6 @@ pub struct OAuthV2AuthorizeRequest {
     pub name: String,
     /// 会话描述
     pub description: Option<String>,
-    /// 用户提供的额外参数（如Gemini的 `project_id`）
-    pub extra_params: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// OAuth v2轮询查询参数
@@ -90,12 +87,11 @@ impl<'a> OAuthV2Service<'a> {
     ) -> Result<AuthorizeUrlResponse> {
         let client = self.client();
         match client
-            .start_authorization_with_extra_params(
+            .start_authorization(
                 user_id,
                 &request.provider_name,
                 &request.name,
                 request.description.as_deref(),
-                request.extra_params.clone(),
             )
             .await
         {
@@ -280,7 +276,11 @@ impl<'a> OAuthV2Service<'a> {
             .into_iter()
             .map(|config| OAuthProviderSummary {
                 provider_name: config.provider_name,
-                scopes: config.scopes,
+                scopes: config
+                    .scopes
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect(),
                 pkce_required: config.pkce_required,
             })
             .collect())

@@ -3,25 +3,18 @@ use crate::error::{Context, Result};
 use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
 use entity::oauth_client_sessions;
+use std::collections::HashMap;
 use url::Url;
 
-use super::registry::resolve_oauth_provider;
-use super::types::ProviderType;
-use std::collections::HashMap;
-
-fn json_value_to_query_value(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::Null => None,
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            serde_json::to_string(value).ok()
-        }
-    }
-}
+use super::template::{
+    OAuthTemplateRequest, build_oauth_template_context, lookup_oauth_template, render_json_value,
+};
 
 /// 根据会话与配置构建授权 URL。
+///
+/// 说明：
+/// - 授权 URL 的 `query` 参数完全由数据库配置驱动（包含基础参数与 PKCE 参数）。
+/// - 业务侧不再根据 OpenAI/Gemini/Anthropic 等做分支判断。
 pub fn build_authorize_url(
     config: &OAuthProviderConfig,
     session: &oauth_client_sessions::Model,
@@ -32,51 +25,47 @@ pub fn build_authorize_url(
         LogComponent::OAuth,
         "build_auth_url",
         &format!(
-            "🔗 [OAuth] 开始构建授权URL: provider_name={}, session_id={}",
+            "🔗 [OAuth] 构建授权URL: provider_name={}, session_id={}",
             config.provider_name, session.session_id
         )
     );
 
-    let mut url = Url::parse(&config.authorize_url)
-        .with_context(|| format!("Invalid authorize URL: {}", config.authorize_url))?;
+    let mut url = Url::parse(&config.authorize.url)
+        .with_context(|| format!("Invalid authorize URL: {}", config.authorize.url))?;
 
-    let scope = config.scopes.join(" ");
-    let mut params = HashMap::new();
-    params.insert("client_id".to_string(), config.client_id.clone());
-    params.insert("redirect_uri".to_string(), config.redirect_uri.clone());
-    params.insert("state".to_string(), session.state.clone());
-    params.insert("scope".to_string(), scope);
+    let context = build_oauth_template_context(
+        config,
+        session,
+        OAuthTemplateRequest {
+            authorization_code: None,
+            refresh_token: None,
+        },
+    );
 
-    let response_type = config
-        .extra_params
-        .get("response_type")
-        .and_then(json_value_to_query_value)
-        .unwrap_or_else(|| "code".to_string());
-    params.insert("response_type".to_string(), response_type);
+    let mut params: HashMap<String, String> = HashMap::new();
 
-    if config.pkce_required {
-        params.insert("code_challenge".to_string(), session.code_challenge.clone());
-        params.insert("code_challenge_method".to_string(), "S256".to_string());
-    }
-
-    // 添加额外参数，会覆盖同名的现有参数
-    for (key, value) in &config.extra_params {
-        if let Some(s) = json_value_to_query_value(value) {
-            params.insert(key.clone(), s);
+    for (key, value) in &config.authorize.query {
+        if let Some(rendered) = render_json_value(value, |k| lookup_oauth_template(&context, k))? {
+            params.insert(key.clone(), rendered);
         }
     }
 
-    let provider_type = ProviderType::parse(
-        config
-            .provider_name
-            .split(':')
-            .next()
-            .unwrap_or(config.provider_name.as_str()),
-    )?;
-    let provider = resolve_oauth_provider(&provider_type)?;
-    provider.build_authorization_url(&mut params, session, config);
+    // 基础参数必须存在，否则无法完成授权流程
+    for required in [
+        "client_id",
+        "redirect_uri",
+        "state",
+        "scope",
+        "response_type",
+    ] {
+        crate::ensure!(
+            params.contains_key(required),
+            crate::error::conversion::ConversionError::message(format!(
+                "authorize.query 缺少必需参数: {required}"
+            ))
+        );
+    }
 
     url.query_pairs_mut().extend_pairs(&params);
-
     Ok(url.to_string())
 }

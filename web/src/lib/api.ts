@@ -119,7 +119,6 @@ export interface OAuthAuthorizeRequest {
   provider_name: string
   name: string
   description?: string
-  extra_params?: Record<string, any>
 }
 
 export interface OAuthAuthorizeResponse {
@@ -174,23 +173,6 @@ export interface OAuthRefreshResponse {
 export type ApiKeyHealthStatus = 'healthy' | 'rate_limited' | 'unhealthy'
 
 // Provider Types相关类型定义
-export interface AuthConfig {
-  authorize_url?: string
-  token_url?: string
-  client_id?: string
-  scopes?: string
-  pkce_required?: boolean
-  extra_params?: Array<{
-    key: string
-    label: string
-    default: string
-    required: boolean
-    type: string
-    placeholder?: string
-    description?: string
-  }>
-}
-
 export interface ProviderType {
   id: number
   name: string

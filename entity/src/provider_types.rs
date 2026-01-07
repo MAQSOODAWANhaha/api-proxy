@@ -47,19 +47,40 @@ impl Related<super::user_service_apis::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {}
 
-/// OAuth配置结构
+/// OAuth 授权 URL 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthAuthorizeFlow {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub query: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// OAuth Token（exchange/refresh）请求配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokenFlow {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub body: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// OAuth 配置结构（完全由数据库驱动）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthConfig {
     pub client_id: String,
     pub client_secret: Option<String>,
-    pub authorize_url: String,
-    pub token_url: String,
     pub redirect_uri: Option<String>,
+    /// 空格分隔的 scopes 字符串
     pub scopes: String,
     pub pkce_required: bool,
-    // 通用额外参数支持 - 包含所有OAuth参数
-    #[serde(default)]
-    pub extra_params: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub authorize: OAuthAuthorizeFlow,
+    pub exchange: OAuthTokenFlow,
+    pub refresh: OAuthTokenFlow,
 }
 
 /// OAuth配置解析方法
@@ -116,19 +137,22 @@ impl Model {
                 if config.client_id.is_empty() {
                     return Err("client_id is required".to_string());
                 }
-                if config.authorize_url.is_empty() {
-                    return Err("authorize_url is required".to_string());
+                if config.authorize.url.is_empty() {
+                    return Err("authorize.url is required".to_string());
                 }
-                if config.token_url.is_empty() {
-                    return Err("token_url is required".to_string());
+                if config.exchange.url.is_empty() {
+                    return Err("exchange.url is required".to_string());
                 }
 
                 // 验证URL格式
-                if let Err(e) = url::Url::parse(&config.authorize_url) {
-                    return Err(format!("Invalid authorize_url: {e}"));
+                if let Err(e) = url::Url::parse(&config.authorize.url) {
+                    return Err(format!("Invalid authorize.url: {e}"));
                 }
-                if let Err(e) = url::Url::parse(&config.token_url) {
-                    return Err(format!("Invalid token_url: {e}"));
+                if let Err(e) = url::Url::parse(&config.exchange.url) {
+                    return Err(format!("Invalid exchange.url: {e}"));
+                }
+                if let Err(e) = url::Url::parse(&config.refresh.url) {
+                    return Err(format!("Invalid refresh.url: {e}"));
                 }
 
                 // 验证redirect_uri（如果存在）

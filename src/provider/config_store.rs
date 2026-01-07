@@ -1,5 +1,4 @@
-use super::types::ProviderType;
-use crate::auth::types::OAuthProviderConfig;
+use crate::auth::types::{OAuthAuthorizeConfig, OAuthProviderConfig, OAuthTokenConfig};
 use crate::error::{ProxyError, Result, auth::OAuthError};
 use crate::ldebug;
 use crate::logging::{LogComponent, LogStage};
@@ -64,8 +63,7 @@ impl ApiKeyProviderConfig {
 
     async fn load_config_from_db(&self, provider_name: &str) -> Result<OAuthProviderConfig> {
         let oauth_type = provider_name.split(':').nth(1).unwrap_or("oauth");
-        let provider_type = ProviderType::parse(provider_name)?;
-        let base_provider = provider_type.db_name();
+        let base_provider = provider_name.split(':').next().unwrap_or(provider_name);
 
         let model = ProviderTypes::find()
             .filter(provider_types::Column::Name.eq(base_provider))
@@ -98,47 +96,46 @@ impl ApiKeyProviderConfig {
         oauth_type: &str,
         oauth_config: entity::provider_types::OAuthConfig,
     ) -> OAuthProviderConfig {
-        let scopes: Vec<String> = oauth_config
-            .scopes
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
+        let authorize = OAuthAuthorizeConfig {
+            url: oauth_config.authorize.url,
+            method: oauth_config.authorize.method,
+            headers: oauth_config.authorize.headers,
+            query: oauth_config.authorize.query,
+        };
+        let exchange = OAuthTokenConfig {
+            url: oauth_config.exchange.url,
+            method: oauth_config.exchange.method,
+            headers: oauth_config.exchange.headers,
+            body: oauth_config.exchange.body,
+        };
+        let refresh = OAuthTokenConfig {
+            url: oauth_config.refresh.url,
+            method: oauth_config.refresh.method,
+            headers: oauth_config.refresh.headers,
+            body: oauth_config.refresh.body,
+        };
 
-        let mut extra_params: HashMap<String, serde_json::Value> = HashMap::new();
-
-        if let Some(ref config_extra_params) = oauth_config.extra_params {
-            extra_params.extend(config_extra_params.clone());
-            ldebug!(
-                "system",
-                LogStage::Db,
-                LogComponent::OAuth,
-                "load_extra_params",
-                &format!(
-                    "📊 [OAuth] 从数据库加载了{}个额外参数: {:?}",
-                    extra_params.len(),
-                    extra_params.keys().collect::<Vec<_>>()
-                )
-            );
-        } else {
-            ldebug!(
-                "system",
-                LogStage::Db,
-                LogComponent::OAuth,
-                "no_extra_params",
-                "📊 [OAuth] 数据库中没有配置extra_params"
-            );
-        }
+        ldebug!(
+            "system",
+            LogStage::Db,
+            LogComponent::OAuth,
+            "load_oauth_config",
+            &format!(
+                "📊 [OAuth] 加载 provider 配置: name={}, auth_type={}",
+                model.name, oauth_type
+            )
+        );
 
         OAuthProviderConfig {
             provider_name: format!("{}:{}", model.name, oauth_type),
             client_id: oauth_config.client_id,
             client_secret: oauth_config.client_secret,
-            authorize_url: oauth_config.authorize_url,
-            token_url: oauth_config.token_url,
             redirect_uri: oauth_config.redirect_uri.unwrap_or_default(),
-            scopes,
             pkce_required: oauth_config.pkce_required,
-            extra_params,
+            scopes: oauth_config.scopes,
+            authorize,
+            exchange,
+            refresh,
         }
     }
 }
@@ -161,17 +158,64 @@ pub struct ProviderConfigBuilder {
 impl ProviderConfigBuilder {
     #[must_use]
     pub fn new(provider_name: &str) -> Self {
+        let mut authorize_query = HashMap::new();
+        // 默认填充基础参数，便于测试直接生成可用的授权 URL。
+        authorize_query.insert(
+            "client_id".to_string(),
+            serde_json::Value::String("{{client_id}}".to_string()),
+        );
+        authorize_query.insert(
+            "redirect_uri".to_string(),
+            serde_json::Value::String("{{redirect_uri}}".to_string()),
+        );
+        authorize_query.insert(
+            "state".to_string(),
+            serde_json::Value::String("{{session.state}}".to_string()),
+        );
+        authorize_query.insert(
+            "scope".to_string(),
+            serde_json::Value::String("{{scopes}}".to_string()),
+        );
+        authorize_query.insert(
+            "response_type".to_string(),
+            serde_json::Value::String("code".to_string()),
+        );
+        // 默认开启 PKCE 并填充占位符
+        authorize_query.insert(
+            "code_challenge".to_string(),
+            serde_json::Value::String("{{session.code_challenge}}".to_string()),
+        );
+        authorize_query.insert(
+            "code_challenge_method".to_string(),
+            serde_json::Value::String("S256".to_string()),
+        );
+
         Self {
             config: OAuthProviderConfig {
                 provider_name: provider_name.to_string(),
                 client_id: String::new(),
                 client_secret: None,
-                authorize_url: String::new(),
-                token_url: String::new(),
                 redirect_uri: String::new(),
-                scopes: Vec::new(),
+                scopes: String::new(),
                 pkce_required: true,
-                extra_params: HashMap::new(),
+                authorize: OAuthAuthorizeConfig {
+                    url: String::new(),
+                    method: "GET".to_string(),
+                    headers: HashMap::new(),
+                    query: authorize_query,
+                },
+                exchange: OAuthTokenConfig {
+                    url: String::new(),
+                    method: "POST".to_string(),
+                    headers: HashMap::new(),
+                    body: HashMap::new(),
+                },
+                refresh: OAuthTokenConfig {
+                    url: String::new(),
+                    method: "POST".to_string(),
+                    headers: HashMap::new(),
+                    body: HashMap::new(),
+                },
             },
         }
     }
@@ -190,13 +234,14 @@ impl ProviderConfigBuilder {
 
     #[must_use]
     pub fn authorize_url(mut self, authorize_url: &str) -> Self {
-        self.config.authorize_url = authorize_url.to_string();
+        self.config.authorize.url = authorize_url.to_string();
         self
     }
 
     #[must_use]
     pub fn token_url(mut self, token_url: &str) -> Self {
-        self.config.token_url = token_url.to_string();
+        self.config.exchange.url = token_url.to_string();
+        self.config.refresh.url = token_url.to_string();
         self
     }
 
@@ -207,25 +252,43 @@ impl ProviderConfigBuilder {
     }
 
     #[must_use]
-    pub fn scopes(mut self, scopes: Vec<&str>) -> Self {
-        self.config.scopes = scopes.into_iter().map(str::to_string).collect();
+    pub fn scopes(mut self, scopes: &[&str]) -> Self {
+        self.config.scopes = scopes.join(" ");
         self
     }
 
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn pkce_required(mut self, required: bool) -> Self {
         self.config.pkce_required = required;
+        if required {
+            self.config
+                .authorize
+                .query
+                .entry("code_challenge".to_string())
+                .or_insert_with(|| {
+                    serde_json::Value::String("{{session.code_challenge}}".to_string())
+                });
+            self.config
+                .authorize
+                .query
+                .entry("code_challenge_method".to_string())
+                .or_insert_with(|| serde_json::Value::String("S256".to_string()));
+        } else {
+            self.config.authorize.query.remove("code_challenge");
+            self.config.authorize.query.remove("code_challenge_method");
+        }
         self
     }
 
     #[must_use]
-    pub fn extra_param(mut self, key: &str, value: &str) -> Self {
-        self.config.extra_params.insert(
-            key.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
+    pub fn authorize_query_value(mut self, key: &str, value: serde_json::Value) -> Self {
+        self.config.authorize.query.insert(key.to_string(), value);
         self
+    }
+
+    #[must_use]
+    pub fn authorize_query_string(self, key: &str, value: &str) -> Self {
+        self.authorize_query_value(key, serde_json::Value::String(value.to_string()))
     }
 
     #[must_use]
@@ -246,17 +309,17 @@ mod tests {
             .authorize_url("https://example.com/auth")
             .token_url("https://example.com/token")
             .redirect_uri("https://example.com/callback")
-            .scopes(vec!["read", "write"])
+            .scopes(&["read", "write"])
             .pkce_required(true)
-            .extra_param("custom", "value")
+            .authorize_query_string("custom", "value")
             .build();
 
         assert_eq!(config.provider_name, "test");
         assert_eq!(config.client_id, "test_client_id");
         assert_eq!(config.client_secret, Some("test_secret".to_string()));
-        assert_eq!(config.scopes, vec!["read", "write"]);
+        assert_eq!(config.scopes, "read write");
         assert_eq!(
-            config.extra_params.get("custom"),
+            config.authorize.query.get("custom"),
             Some(&serde_json::Value::String("value".to_string()))
         );
     }
