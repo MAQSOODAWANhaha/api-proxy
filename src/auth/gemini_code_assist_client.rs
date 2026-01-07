@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 /// Gemini Code Assist API基础URL
 const GEMINI_CODE_ASSIST_BASE_URL: &str = "https://cloudcode-pa.googleapis.com";
 
+const GEMINI_CODE_ASSIST_PROVIDER: &str = "GeminiCodeAssist";
+
 /// API请求超时时间（秒）
 const GEMINI_REQUEST_TIMEOUT_SECONDS: u64 = 30;
 
@@ -27,12 +29,12 @@ const RETRY_MAX_DELAY_MS: u64 = 10000;
 
 /// 客户端元数据结构
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-#[allow(non_snake_case)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientMetadata {
-    pub ideType: String,
+    pub ide_type: String,
     pub platform: String,
-    pub pluginType: String,
-    pub duetProject: Option<String>,
+    pub plugin_type: String,
+    pub duet_project: Option<String>,
 }
 
 impl ClientMetadata {
@@ -40,10 +42,10 @@ impl ClientMetadata {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ideType: "IDE_UNSPECIFIED".to_string(),
+            ide_type: "IDE_UNSPECIFIED".to_string(),
             platform: "PLATFORM_UNSPECIFIED".to_string(),
-            pluginType: "GEMINI".to_string(),
-            duetProject: None,
+            plugin_type: "GEMINI".to_string(),
+            duet_project: None,
         }
     }
 
@@ -51,10 +53,10 @@ impl ClientMetadata {
     #[must_use]
     pub fn with_project(project_id: &str) -> Self {
         Self {
-            ideType: "IDE_UNSPECIFIED".to_string(),
+            ide_type: "IDE_UNSPECIFIED".to_string(),
             platform: "PLATFORM_UNSPECIFIED".to_string(),
-            pluginType: "GEMINI".to_string(),
-            duetProject: Some(project_id.to_string()),
+            plugin_type: "GEMINI".to_string(),
+            duet_project: Some(project_id.to_string()),
         }
     }
 }
@@ -98,23 +100,22 @@ impl RetryConfig {
 
 /// Code Assist API响应结构
 #[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
+#[serde(rename_all = "camelCase")]
 pub struct LoadCodeAssistResponse {
     #[serde(default)]
-    pub cloudaicompanionProject: Option<String>,
-    pub currentTier: Option<CurrentTier>,
+    pub cloudaicompanion_project: Option<String>,
+    pub current_tier: Option<CurrentTier>,
 }
 
 /// 当前层级信息（简化版）
 #[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
+#[serde(rename_all = "camelCase")]
 pub struct CurrentTier {
     pub id: String,
 }
 
 /// Cloud AI Companion项目信息（onboardUser响应使用）
 #[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
 pub struct CloudAiCompanionProject {
     pub id: String,
     pub name: String,
@@ -123,9 +124,9 @@ pub struct CloudAiCompanionProject {
 
 /// onboardUser响应结构
 #[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
+#[serde(rename_all = "camelCase")]
 pub struct OnboardUserResponse {
-    pub cloudaicompanionProject: CloudAiCompanionProject,
+    pub cloudaicompanion_project: CloudAiCompanionProject,
     pub status: String,
 }
 
@@ -153,10 +154,22 @@ impl GeminiCodeAssistClient {
     /// 使用完整配置创建客户端
     #[must_use]
     pub fn with_config(base_url: &str, retry_config: RetryConfig) -> Self {
-        let client = Client::builder()
+        let client = match Client::builder()
             .timeout(Duration::from_secs(GEMINI_REQUEST_TIMEOUT_SECONDS))
             .build()
-            .unwrap_or_default();
+        {
+            Ok(client) => client,
+            Err(err) => {
+                lerror!(
+                    "system",
+                    LogStage::Internal,
+                    LogComponent::GeminiClient,
+                    "http_client_build_fail",
+                    &format!("构建Gemini HTTP客户端失败，将回退到默认客户端: {err}")
+                );
+                Client::new()
+            }
+        };
 
         Self {
             http_client: client,
@@ -165,16 +178,38 @@ impl GeminiCodeAssistClient {
         }
     }
 
+    fn should_retry_error(err: &ProxyError) -> bool {
+        match err {
+            ProxyError::Provider(
+                crate::error::provider::ProviderError::ApiError { status, .. }
+                | crate::error::provider::ProviderError::General {
+                    status: Some(status),
+                    ..
+                },
+            ) => [408_u16, 429, 500, 502, 503, 504].contains(status),
+            ProxyError::Network(
+                crate::error::network::NetworkError::ConnectionTimeout(_)
+                | crate::error::network::NetworkError::ReadTimeout(_)
+                | crate::error::network::NetworkError::WriteTimeout(_),
+            ) => true,
+            _ => false,
+        }
+    }
+
     /// 带重试机制的HTTP请求
-    #[allow(clippy::cognitive_complexity)]
-    async fn execute_with_retry<F, Fut, R>(&self, operation: &str, mut request_fn: F) -> Result<R>
+    async fn execute_with_retry_config<F, Fut, R>(
+        &self,
+        operation: &str,
+        retry_config: &RetryConfig,
+        mut request_fn: F,
+    ) -> Result<R>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<R>>,
     {
         let mut last_error = None;
 
-        for attempt in 1..=self.retry_config.max_attempts {
+        for attempt in 1..=retry_config.max_attempts {
             let start_time = Instant::now();
 
             match request_fn().await {
@@ -200,28 +235,12 @@ impl GeminiCodeAssistClient {
                     );
 
                     // 如果是最后一次尝试，保存错误并返回
-                    if attempt == self.retry_config.max_attempts {
+                    if attempt == retry_config.max_attempts {
                         last_error = Some(e);
                         break;
                     }
 
-                    // 检查是否可重试的错误类型
-                    let should_retry = match &e {
-                        ProxyError::Provider(err) => {
-                            // 检查错误消息中是否包含可重试的状态码
-                            [408, 429, 500, 502, 503, 504]
-                                .iter()
-                                .any(|&code| err.to_string().contains(&code.to_string()))
-                        }
-                        ProxyError::Network(
-                            crate::error::network::NetworkError::ConnectionTimeout(_)
-                            | crate::error::network::NetworkError::ReadTimeout(_)
-                            | crate::error::network::NetworkError::WriteTimeout(_),
-                        ) => true,
-                        _ => false,
-                    };
-
-                    if !should_retry {
+                    if !Self::should_retry_error(&e) {
                         ldebug!(
                             "system",
                             LogStage::ExternalApi,
@@ -233,7 +252,7 @@ impl GeminiCodeAssistClient {
                     }
 
                     // 计算延迟时间
-                    let delay = self.retry_config.calculate_delay(attempt);
+                    let delay = retry_config.calculate_delay(attempt);
                     linfo!(
                         "system",
                         LogStage::ExternalApi,
@@ -253,7 +272,8 @@ impl GeminiCodeAssistClient {
                 Err(ProxyError::Provider(
                     crate::error::provider::ProviderError::General {
                         message: format!("{operation}所有重试尝试都失败了"),
-                        provider: "GeminiCodeAssist".to_string(),
+                        provider: GEMINI_CODE_ASSIST_PROVIDER.to_string(),
+                        status: None,
                     },
                 ))
             },
@@ -261,133 +281,282 @@ impl GeminiCodeAssistClient {
         )
     }
 
-    /// `调用loadCodeAssist` API
-    ///
-    /// # 参数
-    /// * `access_token` - `OAuth访问令牌`
-    /// * `_client_metadata` - 客户端元数据，包含平台和IDE信息（当前未使用）
-    #[allow(clippy::too_many_lines)]
-    pub async fn load_code_assist(
+    /// 带重试机制的HTTP请求（使用客户端默认重试配置）
+    async fn execute_with_retry<F, Fut, R>(&self, operation: &str, request_fn: F) -> Result<R>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<R>>,
+    {
+        self.execute_with_retry_config(operation, &self.retry_config, request_fn)
+            .await
+    }
+
+    fn build_client_metadata(
+        project_id: Option<&str>,
+        client_metadata: Option<&ClientMetadata>,
+    ) -> ClientMetadata {
+        let mut metadata = client_metadata.cloned().unwrap_or_else(ClientMetadata::new);
+        if let Some(pid) = project_id {
+            metadata.duet_project = Some(pid.to_string());
+        }
+        metadata
+    }
+
+    async fn post_json(
+        &self,
+        url: &str,
+        access_token: &str,
+        request_body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        Ok(self
+            .http_client
+            .post(url)
+            .header("Authorization", format!("Bearer {access_token}"))
+            .header("Content-Type", "application/json")
+            .json(request_body)
+            .send()
+            .await?)
+    }
+
+    async fn load_code_assist_once(
         &self,
         access_token: &str,
         project_id: Option<&str>,
-        _client_metadata: Option<&ClientMetadata>,
+        client_metadata: Option<&ClientMetadata>,
     ) -> Result<LoadCodeAssistResponse> {
-        let operation_name = "loadCodeAssist";
+        let mut request_body = serde_json::Map::new();
+        let metadata = Self::build_client_metadata(project_id, client_metadata);
+        request_body.insert(
+            "metadata".to_string(),
+            serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
+        );
 
-        self.execute_with_retry(operation_name, || async {
-            let mut request_body = serde_json::Map::new();
-            let metadata =
-                project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
+        // 如果有project_id，添加到请求中
+        if let Some(pid) = project_id {
             request_body.insert(
-                "metadata".to_string(),
-                serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
+                "cloudaicompanionProject".to_string(),
+                serde_json::Value::String(pid.to_string()),
             );
-
-            // 如果有project_id，添加到请求中
-            if let Some(pid) = project_id {
-                request_body.insert(
-                    "cloudaicompanionProject".to_string(),
-                    serde_json::Value::String(pid.to_string()),
-                );
-                ldebug!(
-                    "system",
-                    LogStage::ExternalApi,
-                    LogComponent::GeminiClient,
-                    "load_code_assist_with_project",
-                    &format!("调用loadCodeAssist with project_id: {pid}")
-                );
-            } else {
-                ldebug!(
-                    "system",
-                    LogStage::ExternalApi,
-                    LogComponent::GeminiClient,
-                    "load_code_assist_no_project",
-                    "调用loadCodeAssist without project_id"
-                );
-            }
-
-            let url = format!("{}/v1internal:loadCodeAssist", self.base_url);
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "load_code_assist_request",
-                &format!("发送loadCodeAssist请求到: {url}")
-            );
-
-            // 打印请求参数
-            let request_json = serde_json::to_string(&request_body)
-                .context("Failed to serialize loadCodeAssist request body")?;
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "load_code_assist_params",
-                &format!("loadCodeAssist请求参数: {request_json}")
-            );
-
-            let response = self
-                .http_client
-                .post(&url)
-                .header("Authorization", format!("Bearer {access_token}"))
-                .header("Content-Type", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-
             ldebug!(
                 "system",
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
-                "load_code_assist_status",
-                &format!("loadCodeAssist响应状态: {}", response.status())
+                "load_code_assist_with_project",
+                &format!("调用loadCodeAssist with project_id: {pid}")
             );
-
-            let status = response.status();
-            if !status.is_success() {
-                let error_text = response.text().await.unwrap_or_default();
-                lerror!(
-                    "system",
-                    LogStage::ExternalApi,
-                    LogComponent::GeminiClient,
-                    "load_code_assist_fail",
-                    &format!("loadCodeAssist API失败: status={status}, response={error_text}")
-                );
-                return Err(ProxyError::Provider(
-                    crate::error::provider::ProviderError::General {
-                        message: format!("loadCodeAssist API failed: {status} - {error_text}"),
-                        provider: "GeminiCodeAssist".to_string(),
-                    },
-                ));
-            }
-
-            let response_body = response.text().await?;
-            linfo!(
+        } else {
+            ldebug!(
                 "system",
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
-                "load_code_assist_response",
-                &format!("loadCodeAssist响应体: {response_body}")
+                "load_code_assist_no_project",
+                "调用loadCodeAssist without project_id"
             );
+        }
 
-            let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body)
-                .context("Failed to parse loadCodeAssist response")?;
+        let url = format!("{}/v1internal:loadCodeAssist", self.base_url);
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "load_code_assist_request",
+            &format!("发送loadCodeAssist请求到: {url}")
+        );
 
-            let tier_id = Self::get_tier_id_from_load_response(&response_data);
-            linfo!(
+        // 打印请求参数
+        let request_json = serde_json::to_string(&request_body)
+            .context("Failed to serialize loadCodeAssist request body")?;
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "load_code_assist_params",
+            &format!("loadCodeAssist请求参数: {request_json}")
+        );
+
+        let response = self
+            .post_json(&url, access_token, &serde_json::Value::Object(request_body))
+            .await?;
+
+        ldebug!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "load_code_assist_status",
+            &format!("loadCodeAssist响应状态: {}", response.status())
+        );
+
+        let status = response.status();
+        let response_body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            lerror!(
                 "system",
                 LogStage::ExternalApi,
                 LogComponent::GeminiClient,
-                "load_code_assist_ok",
-                &format!(
-                    "loadCodeAssist调用成功: has_project={}, tier_id={}",
-                    response_data.cloudaicompanionProject.is_some(),
-                    tier_id
-                )
+                "load_code_assist_fail",
+                &format!("loadCodeAssist API失败: status={status}, response={response_body}")
             );
+            return Err(ProxyError::Provider(
+                crate::error::provider::ProviderError::ApiError {
+                    provider: GEMINI_CODE_ASSIST_PROVIDER.to_string(),
+                    status: status.as_u16(),
+                    message: response_body,
+                },
+            ));
+        }
 
-            Ok(response_data)
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "load_code_assist_response",
+            &format!("loadCodeAssist响应体: {response_body}")
+        );
+
+        let response_data: LoadCodeAssistResponse = serde_json::from_str(&response_body)
+            .context("Failed to parse loadCodeAssist response")?;
+
+        let tier_id = Self::get_tier_id_from_load_response(&response_data);
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "load_code_assist_ok",
+            &format!(
+                "loadCodeAssist调用成功: has_project={}, tier_id={}",
+                response_data.cloudaicompanion_project.is_some(),
+                tier_id
+            )
+        );
+
+        Ok(response_data)
+    }
+
+    async fn onboard_user_once(
+        &self,
+        access_token: &str,
+        project_id: Option<&str>,
+        tier_id: Option<&str>,
+        client_metadata: Option<&ClientMetadata>,
+    ) -> Result<OnboardUserResponse> {
+        let mut request_body = serde_json::Map::new();
+
+        // 添加tierId（必需参数）
+        request_body.insert(
+            "tierId".to_string(),
+            serde_json::Value::String(tier_id.unwrap_or("FREE").to_string()),
+        );
+
+        // 添加客户端元数据
+        let metadata = Self::build_client_metadata(project_id, client_metadata);
+        request_body.insert(
+            "metadata".to_string(),
+            serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
+        );
+
+        ldebug!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_call",
+            &format!("调用onboardUser with tier_id: {tier_id:?}, project_id: {project_id:?}")
+        );
+
+        let url = format!("{}/v1internal:onboardUser", self.base_url);
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_request",
+            &format!("发送onboardUser请求到: {url}")
+        );
+
+        // 打印请求参数
+        let request_json = serde_json::to_string(&request_body)
+            .context("Failed to serialize onboardUser request body")?;
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_params",
+            &format!("onboardUser请求参数: {request_json}")
+        );
+
+        let response = self
+            .post_json(&url, access_token, &serde_json::Value::Object(request_body))
+            .await?;
+
+        ldebug!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_status",
+            &format!("onboardUser响应状态: {}", response.status())
+        );
+
+        let status = response.status();
+        let response_body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            lerror!(
+                "system",
+                LogStage::ExternalApi,
+                LogComponent::GeminiClient,
+                "onboard_user_fail",
+                &format!("onboardUser API失败: status={status}, response={response_body}")
+            );
+            return Err(ProxyError::Provider(
+                crate::error::provider::ProviderError::ApiError {
+                    provider: GEMINI_CODE_ASSIST_PROVIDER.to_string(),
+                    status: status.as_u16(),
+                    message: response_body,
+                },
+            ));
+        }
+
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_response",
+            &format!("onboardUser响应体: {response_body}")
+        );
+
+        let response_data: OnboardUserResponse =
+            serde_json::from_str(&response_body).context("Failed to parse onboardUser response")?;
+
+        linfo!(
+            "system",
+            LogStage::ExternalApi,
+            LogComponent::GeminiClient,
+            "onboard_user_ok",
+            &format!(
+                "onboardUser调用成功: status={}, project_id={}, display_name={}",
+                response_data.status,
+                response_data.cloudaicompanion_project.id,
+                response_data.cloudaicompanion_project.display_name
+            )
+        );
+
+        Ok(response_data)
+    }
+
+    /// `调用loadCodeAssist` API
+    ///
+    /// # 参数
+    /// * `access_token` - `OAuth访问令牌`
+    /// * `project_id` - 可选的项目ID（如果存在，会同时写入 metadata.duetProject）
+    /// * `client_metadata` - 客户端元数据，包含平台和IDE信息（可选）
+    pub async fn load_code_assist(
+        &self,
+        access_token: &str,
+        project_id: Option<&str>,
+        client_metadata: Option<&ClientMetadata>,
+    ) -> Result<LoadCodeAssistResponse> {
+        let operation_name = "loadCodeAssist";
+
+        self.execute_with_retry(operation_name, || async {
+            self.load_code_assist_once(access_token, project_id, client_metadata)
+                .await
         })
         .await
     }
@@ -398,131 +567,19 @@ impl GeminiCodeAssistClient {
     /// * `access_token` - `OAuth访问令牌`
     /// * `project_id` - 可选的项目ID，免费层通常不携带
     /// * `tier_id` - tier ID，从loadCodeAssist响应中获取
-    /// * `_client_metadata` - 客户端元数据，包含平台和IDE信息（当前未使用）
-    #[allow(clippy::too_many_lines)]
+    /// * `client_metadata` - 客户端元数据，包含平台和IDE信息（可选）
     pub async fn onboard_user(
         &self,
         access_token: &str,
         project_id: Option<&str>,
         tier_id: Option<&str>,
-        _client_metadata: Option<&ClientMetadata>,
+        client_metadata: Option<&ClientMetadata>,
     ) -> Result<OnboardUserResponse> {
         let operation_name = "onboardUser";
 
         self.execute_with_retry(operation_name, || async {
-            let mut request_body = serde_json::Map::new();
-
-            // 添加tierId（必需参数）
-            if let Some(tid) = tier_id {
-                request_body.insert(
-                    "tierId".to_string(),
-                    serde_json::Value::String(tid.to_string()),
-                );
-            } else {
-                // 如果没有tierId，使用默认值
-                request_body.insert(
-                    "tierId".to_string(),
-                    serde_json::Value::String("FREE".to_string()),
-                );
-            }
-
-            // 添加客户端元数据
-            let metadata =
-                project_id.map_or_else(ClientMetadata::new, ClientMetadata::with_project);
-            request_body.insert(
-                "metadata".to_string(),
-                serde_json::to_value(metadata).context("Failed to serialize client metadata")?,
-            );
-
-            ldebug!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_call",
-                &format!("调用onboardUser with tier_id: {tier_id:?}, project_id: {project_id:?}")
-            );
-
-            let url = format!("{}/v1internal:onboardUser", self.base_url);
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_request",
-                &format!("发送onboardUser请求到: {url}")
-            );
-
-            // 打印请求参数
-            let request_json = serde_json::to_string(&request_body)
-                .context("Failed to serialize onboardUser request body")?;
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_params",
-                &format!("onboardUser请求参数: {request_json}")
-            );
-
-            let response = self
-                .http_client
-                .post(&url)
-                .header("Authorization", format!("Bearer {access_token}"))
-                .header("Content-Type", "application/json")
-                .json(&request_body)
-                .send()
-                .await?;
-
-            ldebug!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_status",
-                &format!("onboardUser响应状态: {}", response.status())
-            );
-
-            let status = response.status();
-            if !status.is_success() {
-                let error_text = response.text().await.unwrap_or_default();
-                lerror!(
-                    "system",
-                    LogStage::ExternalApi,
-                    LogComponent::GeminiClient,
-                    "onboard_user_fail",
-                    &format!("onboardUser API失败: status={status}, response={error_text}")
-                );
-                return Err(ProxyError::Provider(
-                    crate::error::provider::ProviderError::General {
-                        message: format!("onboardUser API failed: {status} - {error_text}"),
-                        provider: "GeminiCodeAssist".to_string(),
-                    },
-                ));
-            }
-
-            let response_body = response.text().await?;
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_response",
-                &format!("onboardUser响应体: {response_body}")
-            );
-
-            let response_data: OnboardUserResponse = serde_json::from_str(&response_body)
-                .context("Failed to parse onboardUser response")?;
-
-            linfo!(
-                "system",
-                LogStage::ExternalApi,
-                LogComponent::GeminiClient,
-                "onboard_user_ok",
-                &format!(
-                    "onboardUser调用成功: status={}, project_id={}, display_name={}",
-                    response_data.status,
-                    response_data.cloudaicompanionProject.id,
-                    response_data.cloudaicompanionProject.display_name
-                )
-            );
-
-            Ok(response_data)
+            self.onboard_user_once(access_token, project_id, tier_id, client_metadata)
+                .await
         })
         .await
     }
@@ -530,7 +587,6 @@ impl GeminiCodeAssistClient {
     /// 带重试机制的onboardUser调用
     ///
     /// 最多重试5次，使用指数退避算法
-    #[allow(clippy::cognitive_complexity)]
     pub async fn onboard_user_with_retry(
         &self,
         access_token: &str,
@@ -538,73 +594,12 @@ impl GeminiCodeAssistClient {
         tier_id: Option<&str>,
         client_metadata: Option<&ClientMetadata>,
     ) -> Result<OnboardUserResponse> {
-        const MAX_RETRIES: usize = 5;
-        const BASE_DELAY_MS: u64 = 1000; // 1秒基础延迟
-
-        let mut retry_count = 0;
-        let mut last_error = None;
-
-        while retry_count < MAX_RETRIES {
-            match self
-                .onboard_user(access_token, project_id, tier_id, client_metadata)
+        let retry_config = RetryConfig::new(5, 1000, RETRY_MAX_DELAY_MS);
+        self.execute_with_retry_config("onboardUser", &retry_config, || async {
+            self.onboard_user_once(access_token, project_id, tier_id, client_metadata)
                 .await
-            {
-                Ok(response) => {
-                    if retry_count > 0 {
-                        linfo!(
-                            "system",
-                            LogStage::ExternalApi,
-                            LogComponent::GeminiClient,
-                            "onboard_user_retry_ok",
-                            &format!("onboardUser在第{retry_count}次重试后成功")
-                        );
-                    }
-                    return Ok(response);
-                }
-                Err(e) => {
-                    last_error = Some(format!("{e}"));
-                    retry_count += 1;
-
-                    if retry_count < MAX_RETRIES {
-                        // 指数退避计算延迟时间
-                        let delay_ms =
-                            BASE_DELAY_MS * 2u64.pow(u32::try_from(retry_count).unwrap_or(0) - 1);
-                        lwarn!(
-                            "system",
-                            LogStage::ExternalApi,
-                            LogComponent::GeminiClient,
-                            "onboard_user_retry_fail",
-                            &format!(
-                                "onboardUser第{}次调用失败，{}ms后进行第{}次重试. 错误: {}",
-                                retry_count,
-                                delay_ms,
-                                retry_count + 1,
-                                e
-                            )
-                        );
-
-                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-                    } else {
-                        lerror!(
-                            "system",
-                            LogStage::ExternalApi,
-                            LogComponent::GeminiClient,
-                            "onboard_user_retry_giveup",
-                            &format!("onboardUser重试{MAX_RETRIES}次后仍然失败，最终错误: {e}")
-                        );
-                    }
-                }
-            }
-        }
-
-        // 所有重试都失败了，返回最后一个错误
-        Err(ProxyError::Provider(
-            crate::error::provider::ProviderError::General {
-                message: last_error
-                    .unwrap_or_else(|| "onboardUser重试失败，但没有具体的错误信息".to_string()),
-                provider: "GeminiCodeAssist".to_string(),
-            },
-        ))
+        })
+        .await
     }
 
     /// `自动获取project_id（带重试机制）`
@@ -647,6 +642,18 @@ impl GeminiCodeAssistClient {
             }
         };
 
+        // 如果已有project，直接返回
+        if let Some(project_id) = load_response.cloudaicompanion_project.clone() {
+            linfo!(
+                "system",
+                LogStage::ExternalApi,
+                LogComponent::GeminiClient,
+                "project_id_from_load",
+                &format!("通过loadCodeAssist获取到project_id: {project_id}")
+            );
+            return Ok(Some(project_id));
+        }
+
         // Step 2: 如果没有cloudaicompanionProject，调用onboardUser初始化项目（带重试）
         let tier_id = Self::get_tier_id_from_load_response(&load_response);
         ldebug!(
@@ -674,7 +681,7 @@ impl GeminiCodeAssistClient {
             }
         };
 
-        let project_id = Some(onboard_response.cloudaicompanionProject.id);
+        let project_id = Some(onboard_response.cloudaicompanion_project.id);
         linfo!(
             "system",
             LogStage::ExternalApi,
@@ -682,7 +689,7 @@ impl GeminiCodeAssistClient {
             "project_id_from_onboard",
             &format!(
                 "通过onboardUser重试获取到project_id: {:?} (display_name: {})",
-                project_id, onboard_response.cloudaicompanionProject.display_name
+                project_id, onboard_response.cloudaicompanion_project.display_name
             )
         );
 
@@ -694,7 +701,7 @@ impl GeminiCodeAssistClient {
     /// `参考JavaScript实现中的getOnboardTier逻辑`
     fn get_tier_id_from_load_response(load_response: &LoadCodeAssistResponse) -> &str {
         // 使用currentTier的id
-        if let Some(current_tier) = &load_response.currentTier {
+        if let Some(current_tier) = &load_response.current_tier {
             return &current_tier.id;
         }
 
@@ -742,7 +749,7 @@ impl GeminiCodeAssistClient {
         };
 
         // 检查是否已有project
-        if let Some(project_id) = load_response.cloudaicompanionProject {
+        if let Some(project_id) = load_response.cloudaicompanion_project {
             linfo!(
                 "system",
                 LogStage::ExternalApi,
@@ -789,7 +796,7 @@ impl GeminiCodeAssistClient {
             }
         };
 
-        let project_id = Some(onboard_response.cloudaicompanionProject.id);
+        let project_id = Some(onboard_response.cloudaicompanion_project.id);
         linfo!(
             "system",
             LogStage::ExternalApi,
@@ -797,7 +804,7 @@ impl GeminiCodeAssistClient {
             "project_id_from_onboard",
             &format!(
                 "通过onboardUser获取到project_id: {project_id:?} (display_name: {})",
-                onboard_response.cloudaicompanionProject.display_name
+                onboard_response.cloudaicompanion_project.display_name
             )
         );
 
@@ -832,19 +839,19 @@ mod tests {
     #[test]
     fn test_client_metadata_new() {
         let metadata = ClientMetadata::new();
-        assert_eq!(metadata.ideType, "IDE_UNSPECIFIED");
+        assert_eq!(metadata.ide_type, "IDE_UNSPECIFIED");
         assert_eq!(metadata.platform, "PLATFORM_UNSPECIFIED");
-        assert_eq!(metadata.pluginType, "GEMINI");
-        assert!(metadata.duetProject.is_none());
+        assert_eq!(metadata.plugin_type, "GEMINI");
+        assert!(metadata.duet_project.is_none());
     }
 
     #[test]
     fn test_client_metadata_with_project() {
         let metadata = ClientMetadata::with_project("test-project");
-        assert_eq!(metadata.ideType, "IDE_UNSPECIFIED");
+        assert_eq!(metadata.ide_type, "IDE_UNSPECIFIED");
         assert_eq!(metadata.platform, "PLATFORM_UNSPECIFIED");
-        assert_eq!(metadata.pluginType, "GEMINI");
-        assert_eq!(metadata.duetProject, Some("test-project".to_string()));
+        assert_eq!(metadata.plugin_type, "GEMINI");
+        assert_eq!(metadata.duet_project, Some("test-project".to_string()));
     }
 
     #[test]
@@ -897,8 +904,8 @@ mod tests {
 
         // 验证固定的平台值
         assert_eq!(metadata.platform, "PLATFORM_UNSPECIFIED");
-        assert_eq!(metadata.ideType, "IDE_UNSPECIFIED");
-        assert_eq!(metadata.pluginType, "GEMINI");
+        assert_eq!(metadata.ide_type, "IDE_UNSPECIFIED");
+        assert_eq!(metadata.plugin_type, "GEMINI");
     }
 
     #[tokio::test]

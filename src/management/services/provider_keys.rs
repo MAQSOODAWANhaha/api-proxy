@@ -1829,7 +1829,7 @@ async fn process_provided_project_id(
         .await
     {
         Ok(resp) => {
-            if let Some(server_pid) = resp.cloudaicompanionProject {
+            if let Some(server_pid) = resp.cloudaicompanion_project {
                 context.final_project_id = Some(server_pid);
             } else {
                 linfo!(

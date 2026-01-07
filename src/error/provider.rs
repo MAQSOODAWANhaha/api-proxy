@@ -29,5 +29,9 @@ pub enum ProviderError {
 
     // Generic fallback for dynamic errors
     #[error("Provider '{provider}' error: {message}")]
-    General { provider: String, message: String },
+    General {
+        provider: String,
+        message: String,
+        status: Option<u16>,
+    },
 }

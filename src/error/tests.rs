@@ -44,13 +44,19 @@ fn provider_macro_records_provider_name() {
     let err: crate::error::ProxyError = crate::error::provider::ProviderError::General {
         message: "Rate limited".to_string(),
         provider: "openai".to_string(),
+        status: None,
     }
     .into();
     if let ProxyError::Provider(provider_err) = err {
         match provider_err {
-            crate::error::provider::ProviderError::General { message, provider } => {
+            crate::error::provider::ProviderError::General {
+                message,
+                provider,
+                status,
+            } => {
                 assert_eq!(message, "Rate limited");
                 assert_eq!(provider, "openai");
+                assert_eq!(status, None);
             }
             _ => panic!("expected General provider error"),
         }
@@ -63,6 +69,7 @@ fn provider_macro_records_provider_name() {
         crate::error::provider::ProviderError::General {
             message: "Rate limited".to_string(),
             provider: "openai".to_string(),
+            status: None,
         }
         .into(); // Source is lost in this simple construction, or needs to be added differently if we want to keep it.
     // But wait, ProviderError::General doesn't have source field in the enum definition I made?
