@@ -1,8 +1,7 @@
 use crate::auth::types::{OAuthProviderConfig, OAuthTokenConfig};
 use crate::error::Result;
 use crate::provider::template::{
-    OAuthTemplateRequest, build_oauth_template_context, lookup_oauth_template, render_json_value,
-    render_template,
+    OAuthTemplateRequest, build_oauth_template_context, render_json_value, render_template,
 };
 use entity::oauth_client_sessions;
 use std::collections::HashMap;
@@ -43,15 +42,12 @@ fn build_token_request(
 
     let mut headers = HashMap::new();
     for (k, v) in &flow.headers {
-        headers.insert(
-            k.clone(),
-            render_template(v, |key| lookup_oauth_template(&context, key))?,
-        );
+        headers.insert(k.clone(), render_template(v, &context)?);
     }
 
     let mut form = HashMap::new();
     for (k, v) in &flow.body {
-        let rendered = render_json_value(v, |key| lookup_oauth_template(&context, key))?;
+        let rendered = render_json_value(v, &context)?;
         if let Some(rendered) = rendered {
             form.insert(k.clone(), rendered);
         }

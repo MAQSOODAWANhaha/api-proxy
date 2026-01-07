@@ -6,9 +6,7 @@ use entity::oauth_client_sessions;
 use std::collections::HashMap;
 use url::Url;
 
-use super::template::{
-    OAuthTemplateRequest, build_oauth_template_context, lookup_oauth_template, render_json_value,
-};
+use super::template::{OAuthTemplateRequest, build_oauth_template_context, render_json_value};
 
 /// 根据会话与配置构建授权 URL。
 ///
@@ -44,7 +42,7 @@ pub fn build_authorize_url(
     let mut params: HashMap<String, String> = HashMap::new();
 
     for (key, value) in &config.authorize.query {
-        if let Some(rendered) = render_json_value(value, |k| lookup_oauth_template(&context, k))? {
+        if let Some(rendered) = render_json_value(value, &context)? {
             params.insert(key.clone(), rendered);
         }
     }

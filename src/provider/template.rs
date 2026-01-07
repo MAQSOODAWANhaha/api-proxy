@@ -2,74 +2,76 @@ use crate::auth::types::OAuthProviderConfig;
 use crate::error::Result;
 use crate::error::conversion::ConversionError;
 use entity::oauth_client_sessions;
+use minijinja::{AutoEscape, Environment, UndefinedBehavior};
 use serde_json::Value;
+use std::sync::OnceLock;
 
-const ALLOWED_SESSION_KEYS: &[&str] = &[
-    "state",
-    "code_verifier",
-    "code_challenge",
-    "refresh_token",
-    "session_id",
-];
-
-const ALLOWED_REQUEST_KEYS: &[&str] = &["authorization_code"];
-
-/// 简易模板渲染器：将 `{{var}}` 替换为运行时值。
+/// 模板渲染器（基于 minijinja）。
 ///
 /// 说明：
-/// - 仅支持字符串内的占位符替换，不支持表达式/函数。
-/// - 未知变量会返回错误，避免静默生成错误请求。
-pub fn render_template<F>(input: &str, mut lookup: F) -> Result<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    if !input.contains("{{") {
+/// - 语法：Jinja2 风格（兼容 `{{client_id}}` / `{{session.state}}` 这类占位符）
+/// - 未定义变量：严格报错（避免静默生成错误请求）
+/// - 自动转义：关闭（OAuth 参数通常是 URL/form 参数，不做 HTML 转义）
+pub fn render_template(input: &str, context: &Value) -> Result<String> {
+    if !input.contains("{{") && !input.contains("{%") && !input.contains("{#") {
         return Ok(input.to_string());
     }
 
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
+    template_env()
+        .render_str(input, context)
+        .map_err(|e| ConversionError::message(format!("模板渲染失败: {e}")).into())
+}
 
-    while let Some(start) = rest.find("{{") {
-        let (prefix, after_start) = rest.split_at(start);
-        out.push_str(prefix);
-
-        let after_start = &after_start[2..];
-        let Some(end) = after_start.find("}}") else {
-            return Err(ConversionError::message("模板占位符缺少结束标记 '}}'").into());
-        };
-
-        let (raw_key, after_end) = after_start.split_at(end);
-        let key = raw_key.trim();
-        let Some(value) = lookup(key) else {
-            return Err(ConversionError::message(format!("未知模板变量: {key}")).into());
-        };
-        out.push_str(&value);
-        rest = &after_end[2..];
-    }
-
-    out.push_str(rest);
-    Ok(out)
+fn template_env() -> &'static Environment<'static> {
+    static ENV: OnceLock<Environment<'static>> = OnceLock::new();
+    ENV.get_or_init(|| {
+        let mut env = Environment::new();
+        env.set_undefined_behavior(UndefinedBehavior::Strict);
+        env.set_auto_escape_callback(|_| AutoEscape::None);
+        env
+    })
 }
 
 /// 将 JSON 值渲染为字符串（用于 query/body）。
 ///
 /// - `null` 返回 `Ok(None)`（表示跳过该参数）
 /// - `string` 会进行模板替换
-/// - `bool/number/object/array` 会序列化为字符串（不做模板替换）
-pub fn render_json_value<F>(value: &Value, lookup: F) -> Result<Option<String>>
-where
-    F: FnMut(&str) -> Option<String>,
-{
+/// - `bool/number` 直接转字符串
+/// - `object/array` 会递归渲染内部字符串，然后序列化为字符串
+pub fn render_json_value(value: &Value, context: &Value) -> Result<Option<String>> {
     match value {
         Value::Null => Ok(None),
-        Value::String(s) => Ok(Some(render_template(s, lookup)?)),
+        Value::String(s) => Ok(Some(render_template(s, context)?)),
         Value::Bool(b) => Ok(Some(b.to_string())),
         Value::Number(n) => Ok(Some(n.to_string())),
         Value::Array(_) | Value::Object(_) => {
-            Ok(Some(serde_json::to_string(value).map_err(|e| {
+            let rendered = render_json_deep(value, context)?;
+            Ok(Some(serde_json::to_string(&rendered).map_err(|e| {
                 ConversionError::message(format!("序列化 JSON 参数失败: {e}"))
             })?))
+        }
+    }
+}
+
+fn render_json_deep(value: &Value, context: &Value) -> Result<Value> {
+    match value {
+        Value::Null => Ok(Value::Null),
+        Value::Bool(b) => Ok(Value::Bool(*b)),
+        Value::Number(n) => Ok(Value::Number(n.clone())),
+        Value::String(s) => Ok(Value::String(render_template(s, context)?)),
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(render_json_deep(item, context)?);
+            }
+            Ok(Value::Array(out))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                out.insert(k.clone(), render_json_deep(v, context)?);
+            }
+            Ok(Value::Object(out))
         }
     }
 }
@@ -116,7 +118,7 @@ pub fn build_oauth_template_context(
     }
 
     let mut session_obj: serde_json::Map<String, Value> = serde_json::Map::new();
-    // 仅添加白名单字段
+    // 仅注入白名单字段：`session.*` 与数据库表字段绑定，避免配置方意外获得更多会话字段。
     session_obj.insert("state".to_string(), Value::String(session.state.clone()));
     session_obj.insert(
         "code_verifier".to_string(),
@@ -149,55 +151,4 @@ pub fn build_oauth_template_context(
     root.insert("request".to_string(), Value::Object(request_obj));
 
     Value::Object(root)
-}
-
-/// 从上下文中解析模板变量（支持 `a.b` 点路径）。
-///
-/// - `session.*`/`request.*` 会进行白名单校验
-/// - 解析到 `null` 视为不可用（返回 `None`）
-pub fn lookup_oauth_template(context: &Value, key: &str) -> Option<String> {
-    let trimmed = key.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    // `session.*`/`request.*` 必须白名单校验；其他字段完全由数据库配置驱动，不做额外限制。
-    if trimmed == "session" || trimmed == "request" {
-        return None;
-    }
-    if let Some(rest) = trimmed.strip_prefix("session.") {
-        // 仅允许 `session.<key>`（不允许更深层路径）
-        if rest.contains('.') || !ALLOWED_SESSION_KEYS.contains(&rest) {
-            return None;
-        }
-    }
-    if let Some(rest) = trimmed.strip_prefix("request.")
-        && (rest.contains('.') || !ALLOWED_REQUEST_KEYS.contains(&rest))
-    {
-        return None;
-    }
-
-    let resolved = resolve_dot_path(context, trimmed)?;
-    json_value_to_string(resolved)
-}
-
-fn resolve_dot_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut cur = root;
-    for seg in path.split('.') {
-        let Value::Object(map) = cur else {
-            return None;
-        };
-        cur = map.get(seg)?;
-    }
-    Some(cur)
-}
-
-fn json_value_to_string(value: &Value) -> Option<String> {
-    match value {
-        Value::Null => None,
-        Value::String(s) => Some(s.clone()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).ok(),
-    }
 }
