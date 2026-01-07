@@ -1,8 +1,6 @@
 use crate::auth::types::{OAuthProviderConfig, OAuthTokenConfig};
 use crate::error::Result;
-use crate::provider::template::{
-    OAuthTemplateRequest, build_oauth_template_context, render_json_value, render_template,
-};
+use crate::provider::template::{build_oauth_template_context, render_json_value, render_template};
 use entity::oauth_client_sessions;
 use std::collections::HashMap;
 
@@ -37,8 +35,7 @@ fn build_token_request(
     session: &oauth_client_sessions::Model,
     authorization_code: Option<&str>,
 ) -> Result<TokenRequestPayload> {
-    let context =
-        build_oauth_template_context(config, session, OAuthTemplateRequest { authorization_code });
+    let context = build_oauth_template_context(config, session, authorization_code);
 
     let mut headers = HashMap::new();
     for (k, v) in &flow.headers {

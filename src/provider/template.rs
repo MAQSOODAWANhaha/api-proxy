@@ -76,11 +76,6 @@ fn render_json_deep(value: &Value, context: &Value) -> Result<Value> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct OAuthTemplateRequest<'a> {
-    pub authorization_code: Option<&'a str>,
-}
-
 /// 构建 OAuth 模板上下文（仅暴露白名单字段）。
 ///
 /// - `client_*`/`redirect_uri`/`scopes`：来自 provider 配置（数据库）
@@ -89,33 +84,26 @@ pub struct OAuthTemplateRequest<'a> {
 pub fn build_oauth_template_context(
     config: &OAuthProviderConfig,
     session: &oauth_client_sessions::Model,
-    request: OAuthTemplateRequest<'_>,
+    authorization_code: Option<&str>,
 ) -> Value {
-    let mut root: serde_json::Map<String, Value> = serde_json::Map::new();
-    root.insert(
-        "client_id".to_string(),
-        Value::String(config.client_id.clone()),
-    );
-    if let Some(secret) = &config.client_secret {
-        root.insert("client_secret".to_string(), Value::String(secret.clone()));
-    }
-    root.insert(
-        "redirect_uri".to_string(),
-        Value::String(config.redirect_uri.clone()),
-    );
-    root.insert("scopes".to_string(), Value::String(config.scopes.clone()));
-    root.insert(
-        "pkce_required".to_string(),
-        Value::Bool(config.pkce_required),
-    );
+    // 直接将数据库配置反序列化后的结构作为模板上下文根对象，避免代码侧硬编码 `client_id` 等字段名。
+    // 注意：会覆盖/移除保留命名空间 `session`/`request`，再由下方按白名单注入运行时字段。
+    let mut root: serde_json::Map<String, Value> = serde_json::to_value(config)
+        .map_err(|e| ConversionError::message(format!("序列化 OAuthProviderConfig 失败: {e}")))
+        .and_then(|v| match v {
+            Value::Object(map) => Ok(map),
+            _ => Err(ConversionError::message(
+                "OAuthProviderConfig 序列化结果不是 object",
+            )),
+        })
+        .unwrap_or_default();
 
-    // 注入数据库可扩展字段（除保留命名空间外）
-    for (k, v) in &config.extra {
-        if matches!(k.as_str(), "session" | "request") {
-            continue;
-        }
-        root.entry(k.clone()).or_insert_with(|| v.clone());
-    }
+    // 删除 `null` 字段：在 Strict 模式下，缺失变量会报错；而 `null` 会被当成已定义变量，容易掩盖配置问题。
+    strip_null_fields(&mut root);
+
+    // 保护保留命名空间：不允许数据库配置覆盖运行时注入的 `session`/`request`。
+    root.remove("session");
+    root.remove("request");
 
     let mut session_obj: serde_json::Map<String, Value> = serde_json::Map::new();
     // 仅注入白名单字段：`session.*` 与数据库表字段绑定，避免配置方意外获得更多会话字段。
@@ -128,13 +116,12 @@ pub fn build_oauth_template_context(
         "code_challenge".to_string(),
         Value::String(session.code_challenge.clone()),
     );
-    session_obj.insert(
-        "refresh_token".to_string(),
-        session
-            .refresh_token
-            .clone()
-            .map_or(Value::Null, Value::String),
-    );
+    if let Some(refresh_token) = &session.refresh_token {
+        session_obj.insert(
+            "refresh_token".to_string(),
+            Value::String(refresh_token.clone()),
+        );
+    }
     session_obj.insert(
         "session_id".to_string(),
         Value::String(session.session_id.clone()),
@@ -142,13 +129,25 @@ pub fn build_oauth_template_context(
     root.insert("session".to_string(), Value::Object(session_obj));
 
     let mut request_obj: serde_json::Map<String, Value> = serde_json::Map::new();
-    request_obj.insert(
-        "authorization_code".to_string(),
-        request
-            .authorization_code
-            .map_or(Value::Null, |v| Value::String(v.to_string())),
-    );
+    if let Some(code) = authorization_code {
+        request_obj.insert(
+            "authorization_code".to_string(),
+            Value::String(code.to_string()),
+        );
+    }
     root.insert("request".to_string(), Value::Object(request_obj));
 
     Value::Object(root)
+}
+
+fn strip_null_fields(map: &mut serde_json::Map<String, Value>) {
+    let keys_to_remove: Vec<String> = map
+        .iter()
+        .filter(|(_, v)| matches!(v, Value::Null))
+        .map(|(k, _)| k.clone())
+        .collect();
+
+    for k in keys_to_remove {
+        map.remove(&k);
+    }
 }

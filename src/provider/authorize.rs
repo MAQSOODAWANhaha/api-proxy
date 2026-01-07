@@ -6,7 +6,7 @@ use entity::oauth_client_sessions;
 use std::collections::HashMap;
 use url::Url;
 
-use super::template::{OAuthTemplateRequest, build_oauth_template_context, render_json_value};
+use super::template::{build_oauth_template_context, render_json_value};
 
 /// 根据会话与配置构建授权 URL。
 ///
@@ -31,13 +31,7 @@ pub fn build_authorize_url(
     let mut url = Url::parse(&config.authorize.url)
         .with_context(|| format!("Invalid authorize URL: {}", config.authorize.url))?;
 
-    let context = build_oauth_template_context(
-        config,
-        session,
-        OAuthTemplateRequest {
-            authorization_code: None,
-        },
-    );
+    let context = build_oauth_template_context(config, session, None);
 
     let mut params: HashMap<String, String> = HashMap::new();
 
