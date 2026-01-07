@@ -136,6 +136,7 @@ impl ApiKeyProviderConfig {
             authorize,
             exchange,
             refresh,
+            extra: oauth_config.extra,
         }
     }
 }
@@ -216,6 +217,7 @@ impl ProviderConfigBuilder {
                     headers: HashMap::new(),
                     body: HashMap::new(),
                 },
+                extra: HashMap::new(),
             },
         }
     }

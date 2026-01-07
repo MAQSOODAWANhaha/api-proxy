@@ -98,6 +98,11 @@ pub struct OAuthProviderConfig {
     pub authorize: OAuthAuthorizeConfig,
     pub exchange: OAuthTokenConfig,
     pub refresh: OAuthTokenConfig,
+    /// 额外扩展字段（来自数据库 `auth_configs_json` 的未知键）。
+    ///
+    /// 用于在不改代码的前提下扩展 OAuth 参数模板（例如 `audience`、`resource` 等）。
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// JWT 载荷

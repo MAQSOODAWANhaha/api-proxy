@@ -107,6 +107,7 @@ fn create_openai_config() -> OAuthProviderConfig {
             headers: HashMap::new(),
             body: HashMap::new(),
         },
+        extra: HashMap::new(),
     }
 }
 

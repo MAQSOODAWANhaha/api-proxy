@@ -108,6 +108,14 @@ pub fn build_oauth_template_context(
         Value::Bool(config.pkce_required),
     );
 
+    // 注入数据库可扩展字段（除保留命名空间外）
+    for (k, v) in &config.extra {
+        if matches!(k.as_str(), "session" | "request") {
+            continue;
+        }
+        root.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+
     let mut session_obj: serde_json::Map<String, Value> = serde_json::Map::new();
     // 仅添加白名单字段
     session_obj.insert("state".to_string(), Value::String(session.state.clone()));
@@ -160,29 +168,20 @@ pub fn lookup_oauth_template(context: &Value, key: &str) -> Option<String> {
         return None;
     }
 
-    // 校验命名空间白名单
-    if let Some((ns, rest)) = trimmed.split_once('.') {
-        match ns {
-            "session" => {
-                if !ALLOWED_SESSION_KEYS.contains(&rest) {
-                    return None;
-                }
-            }
-            "request" => {
-                if !ALLOWED_REQUEST_KEYS.contains(&rest) {
-                    return None;
-                }
-            }
-            _ => return None,
-        }
-    } else {
-        // 顶层仅允许固定字段
-        if !matches!(
-            trimmed,
-            "client_id" | "client_secret" | "redirect_uri" | "scopes" | "pkce_required"
-        ) {
+    // `session.*`/`request.*` 必须白名单校验；其他字段完全由数据库配置驱动，不做额外限制。
+    if trimmed == "session" || trimmed == "request" {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("session.") {
+        // 仅允许 `session.<key>`（不允许更深层路径）
+        if rest.contains('.') || !ALLOWED_SESSION_KEYS.contains(&rest) {
             return None;
         }
+    }
+    if let Some(rest) = trimmed.strip_prefix("request.")
+        && (rest.contains('.') || !ALLOWED_REQUEST_KEYS.contains(&rest))
+    {
+        return None;
     }
 
     let resolved = resolve_dot_path(context, trimmed)?;

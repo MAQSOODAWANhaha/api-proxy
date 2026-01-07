@@ -4,6 +4,7 @@
 
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// AI 服务提供商类型实体
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
@@ -81,6 +82,12 @@ pub struct OAuthConfig {
     pub authorize: OAuthAuthorizeFlow,
     pub exchange: OAuthTokenFlow,
     pub refresh: OAuthTokenFlow,
+    /// 允许在数据库中扩展任意配置字段（例如 `audience`、`resource` 等）。
+    ///
+    /// 注意：模板渲染中仅对 `session.*`/`request.*` 做白名单校验；其余字段由数据库配置驱动，
+    /// 会按原样进入模板上下文。
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// OAuth配置解析方法

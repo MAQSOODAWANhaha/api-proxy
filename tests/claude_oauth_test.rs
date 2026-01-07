@@ -98,6 +98,7 @@ fn create_claude_config() -> OAuthProviderConfig {
             headers: HashMap::new(),
             body: HashMap::new(),
         },
+        extra: HashMap::new(),
     }
 }
 
