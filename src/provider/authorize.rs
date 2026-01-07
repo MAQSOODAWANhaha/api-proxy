@@ -38,7 +38,6 @@ pub fn build_authorize_url(
         session,
         OAuthTemplateRequest {
             authorization_code: None,
-            refresh_token: None,
         },
     );
 

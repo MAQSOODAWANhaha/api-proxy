@@ -22,21 +22,14 @@ pub fn build_exchange_request(
     session: &oauth_client_sessions::Model,
     authorization_code: &str,
 ) -> Result<TokenRequestPayload> {
-    build_token_request(
-        &config.exchange,
-        config,
-        session,
-        Some(authorization_code),
-        None,
-    )
+    build_token_request(&config.exchange, config, session, Some(authorization_code))
 }
 
 pub fn build_refresh_request(
     config: &OAuthProviderConfig,
     session: &oauth_client_sessions::Model,
-    refresh_token: &str,
 ) -> Result<TokenRequestPayload> {
-    build_token_request(&config.refresh, config, session, None, Some(refresh_token))
+    build_token_request(&config.refresh, config, session, None)
 }
 
 fn build_token_request(
@@ -44,16 +37,9 @@ fn build_token_request(
     config: &OAuthProviderConfig,
     session: &oauth_client_sessions::Model,
     authorization_code: Option<&str>,
-    refresh_token: Option<&str>,
 ) -> Result<TokenRequestPayload> {
-    let context = build_oauth_template_context(
-        config,
-        session,
-        OAuthTemplateRequest {
-            authorization_code,
-            refresh_token,
-        },
-    );
+    let context =
+        build_oauth_template_context(config, session, OAuthTemplateRequest { authorization_code });
 
     let mut headers = HashMap::new();
     for (k, v) in &flow.headers {

@@ -12,7 +12,7 @@ const ALLOWED_SESSION_KEYS: &[&str] = &[
     "session_id",
 ];
 
-const ALLOWED_REQUEST_KEYS: &[&str] = &["authorization_code", "refresh_token"];
+const ALLOWED_REQUEST_KEYS: &[&str] = &["authorization_code"];
 
 /// 简易模板渲染器：将 `{{var}}` 替换为运行时值。
 ///
@@ -77,7 +77,6 @@ where
 #[derive(Debug, Clone, Copy)]
 pub struct OAuthTemplateRequest<'a> {
     pub authorization_code: Option<&'a str>,
-    pub refresh_token: Option<&'a str>,
 }
 
 /// 构建 OAuth 模板上下文（仅暴露白名单字段）。
@@ -145,12 +144,6 @@ pub fn build_oauth_template_context(
         "authorization_code".to_string(),
         request
             .authorization_code
-            .map_or(Value::Null, |v| Value::String(v.to_string())),
-    );
-    request_obj.insert(
-        "refresh_token".to_string(),
-        request
-            .refresh_token
             .map_or(Value::Null, |v| Value::String(v.to_string())),
     );
     root.insert("request".to_string(), Value::Object(request_obj));

@@ -136,25 +136,25 @@ impl ApiKeyOAuthRefreshService {
             ))
         );
 
-        let refresh_token = session.refresh_token.as_ref().ok_or_else(|| {
-            ProxyError::from(OAuthError::TokenExchangeFailed(
-                "Refresh token missing for session".to_string(),
-            ))
-        })?;
+        // refresh_token 已存储在 oauth_client_sessions 表中，因此刷新流程不再接收外部入参
+        // 仍在此处做一次必需性校验，保证错误更早暴露。
+        ensure!(
+            session.refresh_token.is_some(),
+            OAuthError::TokenExchangeFailed("Refresh token missing for session".to_string())
+        );
 
-        self.refresh_with_session(&session, refresh_token).await
+        self.refresh_with_session(&session).await
     }
 
     async fn refresh_with_session(
         &self,
         session: &oauth_client_sessions::Model,
-        refresh_token: &str,
     ) -> Result<ApiKeyOAuthRefreshResult> {
         let config = self
             .provider_manager
             .get_config(&session.provider_name)
             .await?;
-        let payload = build_refresh_request(&config, session, refresh_token)?;
+        let payload = build_refresh_request(&config, session)?;
         let token_response = self.send_token_request(payload).await?;
 
         let oauth_response = Self::process_token_response(token_response, &session.session_id);

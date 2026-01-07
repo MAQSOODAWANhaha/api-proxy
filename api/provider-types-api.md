@@ -99,7 +99,7 @@
                         "headers": {},
                         "body": {
                             "grant_type": "refresh_token",
-                            "refresh_token": "{{request.refresh_token}}",
+                            "refresh_token": "{{session.refresh_token}}",
                             "client_id": "{{client_id}}",
                             "client_secret": "{{client_secret}}"
                         }
