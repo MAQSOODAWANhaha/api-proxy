@@ -2,6 +2,13 @@
 
 **沟通语言**：使用中文进行对话和代码注释。
 
+## 文档索引（按优先级）
+
+- **前端 UI 设计标准**：`docs/design.md`（Tokens、组件标准、反例、交付检查）
+- **web/ 目录专属约束**：`web/AGENTS.md`（对 `docs/design.md` 的强约束摘要）
+- **错误处理最佳实践**：`src/error/`
+- **日志记录最佳实践**：`src/logging.rs`
+
 **代码质量要求**：每次代码修改后，必须按以下顺序完成所有检查：
 
 **Push 规则**：禁止自动 Commit Push；只有在用户明确要求并再次确认后，才允许执行 `git commit` 和 `git push`。
@@ -36,6 +43,10 @@
 ## 前端代码开发规范（web/）
 
 **代码质量要求**：每次前端代码修改后，必须按以下顺序完成所有检查：
+
+**前端设计规范**：所有 UI/样式改动必须遵守 `docs/design.md`；`web/` 目录额外约束见 `web/AGENTS.md`。
+
+如新增/调整“语义样式类”（例如 `table-code` / `table-subtext` / `table-status-*`），需同步更新 `web/src/shadcn.css` 与 `docs/design.md`，保证全站一致性。
 
 1. **Lint 检查**：
 
