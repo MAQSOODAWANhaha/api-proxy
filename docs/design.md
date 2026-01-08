@@ -6,6 +6,14 @@
 
 ---
 
+## 0. 工程约定（实现方式）
+
+本规范面向 `web/` 前端工程，具体工程结构与技术栈约定见 `web/CLAUDE.md`。实现层面遵循以下规则：
+
+- **样式与主题**：以 Tailwind 为主，主题变量与语义样式类集中定义在 `web/src/shadcn.css`（避免散落到页面里）。
+- **组件复用**：基础组件优先使用 `web/src/components/ui/`（shadcn/ui），业务通用组件优先使用 `web/src/components/common/`。
+- **语义优先**：表格内展示 key/url/path、次级信息、状态、标签时，优先使用本规范定义的语义类（如 `table-code` / `table-subtext` / `table-status-*`），不要临时拼 class 造成风格漂移。
+
 ## 1. 设计原则
 
 1. **一致性优先**：同一种语义（如“次级信息/ID/状态/路径/Key”）在任何页面都必须呈现一致。

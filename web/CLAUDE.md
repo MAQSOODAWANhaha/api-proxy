@@ -72,3 +72,10 @@ src/
 - 工具函数放置在 `lib/utils.ts`
 - 新增页面需要在 `App.tsx` 中配置路由
 - 主题颜色通过 CSS Variables 定义在 `shadcn.css` 中
+
+## UI / 设计规范
+
+- 全局 UI 设计标准见 `docs/design.md`（Tokens、组件标准、语义样式类、反例、交付检查）
+- `src/shadcn.css` 是主题变量与“语义样式类”（如 `table-code` / `table-subtext` / `table-status-*`）的权威定义位置
+- 组件与页面优先复用 `src/components/ui/` 与 `src/components/common/` 的既有实现，避免在页面里重复定义基础样式
+- 容器/弹窗/浮层默认不使用阴影；仅 `key/url/path` 等代码样式信息允许轻微阴影（见 `docs/design.md`）
