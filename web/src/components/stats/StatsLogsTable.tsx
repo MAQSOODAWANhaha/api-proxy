@@ -34,6 +34,97 @@ const StatusPill = ({ item }: { item: LogItem }) => {
   return <span className={classes}>{item.status_code ?? '--'}</span>
 }
 
+const MobileLogCard = ({ item, timezone }: { item: LogItem; timezone: string }) => {
+  const { date, time } = formatTimestamp(item.timestamp, timezone)
+  const method = item.method ? item.method.toUpperCase() : '--'
+  const costCurrency = item.cost_currency ?? 'USD'
+  const cost = item.cost ?? 0
+
+  return (
+    <div className="px-4 py-4 sm:px-6">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill item={item} />
+            <span className="table-subtext">
+              {date} <span className="font-mono tabular-nums">{time}</span>
+            </span>
+          </div>
+          <div className="mt-2 truncate text-sm font-medium text-slate-700">
+            {method} {item.path ?? '-'}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+            <span className="table-subtext">模型：{item.model ?? '-'}</span>
+            <span className="table-subtext">
+              耗时：{item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
+            </span>
+          </div>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <div className="table-subtext">费用</div>
+          <div className="font-mono text-sm font-medium tabular-nums text-slate-700">
+            {`${costCurrency} ${cost.toFixed(4)}`}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="table-subtext">Token</div>
+          <div className="font-mono text-sm font-medium tabular-nums text-slate-700">
+            {item.tokens_total.toLocaleString()}
+          </div>
+        </div>
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="table-subtext">请求 ID</div>
+          <div className="table-code truncate">{item.request_id ?? '--'}</div>
+        </div>
+      </div>
+
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs font-medium text-slate-600">展开详情</summary>
+        <div className="mt-3 space-y-3 text-xs">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <div className="table-subtext">输入 Token</div>
+              <div className="font-mono tabular-nums text-slate-700">
+                {item.tokens_prompt.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <div className="table-subtext">输出 Token</div>
+              <div className="font-mono tabular-nums text-slate-700">
+                {item.tokens_completion.toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <div className="table-subtext">缓存创建</div>
+              <div className="font-mono tabular-nums text-slate-700">
+                {item.cache_create_tokens?.toLocaleString?.() ?? '0'}
+              </div>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+              <div className="table-subtext">缓存读取</div>
+              <div className="font-mono tabular-nums text-slate-700">
+                {item.cache_read_tokens?.toLocaleString?.() ?? '0'}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+            <div className="table-subtext">客户端</div>
+            <div className="mt-1 space-y-1 text-slate-700">
+              <div className="font-mono">{item.client_ip ?? '--'}</div>
+              <div className="break-words text-xs text-slate-500">{item.user_agent ?? '--'}</div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+  )
+}
+
 export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: StatsLogsTableProps) {
   const timezone = useTimezoneStore((state) => state.timezone)
 
@@ -64,93 +155,123 @@ export function StatsLogsTable({ logs, loading, onPageChange, hasFetched }: Stat
             <LoadingSpinner size="md" tone="muted" />
           </div>
         )}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>时间</TableHead>
-              <TableHead>请求信息</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>模型</TableHead>
-              <TableHead>Token</TableHead>
-              <TableHead>费用</TableHead>
-              <TableHead>耗时</TableHead>
-              <TableHead>客户端</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!hasFetched ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
-                  请输入用户 API Key 并点击查询，日志将显示在此处。
-                </TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
-                  当前条件下暂无调用记录。
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((item) => {
-                const { date, time } = formatTimestamp(item.timestamp, timezone)
-                const method = item.method ? item.method.toUpperCase() : '--'
-                const costCurrency = item.cost_currency ?? 'USD'
 
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell className="align-top">
-                      <div className="flex flex-col text-xs">
-                        <span className="table-subtext">{date}</span>
-                        <span className="table-subtext font-mono">{time}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <div className="space-y-1 text-xs">
-                        <div className="font-medium text-neutral-800">
-                          {method} {item.path ?? '-'}
+        <div className="md:hidden">
+          {!hasFetched ? (
+            <div className="px-6 py-10 text-center text-sm text-neutral-500">
+              请输入用户 API Key 并点击查询，日志将显示在此处。
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="px-6 py-10 text-center text-sm text-neutral-500">
+              当前条件下暂无调用记录。
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-200">
+              {rows.map((item) => (
+                <MobileLogCard key={item.id} item={item} timezone={timezone} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>时间</TableHead>
+                <TableHead>请求信息</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>模型</TableHead>
+                <TableHead>Token</TableHead>
+                <TableHead>费用</TableHead>
+                <TableHead>耗时</TableHead>
+                <TableHead>客户端</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!hasFetched ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
+                    请输入用户 API Key 并点击查询，日志将显示在此处。
+                  </TableCell>
+                </TableRow>
+              ) : rows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-10 text-center text-sm text-neutral-500">
+                    当前条件下暂无调用记录。
+                  </TableCell>
+                </TableRow>
+              ) : (
+                rows.map((item) => {
+                  const { date, time } = formatTimestamp(item.timestamp, timezone)
+                  const method = item.method ? item.method.toUpperCase() : '--'
+                  const costCurrency = item.cost_currency ?? 'USD'
+                  const cost = item.cost ?? 0
+
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="align-top">
+                        <div className="flex flex-col text-xs">
+                          <span className="table-subtext">{date}</span>
+                          <span className="table-subtext font-mono tabular-nums">{time}</span>
                         </div>
-                        <div className="table-subtext">Request ID: {item.request_id}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <StatusPill item={item} />
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <span className="table-subtext">{item.model ?? '-'}</span>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <div className="text-xs">
-                        <div className="font-medium text-neutral-800">
-                          总计：{item.tokens_total.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="space-y-1 text-xs">
+                          <div className="max-w-[520px] truncate font-medium text-neutral-800">
+                            {method} {item.path ?? '-'}
+                          </div>
+                          <div className="table-subtext">
+                            Request ID: <span className="table-code">{item.request_id}</span>
+                          </div>
                         </div>
-                        <div className="table-subtext space-y-0.5">
-                          <div>输入：{item.tokens_prompt.toLocaleString()} | 输出：{item.tokens_completion.toLocaleString()}</div>
-                          <div>缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} | 缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}</div>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <StatusPill item={item} />
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <span className="table-subtext">{item.model ?? '-'}</span>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="text-xs">
+                          <div className="font-medium text-neutral-800">
+                            总计：{item.tokens_total.toLocaleString()}
+                          </div>
+                          <div className="table-subtext space-y-0.5">
+                            <div>
+                              输入：{item.tokens_prompt.toLocaleString()} | 输出：
+                              {item.tokens_completion.toLocaleString()}
+                            </div>
+                            <div>
+                              缓存创建：{item.cache_create_tokens?.toLocaleString?.() ?? '0'} |
+                              缓存读取：{item.cache_read_tokens?.toLocaleString?.() ?? '0'}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <span className="table-subtext">
-                        {item.cost != null ? `${costCurrency} ${item.cost.toFixed(4)}` : '--'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <span className="table-subtext">
-                        {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      <div className="table-subtext space-y-1">
-                        <div>{item.client_ip ?? '--'}</div>
-                        <div>{item.user_agent ?? '--'}</div>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <span className="table-subtext">
+                          {`${costCurrency} ${cost.toFixed(4)}`}
+                        </span>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <span className="table-subtext">
+                          {item.duration_ms != null ? `${item.duration_ms} ms` : '--'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="table-subtext space-y-1">
+                          <div className="font-mono">{item.client_ip ?? '--'}</div>
+                          <div className="max-w-[420px] truncate">{item.user_agent ?? '--'}</div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       <div className="border-t border-neutral-200 px-5 py-4">

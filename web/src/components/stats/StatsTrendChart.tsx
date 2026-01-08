@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Timeframe } from '@/store/stats'
 import { LoadingSpinner } from '@/components/ui/loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 interface StatsTrendChartProps {
   data: TrendPoint[]
@@ -40,12 +41,6 @@ const chartConfig: ChartConfig = {
   },
 }
 
-const timeframeDaysMap: Record<Timeframe, number> = {
-  '7d': 7,
-  '30d': 30,
-  '90d': 90,
-}
-
 export function StatsTrendChart({
   data,
   loading,
@@ -55,26 +50,23 @@ export function StatsTrendChart({
   timeframeOptions = ['7d', '30d'] as Timeframe[],
 }: StatsTrendChartProps) {
   const timezone = useTimezoneStore((state) => state.timezone)
+  const isMobile = useIsMobile()
 
   const chartData = useMemo(() => {
-    const windowDays = timeframeDaysMap[timeframe] ?? 7
-    const now = new Date()
-
     return data
-      .filter((item) => {
-        const ts = new Date(item.timestamp)
-        const diff = (now.getTime() - ts.getTime()) / (1000 * 60 * 60 * 24)
-        return diff <= windowDays
-      })
       .map((item) => ({
         ...item,
+        requests: item.requests ?? 0,
+        tokens: item.tokens ?? 0,
+        cost: item.cost ?? 0,
+        success_rate: item.success_rate ?? 0,
         label: new Date(item.timestamp).toLocaleDateString('zh-CN', {
           timeZone: timezone,
           month: '2-digit',
           day: '2-digit',
         }),
       }))
-  }, [data, timeframe, timezone])
+  }, [data, timezone])
 
   return (
     <Card className="rounded-2xl border border-neutral-200 bg-white">
@@ -121,8 +113,8 @@ export function StatsTrendChart({
             当前条件下暂无趋势数据。
           </div>
         ) : (
-          <ChartContainer config={chartConfig} className="h-[280px] w-full">
-            <AreaChart data={chartData}>
+          <ChartContainer config={chartConfig} className="aspect-auto h-[240px] w-full sm:h-[280px]">
+            <AreaChart data={chartData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
               <defs>
                 <linearGradient id="fillRequests" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="var(--color-requests)" stopOpacity={0.35} />
@@ -142,14 +134,17 @@ export function StatsTrendChart({
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                tickMargin={12}
-                minTickGap={20}
+                tickMargin={isMobile ? 8 : 12}
+                minTickGap={isMobile ? 28 : 20}
+                interval="preserveStartEnd"
               />
               <ChartTooltip
                 cursor={false}
                 content={<ChartTooltipContent indicator="dot" labelFormatter={(value) => value as string} />}
               />
-              <ChartLegend content={<ChartLegendContent />} />
+              <ChartLegend
+                content={<ChartLegendContent className="flex-wrap justify-start gap-3 sm:justify-center" />}
+              />
               <Area
                 dataKey="requests"
                 type="monotone"

@@ -535,7 +535,7 @@ impl<'a> StatsService<'a> {
                 tokens_prompt: model.tokens_prompt.unwrap_or(0),
                 tokens_completion: model.tokens_completion.unwrap_or(0),
                 tokens_total: model.tokens_total.unwrap_or(0),
-                cost: model.cost,
+                cost: Some(model.cost.unwrap_or(0.0)),
                 cost_currency: model.cost_currency,
                 request_id: model.request_id,
                 operation: None,

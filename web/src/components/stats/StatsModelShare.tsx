@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import type { ModelShareItem } from '@/types/stats'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { LoadingSpinner } from '@/components/ui/loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 interface StatsModelShareProps {
   data: {
@@ -25,12 +26,14 @@ const scopeLabel: Record<'today' | 'total', string> = {
 }
 
 export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChange }: StatsModelShareProps) {
+  const isMobile = useIsMobile()
   const current = useMemo(
     () =>
       (data[scope] ?? []).map((item, index) => ({
         ...item,
         color: COLORS[index % COLORS.length],
         percentage: Number(item.percentage.toFixed(2)),
+        cost: item.cost ?? 0,
       })),
     [data, scope]
   )
@@ -80,15 +83,15 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
           </div>
         ) : (
           <div className="mt-4 grid gap-6 md:grid-cols-[1fr_1fr]">
-            <div className="h-[280px]">
+            <div className="h-[240px] sm:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={current}
                     dataKey="percentage"
                     nameKey="model"
-                    innerRadius={60}
-                    outerRadius={100}
+                    innerRadius={isMobile ? 52 : 60}
+                    outerRadius={isMobile ? 92 : 110}
                     paddingAngle={4}
                   >
                     {current.map((entry) => (
@@ -97,7 +100,7 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
                   </Pie>
                   <Tooltip
                     formatter={(value: number, _name, payload) => {
-                      const item = payload.payload as ModelShareItem & { color: string }
+                      const item = payload.payload as ModelShareItem & { color: string; cost?: number }
                       return [`${value.toFixed(1)}%`, item.model]
                     }}
                     contentStyle={{
@@ -111,22 +114,45 @@ export function StatsModelShare({ data, loading, hasFetched, scope, onScopeChang
               </ResponsiveContainer>
             </div>
 
-            <div className="space-y-3">
-              {current.slice(0, 6).map((item) => (
+            <div className="max-h-[240px] space-y-3 overflow-auto pr-1 sm:max-h-[280px]">
+              {current.map((item) => (
                 <div
                   key={`${scope}-${item.model}`}
-                  className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-sm"
+                  className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-sm"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    <div className="flex flex-col">
-                      <span className="font-medium text-foreground">{item.model}</span>
-                      <span className="text-xs text-muted-foreground">
-                        请求 {item.requests.toLocaleString()} · Token {item.tokens.toLocaleString()} · 费用 ${item.cost.toFixed(2)}
-                      </span>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <span
+                        className="mt-1 h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: item.color }}
+                      />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-foreground">{item.model}</div>
+                        <div className="mt-1 grid grid-cols-3 gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:grid-cols-1 sm:text-xs">
+                          <div className="flex items-baseline gap-1">
+                            <span>请求</span>
+                            <span className="font-mono tabular-nums">{item.requests.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span>Token</span>
+                            <span className="font-mono tabular-nums">{item.tokens.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-baseline gap-1">
+                            <span>费用</span>
+                            <span className="font-mono tabular-nums">
+                              ${item.cost.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="font-mono text-sm font-medium tabular-nums text-foreground">
+                        {item.percentage.toFixed(1)}%
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">{scopeLabel[scope]}</div>
                     </div>
                   </div>
-                  <span className="text-xs text-muted-foreground">{item.percentage.toFixed(1)}%</span>
                 </div>
               ))}
             </div>

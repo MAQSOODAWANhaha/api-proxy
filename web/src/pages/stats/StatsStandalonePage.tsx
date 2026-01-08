@@ -54,8 +54,8 @@ export default function StatsStandalonePage() {
   }, [filters.userServiceKey, filters.timeframe, apiKeyInput])
 
   const hasServiceKey = filters.userServiceKey.trim().length > 0
-  const pageLoading = loading || trendLoading || modelShareLoading
-  const canSubmit = apiKeyInput.trim().length > 0 && !pageLoading
+  const pageBusy = loading || trendLoading || modelShareLoading
+  const canSubmit = apiKeyInput.trim().length > 0 && !pageBusy
 
   const handleSubmit = () => {
     const key = apiKeyInput.trim()
@@ -82,17 +82,19 @@ export default function StatsStandalonePage() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-foreground">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-10 px-6 pb-16 pt-12 sm:px-8 lg:px-10">
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 pb-12 pt-8 sm:gap-10 sm:px-8 sm:pb-16 sm:pt-12 lg:px-10">
         <header className="space-y-3 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">用户 API Key 使用统计</h1>
-          <p className="text-sm text-neutral-600">
+          <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 sm:text-3xl">
+            用户 API Key 使用统计
+          </h1>
+          <p className="mx-auto max-w-2xl text-sm leading-relaxed text-neutral-600">
             在此查看指定用户服务密钥的请求趋势、模型占比以及最新调用日志。
           </p>
         </header>
 
         <Card className="mx-auto w-full max-w-7xl rounded-2xl border border-neutral-200 bg-white">
-          <CardContent className="space-y-5 p-8">
+          <CardContent className="space-y-5 p-5 sm:p-8">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-neutral-600" htmlFor="user-service-key">
                 用户 API Key
@@ -109,9 +111,9 @@ export default function StatsStandalonePage() {
               />
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center">
               <Button
-                className="min-w-[120px] bg-violet-600 text-white hover:bg-violet-700"
+                className="w-full bg-violet-600 text-white hover:bg-violet-700 sm:w-auto sm:min-w-[120px]"
                 onClick={handleSubmit}
                 disabled={!canSubmit}
               >
@@ -120,26 +122,26 @@ export default function StatsStandalonePage() {
               </Button>
               <Button
                 variant="outline"
-                className="min-w-[120px] border-neutral-200 text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900"
+                className="w-full border-neutral-200 text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 sm:w-auto sm:min-w-[120px]"
                 onClick={() => {
                   if (!hasServiceKey) return
                   void fetch({ userServiceKey: filters.userServiceKey })
                 }}
-                disabled={!hasServiceKey || pageLoading}
+                disabled={!hasServiceKey || pageBusy}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 刷新
               </Button>
               <Button
                 variant="ghost"
-                className="min-w-[120px] text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900"
+                className="w-full text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 sm:w-auto sm:min-w-[120px]"
                 onClick={() => {
                   setApiKeyInput('')
                   setTrendTimeframe('7d')
                   setModelScope('today')
                   clear()
                 }}
-                disabled={pageLoading}
+                disabled={pageBusy}
               >
                 <RotateCcw className="mr-2 h-4 w-4" />
                 重置
@@ -155,12 +157,12 @@ export default function StatsStandalonePage() {
         </Card>
 
         <section className="space-y-6">
-          <StatsOverview metrics={summary} loading={pageLoading} hasFetched={hasFetched} />
+          <StatsOverview metrics={summary} loading={loading} hasFetched={hasFetched} />
 
           <div className="grid gap-6 lg:grid-cols-2">
             <StatsTrendChart
               data={trend}
-              loading={pageLoading}
+              loading={loading || trendLoading}
               hasFetched={hasFetched}
               timeframe={trendTimeframe}
               timeframeOptions={TREND_OPTIONS}
@@ -172,7 +174,7 @@ export default function StatsStandalonePage() {
 
             <StatsModelShare
               data={modelShare}
-              loading={pageLoading}
+              loading={loading || modelShareLoading}
               hasFetched={hasFetched}
               scope={modelScope}
               onScopeChange={(scope) => {
@@ -184,7 +186,7 @@ export default function StatsStandalonePage() {
 
           <StatsLogsTable
             logs={logs}
-            loading={pageLoading}
+            loading={loading}
             hasFetched={hasFetched}
             onPageChange={(page) => {
               if (!hasServiceKey) return
