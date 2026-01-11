@@ -49,7 +49,7 @@ pub enum ProxyError {
     Context {
         context: String,
         #[source]
-        source: Box<ProxyError>,
+        source: Box<Self>,
     },
 }
 

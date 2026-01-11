@@ -691,8 +691,24 @@ impl ProxyHttp for ProxyService {
 
         // 基于 Pingora 默认逻辑补充上下文，并决定“复用连接时才重试”这类错误的最终 retry 值。
         let mut err = e.more_context(format!("Peer: {peer}"));
+        let retry_buffer_truncated = session.as_ref().retry_buffer_truncated();
         err.retry
-            .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
+            .decide_reuse(client_reused && !retry_buffer_truncated);
+
+        if matches!(err.etype, ErrorType::ConnectionClosed) {
+            lwarn!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "upstream_connection_closed",
+                "上游连接被关闭",
+                client_reused = client_reused,
+                retry_buffer_truncated = retry_buffer_truncated,
+                retry_decision = err.retry(),
+                retry_count = ctx.retry.retry_count,
+                policy_already_applied = policy_already_applied
+            );
+        }
 
         // 上游响应在 upstream_response_filter 阶段已完成“预算消耗/计数”决策时，
         // 这里必须避免重复应用策略导致双计数。

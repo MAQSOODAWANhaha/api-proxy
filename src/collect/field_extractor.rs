@@ -339,29 +339,29 @@ pub enum TokenMapping {
     /// 直接映射字段路径
     Direct {
         path: String,
-        fallback: Option<Box<TokenMapping>>,
+        fallback: Option<Box<Self>>,
     },
     /// 数学表达式计算
     Expression {
         formula: String,
-        fallback: Option<Box<TokenMapping>>,
+        fallback: Option<Box<Self>>,
     },
     /// 固定默认值
     Default {
         value: Value,
-        fallback: Option<Box<TokenMapping>>,
+        fallback: Option<Box<Self>>,
     },
     /// 条件判断映射
     Conditional {
         condition: String,
         true_value: String,
         false_value: Value,
-        fallback: Option<Box<TokenMapping>>,
+        fallback: Option<Box<Self>>,
     },
     /// Fallback路径列表（保持向后兼容）
     Fallback {
         paths: Vec<String>,
-        fallback: Option<Box<TokenMapping>>,
+        fallback: Option<Box<Self>>,
     },
 }
 
@@ -674,16 +674,13 @@ impl TokenFieldExtractor {
                 "+" => sign = 1.0,
                 "-" => sign = -1.0,
                 _ => {
-                    let num = token.parse::<f64>().ok().map_or_else(
-                        || {
-                            json_path_lookup(value, token).map_or(0.0, |v| match v {
-                                Value::Number(n) => n.as_f64().unwrap_or(0.0),
-                                Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
-                                _ => 0.0,
-                            })
-                        },
-                        |n| n,
-                    );
+                    let num = token.parse::<f64>().ok().unwrap_or_else(|| {
+                        json_path_lookup(value, token).map_or(0.0, |v| match v {
+                            Value::Number(n) => n.as_f64().unwrap_or(0.0),
+                            Value::String(s) => s.parse::<f64>().unwrap_or(0.0),
+                            _ => 0.0,
+                        })
+                    });
                     total += sign * num;
                 }
             }
