@@ -32,6 +32,7 @@ impl ProxyService {
     const DEFAULT_BASE_RETRY_DELAY_MS: u64 = 500;
     const SSE_KEEPALIVE_PREFIX: &'static [u8] = b":\n\n";
     const SSE_CONTENT_TYPE: &'static str = "text/event-stream";
+    const MAX_BODY_BUFFER_BYTES: usize = 2 * 1024 * 1024;
 
     /// 创建新的代理服务实例
     pub const fn new(state: Arc<ProxyState>) -> pingora_core::Result<Self> {
@@ -90,12 +91,36 @@ impl ProxyService {
         Self::db_timeout_seconds(ctx).saturating_mul(1000)
     }
 
-    fn is_sse_response(ctx: &ProxyContext) -> bool {
-        ctx.response
-            .details
-            .content_type
-            .as_deref()
-            .is_some_and(|ct| ct.to_ascii_lowercase().contains(Self::SSE_CONTENT_TYPE))
+    fn is_sse_content_type(content_type: Option<&str>) -> bool {
+        content_type.is_some_and(|ct| ct.to_ascii_lowercase().contains(Self::SSE_CONTENT_TYPE))
+    }
+
+    fn append_body_with_limit(
+        buffer: &mut BytesMut,
+        total_size: &mut usize,
+        truncated: &mut bool,
+        chunk: &[u8],
+        limit: usize,
+    ) -> bool {
+        *total_size = total_size.saturating_add(chunk.len());
+        if *truncated {
+            return false;
+        }
+
+        let remaining = limit.saturating_sub(buffer.len());
+        if remaining == 0 {
+            *truncated = true;
+            return true;
+        }
+
+        if chunk.len() <= remaining {
+            buffer.extend_from_slice(chunk);
+            return false;
+        }
+
+        buffer.extend_from_slice(&chunk[..remaining]);
+        *truncated = true;
+        true
     }
 
     /// 判断是否应对上游状态码进行重试（仅基于状态码维度）
@@ -136,24 +161,66 @@ impl ProxyService {
 
         if max_retry_budget == 0 {
             err.set_retry(false);
+            ldebug!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "retry_skipped",
+                "未触发重试（未配置重试预算）",
+                reason = reason,
+                status_code = status_code
+            );
             return;
         }
 
         // 已收到部分响应的情况下不应重试（避免重复返回/重复计费风险）
         if Self::is_partial_response_error(ctx, Some(err)) {
             err.set_retry(false);
+            ldebug!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "retry_skipped",
+                "未触发重试（已收到部分响应）",
+                reason = reason,
+                status_code = status_code,
+                response_body_size = ctx.response.body_received_size
+            );
             return;
         }
 
         // 不具备可安全重试的前提（retry buffer 缺失/截断）
         if !Self::is_safe_to_retry(session) {
             err.set_retry(false);
+            ldebug!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "retry_skipped",
+                "未触发重试（请求体不可重放）",
+                reason = reason,
+                status_code = status_code,
+                retry_buffer_truncated = session.retry_buffer_truncated(),
+                has_retry_buffer = session.get_retry_buffer().is_some(),
+                is_body_empty = session.is_body_empty()
+            );
             return;
         }
 
         // 达到预算上限后停止重试
         if ctx.control.retry.retry_count >= max_retry_budget {
             err.set_retry(false);
+            ldebug!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "retry_skipped",
+                "未触发重试（已达重试上限）",
+                reason = reason,
+                status_code = status_code,
+                attempt = ctx.control.retry.retry_count,
+                max_retry_budget = max_retry_budget
+            );
             return;
         }
 
@@ -170,6 +237,18 @@ impl ProxyService {
 
         if delay_ms == 0 {
             err.set_retry(false);
+            ldebug!(
+                &ctx.request_id,
+                LogStage::ResponseFailure,
+                LogComponent::Proxy,
+                "retry_skipped",
+                "未触发重试（退避计算为 0）",
+                reason = reason,
+                status_code = status_code,
+                attempt = ctx.control.retry.retry_count,
+                max_retry_budget = max_retry_budget,
+                max_delay_ms = max_delay_ms
+            );
             return;
         }
 
@@ -193,10 +272,15 @@ impl ProxyService {
     fn reset_ctx_for_retry(ctx: &mut ProxyContext) {
         ctx.response.details = crate::collect::types::ResponseDetails::default();
         ctx.response.body = BytesMut::new();
+        ctx.response.body_received_size = 0;
+        ctx.response.body_truncated = false;
+        ctx.response.is_sse = false;
         ctx.response.sse_keepalive_sent = false;
         // 注意：重试时 Pingora 会从内部 retry buffer 重放请求体，并再次调用 `request_body_filter`。
         // 这里清空 `ctx.request.body` 仅影响本地缓存/日志与“基于完整 body 的改写逻辑”，不会导致上游请求体丢失。
         ctx.request.body = BytesMut::new();
+        ctx.request.body_received_size = 0;
+        ctx.request.body_truncated = false;
         ctx.trace.upstream_request_headers = None;
         ctx.trace.upstream_request_uri = None;
         ctx.response.usage_final = None;
@@ -247,7 +331,9 @@ impl ProxyService {
             ctx.routing.user_service_api.as_ref(),
             ctx.routing.provider_type.as_ref(),
         ) {
-            let timeout = user_api.timeout_seconds.unwrap_or(120).max(120);
+            // 允许显式配置较小超时；非正数回退默认值
+            let configured = user_api.timeout_seconds.unwrap_or(120);
+            let timeout = if configured <= 0 { 120 } else { configured };
 
             ctx.control.timeout_seconds = Some(timeout);
 
@@ -503,8 +589,30 @@ impl ProxyHttp for ProxyService {
     ) -> pingora_core::Result<()> {
         // 处理当前分块数据（如果有）
         if let Some(chunk) = body_chunk.as_ref() {
-            // 缓存数据到上下文
-            ctx.request.body.extend_from_slice(chunk);
+            if ctx.request.will_modify_body {
+                ctx.request.body_received_size =
+                    ctx.request.body_received_size.saturating_add(chunk.len());
+                ctx.request.body.extend_from_slice(chunk);
+            } else {
+                let newly_truncated = Self::append_body_with_limit(
+                    &mut ctx.request.body,
+                    &mut ctx.request.body_received_size,
+                    &mut ctx.request.body_truncated,
+                    chunk,
+                    Self::MAX_BODY_BUFFER_BYTES,
+                );
+                if newly_truncated {
+                    lwarn!(
+                        &ctx.request_id,
+                        LogStage::RequestModify,
+                        LogComponent::Proxy,
+                        "request_body_truncated",
+                        "请求体缓存超过上限，已截断",
+                        buffer_limit_bytes = Self::MAX_BODY_BUFFER_BYTES,
+                        received_bytes = ctx.request.body_received_size
+                    );
+                }
+            }
             // 如果需要修改请求体且不是流结束，按照 Pingora 官方示例清空分块
             // 保持 HTTP 流式语义，避免原始与改写后的内容混合发送
             if ctx.request.will_modify_body
@@ -523,7 +631,8 @@ impl ProxyHttp for ProxyService {
                 LogComponent::Proxy,
                 "request_body_eom",
                 "请求体接收完成，准备处理",
-                body_size = ctx.request.body.len(),
+                body_size = ctx.request.body_received_size,
+                body_truncated = ctx.request.body_truncated,
                 has_strategy = ctx.routing.strategy.is_some(),
                 will_modify = ctx.request.will_modify_body
             );
@@ -640,6 +749,8 @@ impl ProxyHttp for ProxyService {
             .collect_service
             .collect_response_details(upstream_response, ctx);
         ctx.response.details.headers = resp_stats.headers;
+        ctx.response.is_sse =
+            Self::is_sse_content_type(ctx.response.details.content_type.as_deref());
 
         Ok(())
     }
@@ -735,7 +846,8 @@ impl ProxyHttp for ProxyService {
                 error_source = format!("{:?}", err.esource),
                 error_type = format!("{:?}", err.etype),
                 response_started = response_started,
-                response_body_size = ctx.response.body.len(),
+                response_body_size = ctx.response.body_received_size,
+                response_body_truncated = ctx.response.body_truncated,
                 client_reused = client_reused,
                 retry_buffer_truncated = retry_buffer_truncated,
                 retry_decision = err.retry(),
@@ -793,10 +905,29 @@ impl ProxyHttp for ProxyService {
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Option<std::time::Duration>> {
         if let Some(chunk) = body.as_ref() {
-            ctx.response.body.extend_from_slice(chunk);
+            let newly_truncated = Self::append_body_with_limit(
+                &mut ctx.response.body,
+                &mut ctx.response.body_received_size,
+                &mut ctx.response.body_truncated,
+                chunk,
+                Self::MAX_BODY_BUFFER_BYTES,
+            );
+            if newly_truncated {
+                lwarn!(
+                    &ctx.request_id,
+                    LogStage::Response,
+                    LogComponent::Proxy,
+                    "response_body_truncated",
+                    "响应体缓存超过上限，已截断",
+                    buffer_limit_bytes = Self::MAX_BODY_BUFFER_BYTES,
+                    received_bytes = ctx.response.body_received_size
+                );
+            }
         }
         if !ctx.response.sse_keepalive_sent
-            && Self::is_sse_response(ctx)
+            && ctx.response.is_sse
+            && ctx.response.details.status_code == Some(200)
+            && !end_of_stream
             && let Some(chunk) = body.take()
         {
             let mut combined =
@@ -821,7 +952,8 @@ impl ProxyHttp for ProxyService {
                 LogComponent::Proxy,
                 "response_body_eom",
                 "响应体接收完成",
-                body_size = ctx.response.body.len()
+                body_size = ctx.response.body_received_size,
+                body_truncated = ctx.response.body_truncated
             );
         }
         Ok(None)

@@ -163,6 +163,10 @@ pub struct ProxyRequestContext {
     pub details: RequestDetails,
     /// 请求体缓冲区（用于 `request_body_filter` 中的数据收集）
     pub body: BytesMut,
+    /// 请求体总接收字节数（用于统计与日志）
+    pub body_received_size: usize,
+    /// 请求体是否被截断（避免无限增长）
+    pub body_truncated: bool,
     /// 是否计划修改请求体（供上游头部处理决策使用）
     pub will_modify_body: bool,
     /// 用户请求的模型名称
@@ -175,6 +179,12 @@ pub struct ProxyResponseContext {
     pub details: ResponseDetails,
     /// 响应体缓冲区（用于 `response_body_filter` 中的数据收集）
     pub body: BytesMut,
+    /// 响应体总接收字节数（用于统计与日志）
+    pub body_received_size: usize,
+    /// 响应体是否被截断（避免无限增长）
+    pub body_truncated: bool,
+    /// 是否为 SSE 响应（在 `response_filter` 时缓存）
+    pub is_sse: bool,
     /// SSE 首包心跳是否已注入（用于保持下游连接活跃）
     pub sse_keepalive_sent: bool,
     /// 最终使用量（统一出口）
@@ -246,12 +256,17 @@ impl Default for ProxyContext {
             request: ProxyRequestContext {
                 details: RequestDetails::default(),
                 body: BytesMut::new(),
+                body_received_size: 0,
+                body_truncated: false,
                 will_modify_body: false,
                 requested_model: None,
             },
             response: ProxyResponseContext {
                 details: ResponseDetails::default(),
                 body: BytesMut::new(),
+                body_received_size: 0,
+                body_truncated: false,
+                is_sse: false,
                 sse_keepalive_sent: false,
                 usage_final: None,
             },
