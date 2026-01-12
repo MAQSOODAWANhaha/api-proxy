@@ -71,3 +71,4 @@ appendonly.aof
 .specify/
 .claude/
 web/tsconfig.tsbuildinfo
+.vscode/settings.json
