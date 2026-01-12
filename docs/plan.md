@@ -246,7 +246,7 @@ Client → Pingora(8080) → RequestFilter Pipeline → Upstream → Response �
 1.  **客户端 API 密钥认证 (Client API Key Authentication)**: `AuthService` 验证客户端提供的 `user_service_apis` API 密钥。
 2.  **追踪启动 (Start Trace)**: `TraceManager` 初始化追踪记录。
 3.  **分布式速率限制 (Distributed Rate Limit)**: `RateLimiter` 检查并应用 QPS、每日请求、Token 和成本限制。
-4.  **配置加载 (Load Config)**: 读取数据库中的服务商配置，填充 `ctx.provider_type`。
+4.  **配置加载 (Load Config)**: 读取数据库中的服务商配置，填充 `ctx.routing.provider_type`。
 5.  **智能后端 API 密钥选择 (Intelligent Backend API Key Selection)**: `ApiKeySchedulerService` 综合考虑健康状态、认证状态、过期时间、速率限制等因素，通过 `ApiKeySelectService` 获取有效的后端 API 密钥（或 OAuth Token）。
 6.  **追踪更新 (Update Trace)**: `TraceManager` 更新追踪记录，关联后端密钥。
 
@@ -306,12 +306,12 @@ async fn request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) ->
     // 检查并应用QPS、每日请求、Token和成本限制
     self.rate_limiter.check_rate_limit(ctx).await?;
 
-    // 步骤 4: 读取 Provider 配置（认证阶段已填充 ctx.provider_type）
-    let provider = ctx.provider_type.as_ref().ok_or_else(|| crate::error!(Internal, "missing provider metadata"))?;
+    // 步骤 4: 读取 Provider 配置（认证阶段已填充 ctx.routing.provider_type）
+    let provider = ctx.routing.provider_type.as_ref().ok_or_else(|| crate::error!(Internal, "missing provider metadata"))?;
 
     // 步骤 5: 智能后端API密钥选择
     // 综合考虑健康状态、认证状态、过期时间、速率限制等因素，通过 ApiKeySelectService 获取有效的后端API密钥（或OAuth Token）
-    let selection_result = self.api_key_scheduler_service.select_api_key_from_service_api(ctx.user_service_api.as_ref().unwrap(), ctx.selection_context()).await?;
+    let selection_result = self.api_key_scheduler_service.select_api_key_from_service_api(ctx.routing.user_service_api.as_ref().unwrap(), ctx.selection_context()).await?;
     ctx.set_selection_result(selection_result);
 
     // 步骤 6: 更新追踪信息
@@ -339,7 +339,7 @@ async fn request_filter(&self, session: &mut Session, ctx: &mut ProxyContext) ->
 // src/proxy/service.rs -> upstream_peer()
 async fn upstream_peer(&self, _session: &mut Session, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
     // 从上下文中获取 provider_type 配置
-    let provider = ctx.provider_type.as_ref().ok_or_else(|| ...)?;
+    let provider = ctx.routing.provider_type.as_ref().ok_or_else(|| ...)?;
 
     // 使用 Provider 的 base_url 构建上游地址
     let upstream_addr = format!("{}:443", provider.base_url);

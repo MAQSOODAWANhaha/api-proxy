@@ -14,12 +14,11 @@ mod tests {
 
     /// 创建测试用的上下文
     fn create_test_context() -> ProxyContext {
-        ProxyContext {
-            request_id: "test-request-123".to_string(),
-            start_time: Instant::now(),
-            response_details: Default::default(),
-            ..Default::default()
-        }
+        let mut ctx = ProxyContext::default();
+        ctx.request_id = "test-request-123".to_string();
+        ctx.start_time = Instant::now();
+        ctx.response.details = Default::default();
+        ctx
     }
 
     /// 创建测试用的Pingora错误
@@ -129,7 +128,7 @@ mod tests {
     #[test]
     fn test_context_status_code_ignored_with_connection_error() {
         let mut ctx = create_test_context();
-        ctx.response_details.status_code = Some(200); // 设置一个成功的状态码
+        ctx.response.details.status_code = Some(200); // 设置一个成功的状态码
 
         // 但是有连接错误
         let error = create_test_error(ErrorType::ConnectionFailed);
@@ -142,7 +141,7 @@ mod tests {
     #[test]
     fn test_context_status_code_used_without_error() {
         let mut ctx = create_test_context();
-        ctx.response_details.status_code = Some(200);
+        ctx.response.details.status_code = Some(200);
 
         // 没有错误时使用上下文中的状态码
         let status_code = ProxyService::resolve_status_code(&ctx, None);
@@ -198,7 +197,7 @@ mod tests {
     #[test]
     fn test_partial_response_error_detection() {
         let mut ctx = create_test_context();
-        ctx.response_details.status_code = Some(200); // 有响应状态码
+        ctx.response.details.status_code = Some(200); // 有响应状态码
 
         // 有连接错误
         let error = create_test_error(ErrorType::ConnectionClosed);
@@ -210,7 +209,7 @@ mod tests {
         assert!(!ProxyService::is_partial_response_error(&ctx, None));
 
         // 没有响应状态码时
-        ctx.response_details.status_code = None;
+        ctx.response.details.status_code = None;
         assert!(!ProxyService::is_partial_response_error(&ctx, Some(&error)));
     }
 }

@@ -38,7 +38,8 @@ impl ProviderStrategy for GeminiStrategy {
         &self,
         ctx: &crate::proxy::ProxyContext,
     ) -> Result<Option<String>> {
-        ctx.provider_type
+        ctx.routing
+            .provider_type
             .as_ref()
             .map_or_else(|| Ok(None), |provider| Ok(Some(provider.base_url.clone())))
     }
@@ -67,7 +68,7 @@ impl ProviderStrategy for GeminiStrategy {
         }
 
         // 判断是否需要后续 JSON 注入（在 body filter 里执行）
-        if let Some(backend) = &ctx.selected_backend
+        if let Some(backend) = &ctx.routing.selected_backend
             && backend.auth_type.as_str() == "oauth"
             && let Some(pid) = &backend.project_id
             && !pid.is_empty()
@@ -76,7 +77,7 @@ impl ProviderStrategy for GeminiStrategy {
             let need_generate =
                 path.contains("streamGenerateContent") || path.contains("generateContent");
             let need_load = path.contains("loadCodeAssist");
-            ctx.will_modify_body = need_generate || need_load;
+            ctx.request.will_modify_body = need_generate || need_load;
         }
         Ok(())
     }
@@ -87,7 +88,7 @@ impl ProviderStrategy for GeminiStrategy {
         ctx: &ProxyContext,
         json_value: &mut serde_json::Value,
     ) -> Result<bool> {
-        let Some(backend) = &ctx.selected_backend else {
+        let Some(backend) = &ctx.routing.selected_backend else {
             return Ok(false);
         };
 
@@ -120,7 +121,7 @@ impl ProviderStrategy for GeminiStrategy {
         }
 
         // 使用 will_modify_body 判断是否需要注入，仅当存在真实的project_id时才执行注入
-        let modified = if ctx.will_modify_body {
+        let modified = if ctx.request.will_modify_body {
             backend.project_id.as_ref().is_some_and(|project_id| {
                 !project_id.is_empty() && inject_generatecontent_fields(json_value, project_id)
             })
@@ -277,11 +278,9 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_oauth_with_project() {
         let strat = GeminiStrategy::new(None);
-        let ctx = ProxyContext {
-            selected_backend: Some(dummy_key("oauth", Some("proj-123"))),
-            provider_type: Some(dummy_provider("cloudcode-pa.googleapis.com", "oauth")),
-            ..Default::default()
-        };
+        let mut ctx = ProxyContext::default();
+        ctx.routing.selected_backend = Some(dummy_key("oauth", Some("proj-123")));
+        ctx.routing.provider_type = Some(dummy_provider("cloudcode-pa.googleapis.com", "oauth"));
         let host = strat.select_upstream_host(&ctx).await.unwrap();
         assert_eq!(host.as_deref(), Some("cloudcode-pa.googleapis.com"));
     }
@@ -289,14 +288,12 @@ mod tests {
     #[tokio::test]
     async fn test_select_upstream_host_api_key() {
         let strat = GeminiStrategy::new(None);
-        let ctx = ProxyContext {
-            selected_backend: Some(dummy_key("api_key", None)),
-            provider_type: Some(dummy_provider(
-                "generativelanguage.googleapis.com",
-                "api_key",
-            )),
-            ..Default::default()
-        };
+        let mut ctx = ProxyContext::default();
+        ctx.routing.selected_backend = Some(dummy_key("api_key", None));
+        ctx.routing.provider_type = Some(dummy_provider(
+            "generativelanguage.googleapis.com",
+            "api_key",
+        ));
         let host = strat.select_upstream_host(&ctx).await.unwrap();
         assert_eq!(host.as_deref(), Some("generativelanguage.googleapis.com"));
     }
@@ -326,7 +323,7 @@ mod tests {
 
         // 创建一个有真实project_id的backend
         let backend = dummy_key("oauth", Some("my-real-project-123"));
-        ctx.selected_backend = Some(backend);
+        ctx.routing.selected_backend = Some(backend);
 
         // 测试JSON数据
         let mut json_value =
@@ -334,6 +331,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
+            .routing
             .selected_backend
             .as_ref()
             .and_then(|b| b.project_id.as_deref())
@@ -357,7 +355,7 @@ mod tests {
         // 创建一个project_id为空字符串的backend
         let mut backend = dummy_key("oauth", None);
         backend.project_id = Some(String::new()); // 显式设置为空字符串
-        ctx.selected_backend = Some(backend);
+        ctx.routing.selected_backend = Some(backend);
 
         // 测试JSON数据
         let mut json_value =
@@ -365,6 +363,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
+            .routing
             .selected_backend
             .as_ref()
             .and_then(|b| b.project_id.as_deref())
@@ -387,7 +386,7 @@ mod tests {
 
         // 创建一个没有project_id的backend
         let backend = dummy_key("oauth", None);
-        ctx.selected_backend = Some(backend);
+        ctx.routing.selected_backend = Some(backend);
 
         // 测试JSON数据
         let mut json_value =
@@ -395,6 +394,7 @@ mod tests {
 
         // 直接测试核心逻辑：智能项目ID选择
         let effective_project_id = ctx
+            .routing
             .selected_backend
             .as_ref()
             .and_then(|b| b.project_id.as_deref())

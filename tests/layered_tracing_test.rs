@@ -202,7 +202,7 @@ async fn test_record_success_updates_trace() {
 
     let mut ctx = build_context(request_id);
     ctx.mark_trace_started();
-    ctx.user_service_api = user_service_apis::Entity::find_by_id(service_api_id)
+    ctx.routing.user_service_api = user_service_apis::Entity::find_by_id(service_api_id)
         .one(db.as_ref())
         .await
         .expect("fetch service api");

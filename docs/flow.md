@@ -126,7 +126,7 @@ flowchart TD
         UpdateTrace --> UpstreamPeer["upstream_peer(session, ctx)<br/>选择上游节点"]
 
         subgraph UpstreamSelection["🎯 上游选择"]
-            UpstreamPeer --> CheckRetry{"ctx.retry_count > 0?"}
+            UpstreamPeer --> CheckRetry{"ctx.control.retry.retry_count > 0?"}
             CheckRetry -->|是| AddDelay["添加重试延迟"]
             CheckRetry -->|否| SelectUpstream["ProviderStrategy 选择 host 或回退 base_url"]
             AddDelay --> SelectUpstream
@@ -150,7 +150,7 @@ flowchart TD
         ResponseFilter --> ResponseBodyFilter["response_body_filter()<br/>响应体过滤"]
 
         subgraph ResponseBodyProcessing["📝 响应体处理"]
-            ResponseBodyFilter --> CollectChunks["ctx.response_details<br/>.add_body_chunk()"]
+            ResponseBodyFilter --> CollectChunks["ctx.response.details<br/>.add_body_chunk()"]
             CollectChunks --> LogChunkSize["记录数据块大小"]
         end
 
@@ -185,8 +185,8 @@ flowchart TD
     subgraph RetryMechanism["🔄 重试机制"]
         Logging --> FailToProxy{"fail_to_proxy事件?<br/>上游连接失败"}
         FailToProxy -->|是| CheckRetryable{"可重试错误?<br/>网络超时等"}
-        CheckRetryable -->|是| CheckRetryCount{"ctx.retry_count < max_retries?"}
-        CheckRetryCount -->|是| IncrementRetry["ctx.retry_count++<br/>更新重试计数"]
+        CheckRetryable -->|是| CheckRetryCount{"ctx.control.retry.retry_count < max_retries?"}
+        CheckRetryCount -->|是| IncrementRetry["ctx.control.retry.retry_count++<br/>更新重试计数"]
         IncrementRetry --> RetryDelay["添加指数退避延迟"]
         RetryDelay --> UpstreamPeer
         CheckRetryCount -->|否| MaxRetriesReached["达到最大重试次数<br/>返回502错误"]
@@ -289,9 +289,9 @@ ProxyService (实现 ProxyHttp trait):
 │       ├── TraceManager::start_trace() // 开始追踪
 │       ├── RateLimiter::check_rate_limit() // 分布式速率限制检查
 │       ├── ApiKeySchedulerService::select_api_key_from_service_api() // 智能后端API密钥选择
-│       └── 填充 ctx.user_service_api / ctx.provider_type / ctx.selected_backend
+│       └── 填充 ctx.routing.user_service_api / ctx.routing.provider_type / ctx.routing.selected_backend
 ├── upstream_peer(session, ctx) // 选择上游节点
-│   ├── 重试延迟处理 (如果ctx.retry_count > 0)
+│   ├── 重试延迟处理 (如果ctx.control.retry.retry_count > 0)
 │   └── HttpPeer::new(provider.base_url, TLS)
 ├── upstream_request_filter() // 上游请求过滤
 │   ├── 替换认证信息 (隐藏客户端密钥，使用后端密钥/OAuth Token)
@@ -299,7 +299,7 @@ ProxyService (实现 ProxyHttp trait):
 ├── response_filter() // 响应处理
 │   └── CollectService::collect_response_details()
 ├── response_body_filter() // 响应体收集
-│   └── ctx.response_details.add_body_chunk() // 流式与非流式统一收集
+│   └── ctx.response.details.add_body_chunk() // 流式与非流式统一收集
 └── logging() // 最终处理
     ├── CollectService::finalize_metrics() // 统一流/非流：使用 usage_model::finalize_eos
     ├── 更新token使用信息和成本计算（通过 TokenFieldExtractor + PricingCalculatorService）
@@ -399,7 +399,7 @@ Collect → Trace 生命周期：
   - 上游请求头：`event=upstream_request_ready`，字段：`upstream_headers_json`
   - 上游响应头：`event=upstream_response_headers`，字段：`response_headers_json`
 - 错误日志合并：
-  - `event=request_failed`，统一记录：`method,url,error_type,error_source,error_message,duration_ms,request_headers_json,selected_backend_id,provider_type,timeout_seconds`
+  - `event=request_failed`，统一记录：`method,url,error_type,error_source,error_message,duration_ms,request_headers_json,selected_backend_id,provider_type,control.timeout_seconds`
 - 统计统一入口：
   - `CollectService::finalize_metrics(ctx, status_code)` 统一流/非流：基于 `usage_model::finalize_eos()` 聚合事件，再使用 `token_mappings_json + TokenFieldExtractor` 提取 `tokens_*` 与模型，随后计算费用
 
@@ -559,7 +559,7 @@ OAuth 2.0 授权系统是平台认证模块的核心组成部分，负责处理�
   - 模型使用分布
   - 成本统计和趋势
 - **系统层面**:
-  - 重试次数和成功率 (`retry_count`)
+  - 重试次数和成功率 (`ctx.control.retry.retry_count`)
   - 上游连接状态 (`upstream_connection_status`)
   - 数据库连接池状态
   - 缓存命中率 (CacheManager)

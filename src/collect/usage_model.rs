@@ -130,20 +130,21 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
     let mut stats = ComputedStats::default();
 
     let content_type = ctx
-        .response_details
+        .response
+        .details
         .content_type
         .as_deref()
         .unwrap_or("")
         .to_ascii_lowercase();
-    let encoding = ctx.response_details.content_encoding.as_deref();
-    let raw = ctx.response_body.clone();
+    let encoding = ctx.response.details.content_encoding.as_deref();
+    let raw = ctx.response.body.clone();
 
     // 无正文：置零并回退模型
     if raw.is_empty() {
         stats.usage.prompt_tokens = Some(0);
         stats.usage.completion_tokens = Some(0);
         stats.usage.total_tokens = Some(0);
-        stats.model_name.clone_from(&ctx.requested_model);
+        stats.model_name.clone_from(&ctx.request.requested_model);
         return stats;
     }
 
@@ -154,7 +155,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         stats.usage.prompt_tokens = Some(0);
         stats.usage.completion_tokens = Some(0);
         stats.usage.total_tokens = Some(0);
-        stats.model_name.clone_from(&ctx.requested_model);
+        stats.model_name.clone_from(&ctx.request.requested_model);
         return stats;
     };
 
@@ -169,7 +170,8 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                 Ok(Some(ev)) => {
                     let json = ev.data;
                     if !json.is_null() {
-                        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                        let usage =
+                            extract_tokens_from_json(ctx.routing.provider_type.as_ref(), &json);
                         // 累加策略
                         stats.usage.prompt_tokens = Some(
                             stats.usage.prompt_tokens.unwrap_or(0)
@@ -198,7 +200,8 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
                     if let Ok(Some(ev)) = event_stream_decoder.decode_eof(&mut buf) {
                         let json = ev.data;
                         if !json.is_null() {
-                            let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                            let usage =
+                                extract_tokens_from_json(ctx.routing.provider_type.as_ref(), &json);
                             // 累加策略
                             stats.usage.prompt_tokens = Some(
                                 stats.usage.prompt_tokens.unwrap_or(0)
@@ -237,7 +240,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
             stats.model_name = extract_model_from_json(&j);
         }
         if stats.model_name.is_none() {
-            stats.model_name.clone_from(&ctx.requested_model);
+            stats.model_name.clone_from(&ctx.request.requested_model);
         }
         return stats;
     }
@@ -256,7 +259,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
             if let Some(pos) = line.find('{') {
                 let json_str = &line[pos..];
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+                    let usage = extract_tokens_from_json(ctx.routing.provider_type.as_ref(), &json);
                     stats.usage.prompt_tokens = Some(
                         stats.usage.prompt_tokens.unwrap_or(0) + usage.prompt_tokens.unwrap_or(0),
                     );
@@ -288,16 +291,17 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
             stats.model_name = extract_model_from_json(&j);
         }
         if stats.model_name.is_none() {
-            stats.model_name.clone_from(&ctx.requested_model);
+            stats.model_name.clone_from(&ctx.request.requested_model);
         }
         return stats;
     }
 
     // 普通 JSON：整体/窗口解析
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
-        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &json);
+        let usage = extract_tokens_from_json(ctx.routing.provider_type.as_ref(), &json);
         stats.usage = usage;
-        stats.model_name = extract_model_from_json(&json).or_else(|| ctx.requested_model.clone());
+        stats.model_name =
+            extract_model_from_json(&json).or_else(|| ctx.request.requested_model.clone());
         return stats;
     }
     // 尝试窗口：逐行扫描最后一段 JSON 或查找最后一个平衡的 JSON
@@ -314,7 +318,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         last_json = find_last_balanced_json(body_str);
     }
     if let Some(j) = last_json {
-        let usage = extract_tokens_from_json(ctx.provider_type.as_ref(), &j);
+        let usage = extract_tokens_from_json(ctx.routing.provider_type.as_ref(), &j);
         stats.usage = usage;
         stats.model_name = extract_model_from_json(&j);
     }
@@ -324,7 +328,7 @@ pub fn finalize_eos(ctx: &mut ProxyContext) -> ComputedStats {
         stats.usage.total_tokens = Some(0);
     }
     if stats.model_name.is_none() {
-        stats.model_name.clone_from(&ctx.requested_model);
+        stats.model_name.clone_from(&ctx.request.requested_model);
     }
     stats
 }

@@ -63,14 +63,14 @@ impl CollectService {
     ) -> CollectedMetrics {
         let computed = usage_model::finalize_eos(ctx);
         let usage = computed.usage.clone();
-        ctx.usage_final = Some(usage.clone());
+        ctx.response.usage_final = Some(usage.clone());
         // 尝试更新最终模型名称
-        ctx.requested_model.clone_from(&computed.model_name);
+        ctx.request.requested_model.clone_from(&computed.model_name);
 
         let (cost_value, cost_currency) = self
             .calculate_cost(
-                ctx.provider_type.as_ref(),
-                ctx.requested_model.as_deref(),
+                ctx.routing.provider_type.as_ref(),
+                ctx.request.requested_model.as_deref(),
                 &usage,
                 &ctx.request_id,
             )
@@ -78,10 +78,10 @@ impl CollectService {
 
         CollectedMetrics {
             request_id: ctx.request_id.clone(),
-            user_id: ctx.user_service_api.as_ref().map(|u| u.user_id),
-            user_service_api_id: ctx.user_service_api.as_ref().map(|u| u.id),
-            provider_type_id: ctx.provider_type.as_ref().map(|p| p.id),
-            model: ctx.requested_model.clone(),
+            user_id: ctx.routing.user_service_api.as_ref().map(|u| u.user_id),
+            user_service_api_id: ctx.routing.user_service_api.as_ref().map(|u| u.id),
+            provider_type_id: ctx.routing.provider_type.as_ref().map(|p| p.id),
+            model: ctx.request.requested_model.clone(),
             usage,
             cost: CollectedCost {
                 value: cost_value,

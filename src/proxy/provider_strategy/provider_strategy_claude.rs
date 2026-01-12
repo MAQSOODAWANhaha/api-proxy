@@ -45,7 +45,7 @@ impl ProviderStrategy for ClaudeStrategy {
     }
 
     async fn select_upstream_host(&self, ctx: &ProxyContext) -> Result<Option<String>> {
-        ctx.provider_type.as_ref().map_or_else(
+        ctx.routing.provider_type.as_ref().map_or_else(
             || {
                 lwarn!(
                     &ctx.request_id,
@@ -77,7 +77,7 @@ impl ProviderStrategy for ClaudeStrategy {
         ctx: &mut ProxyContext,
     ) -> Result<()> {
         // 从配置获取 Host 头
-        let host = if let Some(provider) = &ctx.provider_type {
+        let host = if let Some(provider) = &ctx.routing.provider_type {
             provider.base_url.clone()
         } else {
             return Err(ConfigError::Load(
@@ -95,7 +95,7 @@ impl ProviderStrategy for ClaudeStrategy {
         let need_body_modify = path.contains("/v1/messages") || path.contains("/v1/complete");
 
         if need_body_modify {
-            ctx.will_modify_body = true;
+            ctx.request.will_modify_body = true;
         }
 
         linfo!(
@@ -106,7 +106,7 @@ impl ProviderStrategy for ClaudeStrategy {
             "Claude请求修改完成",
             host = %host,
             path = path,
-            will_modify_body = ctx.will_modify_body
+            will_modify_body = ctx.request.will_modify_body
         );
 
         Ok(())
@@ -315,7 +315,7 @@ mod tests {
         };
 
         let provider = dummy_claude_provider();
-        ctx.provider_type = Some(provider);
+        ctx.routing.provider_type = Some(provider);
 
         let host = strategy.select_upstream_host(&ctx).await.unwrap();
         assert_eq!(host.as_deref(), Some("api.anthropic.com"));
@@ -361,11 +361,11 @@ mod tests {
         let strategy = ClaudeStrategy::new(None);
 
         // 创建代理上下文
-        let ctx = ProxyContext {
+        let mut ctx = ProxyContext {
             request_id: "test-integration-123".to_string(),
-            provider_type: Some(dummy_claude_provider()),
             ..Default::default()
         };
+        ctx.routing.provider_type = Some(dummy_claude_provider());
 
         // 1. 测试 select_upstream_host
         let host = strategy.select_upstream_host(&ctx).await.unwrap();
@@ -433,7 +433,7 @@ mod tests {
 
         // 使用模拟的真实提供商配置
         let real_provider = dummy_claude_provider();
-        ctx.provider_type = Some(real_provider);
+        ctx.routing.provider_type = Some(real_provider);
 
         // 验证从配置中获取的 URL
         let host = strategy.select_upstream_host(&ctx).await.unwrap();

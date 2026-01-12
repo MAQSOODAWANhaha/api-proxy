@@ -54,7 +54,7 @@ impl OpenAIStrategy {
         let Some(health_checker) = self.health_checker.as_ref() else {
             return Ok(());
         };
-        let Some(key_id) = ctx.selected_backend.as_ref().map(|k| k.id) else {
+        let Some(key_id) = ctx.routing.selected_backend.as_ref().map(|k| k.id) else {
             return Ok(());
         };
 
@@ -89,7 +89,7 @@ impl OpenAIStrategy {
 
     /// `更新OpenAI速率限制信息到健康状态详情`
     async fn update_health_status_detail(&self, ctx: &ProxyContext) -> Result<()> {
-        let headers = &ctx.response_details.headers;
+        let headers = &ctx.response.details.headers;
         if headers.is_empty() {
             return Ok(());
         }
@@ -121,7 +121,7 @@ impl OpenAIStrategy {
         );
 
         // 更新数据库中的健康状态详情
-        if let Some(key_id) = ctx.selected_backend.as_ref().map(|k| k.id)
+        if let Some(key_id) = ctx.routing.selected_backend.as_ref().map(|k| k.id)
             && let Some(health_checker) = &self.health_checker
         {
             health_checker
@@ -197,7 +197,7 @@ impl ProviderStrategy for OpenAIStrategy {
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<()> {
-        if let Some(backend) = &ctx.selected_backend
+        if let Some(backend) = &ctx.routing.selected_backend
             && backend.auth_type == "oauth"
         {
             upstream_request
@@ -207,10 +207,11 @@ impl ProviderStrategy for OpenAIStrategy {
                     ctx.request_id
                 ))?;
 
-            if let Some(ResolvedCredential::OAuthAccessToken(token)) = &ctx.resolved_credential
+            if let Some(ResolvedCredential::OAuthAccessToken(token)) =
+                &ctx.routing.resolved_credential
                 && let Some(account_id) = Self::extract_chatgpt_account_id(token)
             {
-                ctx.account_id = Some(account_id.clone());
+                ctx.routing.account_id = Some(account_id.clone());
                 upstream_request
                     .insert_header("chatgpt-account-id", &account_id)
                     .context(format!(

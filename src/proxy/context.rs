@@ -157,6 +157,64 @@ impl RetryState {
     }
 }
 
+/// 请求相关上下文
+pub struct ProxyRequestContext {
+    /// 请求详情
+    pub details: RequestDetails,
+    /// 请求体缓冲区（用于 `request_body_filter` 中的数据收集）
+    pub body: BytesMut,
+    /// 是否计划修改请求体（供上游头部处理决策使用）
+    pub will_modify_body: bool,
+    /// 用户请求的模型名称
+    pub requested_model: Option<String>,
+}
+
+/// 响应相关上下文
+pub struct ProxyResponseContext {
+    /// 响应详情
+    pub details: ResponseDetails,
+    /// 响应体缓冲区（用于 `response_body_filter` 中的数据收集）
+    pub body: BytesMut,
+    /// SSE 首包心跳是否已注入（用于保持下游连接活跃）
+    pub sse_keepalive_sent: bool,
+    /// 最终使用量（统一出口）
+    pub usage_final: Option<TokenUsageMetrics>,
+}
+
+/// 路由与认证相关上下文
+pub struct ProxyRoutingContext {
+    /// 解析得到的最终上游凭证（由 `CredentialResolutionStep` 设置）
+    pub resolved_credential: Option<ResolvedCredential>,
+    /// `ChatGPT` Account ID（用于OpenAI `ChatGPT` API）
+    pub account_id: Option<String>,
+    /// 用户对外 API 配置
+    pub user_service_api: Option<user_service_apis::Model>,
+    /// 选择的后端 API 密钥
+    pub selected_backend: Option<user_provider_keys::Model>,
+    /// 提供商类型配置
+    pub provider_type: Option<provider_types::Model>,
+    /// 选定的服务商策略
+    pub strategy: Option<Arc<dyn ProviderStrategy>>,
+}
+
+/// 请求控制相关上下文
+pub struct ProxyControlContext {
+    /// 重试相关运行时状态
+    pub retry: RetryState,
+    /// 连接超时时间(秒)
+    pub timeout_seconds: Option<i32>,
+}
+
+/// 追踪与日志相关上下文
+pub struct ProxyTraceContext {
+    /// 追踪记录是否已成功写入数据库
+    pub trace_started: bool,
+    /// 最终上游请求头（包含注入/清理后的结果）
+    pub upstream_request_headers: Option<BTreeMap<String, String>>,
+    /// 最终上游请求 URI（可能被策略改写）
+    pub upstream_request_uri: Option<String>,
+}
+
 /// 请求上下文
 // #[derive(Debug, Clone)]
 pub struct ProxyContext {
@@ -164,46 +222,16 @@ pub struct ProxyContext {
     pub request_id: String,
     /// 开始时间
     pub start_time: Instant,
-    /// 重试相关运行时状态
-    pub retry: RetryState,
-    /// 请求详情
-    pub request_details: RequestDetails,
-    /// 响应详情
-    pub response_details: ResponseDetails,
-    /// 连接超时时间(秒)
-    pub timeout_seconds: Option<i32>,
-    /// 请求体缓冲区 (`用于request_body_filter中的数据收集`)
-    pub request_body: BytesMut,
-    /// 响应体缓冲区 (`用于response_body_filter中的数据收集`)
-    pub response_body: BytesMut,
-    /// 是否计划修改请求体（供上游头部处理决策使用）
-    pub will_modify_body: bool,
-    /// 解析得到的最终上游凭证（由 `CredentialResolutionStep` 设置）
-    pub resolved_credential: Option<ResolvedCredential>,
-    /// `ChatGPT` Account ID（用于OpenAI `ChatGPT` API）
-    pub account_id: Option<String>,
-    /// 用户请求的模型名称
-    pub requested_model: Option<String>,
-    /// 最终使用量（统一出口）
-    pub usage_final: Option<TokenUsageMetrics>,
-    /// 追踪记录是否已成功写入数据库
-    pub trace_started: bool,
-
-    // === 认证相关字段（逐步填充） ===
-    /// 用户对外API配置
-    pub user_service_api: Option<user_service_apis::Model>,
-    /// 选择的后端API密钥
-    pub selected_backend: Option<user_provider_keys::Model>,
-    /// 提供商类型配置
-    pub provider_type: Option<provider_types::Model>,
-    /// 选定的服务商策略
-    pub strategy: Option<Arc<dyn ProviderStrategy>>,
-
-    // === 日志模式相关字段（仅在 user_service_api.log_mode=true 时填充） ===
-    /// 最终上游请求头（包含注入/清理后的结果）
-    pub upstream_request_headers: Option<BTreeMap<String, String>>,
-    /// 最终上游请求 URI（可能被策略改写）
-    pub upstream_request_uri: Option<String>,
+    /// 控制域上下文
+    pub control: ProxyControlContext,
+    /// 请求域上下文
+    pub request: ProxyRequestContext,
+    /// 响应域上下文
+    pub response: ProxyResponseContext,
+    /// 路由域上下文
+    pub routing: ProxyRoutingContext,
+    /// 追踪域上下文
+    pub trace: ProxyTraceContext,
 }
 
 impl Default for ProxyContext {
@@ -211,25 +239,35 @@ impl Default for ProxyContext {
         Self {
             request_id: String::new(),
             start_time: Instant::now(),
-            retry: RetryState::default(),
-            request_details: RequestDetails::default(),
-            response_details: ResponseDetails::default(),
-            timeout_seconds: None,
-            request_body: BytesMut::new(),
-            response_body: BytesMut::new(),
-            will_modify_body: false,
-            resolved_credential: None,
-            account_id: None,
-            requested_model: None,
-            usage_final: None,
-            trace_started: false,
-            // 认证相关字段
-            user_service_api: None,
-            selected_backend: None,
-            provider_type: None,
-            strategy: None,
-            upstream_request_headers: None,
-            upstream_request_uri: None,
+            control: ProxyControlContext {
+                retry: RetryState::default(),
+                timeout_seconds: None,
+            },
+            request: ProxyRequestContext {
+                details: RequestDetails::default(),
+                body: BytesMut::new(),
+                will_modify_body: false,
+                requested_model: None,
+            },
+            response: ProxyResponseContext {
+                details: ResponseDetails::default(),
+                body: BytesMut::new(),
+                sse_keepalive_sent: false,
+                usage_final: None,
+            },
+            routing: ProxyRoutingContext {
+                resolved_credential: None,
+                account_id: None,
+                user_service_api: None,
+                selected_backend: None,
+                provider_type: None,
+                strategy: None,
+            },
+            trace: ProxyTraceContext {
+                trace_started: false,
+                upstream_request_headers: None,
+                upstream_request_uri: None,
+            },
         }
     }
 }
@@ -239,13 +277,13 @@ impl ProxyContext {}
 impl ProxyContext {
     /// 标记追踪已成功启动
     pub const fn mark_trace_started(&mut self) {
-        self.trace_started = true;
+        self.trace.trace_started = true;
     }
 
     /// 判断是否已成功启动追踪
     #[must_use]
     pub const fn is_trace_started(&self) -> bool {
-        self.trace_started
+        self.trace.trace_started
     }
 }
 

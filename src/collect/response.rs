@@ -34,15 +34,15 @@ pub fn collect_details(
 
     // 同步关键字段到上下文
     if let Some(ct) = &content_type {
-        ctx.response_details.content_type = Some(ct.clone());
+        ctx.response.details.content_type = Some(ct.clone());
     }
     let content_encoding = upstream_response
         .headers
         .get("content-encoding")
         .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
         .map(str::to_lowercase);
-    ctx.response_details.content_encoding = content_encoding;
-    ctx.response_details.status_code = Some(upstream_response.status.as_u16());
+    ctx.response.details.content_encoding = content_encoding;
+    ctx.response.details.status_code = Some(upstream_response.status.as_u16());
 
     ResponseStats {
         status_code: upstream_response.status.as_u16(),

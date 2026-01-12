@@ -121,10 +121,10 @@ impl AuthenticationService {
             .await?;
 
         // 6. 填充上下文
-        ctx.user_service_api = Some(user_api);
-        ctx.provider_type = Some(provider_type);
-        ctx.selected_backend = Some(selected_backend);
-        ctx.resolved_credential = Some(resolved_credential);
+        ctx.routing.user_service_api = Some(user_api);
+        ctx.routing.provider_type = Some(provider_type);
+        ctx.routing.selected_backend = Some(selected_backend);
+        ctx.routing.resolved_credential = Some(resolved_credential);
 
         Ok(())
     }

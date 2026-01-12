@@ -31,7 +31,7 @@ impl RequestTransformService {
         ctx: &mut ProxyContext,
     ) -> Result<()> {
         // 1. 应用 ProviderStrategy 进行早期修改
-        if let Some(strategy) = ctx.strategy.clone() {
+        if let Some(strategy) = ctx.routing.strategy.clone() {
             strategy
                 .modify_request(session, upstream_request, ctx)
                 .await?;
@@ -68,6 +68,7 @@ impl RequestTransformService {
         ctx: &ProxyContext,
     ) -> Result<()> {
         let credential = ctx
+            .routing
             .resolved_credential
             .as_ref()
             .ok_or(AuthError::NotAuthenticated)?;
@@ -78,9 +79,9 @@ impl RequestTransformService {
 
         match credential {
             ResolvedCredential::ApiKey(api_key) => {
-                let auth_headers = ctx.strategy.as_ref().map_or_else(
+                let auth_headers = ctx.routing.strategy.as_ref().map_or_else(
                     || vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
-                    |strategy| strategy.build_auth_headers(api_key),
+                    |strategy| strategy.build_auth_headers(api_key.as_str()),
                 );
 
                 for (name, value) in auth_headers {
@@ -148,7 +149,7 @@ impl RequestTransformService {
     ) {
         let is_sse = session.req_header().uri.path().contains("stream"); // Simplified check
 
-        if ctx.will_modify_body || is_sse {
+        if ctx.request.will_modify_body || is_sse {
             upstream_request.remove_header("content-length");
         } else {
             let method = upstream_request.method.as_str();

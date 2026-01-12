@@ -149,7 +149,7 @@ impl TraceManager {
                         tokens_completion: metrics.usage.completion_tokens,
                         error_type: None,
                         error_message: None,
-                        retry_count: i32::try_from(ctx.retry.retry_count).ok(),
+                        retry_count: i32::try_from(ctx.control.retry.retry_count).ok(),
                         cache_create_tokens: metrics.usage.cache_create_tokens,
                         cache_read_tokens: metrics.usage.cache_read_tokens,
                         cost: metrics.cost.value,
@@ -224,7 +224,7 @@ impl TraceManager {
             tokens_completion: metrics.and_then(|m| m.usage.completion_tokens),
             error_type,
             error_message,
-            retry_count: i32::try_from(ctx.retry.retry_count).ok(),
+            retry_count: i32::try_from(ctx.control.retry.retry_count).ok(),
             cache_create_tokens: metrics.and_then(|m| m.usage.cache_create_tokens),
             cache_read_tokens: metrics.and_then(|m| m.usage.cache_read_tokens),
             cost: metrics.and_then(|m| m.cost.value),
@@ -247,7 +247,7 @@ impl TraceManager {
     }
 
     async fn update_rate_limits(&self, metrics: &CollectedMetrics, ctx: &ProxyContext) {
-        let Some(user_api) = ctx.user_service_api.as_ref() else {
+        let Some(user_api) = ctx.routing.user_service_api.as_ref() else {
             return;
         };
 
@@ -338,14 +338,15 @@ impl TraceManager {
 }
 
 fn decode_response_body(ctx: &ProxyContext) -> Option<String> {
-    if ctx.response_body.is_empty() {
+    if ctx.response.body.is_empty() {
         return None;
     }
 
-    let raw_bytes = ctx.response_body.as_ref();
+    let raw_bytes = ctx.response.body.as_ref();
 
     if ctx
-        .response_details
+        .response
+        .details
         .content_encoding
         .as_deref()
         .is_some_and(|encoding| encoding.to_ascii_lowercase().contains("gzip"))

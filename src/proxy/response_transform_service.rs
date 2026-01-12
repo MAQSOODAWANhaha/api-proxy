@@ -33,20 +33,29 @@ impl ResponseTransformService {
         ctx: &mut ProxyContext,
     ) -> Result<()> {
         // 1. 将上游响应的关键信息记录到上下文中
-        ctx.response_details.status_code = Some(upstream_response.status.as_u16());
+        ctx.response.details.status_code = Some(upstream_response.status.as_u16());
         if let Some(ct) = upstream_response
             .headers
             .get("content-type")
             .and_then(|v| v.to_str().ok())
         {
-            ctx.response_details.content_type = Some(ct.to_string());
+            ctx.response.details.content_type = Some(ct.to_string());
         }
         if let Some(ce) = upstream_response
             .headers
             .get("content-encoding")
             .and_then(|v| v.to_str().ok())
         {
-            ctx.response_details.content_encoding = Some(ce.to_string());
+            ctx.response.details.content_encoding = Some(ce.to_string());
+        }
+        if ctx
+            .response
+            .details
+            .content_type
+            .as_deref()
+            .is_some_and(Self::is_sse_content_type)
+        {
+            Self::apply_sse_headers(upstream_response)?;
         }
 
         // 2. 添加CORS头部，实现跨域支持
@@ -108,7 +117,60 @@ impl ResponseTransformService {
     ) -> Result<()> {
         upstream_response
             .insert_header(key, value)
-            .context("Failed to set CORS header")
+            .context("Failed to set response header")
+    }
+
+    fn apply_sse_headers(upstream_response: &mut ResponseHeader) -> Result<()> {
+        // SSE 需要流式发送，确保不使用 Content-Length 以避免长度不一致。
+        upstream_response.remove_header("content-length");
+        Self::ensure_cache_control_directive(upstream_response, "no-cache")?;
+        Self::ensure_cache_control_directive(upstream_response, "no-transform")?;
+        if upstream_response.headers.get("x-accel-buffering").is_none() {
+            Self::set_header(upstream_response, "x-accel-buffering", "no")?;
+        }
+        if upstream_response.headers.get("connection").is_none() {
+            Self::set_header(upstream_response, "connection", "keep-alive")?;
+        }
+        Ok(())
+    }
+
+    fn is_sse_content_type(content_type: &str) -> bool {
+        content_type
+            .to_ascii_lowercase()
+            .contains("text/event-stream")
+    }
+
+    fn ensure_cache_control_directive(
+        upstream_response: &mut ResponseHeader,
+        directive: &'static str,
+    ) -> Result<()> {
+        if let Some(value) = upstream_response
+            .headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+        {
+            if Self::has_cache_control_directive(value, directive) {
+                return Ok(());
+            }
+            let mut new_value = value.to_string();
+            if !new_value.ends_with(',') {
+                new_value.push_str(", ");
+            }
+            new_value.push_str(directive);
+            upstream_response
+                .insert_header("cache-control", new_value)
+                .context("Failed to update cache-control header")?;
+        } else {
+            Self::set_header(upstream_response, "cache-control", directive)?;
+        }
+        Ok(())
+    }
+
+    fn has_cache_control_directive(value: &str, directive: &str) -> bool {
+        value
+            .split(',')
+            .map(|item| item.trim().to_ascii_lowercase())
+            .any(|item| item == directive)
     }
 
     /// 清理敏感或不必要的响应头

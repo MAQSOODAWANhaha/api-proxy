@@ -1012,10 +1012,11 @@ pub fn log_proxy_failure_details(
     let pingora_error_details = error.map_or_else(|| "无Pingora错误".to_string(), Error::to_string);
 
     // 检测状态码不一致问题
-    let context_status_code = ctx.response_details.status_code;
+    let context_status_code = ctx.response.details.status_code;
     let status_code_consistent = context_status_code.is_none_or(|ctx_code| ctx_code == status_code);
 
     let should_log_response_body = ctx
+        .routing
         .user_service_api
         .as_ref()
         .is_some_and(|user_api| user_api.log_mode);
@@ -1047,9 +1048,9 @@ pub fn log_proxy_failure_details(
             "connection_failure_analysis",
             "连接失败分析 - 可能需要检查网络或上游服务状态",
             error_category = %error_category,
-            client_ip = %ctx.request_details.client_ip,
-            selected_backend_id = ?ctx.selected_backend.as_ref().map(|b| b.id),
-            provider_name = ?ctx.provider_type.as_ref().map(|p| &p.name)
+            client_ip = %ctx.request.details.client_ip,
+            selected_backend_id = ?ctx.routing.selected_backend.as_ref().map(|b| b.id),
+            provider_name = ?ctx.routing.provider_type.as_ref().map(|p| &p.name)
         );
     }
 
@@ -1095,15 +1096,15 @@ fn log_proxy_failure_summary(summary: &ProxyFailureLogSummary<'_>, response_body
             error_type_cn = %summary.error_type_cn,
             error_message = %summary.error_message,
             pingora_error_details = %summary.pingora_error_details,
-            path = %summary.ctx.request_details.path,
-            method = %summary.ctx.request_details.method,
-            client_ip = %summary.ctx.request_details.client_ip,
-            user_agent = ?summary.ctx.request_details.user_agent,
-            request_body_size = summary.ctx.request_body.len(),
-            response_body_size = summary.ctx.response_body.len(),
+            path = %summary.ctx.request.details.path,
+            method = %summary.ctx.request.details.method,
+            client_ip = %summary.ctx.request.details.client_ip,
+            user_agent = ?summary.ctx.request.details.user_agent,
+            request_body_size = summary.ctx.request.body.len(),
+            response_body_size = summary.ctx.response.body.len(),
             response_body = %response_body,
-            has_selected_backend = summary.ctx.selected_backend.is_some(),
-            provider_type = ?summary.ctx.provider_type.as_ref().map(|p| &p.name),
+            has_selected_backend = summary.ctx.routing.selected_backend.is_some(),
+            provider_type = ?summary.ctx.routing.provider_type.as_ref().map(|p| &p.name),
             request_duration_ms = summary.ctx.start_time.elapsed().as_millis()
         );
     } else {
@@ -1120,14 +1121,14 @@ fn log_proxy_failure_summary(summary: &ProxyFailureLogSummary<'_>, response_body
             error_type_cn = %summary.error_type_cn,
             error_message = %summary.error_message,
             pingora_error_details = %summary.pingora_error_details,
-            path = %summary.ctx.request_details.path,
-            method = %summary.ctx.request_details.method,
-            client_ip = %summary.ctx.request_details.client_ip,
-            user_agent = ?summary.ctx.request_details.user_agent,
-            request_body_size = summary.ctx.request_body.len(),
-            response_body_size = summary.ctx.response_body.len(),
-            has_selected_backend = summary.ctx.selected_backend.is_some(),
-            provider_type = ?summary.ctx.provider_type.as_ref().map(|p| &p.name),
+            path = %summary.ctx.request.details.path,
+            method = %summary.ctx.request.details.method,
+            client_ip = %summary.ctx.request.details.client_ip,
+            user_agent = ?summary.ctx.request.details.user_agent,
+            request_body_size = summary.ctx.request.body.len(),
+            response_body_size = summary.ctx.response.body.len(),
+            has_selected_backend = summary.ctx.routing.selected_backend.is_some(),
+            provider_type = ?summary.ctx.routing.provider_type.as_ref().map(|p| &p.name),
             request_duration_ms = summary.ctx.start_time.elapsed().as_millis()
         );
     }
@@ -1135,28 +1136,29 @@ fn log_proxy_failure_summary(summary: &ProxyFailureLogSummary<'_>, response_body
 
 fn decode_response_body_for_logging(ctx: &ProxyContext) -> String {
     if ctx
-        .response_details
+        .response
+        .details
         .content_encoding
         .as_deref()
         .is_some_and(|encoding| encoding.to_ascii_lowercase().contains("gzip"))
     {
-        let mut decoder = GzDecoder::new(ctx.response_body.as_ref());
+        let mut decoder = GzDecoder::new(ctx.response.body.as_ref());
         let mut decompressed = Vec::new();
         if decoder.read_to_end(&mut decompressed).is_ok() {
             return String::from_utf8_lossy(&decompressed).to_string();
         }
     }
 
-    String::from_utf8_lossy(&ctx.response_body).to_string()
+    String::from_utf8_lossy(&ctx.response.body).to_string()
 }
 
 /// 记录 Gemini 完整请求信息
 pub fn log_complete_request(request_id: &str, path: &str, session: &Session, ctx: &ProxyContext) {
     // 读取请求体
-    let request_body = if ctx.request_body.is_empty() {
+    let request_body = if ctx.request.body.is_empty() {
         String::new()
     } else {
-        String::from_utf8_lossy(&ctx.request_body).to_string()
+        String::from_utf8_lossy(&ctx.request.body).to_string()
     };
 
     // 过滤 request 字段
@@ -1217,7 +1219,7 @@ pub fn log_complete_response(
 pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
     const VALUE_TRUNCATE_LEN: usize = 1024;
 
-    let Some(user_api) = ctx.user_service_api.as_ref() else {
+    let Some(user_api) = ctx.routing.user_service_api.as_ref() else {
         return;
     };
     if !user_api.log_mode {
@@ -1227,10 +1229,10 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
     let request_id = ctx.request_id.as_str();
 
     // === 请求头（上游最终版本） ===
-    let request_headers_json = ctx.upstream_request_headers.as_ref().map_or_else(
+    let request_headers_json = ctx.trace.upstream_request_headers.as_ref().map_or_else(
         || {
             let mut map = BTreeMap::new();
-            for (k, v) in &ctx.request_details.headers {
+            for (k, v) in &ctx.request.details.headers {
                 map.insert(
                     k.to_ascii_lowercase(),
                     truncate_string_value(v, VALUE_TRUNCATE_LEN),
@@ -1251,12 +1253,12 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
     );
 
     // === 请求体预览（完整结构，value 截断） ===
-    let request_body_bytes = ctx.request_body.as_ref();
+    let request_body_bytes = ctx.request.body.as_ref();
     let request_body_preview = build_body_preview(request_body_bytes, VALUE_TRUNCATE_LEN);
 
     // === 响应头（采集到的最终版本） ===
     let mut response_headers_map = BTreeMap::new();
-    for (k, v) in &ctx.response_details.headers {
+    for (k, v) in &ctx.response.details.headers {
         response_headers_map.insert(
             k.to_ascii_lowercase(),
             truncate_string_value(v, VALUE_TRUNCATE_LEN),
@@ -1266,13 +1268,14 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         serde_json::to_string(&response_headers_map).unwrap_or_else(|_| "{}".to_string());
 
     // === 响应体预览（完整结构，value 截断） ===
-    let response_body_bytes = ctx.response_body.as_ref();
+    let response_body_bytes = ctx.response.body.as_ref();
     let response_body_preview = build_body_preview(response_body_bytes, VALUE_TRUNCATE_LEN);
 
     let upstream_uri = ctx
+        .trace
         .upstream_request_uri
         .as_deref()
-        .unwrap_or(ctx.request_details.path.as_str());
+        .unwrap_or(ctx.request.details.path.as_str());
 
     linfo!(
         request_id,
@@ -1284,7 +1287,7 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         user_service_api_id = user_api.id,
         provider_type_id = user_api.provider_type_id,
         upstream_uri = %upstream_uri,
-        method = %ctx.request_details.method,
+        method = %ctx.request.details.method,
         request_headers = %request_headers_json,
         request_body_preview = %request_body_preview
     );

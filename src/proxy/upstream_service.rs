@@ -28,12 +28,13 @@ impl UpstreamService {
     /// 选择上游对等体
     pub async fn select_peer(&self, ctx: &ProxyContext) -> Result<Box<HttpPeer>> {
         let provider_type = ctx
+            .routing
             .provider_type
             .as_ref()
             .ok_or_else(|| ConfigError::Load("Provider type not set in context".to_string()))?;
 
         // 优先由 ProviderStrategy 决定上游地址
-        let upstream_addr = if let Some(strategy) = &ctx.strategy {
+        let upstream_addr = if let Some(strategy) = &ctx.routing.strategy {
             match strategy.select_upstream_host(ctx).await {
                 Ok(Some(host)) => Some(if host.contains(':') {
                     host
@@ -73,7 +74,7 @@ impl UpstreamService {
             .to_string();
         let mut peer = HttpPeer::new(&final_addr, true, sni);
 
-        let timeout = u64::try_from(ctx.timeout_seconds.unwrap_or(30).max(0)).unwrap_or(30);
+        let timeout = u64::try_from(ctx.control.timeout_seconds.unwrap_or(30).max(0)).unwrap_or(30);
         let read_timeout_secs = timeout * 2;
 
         if let Some(options) = peer.get_mut_peer_options() {
