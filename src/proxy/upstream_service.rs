@@ -83,7 +83,7 @@ impl UpstreamService {
             options.total_connection_timeout = Some(Duration::from_secs(10)); // 含TLS握手超时
             options.read_timeout = Some(Duration::from_secs(read_timeout_secs));
             options.write_timeout = Some(Duration::from_secs(read_timeout_secs));
-            options.idle_timeout = Some(Duration::from_secs(60));
+            options.idle_timeout = Some(Duration::from_secs(20));
             options.h2_ping_interval = Some(Duration::from_secs(20));
             options.max_h2_streams = 100;
             // 启用 TCP Keepalive，防止长连接在无数据传输时被中间设备断开
