@@ -6,6 +6,7 @@ use crate::error::{Context, Result, auth::AuthError};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::{ProxyContext, ResolvedCredential};
+use crate::proxy::upstream_url::parse_base_url;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use sea_orm::DatabaseConnection;
@@ -37,16 +38,19 @@ impl RequestTransformService {
                 .await?;
         }
 
-        // 2. 构建并注入认证头
+        // 2. 补齐 Host 头（若策略未设置）
+        Self::ensure_host_header(upstream_request, ctx)?;
+
+        // 3. 构建并注入认证头
         Self::build_and_inject_auth_headers(upstream_request, ctx)?;
 
-        // 3. 清理代理相关和不必要的头部
+        // 4. 清理代理相关和不必要的头部
         Self::cleanup_headers(upstream_request);
 
-        // 4. 确保必要的头部存在（如 User-Agent, Accept）
+        // 5. 确保必要的头部存在（如 User-Agent, Accept）
         Self::ensure_essential_headers(session, upstream_request);
 
-        // 5. 处理 Content-Length
+        // 6. 处理 Content-Length
         Self::handle_content_length(session, upstream_request, ctx);
 
         linfo!(
@@ -57,6 +61,37 @@ impl RequestTransformService {
             "上游请求转换完成",
             method = upstream_request.method.to_string(),
             uri = upstream_request.uri.to_string()
+        );
+
+        Ok(())
+    }
+
+    /// 确保 Host 头存在，避免上游虚拟主机路由错误
+    fn ensure_host_header(upstream_request: &mut RequestHeader, ctx: &ProxyContext) -> Result<()> {
+        if upstream_request.headers.get("host").is_some() {
+            return Ok(());
+        }
+
+        let Some(provider) = &ctx.routing.provider_type else {
+            return Ok(());
+        };
+
+        let parsed = parse_base_url(&provider.base_url)
+            .with_context(|| format!("解析上游地址失败: {}", provider.base_url))?;
+
+        upstream_request
+            .insert_header("host", &parsed.host_header)
+            .context("Failed to set upstream host header")?;
+
+        linfo!(
+            &ctx.request_id,
+            LogStage::RequestModify,
+            LogComponent::RequestTransform,
+            "set_host_header",
+            "补齐上游 Host 头",
+            provider = provider.name.as_str(),
+            host = %parsed.host_header,
+            upstream_addr = %parsed.addr
         );
 
         Ok(())
