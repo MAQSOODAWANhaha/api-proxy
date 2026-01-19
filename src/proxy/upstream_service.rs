@@ -2,10 +2,11 @@
 //!
 //! 负责所有与上游节点（Peer）相关的逻辑，包括根据服务商策略选择地址和配置连接参数。
 
-use crate::error::{Result, config::ConfigError};
+use crate::error::{Context, Result, config::ConfigError};
 use crate::linfo;
 use crate::logging::{LogComponent, LogStage};
 use crate::proxy::context::ProxyContext;
+use crate::proxy::upstream_url::parse_base_url;
 use pingora_core::protocols::TcpKeepalive;
 use pingora_core::upstreams::peer::{ALPN, HttpPeer, Peer};
 use sea_orm::DatabaseConnection;
@@ -36,11 +37,7 @@ impl UpstreamService {
         // 优先由 ProviderStrategy 决定上游地址
         let upstream_addr = if let Some(strategy) = &ctx.routing.strategy {
             match strategy.select_upstream_host(ctx).await {
-                Ok(Some(host)) => Some(if host.contains(':') {
-                    host
-                } else {
-                    format!("{host}:443")
-                }),
+                Ok(Some(host)) => Some(host),
                 _ => None,
             }
         } else {
@@ -48,13 +45,9 @@ impl UpstreamService {
         };
 
         // 回退：使用 provider_types.base_url
-        let final_addr = upstream_addr.unwrap_or_else(|| {
-            if provider_type.base_url.contains(':') {
-                provider_type.base_url.clone()
-            } else {
-                format!("{}:443", provider_type.base_url)
-            }
-        });
+        let final_raw = upstream_addr.unwrap_or_else(|| provider_type.base_url.clone());
+        let parsed =
+            parse_base_url(&final_raw).with_context(|| format!("解析上游地址失败: {final_raw}"))?;
 
         linfo!(
             &ctx.request_id,
@@ -62,17 +55,14 @@ impl UpstreamService {
             LogComponent::Upstream,
             "upstream_peer_selected",
             "上游节点选择完成",
-            upstream = final_addr,
+            upstream = parsed.addr,
+            upstream_raw = final_raw,
+            host_header = parsed.host_header,
             provider = provider_type.name,
             provider_url = provider_type.base_url
         );
 
-        let sni = final_addr
-            .split(':')
-            .next()
-            .unwrap_or(&final_addr)
-            .to_string();
-        let mut peer = HttpPeer::new(&final_addr, true, sni);
+        let mut peer = HttpPeer::new(&parsed.addr, true, parsed.sni.clone());
 
         let timeout = u64::try_from(ctx.control.timeout_seconds.unwrap_or(30).max(0)).unwrap_or(30);
         let read_timeout_secs = timeout * 2;

@@ -60,6 +60,7 @@ pub mod provider_strategy;
 pub mod request_transform_service;
 pub mod response_transform_service;
 pub mod upstream_service;
+pub mod upstream_url;
 
 // 统一导出
 pub use crate::collect::service::CollectService;

@@ -6,6 +6,7 @@ use super::ProviderStrategy;
 use crate::error::{Context, Result, config::ConfigError};
 use crate::key_pool::ApiKeyHealthService;
 use crate::proxy::ProxyContext;
+use crate::proxy::upstream_url::parse_base_url;
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -85,9 +86,11 @@ impl ProviderStrategy for ClaudeStrategy {
             )
             .into());
         };
+        let parsed =
+            parse_base_url(&host).with_context(|| format!("解析 Claude 上游地址失败: {host}"))?;
 
         upstream_request
-            .insert_header("host", &host)
+            .insert_header("host", &parsed.host_header)
             .context("Failed to set host header for Claude")?;
 
         // 检测是否为需要修改 body 的请求
@@ -104,7 +107,8 @@ impl ProviderStrategy for ClaudeStrategy {
             LogComponent::ClaudeStrategy,
             "request_modified",
             "Claude请求修改完成",
-            host = %host,
+            host = %parsed.host_header,
+            upstream_addr = %parsed.addr,
             path = path,
             will_modify_body = ctx.request.will_modify_body
         );

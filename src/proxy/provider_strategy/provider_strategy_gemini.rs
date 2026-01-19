@@ -6,6 +6,7 @@
 use super::ProviderStrategy;
 use crate::error::{Context, Result};
 use crate::proxy::ProxyContext;
+use crate::proxy::upstream_url::parse_base_url;
 use crate::{
     ldebug, linfo,
     logging::{LogComponent, LogStage},
@@ -52,8 +53,10 @@ impl ProviderStrategy for GeminiStrategy {
     ) -> Result<()> {
         // 设置正确的 Host 头（使用数据库配置的 base_url）
         if let Ok(Some(host)) = self.select_upstream_host(ctx).await {
+            let parsed = parse_base_url(&host)
+                .with_context(|| format!("解析 Gemini 上游地址失败: {host}"))?;
             upstream_request
-                .insert_header("host", &host)
+                .insert_header("host", &parsed.host_header)
                 .context("Failed to set host header for Gemini")?;
 
             linfo!(
@@ -62,7 +65,8 @@ impl ProviderStrategy for GeminiStrategy {
                 LogComponent::GeminiStrategy,
                 "set_host_header",
                 "已设置 Gemini 上游 Host 头",
-                host = %host,
+                host = %parsed.host_header,
+                upstream_addr = %parsed.addr,
                 uri = %upstream_request.uri
             );
         }
