@@ -38,7 +38,7 @@ impl RequestTransformService {
                 .await?;
         }
 
-        // 2. 补齐 Host 头（若策略未设置）
+        // 2. 覆盖 Host 头为上游地址（避免下游 Host 影响上游路由）
         Self::ensure_host_header(upstream_request, ctx)?;
 
         // 3. 构建并注入认证头
@@ -66,12 +66,8 @@ impl RequestTransformService {
         Ok(())
     }
 
-    /// 确保 Host 头存在，避免上游虚拟主机路由错误
+    /// 确保 Host 头为上游地址，避免下游虚拟主机路由错误
     fn ensure_host_header(upstream_request: &mut RequestHeader, ctx: &ProxyContext) -> Result<()> {
-        if upstream_request.headers.get("host").is_some() {
-            return Ok(());
-        }
-
         let Some(provider) = &ctx.routing.provider_type else {
             return Ok(());
         };
@@ -79,6 +75,14 @@ impl RequestTransformService {
         let parsed = parse_base_url(&provider.base_url)
             .with_context(|| format!("解析上游地址失败: {}", provider.base_url))?;
 
+        let previous_host = upstream_request
+            .headers
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        upstream_request.remove_header("host");
         upstream_request
             .insert_header("host", &parsed.host_header)
             .context("Failed to set upstream host header")?;
@@ -90,6 +94,7 @@ impl RequestTransformService {
             "set_host_header",
             "补齐上游 Host 头",
             provider = provider.name.as_str(),
+            previous_host = previous_host,
             host = %parsed.host_header,
             upstream_addr = %parsed.addr
         );
