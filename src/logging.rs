@@ -6,6 +6,7 @@
 //! - 日志系统初始化和配置
 
 use crate::{
+    collect::util::decompress_for_stats,
     error::{ErrorCategory, ProxyError},
     proxy::ProxyContext,
 };
@@ -1274,6 +1275,19 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
     // === 响应体预览（完整结构，value 截断） ===
     let response_body_bytes = ctx.response.body.as_ref();
     let response_body_preview = build_body_preview(response_body_bytes, VALUE_TRUNCATE_LEN);
+    let content_type = ctx.response.details.content_type.as_deref().unwrap_or("");
+    let response_sse_tail = if content_type
+        .to_ascii_lowercase()
+        .contains("text/event-stream")
+    {
+        extract_sse_tail_preview(
+            response_body_bytes,
+            ctx.response.details.content_encoding.as_deref(),
+            2,
+        )
+    } else {
+        String::new()
+    };
 
     let upstream_uri = ctx
         .trace
@@ -1306,6 +1320,7 @@ pub fn log_user_service_api_log_mode(ctx: &ProxyContext, status_code: u16) {
         user_service_api_id = user_api.id,
         provider_type_id = user_api.provider_type_id,
         status_code = status_code,
+        response_sse_tail = %response_sse_tail,
         response_headers = %response_headers_json,
         response_body_preview = %response_body_preview
     );
@@ -1399,4 +1414,24 @@ fn build_body_preview(body: &[u8], value_truncate_len: usize) -> String {
 
     let preview_value = build_json_preview_full(&value, value_truncate_len);
     serde_json::to_string(&preview_value).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn extract_sse_tail_preview(body: &[u8], encoding: Option<&str>, max_lines: usize) -> String {
+    if max_lines == 0 {
+        return String::new();
+    }
+    let decoded = decompress_for_stats(encoding, body, 2 * 1024 * 1024);
+    let text = String::from_utf8_lossy(&decoded);
+    let mut data_lines: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.starts_with("data:") {
+            data_lines.push(line);
+        }
+    }
+    if data_lines.is_empty() {
+        return String::new();
+    }
+    let start = data_lines.len().saturating_sub(max_lines);
+    data_lines[start..].join("\n")
 }

@@ -6,6 +6,7 @@ use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::collect::usage_model;
 use crate::error::{Context, Result};
 use crate::key_pool::types::SchedulingStrategy;
 use crate::management::middleware::AuthContext;
@@ -274,6 +275,7 @@ impl ProviderTypeService {
             .insert(self.db.as_ref())
             .await
             .context("创建服务商类型失败")?;
+        usage_model::invalidate_token_extractor_cache(inserted.id);
         Ok(inserted)
     }
 
@@ -360,6 +362,9 @@ impl ProviderTypeService {
             .update(self.db.as_ref())
             .await
             .context("更新服务商类型失败")?;
+        if request.token_mappings_json.is_some() {
+            usage_model::invalidate_token_extractor_cache(updated.id);
+        }
         Ok(updated)
     }
 
@@ -374,6 +379,7 @@ impl ProviderTypeService {
             result.rows_affected > 0,
             crate::error::auth::AuthError::Message("服务商类型不存在".to_string())
         );
+        usage_model::invalidate_token_extractor_cache(id);
         Ok(())
     }
 

@@ -29,6 +29,13 @@ static EXTRACTOR_CACHE: LazyLock<
     RwLock<HashMap<i32, Arc<crate::collect::field_extractor::TokenFieldExtractor>>>,
 > = LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// 清理指定 provider 的 Token 提取器缓存（配置更新后生效）
+pub fn invalidate_token_extractor_cache(provider_id: i32) {
+    let _ = EXTRACTOR_CACHE
+        .write()
+        .map(|mut cache| cache.remove(&provider_id));
+}
+
 fn extract_model_by_path(json: &Value, path: &str) -> Option<String> {
     let mut cur = json;
     for seg in path.split('.') {
