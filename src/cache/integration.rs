@@ -367,8 +367,8 @@ impl CacheFacade {
 
         let user_apis = UserServiceApis::find()
             .filter(user_service_apis::Column::IsActive.eq(true))
-            // 注意：由于删除了last_used字段，这里改为查询所有活跃的API
-            // TODO: 可以考虑从proxy_tracing表查询最近使用的API ID列表
+            // 注意：当前查询所有活跃的API。未来优化方向：从proxy_tracing表查询最近使用的API ID列表，
+            // 以优先预热最近使用的配置，减少冷启动开销
             .all(db)
             .await
             .context("查询用户API配置失败")?;

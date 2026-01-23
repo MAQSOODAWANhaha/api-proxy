@@ -67,7 +67,11 @@ fn get_or_build_extractor(
     provider: &entity::provider_types::Model,
 ) -> Option<Arc<crate::collect::field_extractor::TokenFieldExtractor>> {
     let id = provider.id;
-    let value = EXTRACTOR_CACHE.read().unwrap().get(&id).cloned();
+    let value = EXTRACTOR_CACHE
+        .read()
+        .expect("extractor cache lock should not be poisoned")
+        .get(&id)
+        .cloned();
     if let Some(extractor) = value {
         return Some(extractor);
     }
@@ -81,7 +85,7 @@ fn get_or_build_extractor(
     ));
     EXTRACTOR_CACHE
         .write()
-        .unwrap()
+        .expect("extractor cache lock should not be poisoned")
         .insert(id, extractor.clone());
     Some(extractor)
 }

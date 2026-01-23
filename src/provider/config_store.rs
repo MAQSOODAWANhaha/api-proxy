@@ -121,7 +121,7 @@ impl ApiKeyProviderConfig {
             LogComponent::OAuth,
             "load_oauth_config",
             &format!(
-                "📊 [OAuth] 加载 provider 配置: name={}, auth_type={}",
+                "[CONFIG] [OAuth] 加载 provider 配置: name={}, auth_type={}",
                 model.name, oauth_type
             )
         );

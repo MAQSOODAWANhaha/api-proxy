@@ -142,7 +142,7 @@ pub fn convert_model_to_dto(
         auth_type: provider.auth_type.clone(),
         base_url: provider.base_url.clone(),
         is_active: provider.is_active,
-        // TODO: 从配置中提取支持的模型列表，目前留空
+        // 支持的模型列表：当前设计为从模型定价表动态查询，而非硬编码在此处
         supported_models: Vec::new(),
         auth_configs_json: deserialize_option_json(
             provider.auth_configs_json.as_deref(),

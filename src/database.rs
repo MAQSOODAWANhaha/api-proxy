@@ -233,7 +233,7 @@ pub async fn ensure_model_pricing_data(db: &DatabaseConnection) -> crate::error:
         LogStage::Startup,
         LogComponent::Database,
         "ensure_pricing_data",
-        "🔍 检查模型定价数据完整性..."
+        "[CHECK] 检查模型定价数据完整性..."
     );
     // 始终尝试远程优先的增量更新
     match initialize_model_pricing_from_remote_or_local(db).await {
@@ -270,7 +270,7 @@ pub async fn force_initialize_model_pricing_data(
         LogStage::Startup,
         LogComponent::Database,
         "force_init_pricing",
-        "🔄 强制重新初始化模型定价数据..."
+        "[RELOAD] 强制重新初始化模型定价数据..."
     );
 
     let txn = db.begin().await.context("开启模型定价重置事务失败")?;
@@ -644,7 +644,7 @@ fn filter_target_models(json_data: &HashMap<String, ModelPriceInfo>) -> Vec<Filt
         LogComponent::Database,
         "filter_models_result",
         &format!(
-            "📊 过滤结果: 从 {} 个模型中选择了 {} 个目标模型",
+            "[RESULT] 过滤结果: 从 {} 个模型中选择了 {} 个目标模型",
             json_data.len(),
             filtered_models.len()
         )
@@ -709,7 +709,7 @@ async fn get_provider_mappings<C: ConnectionTrait>(
         LogStage::Startup,
         LogComponent::Database,
         "query_providers",
-        &format!("📋 需要查询的providers: {required_providers:?}")
+        &format!("[QUERY] 需要查询的providers: {required_providers:?}")
     );
 
     // 查询数据库中所有活跃的provider
@@ -729,7 +729,7 @@ async fn get_provider_mappings<C: ConnectionTrait>(
                 LogStage::Startup,
                 LogComponent::Database,
                 "provider_mapping",
-                &format!("🔗 Provider映射: {} -> {}", provider.name, provider.id)
+                &format!("[MAP] Provider映射: {} -> {}", provider.name, provider.id)
             );
         }
     }
@@ -827,89 +827,76 @@ where
 }
 
 /// `从ModelPriceInfo解析出定价层级`
+/// 添加阶梯定价层
+fn add_tiered_pricing(
+    tiers: &mut Vec<PricingTier>,
+    token_type: &str,
+    base_cost: f64,
+    above_200k_cost: Option<f64>,
+    above_128k_cost: Option<f64>,
+) {
+    if let Some(above_200k) = above_200k_cost {
+        // 200k 阶梯定价
+        tiers.push(PricingTier {
+            token_type: token_type.to_string(),
+            min_tokens: 0,
+            max_tokens: Some(199_999),
+            price_per_token: base_cost,
+        });
+        tiers.push(PricingTier {
+            token_type: token_type.to_string(),
+            min_tokens: 200_000,
+            max_tokens: None,
+            price_per_token: above_200k,
+        });
+    } else if let Some(above_128k) = above_128k_cost {
+        // 128k 阶梯定价
+        tiers.push(PricingTier {
+            token_type: token_type.to_string(),
+            min_tokens: 0,
+            max_tokens: Some(127_999),
+            price_per_token: base_cost,
+        });
+        tiers.push(PricingTier {
+            token_type: token_type.to_string(),
+            min_tokens: 128_000,
+            max_tokens: None,
+            price_per_token: above_128k,
+        });
+    } else {
+        // 无阶梯，统一价格
+        tiers.push(PricingTier {
+            token_type: token_type.to_string(),
+            min_tokens: 0,
+            max_tokens: None,
+            price_per_token: base_cost,
+        });
+    }
+}
+
 fn parse_pricing_tiers(price_info: &ModelPriceInfo) -> Vec<PricingTier> {
     let mut tiers = Vec::new();
 
-    // 处理输入token定价
+    // 处理输入 token 定价
     if let Some(base_input_cost) = price_info.input_cost_per_token {
-        if let Some(above_200k_cost) = price_info.input_cost_per_token_above_200k {
-            // 200k阶梯定价
-            tiers.push(PricingTier {
-                token_type: "prompt".to_string(),
-                min_tokens: 0,
-                max_tokens: Some(199_999),
-                price_per_token: base_input_cost,
-            });
-            tiers.push(PricingTier {
-                token_type: "prompt".to_string(),
-                min_tokens: 200_000,
-                max_tokens: None,
-                price_per_token: above_200k_cost,
-            });
-        } else if let Some(above_128k_cost) = price_info.input_cost_per_token_above_128k {
-            // 128k阶梯定价
-            tiers.push(PricingTier {
-                token_type: "prompt".to_string(),
-                min_tokens: 0,
-                max_tokens: Some(127_999),
-                price_per_token: base_input_cost,
-            });
-            tiers.push(PricingTier {
-                token_type: "prompt".to_string(),
-                min_tokens: 128_000,
-                max_tokens: None,
-                price_per_token: above_128k_cost,
-            });
-        } else {
-            // 无阶梯，统一价格
-            tiers.push(PricingTier {
-                token_type: "prompt".to_string(),
-                min_tokens: 0,
-                max_tokens: None,
-                price_per_token: base_input_cost,
-            });
-        }
+        add_tiered_pricing(
+            &mut tiers,
+            "prompt",
+            base_input_cost,
+            price_info.input_cost_per_token_above_200k,
+            price_info.input_cost_per_token_above_128k,
+        );
     }
 
-    // 处理输出token定价
+    // 处理输出 token 定价
     if let Some(base_output_cost) = price_info.output_cost_per_token {
-        if let Some(above_200k_cost) = price_info.output_cost_per_token_above_200k {
-            // 200k阶梯定价
-            tiers.push(PricingTier {
-                token_type: "completion".to_string(),
-                min_tokens: 0,
-                max_tokens: Some(199_999),
-                price_per_token: base_output_cost,
-            });
-            tiers.push(PricingTier {
-                token_type: "completion".to_string(),
-                min_tokens: 200_000,
-                max_tokens: None,
-                price_per_token: above_200k_cost,
-            });
-        } else if let Some(above_128k_cost) = price_info.output_cost_per_token_above_128k {
-            // 128k阶梯定价
-            tiers.push(PricingTier {
-                token_type: "completion".to_string(),
-                min_tokens: 0,
-                max_tokens: Some(127_999),
-                price_per_token: base_output_cost,
-            });
-            tiers.push(PricingTier {
-                token_type: "completion".to_string(),
-                min_tokens: 128_000,
-                max_tokens: None,
-                price_per_token: above_128k_cost,
-            });
-        } else {
-            // 无阶梯，统一价格
-            tiers.push(PricingTier {
-                token_type: "completion".to_string(),
-                min_tokens: 0,
-                max_tokens: None,
-                price_per_token: base_output_cost,
-            });
-        }
+        add_tiered_pricing(
+            &mut tiers,
+            "completion",
+            base_output_cost,
+            price_info.output_cost_per_token_above_200k,
+            price_info.output_cost_per_token_above_128k,
+        );
     }
 
     // 处理缓存相关定价

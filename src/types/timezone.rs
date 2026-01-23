@@ -292,11 +292,13 @@ mod tests {
     fn test_convert_to_utc_trait() {
         let tz = Tz::Asia__Shanghai;
         let naive_dt = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
+            .expect("valid date: 2024-01-01")
             .and_hms_opt(12, 0, 0)
-            .unwrap();
+            .expect("valid time: 12:00:00");
 
-        let utc_dt = naive_dt.to_utc(&tz).unwrap();
+        let utc_dt = naive_dt
+            .to_utc(&tz)
+            .expect("timezone conversion should succeed");
         assert_eq!(utc_dt.hour(), 4); // 上海时间12点 = UTC 4点
     }
 
@@ -305,9 +307,9 @@ mod tests {
         let tz = Tz::UTC;
         let some_dt = Some(
             NaiveDate::from_ymd_opt(2024, 1, 1)
-                .unwrap()
+                .expect("valid date: 2024-01-01")
                 .and_hms_opt(12, 0, 0)
-                .unwrap(),
+                .expect("valid time: 12:00:00"),
         );
         let none_dt: Option<NaiveDateTime> = None;
 
@@ -368,7 +370,7 @@ mod tests {
     fn test_local_day_bounds() {
         let tz = Tz::Asia__Shanghai;
         let utc_now = DateTime::parse_from_rfc3339("2024-03-10T15:30:00Z")
-            .unwrap()
+            .expect("valid RFC3339 datetime")
             .with_timezone(&Utc);
 
         let (start, end) =
@@ -381,7 +383,7 @@ mod tests {
     fn test_local_previous_day_bounds() {
         let tz = Tz::Asia__Shanghai;
         let utc_now = DateTime::parse_from_rfc3339("2024-03-10T15:30:00Z")
-            .unwrap()
+            .expect("valid RFC3339 datetime")
             .with_timezone(&Utc);
 
         let (start, end) =
@@ -394,12 +396,12 @@ mod tests {
     fn test_local_date_label_and_same_day() {
         let tz = Tz::America__New_York;
         let utc_now = DateTime::parse_from_rfc3339("2024-06-01T03:30:00Z")
-            .unwrap()
+            .expect("valid RFC3339 datetime")
             .with_timezone(&Utc);
         let naive = NaiveDate::from_ymd_opt(2024, 5, 31)
-            .unwrap()
+            .expect("valid date: 2024-05-31")
             .and_hms_opt(23, 30, 0)
-            .unwrap();
+            .expect("valid time: 23:30:00");
 
         assert_eq!(timezone_utils::local_date_label(&naive, &tz), "2024-05-31");
         assert!(timezone_utils::is_same_local_day(&naive, &utc_now, &tz));
@@ -408,7 +410,7 @@ mod tests {
     #[test]
     fn test_local_date_window() {
         let tz = Tz::Asia__Shanghai;
-        let start_date = NaiveDate::from_ymd_opt(2024, 4, 1).unwrap();
+        let start_date = NaiveDate::from_ymd_opt(2024, 4, 1).expect("valid date: 2024-04-01");
         let (start_utc, end_utc) =
             timezone_utils::local_date_window(start_date, 1, &tz).expect("window exists");
 

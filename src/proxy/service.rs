@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::proxy::context::ProxyContext;
 use crate::proxy::provider_strategy;
 use crate::proxy::response::{JsonError, build_auth_error_response, write_json_error};
+use crate::proxy::retry_policy;
 use crate::proxy::state::ProxyState;
 
 /// 核心AI代理服务 - 作为编排器
@@ -52,13 +53,9 @@ impl ProxyService {
         })
     }
 
-    /// 检测是否为部分响应错误（收到响应头但响应体不完整）
-    fn is_partial_response_error(ctx: &ProxyContext, error: Option<&Error>) -> bool {
-        // 检查是否有响应状态码但有连接错误
-        let has_response_status = ctx.response.details.status_code.is_some();
-        let has_connection_error = Self::is_connection_failure(error);
-
-        has_response_status && has_connection_error
+    /// 检测是否为部分响应错误（已收到响应体数据）
+    const fn is_partial_response_error(ctx: &ProxyContext) -> bool {
+        ctx.response.body_received_size > 0
     }
 
     /// 获取本次请求允许的最大重试次数（不包含首次尝试）
@@ -150,31 +147,11 @@ impl ProxyService {
         reason: &'static str,
         status_code: Option<u16>,
     ) {
-        // 防止同一次失败被多次 hook 重入导致重复计数与预算提前耗尽。
-        // 典型场景：上游 5xx 在 upstream_response_filter 中触发 retry 后，
-        // Pingora 会进入 error_while_proxy；若不防护会双计数。
-        if !ctx.control.retry.try_mark_policy_applied() {
-            return;
-        }
-
-        let max_retry_budget = Self::max_retry_budget(ctx);
-
-        if max_retry_budget == 0 {
-            err.set_retry(false);
-            ldebug!(
-                &ctx.request_id,
-                LogStage::ResponseFailure,
-                LogComponent::Proxy,
-                "retry_skipped",
-                "未触发重试（未配置重试预算）",
-                reason = reason,
-                status_code = status_code
-            );
-            return;
-        }
-
-        // 已收到部分响应的情况下不应重试（避免重复返回/重复计费风险）
-        if Self::is_partial_response_error(ctx, Some(err)) {
+        // 检查部分响应错误（需要在调用重试策略前单独检查）
+        if Self::is_partial_response_error(ctx) {
+            if !ctx.control.retry.try_mark_policy_applied() {
+                return;
+            }
             err.set_retry(false);
             ldebug!(
                 &ctx.request_id,
@@ -189,82 +166,15 @@ impl ProxyService {
             return;
         }
 
-        // 不具备可安全重试的前提（retry buffer 缺失/截断）
-        if !Self::is_safe_to_retry(session) {
-            err.set_retry(false);
-            ldebug!(
-                &ctx.request_id,
-                LogStage::ResponseFailure,
-                LogComponent::Proxy,
-                "retry_skipped",
-                "未触发重试（请求体不可重放）",
-                reason = reason,
-                status_code = status_code,
-                retry_buffer_truncated = session.retry_buffer_truncated(),
-                has_retry_buffer = session.get_retry_buffer().is_some(),
-                is_body_empty = session.is_body_empty()
-            );
-            return;
-        }
-
-        // 达到预算上限后停止重试
-        if ctx.control.retry.retry_count >= max_retry_budget {
-            err.set_retry(false);
-            ldebug!(
-                &ctx.request_id,
-                LogStage::ResponseFailure,
-                LogComponent::Proxy,
-                "retry_skipped",
-                "未触发重试（已达重试上限）",
-                reason = reason,
-                status_code = status_code,
-                attempt = ctx.control.retry.retry_count,
-                max_retry_budget = max_retry_budget
-            );
-            return;
-        }
-
-        // 退避：对 429 默认指数退避；对其他可重试错误也使用相同退避策略，
-        // 避免集中重试造成“雪崩”。
-        let base_delay_ms = Self::DEFAULT_BASE_RETRY_DELAY_MS;
-        let max_delay_ms = Self::max_retry_delay_ms(ctx);
-        let delay_ms = ctx.control.retry.consume_budget_and_schedule(
-            max_retry_budget,
+        // 调用简化的重试策略评估
+        retry_policy::apply_retry_policy(
+            session,
+            ctx,
+            err,
+            reason,
             status_code,
-            base_delay_ms,
-            max_delay_ms,
-        );
-
-        if delay_ms == 0 {
-            err.set_retry(false);
-            ldebug!(
-                &ctx.request_id,
-                LogStage::ResponseFailure,
-                LogComponent::Proxy,
-                "retry_skipped",
-                "未触发重试（退避计算为 0）",
-                reason = reason,
-                status_code = status_code,
-                attempt = ctx.control.retry.retry_count,
-                max_retry_budget = max_retry_budget,
-                max_delay_ms = max_delay_ms
-            );
-            return;
-        }
-
-        err.set_retry(true);
-
-        linfo!(
-            &ctx.request_id,
-            LogStage::ResponseFailure,
-            LogComponent::Proxy,
-            "retry_scheduled",
-            "满足重试条件，计划重试同一上游请求",
-            reason = reason,
-            status_code = status_code,
-            attempt = ctx.control.retry.retry_count,
-            max_retry_budget = max_retry_budget,
-            delay_ms = delay_ms
+            Self::DEFAULT_BASE_RETRY_DELAY_MS,
+            u32::try_from(Self::max_retry_delay_ms(ctx)).unwrap_or(u32::MAX),
         );
     }
 
@@ -872,7 +782,7 @@ impl ProxyHttp for ProxyService {
         }
 
         // 对于已收到部分响应的场景，强制不重试（避免重复输出）。
-        if Self::is_partial_response_error(ctx, Some(&err)) {
+        if Self::is_partial_response_error(ctx) {
             err.set_retry(false);
             return err;
         }

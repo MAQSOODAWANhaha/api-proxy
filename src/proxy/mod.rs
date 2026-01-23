@@ -49,6 +49,7 @@
 
 pub mod context;
 pub mod response;
+pub mod retry_policy;
 pub mod service;
 pub mod state;
 pub mod types;

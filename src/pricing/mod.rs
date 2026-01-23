@@ -1,7 +1,6 @@
 //! # 费用计算服务
 //!
 //! 基于模型定价和阶梯定价配置，计算AI请求的token使用费用
-#![allow(clippy::float_cmp, clippy::items_after_statements)]
 
 use crate::error::Result;
 use crate::logging::{LogComponent, LogStage};
@@ -349,8 +348,12 @@ impl PricingCalculatorService {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use entity::{model_pricing, model_pricing_tiers, provider_types};
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::Database;
+    use sea_orm::{Database, NotSet, Set};
+
+    // 浮点数比较容差
+    const EPSILON: f64 = 1e-10;
 
     async fn setup_test_db() -> Arc<DatabaseConnection> {
         let db = Database::connect("sqlite::memory:")
@@ -380,7 +383,12 @@ mod tests {
             .await
             .expect("Should return fallback result");
 
-        assert_eq!(result.total_cost, 0.0);
+        // 使用容差比较来处理浮点精度问题
+        assert!(
+            (result.total_cost - 0.0).abs() < EPSILON,
+            "Expected total cost ~0.0, got {}",
+            result.total_cost
+        );
         assert_eq!(result.currency, "USD");
         assert!(result.used_fallback);
         assert!(result.cost_breakdown.is_empty());
@@ -388,9 +396,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_pricing_with_data() {
-        use entity::{model_pricing, model_pricing_tiers, provider_types};
-        use sea_orm::{NotSet, Set};
-
         let db = setup_test_db().await;
         let pricing_service = PricingCalculatorService::new(db.clone());
 
@@ -477,7 +482,6 @@ mod tests {
 
         // 期望费用: (1000 * 0.00003) + (500 * 0.00006) = 0.03 + 0.03 = 0.06
         // 使用容差比较来处理浮点精度问题
-        const EPSILON: f64 = 1e-10;
         assert!(
             (result.total_cost - 0.06).abs() < EPSILON,
             "Expected total cost ~0.06, got {}",
@@ -499,9 +503,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_type_id_validation() {
-        use entity::{model_pricing, provider_types};
-        use sea_orm::{NotSet, Set};
-
         let db = setup_test_db().await;
         let pricing_service = PricingCalculatorService::new(db.clone());
 
@@ -551,7 +552,11 @@ mod tests {
             .expect("Should return fallback result");
 
         assert!(result.used_fallback);
-        assert_eq!(result.total_cost, 0.0);
+        assert!(
+            (result.total_cost - 0.0).abs() < EPSILON,
+            "Expected total cost ~0.0, got {}",
+            result.total_cost
+        );
 
         // 测试使用正确的provider_type_id，应该找到模型但因为没有pricing tiers而fallback
         let result = pricing_service
@@ -560,6 +565,10 @@ mod tests {
             .expect("Should return fallback result");
 
         assert!(result.used_fallback); // 因为没有定价阶梯而fallback
-        assert_eq!(result.total_cost, 0.0);
+        assert!(
+            (result.total_cost - 0.0).abs() < EPSILON,
+            "Expected total cost ~0.0, got {}",
+            result.total_cost
+        );
     }
 }

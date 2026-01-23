@@ -50,7 +50,7 @@ fn create_servers(
         LogStage::Startup,
         LogComponent::ServerSetup,
         "management_listen_info",
-        &format!("📊 Management server will listen on {management_host}:{management_port}")
+        &format!("[INFO] Management server will listen on {management_host}:{management_port}")
     );
 
     let (proxy_host, proxy_port) = config.dual_port.as_ref().map_or_else(
@@ -63,7 +63,7 @@ fn create_servers(
         LogStage::Startup,
         LogComponent::ServerSetup,
         "proxy_listen_info",
-        &format!("🔗 Proxy server will listen on {proxy_host}:{proxy_port}")
+        &format!("[INFO] Proxy server will listen on {proxy_host}:{proxy_port}")
     );
 
     let management_server = ManagementServer::new(management_config, management_state)
@@ -355,7 +355,7 @@ fn build_management_state(app_context: Arc<AppContext>) -> Result<Arc<Management
         LogStage::Startup,
         LogComponent::ServerSetup,
         "init_management_state",
-        "📊 Initializing management services state..."
+        "[INIT] Initializing management services state..."
     );
 
     let state = ManagementState::new(app_context)?;
@@ -365,7 +365,7 @@ fn build_management_state(app_context: Arc<AppContext>) -> Result<Arc<Management
         LogStage::Startup,
         LogComponent::ServerSetup,
         "init_management_state_ok",
-        "✅ Management services state initialized successfully"
+        "[OK] Management services state initialized successfully"
     );
 
     Ok(Arc::new(state))
@@ -378,7 +378,7 @@ fn build_proxy_state(app_context: &Arc<AppContext>) -> Arc<ProxyState> {
         LogStage::Startup,
         LogComponent::ServerSetup,
         "init_proxy_services",
-        "🔧 Initializing proxy-specific services (ProxyState)..."
+        "[INIT] Initializing proxy-specific services (ProxyState)..."
     );
 
     let resources = app_context.resources();

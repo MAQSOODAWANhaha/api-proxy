@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::{ensure, error::Result};
+
 /// 分页参数
 #[derive(Debug, Clone, Copy)]
 pub struct PaginationParams {
@@ -65,4 +67,43 @@ pub const fn build_page(total: u64, params: PaginationParams) -> PaginationInfo 
         total.div_ceil(params.limit)
     };
     PaginationInfo::new(params.page, params.limit, total, pages)
+}
+
+/// 验证名称格式
+///
+/// # 参数
+/// - `name`: 要验证的名称
+///
+/// # 规则
+/// - 不能为空
+/// - 不能只包含空白字符
+/// - 长度不能超过 100 个字符
+pub fn validate_name_format(name: &str) -> Result<()> {
+    let trimmed = name.trim();
+
+    ensure!(!trimmed.is_empty(), "名称不能为空");
+
+    ensure!(trimmed.len() <= 100, "名称长度不能超过 100 个字符");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_name_format() {
+        // 有效名称
+        assert!(validate_name_format("Valid Name").is_ok());
+        assert!(validate_name_format("  Valid Name  ").is_ok());
+
+        // 空名称
+        assert!(validate_name_format("").is_err());
+        assert!(validate_name_format("   ").is_err());
+
+        // 名称过长
+        let long_name = "a".repeat(101);
+        assert!(validate_name_format(&long_name).is_err());
+    }
 }

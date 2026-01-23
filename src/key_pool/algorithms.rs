@@ -176,10 +176,11 @@ impl ApiKeySelector for RoundRobinApiKeySelector {
         );
 
         // 找到在原始数组中的索引
+        // selected_key 来自 active_keys，而 active_keys 是 keys 的子集，因此一定能找到
         let selected_index = keys
             .iter()
             .position(|key| key.id == selected_key.id)
-            .unwrap();
+            .expect("selected key should exist in the original keys array");
 
         let reason = format!(
             "Round robin selection: group='{}', counter={}, active_keys={}, selected_key_id={}",

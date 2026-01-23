@@ -509,7 +509,7 @@ impl DbQueryFormatter {
             format!(" → {}", result_parts.join(", "))
         };
 
-        format!("{operation_icon} {clean_sql} (⏱ {time_str}){result_str}")
+        format!("{operation_icon} {clean_sql} ({time_str}){result_str}")
     }
 
     /// 清理SQL语句，移除多余的空白和换行
@@ -525,25 +525,25 @@ impl DbQueryFormatter {
             .replace("  ", " ") // 移除多余空格
     }
 
-    /// 根据SQL操作类型获取对应图标
+    /// 根据SQL操作类型获取对应图标（使用 ASCII 字符以适应生产环境）
     fn get_operation_icon(sql: &str) -> &'static str {
         let sql_upper = sql.to_uppercase();
         if sql_upper.starts_with("SELECT") {
-            "🔍"
+            "[Q]" // Query
         } else if sql_upper.starts_with("INSERT") {
-            "➕"
+            "[I]" // Insert
         } else if sql_upper.starts_with("UPDATE") {
-            "✏️"
+            "[U]" // Update
         } else if sql_upper.starts_with("DELETE") {
-            "🗑️"
+            "[D]" // Delete
         } else if sql_upper.starts_with("CREATE") {
-            "🔨"
+            "[C]" // Create
         } else if sql_upper.starts_with("DROP") {
-            "💥"
+            "[X]" // Drop
         } else if sql_upper.starts_with("ALTER") {
-            "🔧"
+            "[A]" // Alter
         } else {
-            "📋"
+            "[?]" // Other
         }
     }
 }
@@ -712,7 +712,7 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogComponent::Main,
             "log_init",
             &format!(
-                "🔍 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {actual_filter}"
+                "[DEBUG] 日志系统已启动 - 模式: 开发 | 数据库查询日志: 启用 | 过滤器: {actual_filter}"
             )
         );
     } else {
@@ -722,7 +722,7 @@ fn print_startup_info(config: &LoggingConfig, actual_filter: &str) {
             LogComponent::Main,
             "log_init",
             &format!(
-                "📋 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {actual_filter}"
+                "[INFO] 日志系统已启动 - 模式: 生产 | 数据库查询日志: 禁用 | 过滤器: {actual_filter}"
             )
         );
     }
@@ -871,8 +871,8 @@ impl LogFormatValidator {
     /// 返回当前系统中各种日志格式的使用情况
     #[must_use]
     pub fn get_format_stats() -> String {
-        "📊 日志格式统计:
-  - 统一日志宏: proxy_info!, proxy_debug!, proxy_warn!, proxy_error!
+        "[STATS] 日志格式统计:
+  - 统一日志宏: linfo!, ldebug!, lwarn!, lerror!
   - 日志阶段: 7种 (RequestStart, Authentication, RequestModify, UpstreamRequest, Response, ResponseFailure, Error)
   - 组件类型: 8种 (Proxy, AuthService, RequestHandler, TracingService, Upstream, Builder, GeminiStrategy, Database)
   - 优化文件: 6个 (authentication_service.rs, request_handler.rs, tracing_service.rs, builder.rs, pingora_proxy.rs, provider_strategy_gemini.rs)".to_string()
