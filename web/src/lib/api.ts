@@ -559,7 +559,7 @@ export interface CreateUserServiceApiKeyRequest {
   max_requests_per_day?: number
   max_tokens_per_day?: number
   max_cost_per_day?: number
-  expires_at?: string
+  expires_at?: string | null
   is_active?: boolean
 }
 
@@ -589,7 +589,7 @@ export interface UserServiceApiKeyDetail {
   max_requests_per_day: number
   max_tokens_per_day: number
   max_cost_per_day: number
-  expires_at?: string
+  expires_at?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -607,7 +607,7 @@ export interface UpdateUserServiceApiKeyRequest {
   max_requests_per_day?: number
   max_tokens_per_day?: number
   max_cost_per_day?: number
-  expires_at?: string
+  expires_at?: string | null
 }
 
 export interface UpdateUserServiceApiKeyResponse {

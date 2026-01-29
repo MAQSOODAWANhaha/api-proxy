@@ -3,6 +3,7 @@ import ModernSelect from '../../../../components/common/ModernSelect';
 import MultiSelect from '../../../../components/common/MultiSelect';
 import { LoadingSpinner } from '../../../../components/ui/loading';
 import { api, ProviderType, SchedulingStrategy } from '../../../../lib/api';
+import { formatToDatetimeLocalValue } from '../../../../lib/timezone';
 import { ApiKey, UserProviderKey } from '../types';
 
 const AddDialog: React.FC<{
@@ -541,7 +542,7 @@ const AddDialog: React.FC<{
           </label>
           <input
             type="datetime-local"
-            value={formData.expires_at || ""}
+            value={formatToDatetimeLocalValue(formData.expires_at)}
             onChange={(e) =>
               setFormData({ ...formData, expires_at: e.target.value || null })
             }

@@ -30,6 +30,7 @@ import { ApiKey, DialogType } from "./user-keys/types";
 import { copyWithFeedback } from "../../lib/clipboard";
 import { LoadingSpinner, LoadingState } from "@/components/ui/loading";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatDatetimeLocalToRfc3339 } from "@/lib/timezone";
 import {
   Table,
   TableBody,
@@ -108,6 +109,7 @@ const ApiUserKeysPage: React.FC = () => {
     >
   ) => {
     try {
+      const expiresAt = formatDatetimeLocalToRfc3339(newKey.expires_at);
       const response = await api.userService.createKey({
         name: newKey.name,
         description: newKey.description,
@@ -121,7 +123,7 @@ const ApiUserKeysPage: React.FC = () => {
         max_requests_per_day: newKey.max_requests_per_day,
         max_tokens_per_day: newKey.max_tokens_per_day,
         max_cost_per_day: newKey.max_cost_per_day,
-        expires_at: newKey.expires_at || undefined,
+        expires_at: expiresAt,
         is_active: newKey.is_active,
       });
 
@@ -141,6 +143,7 @@ const ApiUserKeysPage: React.FC = () => {
   // 编辑API Key
   const handleEdit = async (updatedKey: ApiKey) => {
     try {
+      const expiresAt = formatDatetimeLocalToRfc3339(updatedKey.expires_at);
       const response = await api.userService.updateKey(updatedKey.id, {
         name: updatedKey.name,
         description: updatedKey.description,
@@ -153,7 +156,7 @@ const ApiUserKeysPage: React.FC = () => {
         max_requests_per_day: updatedKey.max_requests_per_day,
         max_tokens_per_day: updatedKey.max_tokens_per_day,
         max_cost_per_day: updatedKey.max_cost_per_day,
-        expires_at: updatedKey.expires_at || undefined,
+        expires_at: expiresAt,
       });
 
       if (response.success) {

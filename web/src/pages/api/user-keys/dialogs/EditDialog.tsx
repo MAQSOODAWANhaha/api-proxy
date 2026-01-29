@@ -3,6 +3,7 @@ import ModernSelect from '../../../../components/common/ModernSelect';
 import MultiSelect from '../../../../components/common/MultiSelect';
 import { LoadingSpinner } from '../../../../components/ui/loading';
 import { api, ProviderType, SchedulingStrategy } from '../../../../lib/api';
+import { formatToDatetimeLocalValue } from '../../../../lib/timezone';
 import { ApiKey, UserProviderKey } from '../types';
 
 const EditDialog: React.FC<{
@@ -10,7 +11,10 @@ const EditDialog: React.FC<{
   onClose: () => void;
   onSubmit: (item: ApiKey) => void;
 }> = ({ item, onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({ ...item });
+  const [formData, setFormData] = useState({
+    ...item,
+    expires_at: formatToDatetimeLocalValue(item.expires_at),
+  });
 
   // 编辑弹窗独有的状态管理
   const [providerTypes, setProviderTypes] = useState<ProviderType[]>([]);
@@ -42,6 +46,7 @@ const EditDialog: React.FC<{
           max_requests_per_day: detail.max_requests_per_day || 0,
           max_tokens_per_day: detail.max_tokens_per_day || 0,
           max_cost_per_day: detail.max_cost_per_day || 0,
+          expires_at: formatToDatetimeLocalValue(detail.expires_at),
           // 确保数组字段有默认值
           user_provider_keys_ids: detail.user_provider_keys_ids || [],
         }));
@@ -523,7 +528,7 @@ const EditDialog: React.FC<{
             </label>
             <input
               type="datetime-local"
-              value={formData.expires_at || ""}
+              value={formatToDatetimeLocalValue(formData.expires_at)}
               onChange={(e) =>
                 setFormData({ ...formData, expires_at: e.target.value || null })
               }

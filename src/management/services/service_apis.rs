@@ -14,7 +14,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -61,6 +61,27 @@ pub struct CreateUserServiceKeyRequest {
     pub is_active: Option<bool>,
 }
 
+#[derive(Debug, PartialEq, Eq, Default)]
+pub enum NullableField<T> {
+    #[default]
+    Missing,
+    Null,
+    Value(T),
+}
+
+impl<'de, T> Deserialize<'de> for NullableField<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<T>::deserialize(deserializer)?;
+        Ok(value.map_or_else(|| Self::Null, Self::Value))
+    }
+}
+
 /// 更新用户服务 API 请求
 #[derive(Debug, Deserialize)]
 pub struct UpdateUserServiceKeyRequest {
@@ -76,7 +97,8 @@ pub struct UpdateUserServiceKeyRequest {
     pub max_requests_per_day: Option<i32>,
     pub max_tokens_per_day: Option<i64>,
     pub max_cost_per_day: Option<sea_orm::prelude::Decimal>,
-    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: NullableField<String>,
 }
 
 /// 使用统计查询
@@ -415,8 +437,9 @@ impl<'a> ServiceApiService<'a> {
         let existing = self.find_user_api(api_id, user_id).await?;
 
         let expires_at = match &request.expires_at {
-            Some(value) => Some(parse_rfc3339(value)?),
-            None => existing.expires_at,
+            NullableField::Missing => existing.expires_at,
+            NullableField::Null => None,
+            NullableField::Value(value) => Some(parse_rfc3339(value)?),
         };
 
         let mut model = user_service_apis::ActiveModel {
@@ -794,4 +817,19 @@ fn resolve_usage_range(query: &UsageStatsQuery, timezone: Tz) -> Result<Range<Da
     };
 
     Ok(start..end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NullableField, UpdateUserServiceKeyRequest};
+
+    #[test]
+    fn update_request_distinguishes_null_from_missing() {
+        let missing: UpdateUserServiceKeyRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.expires_at, NullableField::Missing);
+
+        let with_null: UpdateUserServiceKeyRequest =
+            serde_json::from_str(r#"{"expires_at":null}"#).unwrap();
+        assert_eq!(with_null.expires_at, NullableField::Null);
+    }
 }

@@ -42,6 +42,33 @@ export const formatLocalToISOString = (localTime: string): string => {
 }
 
 /**
+ * 将任意时间字符串格式化为 datetime-local 控件可用的值
+ * @param value 时间字符串（支持 ISO 8601、YYYY-MM-DD HH:mm:ss 等）
+ * @returns YYYY-MM-DDTHH:mm 格式字符串
+ */
+export const formatToDatetimeLocalValue = (value?: string | null): string => {
+  if (!value) return ''
+  const parsed = dayjs(value)
+  if (!parsed.isValid()) return ''
+  return parsed.format('YYYY-MM-DDTHH:mm')
+}
+
+/**
+ * 将 datetime-local 的本地时间转换为 RFC3339（带时区）字符串
+ * @param value datetime-local 的值（YYYY-MM-DDTHH:mm）
+ * @returns RFC3339 字符串；value 为 null 时返回 null；解析失败返回 undefined
+ */
+export const formatDatetimeLocalToRfc3339 = (
+  value?: string | null
+): string | null | undefined => {
+  if (value === null) return null
+  if (!value) return undefined
+  const parsed = dayjs(value)
+  if (!parsed.isValid()) return undefined
+  return parsed.toISOString()
+}
+
+/**
  * 将本地时间字符串转换为 Date 对象
  * @param localTime 本地时间字符串
  * @returns Date 对象
