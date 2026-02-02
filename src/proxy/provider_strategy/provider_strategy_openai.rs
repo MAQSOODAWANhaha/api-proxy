@@ -38,8 +38,6 @@ pub struct OpenAIStrategy {
     health_checker: Option<Arc<ApiKeyHealthService>>,
 }
 
-const CODEX_INSTRUCTIONS: &str = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.\n\n## General\n\n- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)\n\n## Editing constraints\n\n- Default to ASCII when editing or creating files. Only introduce non-ASCII or other Unicode characters when there is a clear justification and the file already uses them.\n- Add succinct code comments that explain what is going on if code is not self-explanatory. You should not add comments like \"Assigns the value to the variable\", but a brief comment might be useful ahead of a complex code block that the user would otherwise have to spend time parsing out. Usage of these comments should be rare.\n- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto";
-
 fn is_codex_responses_path(path: &str) -> bool {
     path.trim_end_matches('/') == "/backend-api/codex/responses"
 }
@@ -262,9 +260,19 @@ impl ProviderStrategy for OpenAIStrategy {
             return Ok(false);
         }
 
+        let Some(description) = ctx
+            .routing
+            .user_service_api
+            .as_ref()
+            .and_then(|api| api.description.as_deref())
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(false);
+        };
+
         object.insert(
             "instructions".to_string(),
-            Value::String(CODEX_INSTRUCTIONS.to_string()),
+            Value::String(description.to_string()),
         );
 
         linfo!(
@@ -352,6 +360,7 @@ mod tests {
     use super::OpenAIStrategy;
     use crate::proxy::ProxyContext;
     use crate::proxy::provider_strategy::ProviderStrategy;
+    use entity::user_service_apis;
     use pingora_core::protocols::l4::stream::Stream;
     use pingora_http::RequestHeader;
     use pingora_proxy::Session;
@@ -385,6 +394,31 @@ mod tests {
         session
     }
 
+    fn make_test_user_service_api(description: Option<String>) -> user_service_apis::Model {
+        let now = chrono::Utc::now().naive_utc();
+        user_service_apis::Model {
+            id: 1,
+            user_id: 1,
+            provider_type_id: 1,
+            user_provider_keys_ids: serde_json::json!([]),
+            api_key: "test-api-key".to_string(),
+            name: None,
+            description,
+            scheduling_strategy: None,
+            retry_count: None,
+            timeout_seconds: None,
+            max_request_per_min: None,
+            max_requests_per_day: None,
+            max_tokens_per_day: None,
+            max_cost_per_day: None,
+            log_mode: false,
+            expires_at: None,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn test_openai_sets_will_modify_body_for_codex_responses() {
         let request = "POST /backend-api/codex/responses HTTP/1.1\r\nHost: example.com\r\n\r\n";
@@ -407,7 +441,9 @@ mod tests {
     async fn test_openai_injects_instructions_when_missing() {
         let request = "POST /backend-api/codex/responses HTTP/1.1\r\nHost: example.com\r\n\r\n";
         let session = make_test_session(request).await;
-        let ctx = ProxyContext::default();
+        let mut ctx = ProxyContext::default();
+        ctx.routing.user_service_api =
+            Some(make_test_user_service_api(Some("自定义说明".to_string())));
         let mut json_value = json!({
             "model": "gpt-5"
         });
@@ -418,8 +454,27 @@ mod tests {
             .await
             .expect("modify request body");
 
-        let expected = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.\n\n## General\n\n- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)\n\n## Editing constraints\n\n- Default to ASCII when editing or creating files. Only introduce non-ASCII or other Unicode characters when there is a clear justification and the file already uses them.\n- Add succinct code comments that explain what is going on if code is not self-explanatory. You should not add comments like \"Assigns the value to the variable\", but a brief comment might be useful ahead of a complex code block that the user would otherwise have to spend time parsing out. Usage of these comments should be rare.\n- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto";
         assert!(modified);
-        assert_eq!(json_value["instructions"], expected);
+        assert_eq!(json_value["instructions"], "自定义说明");
+    }
+
+    #[tokio::test]
+    async fn test_openai_injects_empty_instructions_when_description_missing() {
+        let request = "POST /backend-api/codex/responses HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let session = make_test_session(request).await;
+        let mut ctx = ProxyContext::default();
+        ctx.routing.user_service_api = Some(make_test_user_service_api(None));
+        let mut json_value = json!({
+            "model": "gpt-5"
+        });
+        let strategy = OpenAIStrategy::new(None);
+
+        let modified = strategy
+            .modify_request_body_json(&session, &ctx, &mut json_value)
+            .await
+            .expect("modify request body");
+
+        assert!(!modified);
+        assert!(json_value.get("instructions").is_none());
     }
 }
