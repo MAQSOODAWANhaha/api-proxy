@@ -15,6 +15,7 @@ use entity::user_provider_keys;
 use pingora_http::RequestHeader;
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -35,6 +36,12 @@ pub struct OpenAIErrorDetail {
 #[derive(Default)]
 pub struct OpenAIStrategy {
     health_checker: Option<Arc<ApiKeyHealthService>>,
+}
+
+const CODEX_INSTRUCTIONS: &str = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.\n\n## General\n\n- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)\n\n## Editing constraints\n\n- Default to ASCII when editing or creating files. Only introduce non-ASCII or other Unicode characters when there is a clear justification and the file already uses them.\n- Add succinct code comments that explain what is going on if code is not self-explanatory. You should not add comments like \"Assigns the value to the variable\", but a brief comment might be useful ahead of a complex code block that the user would otherwise have to spend time parsing out. Usage of these comments should be rare.\n- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto";
+
+fn is_codex_responses_path(path: &str) -> bool {
+    path.trim_end_matches('/') == "/backend-api/codex/responses"
 }
 
 impl OpenAIStrategy {
@@ -193,10 +200,23 @@ impl ProviderStrategy for OpenAIStrategy {
     }
     async fn modify_request(
         &self,
-        _session: &Session,
+        session: &Session,
         upstream_request: &mut RequestHeader,
         ctx: &mut ProxyContext,
     ) -> Result<()> {
+        let path = session.req_header().uri.path();
+        if is_codex_responses_path(path) {
+            ctx.request.will_modify_body = true;
+            linfo!(
+                &ctx.request_id,
+                LogStage::RequestModify,
+                LogComponent::OpenAIStrategy,
+                "enable_instructions_injection",
+                "OpenAI请求启用instructions注入",
+                route_path = path,
+                will_modify_body = ctx.request.will_modify_body
+            );
+        }
         if let Some(backend) = &ctx.routing.selected_backend
             && backend.auth_type == "oauth"
         {
@@ -221,6 +241,42 @@ impl ProviderStrategy for OpenAIStrategy {
             }
         }
         Ok(())
+    }
+
+    async fn modify_request_body_json(
+        &self,
+        session: &Session,
+        ctx: &ProxyContext,
+        json_value: &mut Value,
+    ) -> Result<bool> {
+        let path = session.req_header().uri.path();
+        if !is_codex_responses_path(path) {
+            return Ok(false);
+        }
+
+        let Some(object) = json_value.as_object_mut() else {
+            return Ok(false);
+        };
+
+        if object.contains_key("instructions") {
+            return Ok(false);
+        }
+
+        object.insert(
+            "instructions".to_string(),
+            Value::String(CODEX_INSTRUCTIONS.to_string()),
+        );
+
+        linfo!(
+            &ctx.request_id,
+            LogStage::RequestModify,
+            LogComponent::OpenAIStrategy,
+            "inject_instructions",
+            "OpenAI请求补充instructions字段",
+            route_path = path
+        );
+
+        Ok(true)
     }
 
     async fn handle_response_body(
@@ -289,4 +345,81 @@ struct RateLimitWindowLog {
     used_percent: f64,
     window_seconds: Option<i64>,
     resets_at: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OpenAIStrategy;
+    use crate::proxy::ProxyContext;
+    use crate::proxy::provider_strategy::ProviderStrategy;
+    use pingora_core::protocols::l4::stream::Stream;
+    use pingora_http::RequestHeader;
+    use pingora_proxy::Session;
+    use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::{TcpListener, TcpStream};
+
+    async fn make_test_session(request: &str) -> Session {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+
+        let mut client = TcpStream::connect(addr).await.expect("connect");
+        let (server, _) = listener.accept().await.expect("accept");
+
+        client
+            .write_all(request.as_bytes())
+            .await
+            .expect("write request");
+
+        let stream = Stream::from(server);
+        let mut session = Session::new_h1(Box::new(stream));
+
+        session
+            .downstream_session
+            .read_request()
+            .await
+            .expect("read request");
+
+        session
+    }
+
+    #[tokio::test]
+    async fn test_openai_sets_will_modify_body_for_codex_responses() {
+        let request = "POST /backend-api/codex/responses HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let session = make_test_session(request).await;
+        let mut ctx = ProxyContext::default();
+        let mut upstream_request =
+            RequestHeader::build("POST", b"/backend-api/codex/responses", None)
+                .expect("build request header");
+        let strategy = OpenAIStrategy::new(None);
+
+        strategy
+            .modify_request(&session, &mut upstream_request, &mut ctx)
+            .await
+            .expect("modify request");
+
+        assert!(ctx.request.will_modify_body);
+    }
+
+    #[tokio::test]
+    async fn test_openai_injects_instructions_when_missing() {
+        let request = "POST /backend-api/codex/responses HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let session = make_test_session(request).await;
+        let ctx = ProxyContext::default();
+        let mut json_value = json!({
+            "model": "gpt-5"
+        });
+        let strategy = OpenAIStrategy::new(None);
+
+        let modified = strategy
+            .modify_request_body_json(&session, &ctx, &mut json_value)
+            .await
+            .expect("modify request body");
+
+        let expected = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.\n\n## General\n\n- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)\n\n## Editing constraints\n\n- Default to ASCII when editing or creating files. Only introduce non-ASCII or other Unicode characters when there is a clear justification and the file already uses them.\n- Add succinct code comments that explain what is going on if code is not self-explanatory. You should not add comments like \"Assigns the value to the variable\", but a brief comment might be useful ahead of a complex code block that the user would otherwise have to spend time parsing out. Usage of these comments should be rare.\n- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto";
+        assert!(modified);
+        assert_eq!(json_value["instructions"], expected);
+    }
 }
